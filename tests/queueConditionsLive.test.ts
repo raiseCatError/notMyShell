@@ -44,7 +44,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         frontend.pty.write('sleep 2\r');
         await frontend.waitFor(/Running sleep 2|Cooking|[A-Z][a-z]+…/u, mark);
         frontend.pty.write(`touch ${marker}\r`);
-        await frontend.waitFor(/≡ Queued \(1\) · next: touch/u, mark);
+        await frontend.waitFor(/› touch .*Next/u, mark);
         frontend.pty.write('/queue\r');
         await frontend.waitFor(/Command queue[\s\S]*touch/u, mark);
         frontend.pty.write('w');
@@ -52,7 +52,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         frontend.pty.write('w');
         await frontend.waitFor(/asks first/u, mark);
         frontend.pty.write('\u001b');
-        await frontend.waitFor(/next needs your approval[\s\S]*touch/u, mark, 20_000);
+        await frontend.waitFor(/Awaiting approval[\s\S]*touch/u, mark, 20_000);
         await pause(1500);
         assert.equal(existsSync(marker), false, 'nothing runs while it waits for approval');
         mark = frontend.mark;
@@ -73,7 +73,7 @@ test('live: "runs even after a failure" goes on after a plain failure; the defau
     frontend.pty.write(`sh -c 'sleep 1; exit 3'\r`);
     await frontend.waitFor(/Running sh -c|[A-Z][a-z]+…/u, mark);
     frontend.pty.write(`touch ${cleanup}\r`);
-    await frontend.waitFor(/≡ Queued \(1\)/u, mark);
+    await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('/queue\r');
     await frontend.waitFor(/Command queue/u, mark);
     frontend.pty.write('w');

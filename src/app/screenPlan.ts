@@ -380,7 +380,7 @@ const QUEUE_MIN_TRANSCRIPT = 3;
  * from the transcript's view, never from the shell's terminal: ptyRows stays as planned, so a growing or shrinking
  * queue never resizes the running program. Rows that do not fit leave the list shorter; none means no list.
  */
-export function withQueueRows(plan: ScreenPlan, count: number): ScreenPlan {
+export function withQueueRows(plan: ScreenPlan, count: number, beforeActivity = false): ScreenPlan {
   const activity = regionOf(plan, 'activity');
   if (count <= 0 || !activity || plan.panelActive || activity.top < plan.transcript.top) return plan;
   const take = Math.min(count, Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT));
@@ -391,7 +391,11 @@ export function withQueueRows(plan: ScreenPlan, count: number): ScreenPlan {
   const moved = (region: Region): Region => region.kind === 'transcript' ? {...region, height: region.height - take}
     : region.top >= transcriptEnd && region.top < activityEnd ? {...region, top: region.top - take} : region;
   const regions = plan.regions.map(moved);
-  regions.splice(regions.findIndex(region => region.kind === 'activity') + 1, 0, {kind: 'queue', top: activityEnd - take, height: take});
+  if (beforeActivity) {
+    const activityIndex = regions.findIndex(region => region.kind === 'activity');
+    regions[activityIndex] = {...regions[activityIndex]!, top: activity.top};
+    regions.splice(activityIndex, 0, {kind: 'queue', top: activity.top - take, height: take});
+  } else regions.splice(regions.findIndex(region => region.kind === 'activity') + 1, 0, {kind: 'queue', top: activityEnd - take, height: take});
   const transcript = moved(plan.transcript);
   return {...plan, regions: regions.filter(region => region.height > 0), transcript,
     viewportRows: Math.max(1, plan.composerPosition === 'flow' ? transcript.height : plan.viewportRows - take)};

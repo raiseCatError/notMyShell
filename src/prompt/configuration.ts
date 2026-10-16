@@ -648,6 +648,7 @@ export interface PromptConfiguration {
   agentActivity: boolean;
   /** Enter while a command runs queues the next command (Ctrl+S sends to the program); off: Enter sends to the program. */
   commandQueue: boolean;
+  queueFailurePolicy: 'pause' | 'continue';
   /**
    * Experimental, Off by default: the docked workspace sidebar and detail panel (/sidebar, /panel). Off, neither opens
    * and their keymap bindings do nothing; /worktrees, /sessions, /github and /background are unaffected.
@@ -781,6 +782,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
   commandQueue: true,
+  queueFailurePolicy: 'pause',
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',
@@ -877,7 +879,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {existsSync, writeFileSync} from 'node:fs';
+import {existsSync, readFileSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
 import {inForeground, uniqueSleep} from './helpers/processState.js';
@@ -70,8 +70,8 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       }
       // Room for the list (30 rows): what runs next, in order.
       // (A redraw writes only the rows that changed, so the header and the list rows are checked apart.)
-      await frontend.waitFor(/├─ next {2}cd sub/u, mark);
-      await frontend.waitFor(/≡ Queue · 5 pending/u, mark);
+      await frontend.waitFor(/› cd sub +Next/u, mark);
+      await frontend.waitFor(/Queue · 6 commands/u, mark);
       assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sh/u, 'the empty composer says what Enter does');
       writeFileSync(release, '');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
@@ -97,7 +97,7 @@ test('live: a failed command pauses the queue with its reason; nothing after it 
     frontend.pty.write(`touch ${marker}\r`);
     // Said once where it happened; the queue's row carries what waits and what to do, not the same sentence again.
     await frontend.waitFor(/Queue paused: sh -c 'sleep 1; exit 3' failed \(exit 3\)\./u, mark, 20_000);
-    await frontend.waitFor(/⏸ Queue paused · 1 pending[\s\S]*Enter to review before anything runs · \/queue/u, mark);
+    await frontend.waitFor(/Queue paused · 1 pending[\s\S]*Enter to review/u, mark);
     await pause(1500);
     assert.equal(existsSync(marker), false, 'the follow-up did not run blindly');
     // A command typed at the prompt still runs at once; the paused queue keeps waiting.
@@ -105,7 +105,9 @@ test('live: a failed command pauses the queue with its reason; nothing after it 
     assert.equal(existsSync(marker), false);
     const resume = frontend.mark;
     frontend.pty.write('/queue resume\r');
-    await frontend.waitFor(/Queue resumed; 1 will run in order/u, resume);
+    await frontend.waitFor(/Resume the queue\?/u, resume);
+    assert.equal(existsSync(marker), false, 'the slash alias opens review only');
+    frontend.pty.write('\r');
     await until(() => existsSync(marker), 15_000, 'the resumed entry runs');
     await frontend.waitFor(/from queue/u, resume);
   } finally { await sandbox.dispose(); }
@@ -182,14 +184,16 @@ test('live: Ctrl+C pauses what was queued behind the interrupted command', {skip
     frontend.pty.write('sleep 30\r');
     await frontend.waitFor(/Running sleep 30/u, mark);
     frontend.pty.write(`touch ${marker}\r`);
-    await frontend.waitFor(/≡ Queued \(1\)/u, mark);
+    await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('\u0003');
     await frontend.waitFor(/Queue paused: sleep 30 was interrupted/u, mark, 20_000);
     await pause(1000);
     assert.equal(existsSync(marker), false);
     const clear = frontend.mark;
     frontend.pty.write('/queue clear\r');
-    await frontend.waitFor(/Cleared 1 queued command; none of them ran\./u, clear);
+    await frontend.waitFor(/Clear queued commands\?/u, clear);
+    frontend.pty.write('\r');
+    await frontend.waitFor(/Queue cleared|Cleared 1 queued command; none of them ran\./u, clear);
   } finally { await sandbox.dispose(); }
 });
 
@@ -228,7 +232,7 @@ test('live: a program that survives Ctrl+C gets ordinary routing again: later ty
     frontend.pty.write('\u0003');
     await pause(4200);
     frontend.pty.write('echo LATER\r');
-    await frontend.waitFor(/≡ Queued \(1\) · next: echo LATER/u, mark);
+    await frontend.waitFor(/› echo LATER +Next/u, mark);
     writeFileSync(release, '');
     await frontend.waitFor(/SURVIVED[\s\S]*LATER/u, mark, 20_000);
     assert.doesNotMatch(drawn(frontend, mark), /GOT=echo LATER/u, 'nothing typed after the window reached the program');
@@ -241,17 +245,26 @@ test('live: a multi-line paste queues as one entry and runs once, as one block',
     const mark = frontend.mark;
     frontend.pty.write('sleep 5\r');
     await frontend.waitFor(/Running sleep 5/u, mark);
-    frontend.pty.write('\u001b[200~for i in 1 2; do\n  echo "LINE-$i"\ndone\u001b[201~');
+    const executions = join(sandbox.home, 'multiline-executions');
+    const block = `for i in 1 2; do\n  echo "LINE-$i"; printf '%s\\n' "$i" >> '${executions}'\ndone`;
+    frontend.pty.write('\u001b[200~' + block + '\u001b[201~');
     // NMSh's paste review comes first; Enter inserts the paste into the composer, and only the next Enter queues it.
     await frontend.waitFor(/Enter insert · R review(?: · B queue as commands)? · Esc cancel/u, mark);
     frontend.pty.write('\r');
     await frontend.waitFor(/❯ for i in 1 2; do/u, mark);
     await pause(300);
-    assert.doesNotMatch(drawn(frontend, mark), /≡ Queued/u, 'a paste never queues by itself');
+    assert.doesNotMatch(drawn(frontend, mark), /≡ Queued|Queue · \d+ commands/u, 'a paste never queues by itself');
     frontend.pty.write('\r');
-    await frontend.waitFor(/≡ Queued \(1\) · next: for i in 1 2; do \(\+2 lines\)/u, mark);
+    await frontend.waitFor(/› for i in 1 2; do \(\+2 lines\).*Next/u, mark);
     await frontend.waitFor(/LINE-1[\s\S]*LINE-2[\s\S]*from queue/u, mark, 20_000);
-    assert.equal(drawn(frontend, mark).match(/LINE-1/gu)?.length, 1, 'it ran exactly once');
+    // Changed-row terminal writes may repaint output when chrome changes. Execution evidence comes from the
+    // shell side effect and authoritative journal, which must both retain exactly one complete execution.
+    await until(async () => (await sandbox.transcripts().list()).flatMap(item => item.transcript.records).some(record => record.command === block), 15_000, 'multiline journal');
+    const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records).filter(record => record.command === block);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.output.match(/LINE-1/gu)?.length, 1);
+    assert.equal(records[0]!.output.match(/LINE-2/gu)?.length, 1);
+    assert.equal(readFileSync(executions, 'utf8'), '1\n2\n', 'the shell ran the grouped entry exactly once');
   } finally { await sandbox.dispose(); }
 });
 
@@ -269,7 +282,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       frontend.pty.write('\r');
       await frontend.waitFor(/❯ (?:set -g MULTI_VALUE|MULTI_VALUE=kept)/u, mark);
       frontend.pty.write('\u0011');
-      await frontend.waitFor(/≡ Queued \(1\)/u, mark);
+      await frontend.waitFor(/Queue · 2 commands/u, mark);
       assert.doesNotMatch(drawn(frontend, mark), /BLOCK-FIRST/u, 'review and insertion never execute');
       writeFileSync(release, '');
       await frontend.waitFor(/BLOCK-FIRST[\s\S]*BLOCK-LAST-kept[\s\S]*from queue/u, mark, 20_000);
@@ -290,7 +303,7 @@ test('live: the queue belongs to the session: it survives detach and reattach an
     await first.waitFor(/Running sleep 4/u, mark);
     first.pty.write(`touch ${marker}\r`);
     first.pty.write('sleep 6\r');
-    await first.waitFor(/≡ Queue · 2 pending/u, mark);
+    await first.waitFor(/Queue · 3 commands/u, mark);
     const [session] = await sandbox.sessions();
     first.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions()).find(item => item.id === session!.id)?.state === 'detached', 15_000, 'detached');
@@ -310,7 +323,7 @@ test('live: narrow, NO_COLOR and Safe glyphs keep the queue legible', {skip: sup
     await frontend.waitFor(/Running/u, mark);
     frontend.pty.write('echo NARROW-QUEUED\r');
     // 40 columns: the entry's text is cut to fit, never wrapped into the composer.
-    await frontend.waitFor(/= Queued \(1\) · next: echo NARR/u, mark);
+    await frontend.waitFor(/> echo NARR.*Next/u, mark);
     assert.doesNotMatch(drawn(frontend, mark), /≡|⏸/u, 'Safe glyphs only');
     await frontend.waitFor(/NARROW-QUEUED[\s\S]*from queue/u, mark, 20_000);
   } finally { await sandbox.dispose(); }

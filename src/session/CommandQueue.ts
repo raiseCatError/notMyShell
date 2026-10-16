@@ -1,3 +1,4 @@
+import type {QueueFailurePolicy, QueueTimeline} from './ExecutionTimeline.js';
 import {EventEmitter} from 'node:events';
 
 /**
@@ -35,12 +36,17 @@ export type QueuePause =
 
 export interface QueueState {
   entries: readonly QueueEntry[];
+  revision?: number;
+  timeline?: QueueTimeline;
+  /** Submitted once, but no authenticated exec has arrived yet. */
+  dispatching?: QueueEntry;
   paused?: QueuePause;
   /** An entry being edited holds the queue at that point until the edit is saved or cancelled. */
   editing?: number;
 }
 
-export type QueueOp =
+export type QueueOp = (
+  | {op: 'failure-policy'; policy: QueueFailurePolicy}
   | {op: 'add'; text: string; condition?: QueueCondition}
   /** Set (or with no condition, clear) when an entry may run. Withdraws any approval. */
   | {op: 'condition'; id: number; condition?: QueueCondition}
@@ -53,7 +59,7 @@ export type QueueOp =
   | {op: 'move'; id: number; to: number}
   | {op: 'clear'}
   | {op: 'pause'}
-  | {op: 'resume'};
+  | {op: 'resume'}) & {expectedRevision?: number};
 
 /** Bounds: a queue is for prepared commands, not bulk data. */
 export const QUEUE_LIMIT = 100;
@@ -64,6 +70,7 @@ export const QUEUE_BYTES_LIMIT = 1024 * 1024;
 export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
   private entries: QueueEntry[] = [];
   private nextId = 1;
+  private revision = 0;
   private pause?: QueuePause;
   private editing?: number;
 
@@ -74,11 +81,18 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
       ...(this.editing === undefined ? {} : {editing: this.editing})};
   }
 
+  get currentRevision(): number { return this.revision; }
+
+  /** Shell ownership changed after an idle review; its confirmation is no longer current. */
+  invalidateReviews(): void { this.changed(); }
+
   get size(): number { return this.entries.length; }
 
   /** Applies an operation; returns why it was refused, if it was. */
   apply(change: QueueOp): string | undefined {
+    if (change.expectedRevision !== undefined && change.expectedRevision !== this.revision) return 'The queue changed; review it again before continuing.';
     switch (change.op) {
+      case 'failure-policy': return undefined;
       case 'add': {
         if (!change.text.trim()) return 'Nothing to queue.';
         if (change.text.length > ENTRY_LIMIT) return 'That command is too long to queue.';
@@ -199,6 +213,7 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
   }
 
   private changed(): void {
+    this.revision++;
     this.emit('change', this.state);
   }
 }

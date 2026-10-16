@@ -1,3 +1,4 @@
+import {ExecutionTimeline, systemQueueClock, type QueueClock, type QueueFailurePolicy} from './ExecutionTimeline.js';
 import {shellSubmission} from '../shell/submission.js';
 import {EventEmitter} from 'node:events';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -45,29 +46,59 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   /** The entry submitted at the last prompt, until the shell reports the command it started. */
   private sent?: QueueEntry;
 
-  constructor(shell: QueueShell, queue = new CommandQueue()) {
+  private readonly timeline: ExecutionTimeline;
+  private failurePolicy: QueueFailurePolicy = 'pause';
+  private foreground?: {text: string; at: number; mono: number; eligible: boolean};
+
+  constructor(shell: QueueShell, queue = new CommandQueue(), private readonly clock: QueueClock = systemQueueClock) {
     super();
     this.shell = shell;
+    this.timeline = new ExecutionTimeline(clock);
     this.queue = queue;
-    this.queue.on('change', state => { if (!this.taking) this.emit('state', state, {}); });
+    this.queue.on('change', () => { if (!this.taking) this.emit('state', this.state, {}); });
   }
 
-  get state(): QueueState { return this.queue.state; }
+  get state(): QueueState { const timeline = this.timeline.state; return {...this.queue.state, ...(this.sent ? {dispatching: {...this.sent}} : {}), revision: this.queue.currentRevision, ...(timeline ? {timeline} : {})}; }
 
   /** A change requested by the person; the queue may run at once if the shell is idle. */
   request(change: QueueOp): void {
-    const refused = this.queue.apply(change);
-    if (refused) { this.emit('state', this.queue.state, {refused}); return; }
+    if (change.op === 'failure-policy') { this.failurePolicy = change.policy; return; }
+    const before = this.queue.size;
+    this.taking = true;
+    let refused: string | undefined;
+    try { refused = this.queue.apply(change); } finally { this.taking = false; }
+    if (refused) { this.emit('state', this.state, {refused}); return; }
+    if (change.op === 'add') {
+      const opening = !this.timeline.active;
+      this.timeline.open(this.failurePolicy);
+      if (opening && this.foreground?.eligible && !this.queue.state.paused) this.timeline.begin(this.foreground.text, this.foreground.at, this.foreground.mono);
+    }
+    if (change.op === 'clear') this.timeline.skip(before, 'cleared');
+    else if (change.op === 'remove') this.timeline.skip(before - this.queue.size, this.queue.size ? undefined : 'cleared');
+    this.settleTimeline();
+    this.emit('state', this.state, {});
     this.dispatch();
   }
 
+  /** Claim a manual submission synchronously, before an asynchronous shell exec marker can arrive. */
+  onSubmission(): void {
+    this.atPrompt = false;
+    this.queue.invalidateReviews();
+  }
+
+  /** A review belongs to one controller attachment, even if no queue entry changed. */
+  onOwnershipChanged(): void { this.queue.invalidateReviews(); }
+
   /** The shell started a command; returns the queued entry it is, when it is the one just submitted. */
-  onExec(command: string): QueueEntry | undefined {
+  onExec(command: string, at = this.clock.now()): QueueEntry | undefined {
     this.atPrompt = false;
     this.ran = true;
     this.lastCommand = command;
     const entry = this.sent;
     this.sent = undefined;
+    this.foreground = {text: command, at, mono: this.clock.monotonic(), eligible: !this.queue.state.paused};
+    if (entry) this.timeline.begin(entry.text, at, this.foreground.mono, entry.id);
+    this.queue.invalidateReviews();
     return entry;
   }
 
@@ -75,19 +106,24 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     if (!this.atPrompt) this.interrupted = true;
   }
 
-  onPrompt(exitCode: number): void {
+  onPrompt(exitCode: number, at = this.clock.now(), waits?: {inputWaitMs?: number}): void {
+    if (this.sent && !this.ran) this.timeline.unobserved();
+    const belongs = this.timeline.running;
+    if (this.ran && belongs) this.timeline.complete(exitCode, this.interrupted || exitCode === 130, at, waits?.inputWaitMs);
+    this.foreground = undefined;
     // A submission that started no command (a comment, an empty block) is not owed to the next command.
     this.sent = undefined;
     const finished = this.ran;
     this.ran = false;
     this.atPrompt = true;
-    if (finished && this.queue.size) {
-      const at = Date.now();
+    if (finished && belongs && this.queue.size && !this.queue.state.paused) {
       if (this.interrupted || exitCode === 130) this.queue.hold({reason: 'interrupted', at, command: this.lastCommand});
       // An entry that is to run regardless of the result before it is not held back by a plain failure.
-      else if (exitCode !== 0 && this.queue.next?.condition !== 'always') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
+      else if (exitCode !== 0 && this.queue.next?.condition !== 'always' && this.timeline.policy !== 'continue') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
     }
     this.interrupted = false;
+    this.settleTimeline();
+    this.emit('state', this.state, {});
     this.dispatch();
   }
 
@@ -97,7 +133,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.atPrompt = false;
     this.ran = false;
     this.sent = undefined;
-    this.queue.hold({reason: 'shell-switched', at: Date.now()});
+    this.foreground = undefined;
+    this.queue.hold({reason: 'shell-switched', at: this.clock.now()});
   }
 
   /** The shell ended: what is left is reported and never runs. */
@@ -106,7 +143,19 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.taking = true;
     let dropped: QueueEntry[];
     try { dropped = this.queue.drain(); } finally { this.taking = false; }
-    if (dropped.length) this.emit('state', this.queue.state, {dropped});
+    if (this.sent) this.timeline.unobserved();
+    this.sent = undefined;
+    this.foreground = undefined;
+    this.ran = false;
+    this.interrupted = false;
+    this.timeline.skip(dropped.length, 'shell-ended');
+    if (this.timeline.running) this.timeline.abort(this.clock.now());
+    this.timeline.settle();
+    this.emit('state', this.state, {dropped});
+  }
+
+  private settleTimeline(): void {
+    if (!this.queue.size && !this.sent && !this.timeline.running) this.timeline.settle();
   }
 
   private dispatch(): void {
@@ -118,7 +167,7 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     // Leaves the prompt now: a second dispatch cannot happen before this entry's own prompt.
     this.atPrompt = false;
     this.sent = entry;
-    this.emit('state', this.queue.state, {dispatched: entry});
+    this.emit('state', this.state, {dispatched: entry});
     // Exactly as the composer submits it: a multi-line entry runs as one block.
     this.shell.submit(shellSubmission(entry.text, this.shell.adapter.id));
   }

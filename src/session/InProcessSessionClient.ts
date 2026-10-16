@@ -49,7 +49,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
       this.running = false;
       this.knowledge = marker.knowledge;
       this.emit('prompt', marker, NO_STAMP);
-      this.dispatcher.onPrompt(marker.exitCode);
+      this.dispatcher.onPrompt(marker.exitCode, Date.now(), marker);
     });
     shell.on('exec', (command, historyAllowed) => {
       this.running = true;
@@ -70,9 +70,10 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     const refused = this.tasks.request(change);
     if (refused) this.emit('taskRefused', refused);
   }
-  submit(command: string): void { this.shell.submit(command); }
+  submit(command: string): void { this.dispatcher.onSubmission(); this.shell.submit(command); }
   write(data: string): void {
     if (data.includes('\u0003')) this.dispatcher.onInterrupt();
+    if (/[\r\n]/u.test(data)) this.dispatcher.onSubmission();
     this.shell.write(data);
   }
   interrupt(): void { this.dispatcher.onInterrupt(); this.shell.interrupt(); }

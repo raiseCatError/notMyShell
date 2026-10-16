@@ -1,3 +1,6 @@
+import {renderExecutionTimeline} from './executionTimeline.js';
+import {queueGlyph, pausedGlyph, queuePreview, pauseReason} from './queueText.js';
+export {queueGlyph, pausedGlyph, queuePreview, pauseReason} from './queueText.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {displaySafe} from '../input/PasteReview.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -12,47 +15,24 @@ const RESET = '\u001b[0m';
 /** Paused: the same amber NMSh uses for a stopped command, apart from waiting-for-input and failure. */
 const STOPPED = {red: 198, green: 156, blue: 109};
 
-export function queueGlyph(): string { return getCurrentGlyphMode() === 'safe' ? '=' : '≡'; }
-export function pausedGlyph(): string { return getCurrentGlyphMode() === 'safe' ? '||' : '⏸'; }
-
-/** One line for a queued command: its first line, and how many more it has. */
-export function queuePreview(text: string, limit = 80): string {
-  const lines = text.split('\n');
-  const more = lines.length > 1 ? ` (+${lines.length - 1} line${lines.length === 2 ? '' : 's'})` : '';
-  const room = Math.max(1, limit - displayWidth(more));
-  // Command text is drawn, never interpreted: a pasted escape sequence shows as ␛, it does not reach the terminal.
-  return `${truncateText(displaySafe(lines[0]!.trim()) || '(blank first line)', room)}${more}`;
-}
-
-/** Why the queue waits, in words. */
-export function pauseReason(pause: QueuePause): string {
-  switch (pause.reason) {
-    case 'failed': return `${commandName(pause.command)} failed (exit ${pause.exitCode})`;
-    case 'interrupted': return `${commandName(pause.command)} was interrupted`;
-    case 'shell-switched': return 'the shell changed';
-    case 'restored': return 'restored, not resumed';
-    case 'user': return 'paused';
-  }
-}
-
-function commandName(command: string): string {
-  return truncateText(displaySafe(command.split('\n')[0]!.trim()) || 'the command', 32);
-}
-
 /**
  * What the queue offers right now from an empty composer at idle (see TerminalApp.queueAffordance), and the inline
  * review that a first Enter arms: nothing runs from a single key.
  */
-export type QueueAffordance = 'resume' | 'approve';
+export type QueueAffordance = 'resume' | 'approve' | 'clear';
 
 export interface QueueRowOptions {
   /** Shown only while the shell is idle, the composer is empty and nothing else owns input. */
   affordance?: QueueAffordance;
   /** The review a first Enter armed: the row says exactly what the next key does. */
   review?: QueueAffordance;
+  now?: number;
+  animate?: boolean;
+  animationElapsed?: number;
+  treatment?: import('../chroma/treatment.js').TreatmentSettings;
 }
 
-const AFFORDANCE_HINT: Record<QueueAffordance, string> = {resume: 'Enter to review', approve: 'Enter to review'};
+const AFFORDANCE_HINT: Record<QueueAffordance, string> = {resume: 'Enter to review', approve: 'Enter to review', clear: 'Esc to review clear'};
 
 /**
  * The queue's one line under the running command (or at idle while paused), widest form first:
@@ -68,6 +48,7 @@ export function queueRow(state: QueueState, columns: number, options: QueueRowOp
   const secondary = foreground(UI_COLORS.secondary);
   const accent = foreground(UI_COLORS.accent);
   const stopped = foreground(STOPPED);
+  if (options.review === 'clear') return truncateAnsi(`${accent}Clear ${count} queued commands?${RESET}${secondary} · Enter clears · Esc cancels${RESET}`, columns);
   if (options.review) return reviewRow(state, columns, options.review);
   const hint = options.affordance ? [AFFORDANCE_HINT[options.affordance]] : [];
   if (state.paused) {
@@ -129,6 +110,7 @@ function connectors(): {first: string; middle: string; last: string; rail: strin
  * Returns undefined when the one-line row says it all (one plain entry, or no room for at least one listed command).
  */
 export function queueBlock(state: QueueState, columns: number, rows: number, options: QueueRowOptions = {}): string[] | undefined {
+  if (state.timeline) return renderExecutionTimeline(state, columns, rows, options);
   const entries = state.entries;
   if (!entries.length || rows < 2 || columns < 24) return undefined;
   const plain = !state.paused && !options.review && !options.affordance && entries.length === 1 && !entries[0]!.condition;

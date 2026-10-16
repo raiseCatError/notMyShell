@@ -131,7 +131,9 @@ test('a shell switch pauses the queue for the new shell; a shell exit drops and 
   assert.equal(dispatcher.state.paused?.reason, 'shell-switched');
   dispatcher.onShellExit();
   assert.deepEqual(events.at(-1)![1].dropped?.map(entry => entry.text), ['echo for zsh']);
-  assert.deepEqual(dispatcher.state, {entries: []});
+  assert.deepEqual(dispatcher.state.entries, []);
+  assert.equal(dispatcher.state.paused, undefined);
+  assert.equal(dispatcher.state.timeline?.status, 'shell-ended');
 });
 
 test('nothing is dispatched before the shell is ready', () => {

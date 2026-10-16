@@ -376,6 +376,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('liveSessionStartup')},
     {row: configRow('liveSessionMultiple')},
     {row: configRow('commandQueue'), note: draft => draft.commandQueue ? 'On: while a command runs, Enter queues the next one; a program waiting for input still gets your answer' : 'Off: Enter while a command runs goes to the program, as in a plain terminal'},
+    {row: configRow('queueFailurePolicy'), note: () => 'Applies to new execution chains; existing reviewed work keeps its policy. Ctrl+C always pauses.'},
     {row: configRow('sessionNotices'), note: draft => draft.sessionNotices ? 'Brief: a success fades in seconds, a failure lingers a little, a request for attention stays until you look' : 'Off: other sessions never add lines above the composer'},
     {row: configRow('terminalTitle'), note: draft => draft.terminalTitle === 'off' ? 'Off: the terminal keeps its own window title'
       : 'NMSh titles the window while it owns the screen; programs keep their own title while they run'},

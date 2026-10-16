@@ -264,7 +264,7 @@ export class SessionService {
             send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
             // The live input state is not a stream event: a reattaching frontend gets it now, after the replay.
             if (features.has('input-state') && info.running && session.input) send(inputStateMessage(session.input));
-            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}));
+            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}, features.has('queue-timeline')));
             // Background tasks kept running while detached: their list and recent output, never started again.
             this.attachTasks(session, send, features);
             this.redraw(session, message.columns, message.rows);
@@ -300,6 +300,7 @@ export class SessionService {
             const change = queueOpFrom(message.change);
             if (!owned || !features.has('queue')) send({type: 'error', code: 'state', message: 'no session queue for this connection'});
             else if (!change) send({type: 'error', code: 'queue', message: 'not a queue change'});
+            else if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !features.has('queue-timeline')) send({type: 'error', code: 'queue', message: 'queue timeline review not negotiated'});
             else owned.queue.request(change);
             break;
           }
@@ -319,6 +320,7 @@ export class SessionService {
             if (owned) {
               const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
               owned.shell.once('inputRejected', rejected);
+              if (message.submission === 1 || /[\r\n]/u.test(message.data)) owned.queue.onSubmission();
               owned.shell.write(message.data, message.submission === 1);
               owned.shell.off('inputRejected', rejected);
             }
@@ -374,6 +376,7 @@ export class SessionService {
     session.controller = send;
     session.controllerFeatures = features;
     session.record.state = 'attached';
+    session.queue.onOwnershipChanged();
   }
 
   /** The attached frontend hears about this session's tasks only when it understands them. */
@@ -394,6 +397,7 @@ export class SessionService {
     session.controller = undefined;
     session.controllerFeatures = undefined;
     session.record.state = 'detached';
+    session.queue.onOwnershipChanged();
   }
 
   /**
@@ -466,7 +470,7 @@ export class SessionService {
     // The session's own shell runs each task's command; the launch environment is used for the spawn only.
     session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
     session.queue.on('state', (state, event) => {
-      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event));
+      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event, session.controllerFeatures.has('queue-timeline')));
     });
     this.sessions.set(record.id, session);
     this.wire(session);
@@ -493,7 +497,7 @@ export class SessionService {
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.
-      const queued = session.queue.onExec(command)?.text;
+      const queued = session.queue.onExec(command, at)?.text;
       session.running = {command, since: at, ...(queued === undefined ? {} : {queued})};
       session.evidence.onExec();
       session.notices.onExec(command, at);
@@ -511,7 +515,7 @@ export class SessionService {
         ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge}),
         ...(marker.inputWaits ? {inputWaitMs: marker.inputWaitMs ?? 0, inputWaits: marker.inputWaits} : {})});
       // After the prompt is on its way: the next queued command, if any, starts from this evidence only.
-      session.queue.onPrompt(marker.exitCode);
+      session.queue.onPrompt(marker.exitCode, session.idleSince, marker);
     });
     shell.on('exit', event => {
       session.queue.onShellExit();

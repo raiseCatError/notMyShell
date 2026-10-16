@@ -38,9 +38,9 @@ async function pausedQueue(frontend: Frontend, entries: string[]) {
   await frontend.waitFor(/Running sleep 2|[A-Z][a-z]+…/u, mark);
   for (const entry of entries) frontend.pty.write(`${entry}\r`);
   // One plain entry stays the one-line row; more show as the list.
-  await frontend.waitFor(entries.length === 1 ? /Queued \(1\) · next:/u : new RegExp(`Queue · ${entries.length} pending`, 'u'), mark);
+  await frontend.waitFor(new RegExp(`Queue · ${entries.length + 1} commands`, 'u'), mark);
   await frontend.waitFor(/Queue paused: sleep 2; false failed \(exit 1\)\./u, mark, 20_000);
-  await frontend.waitFor(/⏸ Queue paused · \d+ pending[\s\S]*Enter to review before anything runs/u, mark);
+  await frontend.waitFor(/Queue paused · \d+ pending[\s\S]*Enter to review/u, mark);
   return mark;
 }
 
@@ -52,20 +52,20 @@ test('live: the running queue shows what runs next and in what order; the pause 
     await frontend.waitFor(/Running sleep 3|[A-Z][a-z]+…/u, mark);
     for (const entry of ['echo Q1', 'echo Q2', 'echo Q3', 'echo Q4']) frontend.pty.write(`${entry}\r`);
     // A redraw writes only the rows that changed: each row is checked on its own.
-    for (const row of [/╭─ ≡ Queue · 4 pending/u, /├─ next {2}echo Q1/u, /├─ 2 {5}echo Q2/u, /├─ 3 {5}echo Q3/u, /╰─ \+1 more · \/queue/u]) await frontend.waitFor(row, mark);
+    for (const row of [/Queue · 5 commands/u, /› echo Q1 +Next/u, /echo Q2 +Queued/u, /\+2 more/u]) await frontend.waitFor(row, mark);
     for (const entry of ['echo Q1', 'echo Q2', 'echo Q3', 'echo Q4']) await until(async () => await runs(sandbox, entry) === 1, 15_000, `${entry} once`);
     // One interruption: one transcript notice; the row below carries the state, not the same sentence again.
     const stop = frontend.mark;
     frontend.pty.write('sleep 20\r');
     await frontend.waitFor(/Running sleep 20|[A-Z][a-z]+…/u, stop);
     frontend.pty.write('echo LATER\r');
-    await frontend.waitFor(/Queued \(1\)|Queue · 1 pending/u, stop);
+    await frontend.waitFor(/Queue · 2 commands/u, stop);
     frontend.pty.write('\u0003');
-    await frontend.waitFor(/⏸ Queue paused · 1 waiting|⏸ Queue paused · 1 pending/u, stop, 20_000);
+    await frontend.waitFor(/Queue paused · 1 waiting|Queue paused · 1 pending/u, stop, 20_000);
     await pause(800);
     const text = drawn(frontend, stop);
     assert.equal(new Set(text.match(/Queue paused: sleep 20 was interrupted\./gu)).size, 1);
-    assert.doesNotMatch(text, /⏸ Queue paused · sleep 20/u, 'the row does not repeat why');
+    assert.doesNotMatch(text, /Queue paused · sleep 20/u, 'the row does not repeat why');
   } finally { await sandbox.dispose(); }
 });
 
@@ -81,7 +81,7 @@ test('live: a paused queue resumes only after an inline review; Esc keeps it pau
     await pause(1200);
     assert.equal(existsSync(marker), false, 'one Enter never runs anything');
     frontend.pty.write('\u001b');
-    await frontend.waitFor(/⏸ Queue paused · 1 pending[\s\S]*Enter to review/u, mark);
+    await frontend.waitFor(/Queue paused · 1 pending[\s\S]*Enter to review/u, mark);
     await pause(800);
     assert.equal(existsSync(marker), false, 'Esc keeps it paused');
     // While the review is armed it owns the keys: other text does nothing.
@@ -110,7 +110,7 @@ test('live: an entry that asks first is approved in place after its review; a ty
     frontend.pty.write('sleep 4\r');
     await frontend.waitFor(/Running sleep 4|[A-Z][a-z]+…/u, mark);
     frontend.pty.write(`touch ${approved}\r`);
-    await frontend.waitFor(/Queued \(1\)|Queue · 1 pending/u, mark);
+    await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('/queue\r');
     await frontend.waitFor(/Command queue[\s\S]*touch/u, mark);
     frontend.pty.write('w');
@@ -118,7 +118,7 @@ test('live: an entry that asks first is approved in place after its review; a ty
     frontend.pty.write('w');
     await frontend.waitFor(/asks first/u, mark);
     frontend.pty.write('\u001b');
-    await frontend.waitFor(/next needs your approval[\s\S]*Enter to review it/u, mark, 20_000);
+    await frontend.waitFor(/Awaiting approval[\s\S]*Enter to review/u, mark, 20_000);
     // "y" typed into an empty composer starts a command; it never approves.
     mark = frontend.mark;
     frontend.pty.write('y');
@@ -137,7 +137,8 @@ test('live: an entry that asks first is approved in place after its review; a ty
     frontend.pty.write('\r');
     await frontend.waitFor(/Resume the queue\?/u, mark);
     frontend.pty.write('\r');
-    await frontend.waitFor(/next needs your approval[\s\S]*Enter to review it/u, mark, 15_000);
+    await frontend.waitFor(/Awaiting approval/u, mark, 15_000);
+    await frontend.waitFor(/Enter to review/u, mark, 15_000);
     await pause(700);
     frontend.pty.write('\r');
     await frontend.waitFor(/Approve and run this command\?/u, mark);
@@ -168,7 +169,7 @@ test('live: while a program waits for input, Enter answers it; a queued entry th
     mark = frontend.mark;
     frontend.pty.write('yes\r');
     await frontend.waitFor(/got=yes/u, mark);
-    await frontend.waitFor(/next needs your approval/u, mark, 15_000);
+    await frontend.waitFor(/Awaiting approval/u, mark, 15_000);
     await pause(1500);
     assert.equal(existsSync(approved), false, 'answering the reader never approved the entry');
   } finally { await sandbox.dispose(); }

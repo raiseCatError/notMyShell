@@ -1,4 +1,5 @@
-import {QUEUE_LIMIT, type QueueCondition, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
+import {queueTimelineFrom} from './ExecutionTimeline.js';
+import {ENTRY_LIMIT, QUEUE_LIMIT, type QueueCondition, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
 import type {QueueEvent} from './QueueDispatcher.js';
 /**
  * Versioned wire protocol between an NMSh frontend and whatever owns the
@@ -24,7 +25,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -32,7 +33,7 @@ export type ServiceFeature = typeof SERVICE_FEATURES[number];
  * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
  * attached to a newer service never receives a frame it would reject.
  */
-export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look'] as const;
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline'] as const;
 export type ClientFeature = typeof CLIENT_FEATURES[number];
 
 export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
@@ -338,9 +339,16 @@ export function queueOpFrom(text: string): QueueOp | undefined {
   try { raw = JSON.parse(text); } catch { return undefined; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const value = raw as Record<string, unknown>;
+  if (value.expectedRevision !== undefined && (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0)) return undefined;
+  const change = queueOpFieldsFrom(value);
+  return change ? {...change, ...(value.expectedRevision === undefined ? {} : {expectedRevision: value.expectedRevision as number})} : undefined;
+}
+
+function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined {
   const id = Number.isSafeInteger(value.id) ? value.id as number : undefined;
   const text_ = typeof value.text === 'string' ? value.text : undefined;
   switch (value.op) {
+    case 'failure-policy': return value.policy === 'pause' || value.policy === 'continue' ? {op: 'failure-policy', policy: value.policy} : undefined;
     case 'add': {
       if (text_ === undefined) return undefined;
       const condition = queueConditionFrom(value.condition);
@@ -363,6 +371,14 @@ const queueConditionFrom = (value: unknown): QueueCondition | undefined => value
 
 const PAUSE_REASONS = ['user', 'failed', 'interrupted', 'shell-switched', 'restored'] as const;
 
+function queueEntryFrom(raw: unknown): QueueEntry | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const item = raw as Record<string, unknown>;
+  if (!Number.isSafeInteger(item.id) || typeof item.text !== 'string' || item.text.length > ENTRY_LIMIT || !Number.isSafeInteger(item.addedAt)) return undefined;
+  const condition = queueConditionFrom(item.condition);
+  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})};
+}
+
 /** The queue a queue-state message describes; anything malformed is dropped, never guessed. */
 export function queueStateFrom(text: string): QueueState | undefined {
   let raw: unknown;
@@ -371,12 +387,13 @@ export function queueStateFrom(text: string): QueueState | undefined {
   const value = raw as Record<string, unknown>;
   if (!Array.isArray(value.entries) || value.entries.length > QUEUE_LIMIT) return undefined;
   const entries: QueueEntry[] = [];
-  for (const entry of value.entries as unknown[]) {
-    const item = entry as Record<string, unknown> | null;
-    if (!item || !Number.isSafeInteger(item.id) || typeof item.text !== 'string' || !Number.isSafeInteger(item.addedAt)) return undefined;
-    const condition = queueConditionFrom(item.condition);
-    entries.push({id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})});
+  for (const rawEntry of value.entries as unknown[]) {
+    const entry = queueEntryFrom(rawEntry);
+    if (!entry) return undefined;
+    entries.push(entry);
   }
+  const dispatching = value.dispatching === undefined ? undefined : queueEntryFrom(value.dispatching);
+  if (value.dispatching !== undefined && !dispatching) return undefined;
   const pause = value.paused as Record<string, unknown> | undefined;
   let paused: QueuePause | undefined;
   if (pause && typeof pause === 'object' && (PAUSE_REASONS as readonly unknown[]).includes(pause.reason) && Number.isSafeInteger(pause.at)) {
@@ -387,11 +404,16 @@ export function queueStateFrom(text: string): QueueState | undefined {
         : {reason: pause.reason as 'user' | 'shell-switched' | 'restored', at};
   }
   const editing = Number.isSafeInteger(value.editing) ? value.editing as number : undefined;
-  return {entries, ...(paused ? {paused} : {}), ...(editing === undefined ? {} : {editing})};
+  const revision = value.revision;
+  if (revision !== undefined && (!Number.isSafeInteger(revision) || (revision as number) < 0)) return undefined;
+  const timeline = value.timeline === undefined ? undefined : queueTimelineFrom(value.timeline);
+  if (value.timeline !== undefined && !timeline) return undefined;
+  return {entries, ...(dispatching ? {dispatching} : {}), ...(revision === undefined ? {} : {revision: revision as number}), ...(timeline ? {timeline} : {}), ...(paused ? {paused} : {}), ...(editing === undefined ? {} : {editing})};
 }
 
 /** The queue-state message for a state and its event. */
-export function queueStateMessage(state: QueueState, event: QueueEvent): Extract<ServerMessage, {type: 'queue-state'}> {
-  return {type: 'queue-state', state: JSON.stringify(state), ...(event.dispatched ? {dispatched: event.dispatched.id} : {}),
+export function queueStateMessage(state: QueueState, event: QueueEvent, timelineSupported = true): Extract<ServerMessage, {type: 'queue-state'}> {
+  const {timeline, revision, dispatching, ...legacy} = state;
+  return {type: 'queue-state', state: JSON.stringify(timelineSupported ? state : legacy), ...(event.dispatched ? {dispatched: event.dispatched.id} : {}),
     ...(event.refused ? {refused: event.refused.slice(0, 200)} : {}), ...(event.dropped?.length ? {dropped: event.dropped.length} : {})};
 }

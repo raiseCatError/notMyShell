@@ -282,7 +282,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
 
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
-  queue(change: QueueOp): void { if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
+  queue(change: QueueOp): void { if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !this.features.has('queue-timeline')) return; if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
   task(change: TaskOp): void { if (this.features.has('background-tasks')) this.send({type: 'task', change: JSON.stringify(change)}); }
   lookInput(): Promise<boolean> {
     // Never send a message the service did not advertise.

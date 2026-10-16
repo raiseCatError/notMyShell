@@ -1,3 +1,5 @@
+import {failurePolicyNote} from '../status/queueText.js';
+import {renderExecutionTimeline} from '../status/executionTimeline.js';
 import type {Key} from '../terminal/keys.js';
 import type {QueueCondition, QueueEntry, QueueOp, QueueState} from '../session/CommandQueue.js';
 import {renderControls} from '../ui/controls.js';
@@ -16,6 +18,8 @@ export interface QueuePanelState {
   selected: number;
   /** Waiting for y/n before clearing everything. */
   confirmClear?: boolean;
+  confirmResume?: boolean;
+  reviewRevision?: number;
 }
 
 export type QueuePanelAction =
@@ -33,12 +37,15 @@ export const conditionNote = (entry: QueueEntry): string =>
   entry.condition === 'always' ? 'runs even after a failure' : entry.condition === 'approve' ? (entry.approved ? 'approved' : 'asks first') : '';
 
 /** `conditions`: the queue's owner understands conditions and approval (older session services do not, and must never be sent them). */
-export function queuePanelKey(panel: QueuePanelState, key: Key, queue: QueueState, conditions = false): QueuePanelAction | undefined {
+export function queuePanelKey(panel: QueuePanelState, key: Key, queue: QueueState, conditions = false, reviewed = false): QueuePanelAction | undefined {
   const entries = queue.entries;
   panel.selected = Math.max(0, Math.min(panel.selected, entries.length - 1));
-  if (panel.confirmClear) {
-    panel.confirmClear = false;
-    if (key.kind === 'text' && key.value.toLowerCase() === 'y') return {kind: 'change', change: {op: 'clear'}};
+  if (panel.confirmResume || panel.confirmClear) {
+    const op = panel.confirmResume ? 'resume' : 'clear';
+    const revision = panel.reviewRevision;
+    panel.confirmResume = false; panel.confirmClear = false; panel.reviewRevision = undefined;
+    if (reviewed && revision !== queue.revision) return undefined;
+    if ((reviewed && key.kind === 'enter') || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return {kind: 'change', change: {op, ...(reviewed ? {expectedRevision: revision} : {})}};
     return undefined;
   }
   if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value === 'q')) return {kind: 'close'};
@@ -48,6 +55,7 @@ export function queuePanelKey(panel: QueuePanelState, key: Key, queue: QueueStat
     return undefined;
   }
   if (key.kind === 'text' && key.value === 's' && entries.length) return {kind: 'saveRecipe'};
+  if (reviewed && key.kind === 'text' && key.value === 'p' && queue.paused) { panel.confirmResume = true; panel.reviewRevision = queue.revision; return undefined; }
   if (key.kind === 'text' && key.value === 'p') return {kind: 'change', change: {op: queue.paused ? 'resume' : 'pause'}};
   if (!entry) return undefined;
   if (key.kind === 'selectUp' || key.kind === 'selectDown') {
@@ -58,9 +66,9 @@ export function queuePanelKey(panel: QueuePanelState, key: Key, queue: QueueStat
   }
   if (key.kind === 'enter' || (key.kind === 'text' && key.value === 'e')) return {kind: 'edit', id: entry.id};
   if (key.kind === 'delete' || key.kind === 'backspace' || (key.kind === 'text' && key.value === 'd')) return {kind: 'change', change: {op: 'remove', id: entry.id}};
-  if (key.kind === 'text' && key.value === 'c') { panel.confirmClear = true; return undefined; }
+  if (key.kind === 'text' && key.value === 'c') { panel.confirmClear = true; panel.reviewRevision = queue.revision; return undefined; }
   if (conditions && key.kind === 'text' && key.value === 'w') return {kind: 'change', change: {op: 'condition', id: entry.id, ...(nextCondition(entry.condition) ? {condition: nextCondition(entry.condition)!} : {})}};
-  if (conditions && key.kind === 'text' && key.value === 'a' && entry.condition === 'approve' && !entry.approved) return {kind: 'change', change: {op: 'approve', id: entry.id}};
+  if (conditions && key.kind === 'text' && key.value === 'a' && entry.condition === 'approve' && !entry.approved) return {kind: 'change', change: {op: 'approve', id: entry.id, ...(reviewed ? {expectedRevision: queue.revision} : {})}};
   return undefined;
 }
 
@@ -75,11 +83,14 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
   const entries = queue.entries;
   const status = queue.paused ? `${pausedGlyph()} paused · ${pauseReason(queue.paused)}` : entries.length ? `${queueGlyph()} runs in order, one at a time` : 'empty';
   const out = [`  ${primary}Command queue${reset}  ${queue.paused ? accent : subtle}${truncateText(status, Math.max(4, width - 15))}${reset}`];
-  out.push(`  ${subtle}${truncateText(running ? `Running: ${queuePreview(running, width)}` : 'Nothing running', width)}${reset}`, '');
+  out.push(`  ${subtle}${truncateText(running ? `Running: ${queuePreview(running, width)}` : 'Nothing running', width)}${reset}`);
+  if (queue.timeline) out.push(`  ${subtle}${truncateText(failurePolicyNote(queue.timeline.failurePolicy), width)}${reset}`);
+  out.push('');
+  if (!entries.length && queue.timeline) out.push(...renderExecutionTimeline(queue, width, Math.max(1, height - 10), {animate: false}));
   if (!entries.length) {
     out.push(`  ${secondary}Nothing queued. While a command runs, type the next one and press Enter (or Ctrl+Q).${reset}`);
   }
-  const listRoom = Math.max(1, height - 12);
+  const listRoom = Math.max(1, height - (queue.timeline ? 13 : 12));
   const first = Math.max(0, Math.min(panel.selected - Math.floor(listRoom / 2), entries.length - listRoom));
   entries.slice(first, first + listRoom).forEach((entry, offset) => {
     const index = first + offset;
@@ -97,7 +108,8 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
     if (lines.length > 5) out.push(`  ${subtle}… ${lines.length - 5} more line${lines.length === 6 ? '' : 's'}${reset}`);
   }
   out.push('');
-  if (panel.confirmClear) out.push(`  ${accent}Clear ${entries.length} queued command${entries.length === 1 ? '' : 's'}? y / n${reset}`);
+  if (panel.confirmResume) out.push(`  ${accent}Resume queued commands? Enter confirms · Esc cancels${reset}`);
+  else if (panel.confirmClear) out.push(`  ${accent}Clear ${entries.length} queued command${entries.length === 1 ? '' : 's'}? Enter / y confirms · Esc cancels${reset}`);
   else {
     const approvable = conditions && selected?.condition === 'approve' && !selected.approved;
     out.push(renderControls([['↑↓', 'select'], ['Shift+↑↓', 'move'], ['Enter', 'edit'], ['Del', 'remove'], ...(conditions ? [['w', 'when it runs'] as const] : []), ...(approvable ? [['a', 'approve'] as const] : []),

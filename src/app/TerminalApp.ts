@@ -1,3 +1,6 @@
+import {failurePolicyNote} from '../status/queueText.js';
+import {formatDuration} from '../status/commandTiming.js';
+import {queueActivitySummary} from '../status/executionTimeline.js';
 import {shellSubmission} from '../shell/submission.js';
 import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
 import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
@@ -190,7 +193,7 @@ import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
-import {pauseReason, pausedGlyph, queueGlyph, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
+import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
@@ -819,7 +822,10 @@ export class TerminalApp {
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
    * While it is armed it owns the keys: Enter or y confirms, n or Esc leaves everything as it was, e edits.
    */
-  private queueReview?: {kind: QueueAffordance; id: number};
+  private queueReview?: {kind: QueueAffordance; id: number; revision?: number};
+  private queueExpiry?: () => void;
+  private queueObservedMono = 0;
+  private queueTransientUntil = 0;
   /** After a review is confirmed, an empty Enter for a moment is swallowed: it never reaches the command it started. */
   private queueConfirmedAt = 0;
   /** The previous command's phrase pair, so two commands in a row never get the same one. */
@@ -1045,6 +1051,7 @@ export class TerminalApp {
     if (!journal) return;
     this.continuedJournal = journal;
     this.welcomeGeneration += 1;
+    this.queueReview = undefined;
     this.output.restoreTranscript(journal.transcript);
     this.presentationStartCwd = journal.startCwd;
     if (journal.live) {
@@ -1145,6 +1152,7 @@ export class TerminalApp {
    * detached, or came from type-ahead): give it its own transcript block.
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number, queued?: string): void {
+    this.queueReview = undefined;
     this.effects.cancel();
     if (this.running) {
       this.running.awaitingExec = false;
@@ -1790,7 +1798,7 @@ export class TerminalApp {
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
     if (this.pinsPanel) { void this.handlePinsKey(key); return; }
     if (this.queuePanel) {
-      const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable());
+      const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable(), this.session.features.has('queue-timeline'));
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
@@ -1867,6 +1875,7 @@ export class TerminalApp {
           this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
         } else {
           for (const text of texts) {
+            this.syncQueuePolicy();
             this.session.queue({op: 'add', text});
             this.sessionSubmissions.push({text, slash: false});
             if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
@@ -2161,6 +2170,9 @@ export class TerminalApp {
       const record = this.output.recent(this.focusedCommandIndex + 1);
       if (record) this.openBlockPalette(record.startId);
       return;
+    }
+    if (key.kind === 'escape' && this.queueAffordance() === 'resume' && this.focusedCommandIndex === undefined) {
+      this.openQueueReview('clear'); this.render(); return;
     }
     if (key.kind === 'escape') this.clearBlockFocus();
     if (FLOW_EDIT_KEYS.has(key.kind) && key.kind !== 'enter') this.clearBlockFocus();
@@ -3379,6 +3391,7 @@ export class TerminalApp {
       this.output.addFrontendInteraction(command, 'Could not archive this transcript; the current view was kept.', ERROR);
       return false;
     }
+    this.queueReview = undefined;
     this.output.clearPresentation();
     this.presentationStartCwd = this.shellCwd;
     this.startWelcome(this.presentationStartCwd);
@@ -3529,6 +3542,7 @@ export class TerminalApp {
       this.resumeBrowser = undefined;
       return;
     }
+    this.queueReview = undefined;
     this.output.restoreTranscript(restored.transcript);
     this.welcomeGeneration += 1;
     this.presentationStartCwd = restored.startCwd;
@@ -6558,6 +6572,7 @@ export class TerminalApp {
       return false;
     }
     this.promptConfiguration = next;
+    this.syncQueuePolicy();
     setIconStyle(next.glyphStyle);
     if (next.idleVisuals.timeout !== this.idleArmedFor) { this.idleArmedFor = next.idleVisuals.timeout; this.armIdle(); }
     this.output.setTranscriptAppearance(next.transcript);
@@ -7270,7 +7285,7 @@ export class TerminalApp {
     if (!shell || !review) return;
     const check = await verifyCommands(batchTexts(review), shell);
     if (this.stopped || this.pastePreview?.text !== text) return;
-    if (check.ok) this.batchReview = review;
+    if (check.ok) { review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · '); this.batchReview = review; }
     else {
       this.output.addFrontendInteraction('/ps', check.reason, INFO);
       this.pastePreview = {...this.pastePreview, batch: false};
@@ -7399,7 +7414,7 @@ export class TerminalApp {
     const where = this.shellCwd;
     const note = recipe.scope === 'directory' && recipe.cwd && recipe.cwd !== where ? `Saved for ${recipe.cwd}; this shell is in ${where}.` : `Runs in this shell, from ${where}.`;
     this.pinsPanel = undefined;
-    this.batchReview = batchFromCommands(expanded.steps, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length), {title: `Recipe: ${recipe.name}`, note});
+    this.batchReview = batchFromCommands(expanded.steps, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length), {title: `Recipe: ${recipe.name}`, note: `${note} · ${this.queuePolicyNote()}`});
   }
 
   /** e on a recipe: its commands in your editor (a private temporary file); saved only if they still split into whole commands. */
@@ -9492,19 +9507,26 @@ export class TerminalApp {
       panelRows,
       railPresentation: this.preparedRail(columns).presentation,
     };
+    // Timeline chrome borrows transcript rows. Its activity/transient reservation never resizes the shell PTY.
+    const planned = (overrides: Partial<typeof input> & {viewStart?: number} = {}): ScreenPlan => {
+      const visible = planScreen({...input, ...overrides});
+      if (this.queueState.timeline) visible.ptyRows = planScreen({...input, ...overrides, running: Boolean(this.running)}).ptyRows;
+      return visible;
+    };
     // The expanded queue asks for exactly the rows its block needs within what the transcript can spare, so the plan
     // and the painted block always agree (a block painted at its own height is the same block).
     const listed = (plan: ScreenPlan) => {
       if (panelRows !== undefined) return plan;
       const budget = Math.min(this.queueBudget(rows), Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT_ROWS) + 1);
-      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - 1));
+      const timeline = this.timelineVisible();
+      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - (timeline ? 0 : 1)), timeline);
     };
-    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return listed(planScreen(input));
+    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return listed(planned());
     // Flow scrolled back: where the view starts decides how much of the composer
     // is still on screen, and it is resolved against the following capacity.
-    const following = planScreen({...input, detached: false});
+    const following = planned({detached: false});
     const viewStart = this.historyViewport.resolve(transcriptRows, following.viewportRows);
-    return listed(this.historyViewport.detached ? planScreen({...input, viewStart}) : following);
+    return listed(this.historyViewport.detached ? planned({viewStart}) : following);
   }
 
   /**
@@ -9513,14 +9535,18 @@ export class TerminalApp {
    * program waits for input: its question stays next to the composer.
    */
   private queueBlockRows(columns: number, budget: number): string[] | undefined {
-    if (!this.queueAvailable() || !this.queueState.entries.length || this.queueEdit) return undefined;
+    if (!this.queueAvailable() || (!this.queueState.entries.length && !this.timelineVisible()) || this.queueEdit) return undefined;
     if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
     const review = this.queueReview?.kind;
-    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {...(review ? {review} : {}), ...(this.queueAffordance() ? {affordance: this.queueAffordance()!} : {})}) : undefined;
+    const now = this.activityAnimationNow || Date.now();
+    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {now, animate: this.decorativeMotionAllowed(), treatment: this.promptConfiguration.presentation,
+      animationElapsed: this.running ? presentationAnimationElapsed(now - this.running.startedAt) : 0,
+      ...(review ? {review} : {}), ...(this.queueAffordance() ? {affordance: this.queueAffordance()!} : {})}) : undefined;
   }
 
   /** Rows the expanded queue may use (header included) on a screen of `rows`; the plan may give it fewer. */
   private queueBudget(rows: number): number {
+    if (this.timelineVisible()) return rows >= 30 ? 7 : rows >= 24 ? 6 : rows >= 18 ? 3 : 0;
     return rows >= 28 && this.queueReview?.kind === 'approve' ? 7 : rows >= 24 ? 5 : rows >= 18 ? 3 : 0;
   }
 
@@ -9545,7 +9571,10 @@ export class TerminalApp {
       this.queueReview = undefined;
       this.queueConfirmedAt = Date.now();
       // The exact entry that was reviewed: a queue that changed meanwhile already dismissed the review.
-      this.session.queue(review.kind === 'approve' ? {op: 'approve', id: review.id} : {op: 'resume'});
+      const change = review.kind === 'approve' ? {op: 'approve' as const, id: review.id} : {op: review.kind === 'clear' ? 'clear' as const : 'resume' as const};
+      const count = this.queueState.entries.length;
+      this.session.queue({...change, ...(review.revision === undefined ? {} : {expectedRevision: review.revision})});
+      if (review.kind === 'clear' && !this.queueState.entries.length) this.output.addFrontendInteraction('/queue', `Cleared ${count} queued command${count === 1 ? '' : 's'}; none of them ran.`, INFO);
     } else if (key.kind === 'escape' || key.kind === 'interrupt' || value === 'n') {
       this.queueReview = undefined;
       // Not now: an entry that asks first would hold everything typed behind it, so the queue pauses and commands run.
@@ -9716,7 +9745,7 @@ export class TerminalApp {
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': return this.activityRows(plan, columns);
-        case 'queue': return this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
+        case 'queue': return this.timelineVisible() ? this.queueBlockRows(columns, region.height) ?? [] : this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -9919,6 +9948,10 @@ export class TerminalApp {
     const settings = this.promptConfiguration.presentation;
     const rows = [...frame.rows];
     for (const region of plan.regions) {
+      if (region.kind === 'queue' && this.running && this.timelineVisible()) {
+        const content = this.queueBlockRows(frame.columns ?? 80, region.height);
+        for (let index = 0; index < region.height; index++) rows[region.top + index] = content?.[index] ?? '';
+      }
       if (region.kind === 'activity' && this.running) {
         const content = this.activityRows(plan, frame.columns ?? 80);
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
@@ -10336,6 +10369,15 @@ export class TerminalApp {
   private activityRows(plan: ScreenPlan, columns: number): string[] {
     // With the list shown (the plan's queue region), its header takes the queue row and the list follows it.
     const region = regionOf(plan, 'queue');
+    if (region && this.timelineVisible() && !this.inputState?.request) {
+      const execution = this.queueState.timeline?.executions.find(entry => entry.status === 'running');
+      const ownsRunning = Boolean(execution);
+      const elapsed = execution?.runningMs === undefined ? undefined : execution.runningMs + Math.max(0, performance.now() - this.queueObservedMono);
+      const pair = ownsRunning ? this.activityPair() : undefined;
+      const summary = this.running && !ownsRunning ? this.currentActivity() : `${SECONDARY}${pair ? `${pair.active}… · ` : ''}${queueActivitySummary(this.queueState, performance.now() - this.queueObservedMono)}${RESET}`;
+      const hint = this.queueReview ? queueRow(this.queueState, columns, {review: this.queueReview.kind}) : this.queueAffordance() ? `${SUBTLE}Enter to review · Esc to review clear · /queue${RESET}` : elapsed !== undefined ? `${SECONDARY}${formatDuration(elapsed)} current command${waitedDetail(this.inputState, Date.now(), elapsed)}${RESET}` : undefined;
+      return [truncateAnsi(summary, columns), hint ? truncateAnsi(hint, columns) : ''];
+    }
     const listed = region ? this.queueBlockRows(columns, region.height + 1) : undefined;
     const queue = listed?.[0] ?? this.queueLine(columns);
     if (!this.running) return queue ? (listed ? ['', queue] : [queue, '']) : [];
@@ -10397,6 +10439,17 @@ export class TerminalApp {
   /** The queue's line: what is queued and what runs next, or why it waits; an edit in progress says how to finish. */
   private queueLine(columns: number): string | undefined {
     if (!this.queueAvailable()) return undefined;
+    if (this.timelineVisible() && !this.queueState.entries.length) return truncateAnsi(`${SECONDARY}${queueActivitySummary(this.queueState, performance.now() - this.queueObservedMono)}${RESET}`, columns);
+    if (this.queueState.timeline && this.queueState.entries.length && !this.queueEdit && !this.queueReview) {
+      const pause = this.queueState.paused;
+      if (pause) {
+        const cause = pause.reason === 'failed' ? `exit ${pause.exitCode} · ${pauseReason(pause)}` : pause.reason === 'user' ? 'Paused manually' : pauseReason(pause);
+        return truncateAnsi(`${STOPPED}${cause}${RESET}${SUBTLE} · ${this.queueState.entries.length} waiting${RESET}`, columns);
+      }
+      const next = this.queueState.entries[0]!;
+      const tail = ` · ${next.condition === 'approve' && !next.approved ? 'Approval' : 'Next'} · ${this.queueState.entries.length} pending`;
+      return truncateAnsi(`${SECONDARY}${GLYPHS.selection} ${queuePreview(next.text, Math.max(1, columns - displayWidth(tail) - 2))}${SUBTLE}${tail}${RESET}`, columns);
+    }
     if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
     const affordance = this.queueAffordance();
     return queueRow(this.queueState, columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
@@ -10405,6 +10458,16 @@ export class TerminalApp {
   private onQueueState(state: QueueState, news: QueueNews): void {
     const previous = this.queueState;
     this.queueState = state;
+    this.queueObservedMono = performance.now();
+    const chain = state.timeline;
+    if (chain?.endedAt !== undefined && chain.status !== 'active' && (chain.id !== previous.timeline?.id || previous.timeline?.status === 'active')) {
+      this.queueExpiry?.();
+      this.queueTransientUntil = performance.now() + 8000;
+      this.queueExpiry = presentationClock.after(() => { this.queueExpiry = undefined; if (!this.stopped) this.render(); }, 8000);
+    } else if (chain?.status === 'active') { this.queueExpiry?.(); this.queueExpiry = undefined; }
+    if (state.entries.length !== previous.entries.length || state.paused?.at !== previous.paused?.at || chain?.status !== previous.timeline?.status || news.dispatched !== undefined) {
+      this.transitions.echo(state.paused?.reason === 'failed' ? 'failure' : state.paused?.reason === 'interrupted' ? 'interrupted' : 'attention', Date.now());
+    }
     if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;
@@ -10415,7 +10478,7 @@ export class TerminalApp {
     }
     // A review is for what was shown: any change to what it would act on dismisses it, so nothing unseen runs.
     const review = this.queueReview;
-    if (review && (state.entries[0]?.id !== review.id || (review.kind === 'resume') !== Boolean(state.paused)
+    if (review && ((review.revision !== undefined && state.revision !== review.revision) || state.entries[0]?.id !== review.id || (review.kind === 'resume' && !state.paused)
       || (review.kind === 'approve' && (state.entries[0]?.approved || state.entries[0]?.condition !== 'approve' || state.entries[0]?.text !== previous.entries[0]?.text)))) {
       this.queueReview = undefined;
     }
@@ -10434,6 +10497,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    this.syncQueuePolicy();
     this.session.queue({op: 'add', text});
     this.sessionSubmissions.push({text, slash: false});
     if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
@@ -10493,7 +10557,7 @@ export class TerminalApp {
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
     const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
     if (affordance && Date.now() - this.queueConfirmedAt >= QUEUE_CONFIRM_SETTLE_MS) {
-      this.queueReview = {kind: affordance, id: this.queueState.entries[0]!.id};
+      this.openQueueReview(affordance);
       this.render();
       return;
     }
@@ -10515,13 +10579,39 @@ export class TerminalApp {
     }
     if (op === 'open') { this.panelOrigin = undefined; this.queuePanel = {selected: 0}; return; }
     const count = this.queueState.entries.length;
-    if (op === 'clear') {
-      this.session.queue({op: 'clear'});
-      this.output.addFrontendInteraction(command, count ? `Cleared ${count} queued command${count === 1 ? '' : 's'}; none of them ran.` : 'The queue was already empty.', INFO);
+    if (op === 'pause') {
+      this.session.queue({op: 'pause'});
+      this.output.addFrontendInteraction(command, `Queue paused${count ? ` with ${count} waiting` : ''}; /qr reviews before continuing.`, INFO);
       return;
     }
-    this.session.queue({op});
-    this.output.addFrontendInteraction(command, op === 'pause' ? `Queue paused${count ? ` with ${count} waiting` : ''}; /queue resume continues it.` : `Queue resumed${count ? `; ${count} will run in order` : ''}.`, INFO);
+    if (!count) { this.output.addFrontendInteraction(command, 'The queue is empty.', INFO); return; }
+    if (this.running || this.passthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'Wait for the foreground program to finish before reviewing queued commands.', INFO); return;
+    }
+    if (!this.session.features.has('queue-timeline')) {
+      this.panelOrigin = undefined; this.queuePanel = {selected: 0, ...(op === 'clear' ? {confirmClear: true} : {})}; return;
+    }
+    this.openQueueReview(op === 'clear' ? 'clear' : this.queueState.paused ? 'resume' : 'approve');
+  }
+
+  private openQueueReview(kind: QueueAffordance): void {
+    const next = this.queueState.entries[0];
+    if (!next) return;
+    this.queueReview = {kind, id: next.id, ...(this.session.features.has('queue-timeline') ? {revision: this.queueState.revision} : {})};
+  }
+
+  private queuePolicyNote(): string {
+    const policy = this.queueState.timeline?.status === 'active' ? this.queueState.timeline.failurePolicy : this.promptConfiguration.queueFailurePolicy;
+    return failurePolicyNote(policy);
+  }
+
+  private syncQueuePolicy(): void {
+    if (this.session.features.has('queue-timeline')) this.session.queue({op: 'failure-policy', policy: this.promptConfiguration.queueFailurePolicy});
+  }
+
+  private timelineVisible(): boolean {
+    const timeline = this.queueState.timeline;
+    return this.queueAvailable() && Boolean(timeline && (timeline.status === 'active' || performance.now() < this.queueTransientUntil));
   }
 
   /** Load a queued entry into the composer to edit it in place; the queue holds at that entry until it is saved. */
@@ -10880,6 +10970,7 @@ export class TerminalApp {
   private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string; returnSession?: string};
 
   private stop(exitCode: number): void {
+    this.queueExpiry?.(); this.queueExpiry = undefined;
     if (this.stopped) return;
     this.hostTitle.end();
     this.stopped = true;

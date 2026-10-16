@@ -42,7 +42,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       first.pty.write(`${failed.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
       first.pty.write(`${afterFailure}\r`);
-      await first.waitFor(/Queued \(1\)/u, mark);
+      await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
       first.pty.write('w');
@@ -58,7 +58,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       first.pty.write(`sleep ${duration}\r`);
       await until(() => inForeground(duration), 20_000, 'sleep owns input before interrupt');
       first.pty.write(`${afterInterrupt}\r`);
-      await first.waitFor(/Queued \(1\)/u, mark);
+      await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
       first.pty.write('w');
@@ -69,14 +69,16 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       await first.waitFor(/Queue paused:[\s\S]*was interrupted/u, mark);
       await first.run('echo AFTER-INTERRUPT', /AFTER-INTERRUPT/u);
       assert.equal(contents(), 'after-failure\n', 'always does not bypass interruption');
-      await first.run('/queue clear', /Cleared 1 queued command/u);
+      await first.run('/queue clear', /Clear queued commands\?/u);
+      first.pty.write('\r');
+      await first.waitFor(/Queue cleared|Cleared 1 queued command/u);
 
       const gated = hold('release-approval', 0);
       mark = first.mark;
       first.pty.write(`${gated.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
       first.pty.write(`${approved}\r`);
-      await first.waitFor(/Queued \(1\)/u, mark);
+      await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
       first.pty.write('w');
@@ -85,7 +87,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       await first.waitFor(/asks first/u, mark);
       first.pty.write('\u001b[27u');
       writeFileSync(gated.release, '');
-      await first.waitFor(/next needs your approval/u, mark);
+      await first.waitFor(/Awaiting approval/u, mark);
       await until(async () => (await sandbox.transcripts().list()).some(item =>
         item.transcript.records.some(record => record.command === gated.command && record.exitCode === 0)),
       15_000, 'the holding command completes before detaching');
@@ -97,7 +99,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       assert.equal(contents(), 'after-failure\n');
 
       const back = sandbox.launch(['--attach', session.id], {cols: 100, rows: 30}, {NO_COLOR: '1', NMSH_ICONS: 'safe'});
-      await back.waitFor(/next needs your approval/u);
+      await back.waitFor(/Awaiting approval/u);
       back.pty.resize(50, 24);
       await back.run('/queue', /Command queue[\s\S]*asks first/u);
       assert.equal(contents(), 'after-failure\n', 'reattach and inspection do not approve');

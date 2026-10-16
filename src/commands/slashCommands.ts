@@ -115,7 +115,12 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
-  {name: '/queue', insertion: '/queue', description: 'Commands queued to run after the current one: view, edit, reorder, pause or clear (/queue pause|resume|clear)'},
+  {name: '/q', insertion: '/q', alias: '/queue', description: 'Same as /queue, including every subcommand'},
+  {name: '/qp', insertion: '/qp', alias: '/queue', description: 'Pause the command queue'},
+  {name: '/qr', insertion: '/qr', alias: '/queue', description: 'Review before resuming the queue'},
+  {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
+  {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
+  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -351,7 +356,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (family) return {kind: 'providers', family: (family === 'pickers' ? 'picker' : family) as 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
-  const queue = /^\/queue(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
+  const shortcut = ({'/qp': 'pause', '/pause': 'pause', '/qr': 'resume', '/qc': 'clear'} as const)[input.trim() as '/qp'];
+  if (shortcut) return {kind: 'queue', op: shortcut};
+  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
   if (queue) return {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
