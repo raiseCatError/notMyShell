@@ -1,6 +1,10 @@
 # Workspace UI decision: sidebar, detail panel and Git/GitHub (proposal, 2026-10-16)
 
-**Status: proposal for the maintainer. Nothing here is implemented or removed.** This is the final attempt at the
+**Status (2026-10-16): decided.** The maintainer approved (1) the experimental switch for v0.20, (2) Direction B
+then C as the v0.21 direction, and (3) the Setup order below. Implemented for v0.20 and v0.19 on the stabilization
+branches (see "Decisions and implementation" at the end); the v0.21 work is not started.
+
+Original status: proposal for the maintainer; nothing here was implemented or removed. This is the final attempt at the
 native workspace UI the maintainer asked for; it ends in a recommendation, not another redevelopment cycle. A second,
 smaller proposal (Setup navigation) follows at the end.
 
@@ -127,3 +131,28 @@ legible activity-wording example. **Proposed, not implemented** (changes the ste
 4. Idle & activity, Editor, Transcript, and the rest unchanged.
 
 A test already guarantees every setting stays reachable from Setup; the reorder keeps that guarantee.
+
+## Decisions and implementation (2026-10-16)
+
+**v0.20: experimental switch (implemented, `fix/v020-workspace-experimental` → `stabilize/v0.20.0`).** A persisted
+`workspacePanels` setting, Off by default and Off for any configuration that does not have it (nothing else in a
+saved configuration changes). Settings → Layout → *Workspace sidebar & panel* and Setup → Editor show it, labelled
+experimental. While Off: `/sidebar`, `/panel` and their focus forms open nothing and say how to turn it on;
+`keymap.json` workspace bindings are kept as written but take no key, and `/keys` says so; the PTY always has every
+column. Turning it Off closes open regions and returns focus to the composer. The gate is one check on the actions
+that open or focus a region (`WorkspaceHost.perform`), so geometry, PTY sizing, passthrough and focus code are
+unchanged when it is On. `/worktrees`, `/sessions`, `/github` and `/background` never depend on it. Help, `/sidebar`
+and `/panel` descriptions, the Ask concept, the CHANGELOG and v0.20 physical QA pass 1 (now 1.0a–c required, 1.1–1.7
+as optional 1E, recorded Deferred) say the same.
+
+**v0.21 direction (approved, not started).** Direction B: delegate Git to Lazygit (the conservative default) or GitUI,
+Serie or GitOUI by explicit choice, `gh` for PRs and issues, launched in the persistent shell through the existing
+full-screen passthrough; keep `/worktrees`, `/sessions`, background tasks and the queue native. Then Direction C:
+retire the docked sidebar and detail panel once nothing important depends on them. No further sidebar redesign.
+
+**Setup order (implemented, `fix/v019-setup-order` → `stabilize/v0.19.0`, merged forward into `stabilize/v0.20.0`).**
+Start → Terminal → **Look → Prompt → Motion** → Cursor → Editor → the rest unchanged, as proposed above. Look is the
+only place Setup chooses Chroma; Prompt shows it as a read-only line whose Enter goes to Look's Chroma row; Motion
+starts with Reduced Motion, Decorative effects, Shimmer and Milestone effects (the Shimmer preview moved with its
+row). `/setup look` and `/setup motion` are new entries; `/setup appearance` and `/setup chroma` still work. Found
+and fixed on the way: `/setup chroma` counted its row over hidden theme rows and selected Theme Studio.

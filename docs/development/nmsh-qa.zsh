@@ -158,7 +158,7 @@ typeset -g NMSH_QA_BUILDS=${NMSH_QA_BUILDS:-/Volumes/nmsh-opus/qa-builds}
 typeset -g NMSH_QA_REPO=${NMSH_QA_REPO:-$NMSH_QA_WT/release-train}
 # The pins say what "the stabilized v019/v020" is. Moving one is a reviewed edit of this file, never automatic.
 typeset -gA NMSH_QA_STABLE_PIN NMSH_QA_STABLE_BRANCH NMSH_QA_STABLE_VERSION NMSH_QA_STABLE_PR
-NMSH_QA_STABLE_PIN=(v019 adfce9c16d1808e56912b84366e51c999f8e8eff v020 2f00b301e49b702efcfb3ad60ac0ea923344b0c9)
+NMSH_QA_STABLE_PIN=(v019 1aeb05c0d569c06562e8fa9219eae3069686e0cd v020 891ee5835b956952ae5c15e1929e8dab22908d7d)
 NMSH_QA_STABLE_BRANCH=(v019 stabilize/v0.19.0 v020 stabilize/v0.20.0)
 NMSH_QA_STABLE_VERSION=(v019 0.19.0 v020 0.20.0)
 NMSH_QA_STABLE_PR=(v019 395 v020 396)

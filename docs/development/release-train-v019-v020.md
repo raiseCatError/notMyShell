@@ -496,6 +496,82 @@ particular attention to 1.3, 1.4, 1.5, 1.7 (input), 1.11–1.12 (bytes), 2.2–2
 queue preview and review, the task bar, and Setup's previews. Physical Linux/Fish 3.7 remains outstanding for both.
 Managed Claude 4.1–4.3: **deferred by the maintainer, not performed, not passed**.
 
+## Stabilization QA launcher, workspace decision and Setup order (2026-10-16)
+
+Release heads unchanged (`release/v0.19.0` `9e85a910`, `release/v0.20.0` `c71a4284`); nothing merged into them,
+tagged, released or retargeted. #390, #392 and #394 untouched.
+
+### Heads
+
+| Candidate | Branch | Head | Contains |
+|---|---|---|---|
+| v0.19 stabilized (#395) | `stabilize/v0.19.0` | `1aeb05c0d569c06562e8fa9219eae3069686e0cd` | `adfce9c1` + merge of `fix/v019-setup-order` (`e2ab71da`) |
+| v0.20 stabilized (#396) | `stabilize/v0.20.0` | `891ee5835b956952ae5c15e1929e8dab22908d7d` | `2f00b301` + merge of `stabilize/v0.19.0` (`91343ecd`) + merge of `fix/v020-workspace-experimental` (`199127ff`) |
+
+Ancestry only (merges, no rebase or force push). The Setup order reached v0.20 by merging `stabilize/v0.19.0`; the
+workspace switch is v0.20-only.
+
+### What changed
+
+- **QA launcher** (`nmsh-qa.zsh`, this branch, `850ac169`, `c2d5ca34`, re-pinned with this entry): `qa19`/`qa20`
+  (new session) and `qa19r`/`qa20r` (reopen) run read-only builds of the pinned stabilization heads from
+  `/Volumes/nmsh-opus/qa-builds/` (detached worktrees: `npm ci`, `npm run build`, dist digest stamped, dist made
+  read-only). Every launch verifies commit, tracked sources, dist digest and the build's own identity; sessions record
+  kind, candidate, version, commit, branch, PR and build in `qa.meta`; reopening uses the recorded build and refuses a
+  session service of any other build, a latest session from an older pin (printing both ways forward), launching from
+  inside NMSh, and overrides of HOME/XDG/NMSH_RUNTIME_DIR/ZDOTDIR/HISTFILE. `CLAUDE_CONFIG_DIR`, `ZDOTDIR`,
+  `HISTFILE` and outer `NMSH_*` are not inherited. Stop/remove are explicit, ask first and accept only stabilized QA
+  directories. Original-candidate commands are unchanged apart from an ORIGINAL banner, and the two sets refuse each
+  other's directories. Builds kept: `v019-adfce9c16d18`, `v020-2f00b301e49b` (first pins), `v019-1aeb05c0d569`,
+  `v020-891ee5835b95` (current pins). Tests: `zsh docs/development/nmsh-qa.test.zsh`, 78 checks (selection, wrong
+  commit, modified sources, changed dist, build identity, wrong session identity, service of another build, pin
+  moves, isolation, cleanup); mutants that disable the service check, the digest check or the pin check each fail it.
+  Real-PTY smoke (tmux, scratch QA root): `qa19`, run `sleep 300`, close, `qa19r` → "1 detached live session · running
+  …", Resume reattaches; `qa20` Setup order and `/sidebar` Off message with `tput cols` at full width; both smoke
+  sessions stopped and removed with the launcher's own commands.
+- **The maintainer's QA sessions were not touched:** services 14169, 23206, 23772, 24123 (old v019 build) and 25566
+  (old v020 build), their directories under `/Volumes/nmsh-opus/t/`, and the real NMSh (17873) were running before
+  and after; nothing was signalled. The real service's children were checked: none new.
+- **Setup order** (`e2ab71da`): Look → Prompt → Motion (see `workspace-ui-decision.md`). Also fixed `/setup chroma`
+  selecting Theme Studio instead of Chroma (row index counted over hidden rows; present on both original candidates).
+- **Workspace regions experimental, Off by default** (`199127ff`, v0.20 only; see `workspace-ui-decision.md`).
+
+### Verification (exact heads)
+
+| Head | Gate | Result | Evidence |
+|---|---|---|---|
+| `1aeb05c0` | local canonical `verify:release` | **pass** 2466/2466, 0 skipped | `verify-release-1aeb05c0….{log,json}` (log sha256 `b4ab9d72…`), 03:31:38–03:37:40Z, clean before/after |
+| `1aeb05c0` | PR CI 38846487932 | **pass** | GitHub Actions |
+| `1aeb05c0` | dispatch CI 38846491065 attempt 1 | **fail** (kept): Ubuntu 2/2 only, `typingAfterRead` "live fish: keys typed the moment a read finishes are never lost": the answer to a hidden read (`after3`) never arrived; Fish 3.7.0 | GitHub Actions, attempt 1 |
+| `1aeb05c0` | dispatch CI 38846491065 attempt 2 (failed jobs) | **pass** | GitHub Actions |
+| `891ee583` | local canonical | **pass** 2655/2656, 1 skipped (the existing opt-in real-Claude skip) | `verify-release-891ee583….{log,json}` (log sha256 `f3107641…`), 03:37:51–03:44:50Z, clean before/after |
+| `891ee583` | PR CI 38847064977 | **pass** | GitHub Actions |
+| `891ee583` | dispatch CI 38847061537 attempt 1 | **fail** (kept): the same test, Ubuntu 2/2, Fish 3.7.0: the next command typed right after a completed one (`after1`) was lost | GitHub Actions, attempt 1 |
+
+Focused runs before the canonical ones: v0.19 503/503 (every test file touching slash commands or Setup), v0.20
+1308/1309 (134 files touching the workspace, Setup, Settings, configuration, Ask concepts, help or slash commands;
+the one skip is the real-Claude opt-in).
+
+**Open: the Fish 3.7 `typingAfterRead` failures.** Two of the four CI runs on the new heads failed it (both
+full-matrix dispatch runs, Ubuntu, Fish 3.7.0); both PR runs passed it, as did all four runs on `adfce9c1`/`2f00b301`,
+and the last 40 failed CI runs contain no other instance. Locally (macOS, Fish 4.9.3) it passed 5/5 in a row. The
+changes on these heads do not touch input routing (Setup rows and copy, a `/setup` entry, help; on v0.20 a gate that
+returns as before when no region is open). The test types the next command, or the answer, the instant the previous
+step is shown, with no pause; `docs/development/fish-typeahead.md` documents Fish dropping keys queued when its reader
+starts a terminal query. This is not explained yet and is not waived: it is exactly physical QA's Linux/Fish 3.7 row,
+and it needs a Fish 3.7 reproduction (the Fish 3.7 VM is the other track's; not used here).
+
+**Test-environment note (not a product defect):** `tests/settingsPanel.test.ts` run directly with the real HOME and
+TMPDIR finishes its tests but its process never exits; it behaves the same on the unmodified `adfce9c1` build, and
+passes under the runner's isolated environment. Focused runs must use the isolated recipe.
+
+### Physical QA (unchanged gate; nothing above passes a checklist item)
+
+Use `qa19`/`qa20` (runbook, "Stabilized builds"). In addition to the items listed in the 2026-10-15/16 section: Setup
+Look → Prompt → Motion (the Chroma preview on Look, the read-only Chroma line on Prompt, Reduced Motion on Motion),
+and on v0.20 pass 1.0a–c (the regions' Off state). 1.1–1.7 are now optional 1E (Deferred). Physical Linux/Fish 3.7
+remains outstanding for both, now with the CI failure above to watch for. Managed Claude stays deferred.
+
 ## Checkpoint and handover (2026-10-15, resumed session)
 
 State at the end of the resumed session; the earlier handover below is kept as written.
@@ -620,3 +696,4 @@ below and stop cleanly with no background processes left.
 - 2026-10-15 16:01 IST — `44f4c232` canonical run 2 failed 5/2609; investigated (ledger). Security review of the integration; gate bypasses found.
 - 2026-10-15 16:22 IST — `00163da7`, `1861666a`, `c71a4284` pushed (fast-forward). Security subsets pass.
 - 2026-10-15 16:31 IST — `c71a4284`: local canonical run 3 pass; PR and dispatch CI pass. All automated v0.20 gates pass on this head. Physical QA for both releases outstanding; maintainer decisions listed in the resumed handover.
+- 2026-10-16 09:40 IST — Stabilization QA launcher (qa19/qa20), Setup order (both), workspace regions experimental (v0.20). New heads `1aeb05c0` / `891ee583`: local canonical pass on both; PR CI pass on both; dispatch CI attempt 1 failed `typingAfterRead` (Fish 3.7) on both, v0.19 attempt 2 passed; open item recorded. Release heads unchanged.

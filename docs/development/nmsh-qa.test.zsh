@@ -140,7 +140,7 @@ print changed > $B19/src.txt
 out=$(nmsh_qa_stable v019 2>&1); [[ $? != 0 ]] && has "$out" 'modified sources'; check 'modified sources refused'
 git -C $B19 checkout -q -- src.txt
 
-chmod u+w $B19/dist; print '// edited' >> $B19/dist/index.js 2>/dev/null || { chmod u+w $B19/dist/index.js; print '// edited' >> $B19/dist/index.js; }
+chmod u+w $B19/dist $B19/dist/index.js; print '// edited' >> $B19/dist/index.js
 out=$(nmsh_qa_stable v019 2>&1); [[ $? != 0 ]] && has "$out" 'changed after it was built'; check 'dist changed after build refused'
 sed -i '' -e '$d' $B19/dist/index.js 2>/dev/null || sed -i -e '$d' $B19/dist/index.js
 _nmsh_qas_verify v019 $A; check 'digest matches again once restored'
