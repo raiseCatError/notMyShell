@@ -5726,8 +5726,7 @@ export class TerminalApp {
    */
   private setupPreview(state: SetupState, columns: number): string[] {
     const section0 = SETUP_SECTIONS[state.section]?.id;
-    // Prompt/Appearance previews show the base theme unless the local preview switch asks for the draft's Chroma.
-    // The preview shows the draft's Chroma as soon as it is on; P compares with the base theme.
+    // Look and Prompt previews show the draft's Chroma as soon as it is on; P compares with the base theme.
     const chromaStep = section0 === 'appearance' || section0 === 'prompt';
     const shown = chromaStep && setupShowsChroma(state);
     const rawPreview = chromaStep && !shown;
@@ -5779,6 +5778,26 @@ export class TerminalApp {
         const signature = `${item.key}|${JSON.stringify(draft.motion)}|${gate.reducedMotion}|${gate.effectsOff}`;
         const now = Date.now();
         if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
+        // Reduced Motion and Decorative effects head this step: say what they hold still, above the motion they govern.
+        rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles, shimmer and idle visuals stay still.'
+          : gate.reducedMotion ? 'Reduced Motion: colors stay, movement stops (Chroma, motion below, cursor effects).' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
+        if (selected?.row.id === 'shimmer') {
+          // The light sweep over a semantic sample: with Semantic Preserve, ✔ and ✘ keep their hues.
+          const style = sweepStyleFor(draft);
+          if (style.level !== 'off') {
+            const sample: Array<{glyph: string; color?: Rgb; semantic?: boolean}> = [];
+            const add = (text: string, color: Rgb | undefined, semantic = false) => { for (const glyph of graphemes(text)) sample.push({glyph, color: glyph === ' ' ? undefined : color, semantic}); };
+            add('✔ 0 ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('success').background, true);
+            add('notMyShell ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('project').background);
+            add('~/src ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('cwd').background);
+            add('✘ 1', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('failure').background, true);
+            // One pass on each change in this step (the same event as the selected row), not a loop.
+            rows.push(`${label('Shimmer')}${sweepOnce(sample, this.sweep?.target === 'selection' ? this.sweepElapsed() : Number.POSITIVE_INFINITY, style, colorLevel(), sweepStill(draft))}${RESET}`);
+          } else rows.push(`${label('Shimmer')}${SUBTLE}Off: no sweep of light${RESET}`);
+          // No looping motion preview runs behind the one-shot sweep.
+          if (this.setupCursorClock) { this.setupCursorClock(); this.setupCursorClock = undefined; }
+          break;
+        }
         const shown = renderMotionPreview(item.key, draft.motion, gate, columns, state.previewStart ?? now, now);
         rows.push(`  ${SUBTLE}Preview · ${item.label} · ${draft.motion.rendering === 'rich' ? 'Rich' : 'Clean'}${RESET}`, ...shown.rows);
         if (shown.busy && !this.setupCursorClock) this.setupCursorClock = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 40, 16);
@@ -5817,18 +5836,6 @@ export class TerminalApp {
         }
         rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles and idle visuals stay still.'
           : draft.presentation.reducedMotion ? 'Reduced Motion: colors stay, movement stops.' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
-        // The light sweep over a semantic sample: with Semantic Preserve, ✔ and ✘ keep their hues.
-        const style = sweepStyleFor(draft);
-        if (style.level !== 'off') {
-          const sample: Array<{glyph: string; color?: Rgb; semantic?: boolean}> = [];
-          const add = (text: string, color: Rgb | undefined, semantic = false) => { for (const glyph of graphemes(text)) sample.push({glyph, color: glyph === ' ' ? undefined : color, semantic}); };
-          add('✔ 0 ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('success').background, true);
-          add('notMyShell ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('project').background);
-          add('~/src ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('cwd').background);
-          add('✘ 1', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('failure').background, true);
-          // One pass on each change in this step (the same event as the selected row), not a loop.
-          rows.push(`${label('Shimmer')}${sweepOnce(sample, this.sweep?.target === 'selection' ? this.sweepElapsed() : Number.POSITIVE_INFINITY, style, colorLevel(), sweepStill(draft))}${RESET}`);
-        }
         animate ||= treatmentAnimated(draft.presentation);
         break;
       }

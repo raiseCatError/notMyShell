@@ -53,6 +53,9 @@ Verification: automated CI (unit and real-PTY suites on macOS and Ubuntu, Node 2
 - Ruby and PHP version modules read the project's own files and the install location, never running an interpreter. The Gemfile `ruby` declaration is parsed in linear time.
 - `/theme` imports **Starship** configurations as Native themes from their static colors only; format strings and custom commands are never evaluated, and the preview lists what was not carried over.
 
+### Changed
+- **Setup Cat order: Look → Prompt → Motion.** The first steps after Terminal are now **Look** (formerly Appearance): theme family, variant, accent, theme text, UI chrome, then Chroma (the only place Setup chooses it) with its dependent rows under it; **Prompt**, which shows Chroma as a read-only line that goes to Look; and **Motion**, which now starts with Reduced Motion, Decorative effects, Shimmer and Milestone effects above the motion rows they govern. Cursor follows Motion. Every setting stays reachable and saved values are unchanged; `/setup look` opens Look (`/setup appearance` and `/setup chroma` still work).
+
 ### Fixed
 - **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.
 - **Passwords:** text typed at a password prompt is no longer drawn in the composer.

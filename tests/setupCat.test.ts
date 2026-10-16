@@ -9,7 +9,7 @@ import type {Key} from '../src/terminal/keys.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
 import {
   createSetup, NATIVE_FIRST_MESSAGE, parseSetupEntry, providerNote, renderSetup, sectionIndex, SETUP_SECTIONS, setupChanges,
-  setupIsIdempotent, setupKey, type SetupState,
+  setupIsIdempotent, setupKey, setupSelectedRow, type SetupState,
 } from '../src/setup/SetupCat.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {paletteItems} from '../src/ui/CommandPalette.js';
@@ -101,7 +101,7 @@ test('edits show in Review & Apply with from → to and apply normalized configu
 
 test('direct entries are views into the same model; unknown entries are rejected', () => {
   assert.deepEqual(parseSlashCommand('/setup'), {kind: 'setup'});
-  for (const entry of ['prompt', 'appearance', 'chroma', 'tools', 'editor']) {
+  for (const entry of ['prompt', 'look', 'appearance', 'chroma', 'tools', 'editor']) {
     assert.deepEqual(parseSlashCommand(`/setup ${entry}`), {kind: 'setup', entry});
     assert.equal(parseSetupEntry(entry), entry);
   }
@@ -111,7 +111,7 @@ test('direct entries are views into the same model; unknown entries are rejected
   assert.equal(createSetup(DEFAULT_PROMPT_CONFIGURATION, 'tools').section, sectionIndex('tools'));
   const chroma = createSetup(DEFAULT_PROMPT_CONFIGURATION, 'chroma');
   assert.equal(chroma.section, sectionIndex('appearance'));
-  assert.equal(SETUP_SECTIONS[chroma.section]!.rows[chroma.row]!.row.id, 'treatmentPreset');
+  assert.equal(setupSelectedRow(chroma)?.row.id, 'treatmentPreset', 'the selected (shown) row, not an index into hidden ones');
   // Tab moves through every section of the one model and wraps.
   const state = createSetup(DEFAULT_PROMPT_CONFIGURATION, 'editor');
   for (let i = 0; i < SETUP_SECTIONS.length; i++) press(state, {kind: 'complete'});
