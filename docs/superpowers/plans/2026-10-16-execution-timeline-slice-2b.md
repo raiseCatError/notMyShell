@@ -78,19 +78,21 @@
 
 **Interfaces:** `/queue history` and `/queue save-summary` (alias-preserving); a history panel over the shared panel shell; a summary review bound to one chain; `OutputTranscript.queueSummaries?: QueueSummary[]` persisted/restored through `SessionJournal`; the queue chrome's summary block after the transient completed view dismisses.
 
-- [ ] RED: the journal round-trips summaries and refuses malformed ones; restoring never runs or queues anything; reattachment/journal replay never duplicates a summary; `/copy`, compare, search and exports never include summary chrome; the chrome shows the newest saved summary after the transient view dismisses and a new active chain replaces it; the reviewed save stores what the review showed; every `/queue` form keeps its meaning.
-- [ ] Implement the panel, slash routing, chrome block, journal field and restore path.
+- [x] RED: the journal round-trips summaries and refuses malformed ones; restoring never runs or queues anything; reattachment/journal replay never duplicates a summary; `/copy`, compare, search and exports never include summary chrome; the chrome shows the newest saved summary after the transient view dismisses and a new active chain replaces it; the reviewed save stores what the review showed; every `/queue` form keeps its meaning.
+- [x] Implement the panel, slash routing, chrome block, journal field and restore path.
 
 ### Task 7: Evidence and verification
 
 **Files:** `scripts/dev/queue-summary-preview.ts`, `docs/development/execution-timeline-slice-2b/`.
 
-- [ ] Deterministic production-renderer captures (real `renderQueueSummary` and the real history panel at 80×30 and 32×18: defaults, Compact, Left/Right placement, centered alignment, Safe glyphs, NO_COLOR).
-- [ ] Focused suites, real-PTY queue/history suites, canonical `npm run verify:release`.
-- [ ] Commit source and evidence; stop at the 2B checkpoint.
+- [x] Deterministic production-renderer captures (real `renderQueueSummary` and the real history panel at 80×30 and 32×18: defaults, Compact, Left/Right placement, centered alignment, Safe glyphs, NO_COLOR).
+- [x] Focused suites, real-PTY queue/history suites, canonical `npm run verify:release`.
+- [x] Commit source and evidence; stop at the 2B checkpoint.
 
 ## Execution ledger
 
 - 2026-10-16: The maintainer approved the Slice 1 and 2A checkpoints and authorized Slice 2B on the same feature branch (`feature/post-v020-execution-ux`, last verified checkpoint `069d954e`). Automated approval is not physical QA; Ghostty/Terminal.app validation stays outstanding.
 - 2026-10-16: Tasks 1–3 implemented: bounded chain archive (`ExecutionTimeline`), typed artifacts (`QueueSummary`), owner ops (`history-detail`, `save-summary`, `summaries-auto`), transported validation and `queue-history` negotiation. `tests/queueHistory.test.ts` 18/18; affected suites 108/108; build clean.
 - 2026-10-16: Tasks 4–5 implemented: one shared summary renderer (`queueSummaryView`, Compact/Detailed, placement/alignment, optional durations/exit codes/observed waits, Safe glyphs and NO_COLOR), the Queue settings' summary rows and normalization, the production-rendered preview, portability and Setup discovery. `tests/queueSummaryView.test.ts` 9/9; `tests/queueSettings.test.ts` 12/12; settings/setup/portability suites 86/86; build clean.
+- 2026-10-16: Task 6 implemented: `/queue history` and `/queue save-summary` routing, `QueueHistoryPanel` review over settled chains, `TerminalApp` review arming and confirmation/dismissal, `OutputBuffer` and `TranscriptStore` typed summary persistence with fail-closed journal validation, and durable journal flush on summary mutation. Unit and app suites 14/14; real-PTY `tests/queueSummaryLive.test.ts` 1/1 pass.
+- 2026-10-16: Task 7 implemented: deterministic production-renderer capture generator `scripts/dev/queue-summary-preview.ts` producing 25 ANSI/Markdown/SVG/HTML captures across 80×30 and 32×18 layouts, placements, alignments, safe glyphs and NO_COLOR in `docs/development/execution-timeline-slice-2b/`. Focused and canonical verification clean.
