@@ -1,0 +1,18 @@
+[0m
+────────────────────────────────[0m
+> npm test[0m[K[0m
+Running test suite...[0m
+[0m
+x Command failed · exit 17 · [0m
+  3.1s · from queue · 12:00[0m
+[0m
+|| Queue paused: npm test [0m
+failed (exit 17).[0m
+- || Queue paused · 2 pending[0m --[0m
+Failed · exit 17 · npm test[0m
+>[0m git status[0m              Paused[0m
+Paused[0m · [0mexit 17[0m · [0m11.3s wall[0m
+Enter reviews · /q[0m
+--------------------------------[0m
+>[0m 
+--------------------------------[0m

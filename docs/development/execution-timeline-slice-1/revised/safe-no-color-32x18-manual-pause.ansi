@@ -1,0 +1,18 @@
+> npm run build[0m        [Actions][0m[K[0m
+[0m
++ Hopped for 8.2s · done 12:00[0m
+[0m
+────────────────────────────────[0m
+> npm test[0m[K[0m
+Running test suite...[0m
+[0m
++ Jumped for 3.1s · from queue ·[0m
+  done 12:00[0m
+- || Queue paused · 2 pending[0m --[0m
+Paused manually[0m
+>[0m git status[0m              Paused[0m
+Paused[0m · [0m11.3s wall[0m · [0m2 pending[0m
+Enter reviews · /q[0m
+--------------------------------[0m
+>[0m 
+--------------------------------[0m

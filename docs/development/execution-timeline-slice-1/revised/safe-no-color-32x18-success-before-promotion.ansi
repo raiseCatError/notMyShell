@@ -1,0 +1,18 @@
+────────────────────────────────[0m
+> npm run build[0m[K[0m
+> nmsh build[0m
+Compiling project...[0m
+[0m
++ Hopped for 8.2s · done 12:00[0m
+
+
+
+
+- Queue · 4 commands[0m -----------[0m
+·[0m npm test[0m              Starting[0m
+>[0m git status[0m                Next[0m
+Starting[0m · [0m8.2s[0m · [0m2 pending[0m
+[0m
+--------------------------------[0m
+>[0m 
+--------------------------------[0m

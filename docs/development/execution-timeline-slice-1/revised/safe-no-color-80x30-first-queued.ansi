@@ -1,0 +1,30 @@
+────────────────────────────────────────────────────────────────────────────────[0m
+> npm run build[0m[K[0m
+> nmsh build[0m
+Compiling project...[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+- Queue · 2 commands[0m -----------------------------------------------------------[0m
+·[0m npm run build[0m                                                          Running[0m
+>[0m npm test[0m                                                                  Next[0m
+Hopping…[0m · Queue activity[0m · [0m500 ms elapsed[0m · [0m1 running[0m · [0m1 waiting[0m
+500 ms current command[0m
+--------------------------------------------------------------------------------[0m
+>[0m Enter queues the next command · Ctrl+S sends to npm[0m
+--------------------------------------------------------------------------------[0m

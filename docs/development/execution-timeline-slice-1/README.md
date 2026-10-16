@@ -6,6 +6,12 @@ The implementation is on `feature/post-v020-execution-ux`, based on verified v0.
 
 The capture script calls the real queue renderer, activity-summary formatter and screen-plan adapter with deterministic session-owner event fixtures. It never executes the displayed commands. These are implementation previews, not physical terminal validation. The captures record their source commit and include normal/narrow running, promoted success, failure, manual pause, interruption and completed states, plus Safe/NO_COLOR.
 
+## Revised integrated-frame evidence (maintainer follow-up at `7f26f651`)
+
+[Revised production frames](revised/previews.md) · [Mode color gallery](revised/gallery.svg) · [Recorded motion player](revised/motion.html)
+
+The follow-up presentation pass adds theme-derived low-strength row tints behind semantic results, one identity-targeted transition per observed result/promotion/aggregate event on the existing motion store, a muted next arrow with an explicit `Paused` label, and narrow summaries that fit whole status/fact/time components. The revised evidence renders real `TerminalApp.render()` / `paintPresentation()` frames at 80×30 and 32×18 through the real OutputBuffer, screen plan, dividers, activity and composer with deterministic owner observations; displayed commands never execute. It covers Normal, Rich, Reduced Motion and Safe/NO_COLOR with first-queued, running, success sweep, failure, interruption, manual pause/resume, promotion, completion and settled frames. The committed review set is every raw ANSI frame plus the frame/state JSON, the mode gallery and the recorded Normal/Rich sequences; `node --import=tsx scripts/dev/execution-timeline-frames.ts --full` additionally writes one SVG per frame and replays every mode locally. The original 80b9736 gallery above stays as it was.
+
 ## Behavior to review
 
 A single command retains ordinary activity presentation. Once work is queued, a bounded chronological timeline sits above the existing activity row. It shows two recent results when space allows, one existing live glyph, upcoming work and overflow. Failure/interruption reasons survive narrow widths. Raw command output remains in the ordinary transcript and authoritative storage. A completed chain remains briefly visible for eight seconds; `/queue` can show its latest bounded results after dismissal. Rich history and saved summaries belong to Slice 2.
