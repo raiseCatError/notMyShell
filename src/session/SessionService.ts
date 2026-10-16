@@ -284,6 +284,14 @@ export class SessionService {
             else owned.queue.request(change);
             break;
           }
+          case 'input-look': {
+            const session = owned;
+            if (!session || !features.has('input-look')) { send({type: 'error', code: 'state', message: 'no session input to look at'}); break; }
+            const {id} = message;
+            // Any input-state the look produces is sent first (synchronously, as the watch emits it).
+            void session.shell.inputWatch.lookNow().then(() => { if (owned === session) send({type: 'input-looked', id}); });
+            break;
+          }
           case 'input':
             // Ctrl+C reaching a running command: what was queued after it waits (see QueueDispatcher).
             if (message.data.includes('\u0003')) owned?.queue.onInterrupt();

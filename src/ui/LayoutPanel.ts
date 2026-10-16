@@ -103,6 +103,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     panel: [],
     inspector: [],
     suggestions: [],
+    queue: [],
     activity: plan.composerPosition === 'top'
       ? ['', `${SECONDARY}${activity.phrase}${SUBTLE}${activity.duration}${RESET}`]
       : [`${SECONDARY}${activity.phrase}${SUBTLE}${activity.duration}${RESET}`, ''],

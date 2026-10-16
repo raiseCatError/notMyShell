@@ -23,6 +23,7 @@ against the kernel's documented `/proc` formats, but it has not been run on a Li
 |---|---|---|---|
 | Kernel | A foreground thread is blocked in `read()` on this terminal (`/proc/PID/task/TID/syscall` plus the fd's link). If every thread is blocked elsewhere, that vetoes the other layers. | Linux | confirmed |
 | Terminal line settings | `stty -a` on the PTY device: echo off with line input on means a hidden line (password). Line input off with a prompt left open on the cursor's line means single keys (`e2fsck`, `read -k`, `read -n1`). | macOS, Linux | confirmed |
+| The shell holds its terminal | While a command runs, the shell itself (the terminal's session leader, ps state `s`) is the foreground group: one of its builtins has the terminal. Line input off there means single keys (`read -k 1`, `read -n 1`, no prompt needed); ordinary line settings with the shell idle across two samples (the second 100 ms after the first) mean a line read (`read -r reply`). A loop's shell between commands is seen for one sample only and is not a request. | macOS, Linux | confirmed (keys), likely (line) |
 | Prompt evidence | A question-shaped line left open (ends in `?`, `:`, `]`, `)`, `>`), written once and never rewritten or cursor-drawn, output quiet for 0.7 s or more, and the foreground group idle across two samples (nothing running on a CPU, no CPU time gained). | macOS, Linux | likely |
 
 Raw mode alone is never a request: spinners and terminal proxies (`docker run -it`) set it without asking anything. A
@@ -39,7 +40,10 @@ that end with a newline.
 process), so the open question plus an idle process is the best available evidence.
 
 **Not detected generically:**
-- Line reads on macOS whose prompt ends with a newline, or that print no prompt at all.
+- Line reads on macOS by programs other than the shell whose prompt ends with a newline, or that print no prompt at all
+  (`cat`, Python `input()` with no prompt). The shell's own `read` is detected with or without a prompt.
+- On macOS, a `wait` builtin looks like a line read (the shell holds the terminal, idle); it is shown as "Probably".
+  Linux's kernel report tells them apart.
 - Programs reading through `poll`/`select` on macOS.
 - Programs that own the terminal. Fish 4's own `read` is one: it is fish's line editor, with bracketed paste and OSC 133
   marks, so NMSh hands it the terminal and fish answers natively. It is not reported as waiting.
@@ -55,6 +59,20 @@ In all of these cases NMSh shows "Running", as before.
 - **Questions printed as ordinary output:** later output ends the wait at once.
 - **Interactive full-screen or inline programs:** they own the terminal.
 
+### Looking on demand
+
+Probes back off (every 10 s after a minute of quiet), and the first look comes 150–400 ms after a command starts. A key
+typed in that time would be routed on no evidence. So the frontend holds the keys that decide where typing goes, the
+first key of a draft and an Enter that would queue, and asks the session to look now (`input-look`, answered by
+`input-looked` after any `input-state` the look produced). Keys typed right after Enter wait for the shell's exec first.
+The hold ends when the look is done, when evidence arrives, or after 800 ms, and the keys are then routed on what is
+known, in the order typed. A program that took the terminal meanwhile (Fish's reader) gets them as raw keys. Ctrl+C is
+never held, and typing right after Ctrl+C or Ctrl+Z stays type-ahead for the prompt. Both ends negotiate the feature;
+an older service is never asked and behaves as before.
+
+When an answer goes to the program (a key in key mode, Enter otherwise), the frontend counts the question as answered
+until the session reports again, so the next command typed at speed is routed on fresh evidence.
+
 ### Cost
 
 Probes start only after a running command's output goes quiet:
@@ -68,7 +86,7 @@ probe that started before newer output is discarded.
 ## States and time
 
 - **Running:** no credible request. The line keeps its shimmer and adds `· waited 18s` once the command has waited.
-- **Waiting for input** (◆, accent and weight) or **Probably waiting for input** (◇): the attention line plus the open
+- **Waiting for input** (◆, attention color and weight) or **Probably waiting for input** (◇): the attention line plus the open
   question.
 - **Running again:** after an answer (a key in key mode, Enter otherwise, or Ctrl+C or Ctrl+D), or when the program
   writes again.
@@ -92,12 +110,27 @@ so nothing new is reserved and the PTY never resizes:
 
 ```
 ◆ Waiting for input · e2fsck · 18.0s · 1m 40s total
-  Padding at end of inode bitmap is not set. Fix<y>?  ·  each key goes straight to e2fsck
-❯ Keys go straight to e2fsck
+  Padding at end of inode bitmap is not set. Fix<y>?
+❯ Press a key · it goes straight to e2fsck · Ctrl+Q queues a command
 ```
 
+A read that left no question says what it reads, and the composer says how to answer, once:
+
+```
+◇ Probably waiting for input · zsh · 3.2s
+  zsh is probably reading a line
+❯ Type your answer · Enter sends it to zsh · Ctrl+Q queues a command
+```
+
+Hidden input: `Hidden input · nothing you type is shown · Enter sends it to sudo · Ctrl+Q queues a command`. Nothing
+typed is drawn, not even as dots.
+
+- **Its own color:** the attention hue (cyan) on the headline and the composer's `❯`, apart from running (lavender
+  shimmer), paused (amber), failed (red) and done (green). `/sessions` and `/resume` rows for a waiting session use it
+  too. The instruction reads at secondary contrast, not the subtle tier.
+- **Said once:** the activity rows carry the state and the question; the composer carries the instruction.
 - **The question stays in view** however far the transcript has scrolled or folded.
-- **Narrow widths:** the line drops detail first (total time, then program name); the question outranks the hint.
+- **Narrow widths:** the line drops detail first (total time, then program name); the question keeps its row.
 - **No animation:** no shimmer and no flashing. The timer only counts.
 - **NO_COLOR:** keeps the weight and the glyph.
 - **Safe glyphs:** `!` for confirmed and `?` for likely.

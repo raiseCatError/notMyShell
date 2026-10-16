@@ -310,7 +310,7 @@ test('copy failure: PTY output + failure lifecycle row are both in payload', () 
   assert.equal(record.lifecycleText, '✘ Failed after 0.0s · exit 127 · 04:12', 'lifecycleText is the completion row');
 
   // The lifecycle row is NMSh's presentation: recorded for display, never part of what /copy copies.
-  assert.equal(serializeCopyPayload(record), 'zsh: command not found: meow', 'payload is the PTY output only');
+  assert.equal(serializeCopyPayload(record), 'zsh: command not found: meow\n', 'payload is the PTY output only, as printed');
 });
 
 test('copy success: the success lifecycle row is not in the payload', () => {
@@ -320,7 +320,7 @@ test('copy success: the success lifecycle row is not in the payload', () => {
   output.complete(0);
   output.setCompletionLifecycle('Completed · 0.0s · 04:12');
   output.addHistoryLine('\u001B[32mCompleted · 0.0s\u001B[0m\u001B[2m · 04:12\u001B[0m');
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello\n');
 });
 
 test('copy empty PTY: a silent command has nothing to copy (the host says so and leaves the clipboard alone)', () => {
@@ -340,7 +340,7 @@ test('copy interrupted: the stopped row is not in the payload', () => {
   output.write('partial\n');
   output.complete(130);
   output.setCompletionLifecycle('✘ Stopped after 1.5s · done 04:14');
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'partial');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'partial\n');
 });
 
 test('copy /copy N: the Nth recent command copies its own output', () => {
@@ -355,8 +355,8 @@ test('copy /copy N: the Nth recent command copies its own output', () => {
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:11');
   output.addHistoryLine('✘ Failed after 0.0s · exit 127 · done 04:11');
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'zsh: command not found: meow');
-  assert.equal(serializeCopyPayload(output.recent(2)!), 'first');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'zsh: command not found: meow\n');
+  assert.equal(serializeCopyPayload(output.recent(2)!), 'first\n');
 });
 
 test('copy feedback counts reflect exactly what was copied', () => {

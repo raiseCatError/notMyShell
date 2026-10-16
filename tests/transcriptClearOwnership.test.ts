@@ -80,7 +80,7 @@ test('repeated Ctrl+O after /copy folds only the adb block, keeps its rows toget
     assert.ok(copy > hint, 'the /copy confirmation stays below the adb block');
     assert.ok(!rows.slice(copy).some(row => row.isFoldHint), 'no fold row is drawn under /copy');
   }
-  assert.equal(serializeCopyPayload(output.recentShell(1)!), PACKAGES.join('\n'), '/copy still copies exactly the output');
+  assert.equal(serializeCopyPayload(output.recentShell(1)!), `${PACKAGES.join('\n')}\n`, '/copy still copies exactly the output');
 });
 
 test('a command that clears the screen owns what it writes afterwards: rows, fold and /copy payload', () => {
@@ -152,7 +152,7 @@ test('a restored transcript drops records whose lines a clear removed before thi
     assertFoldRowsOwned(restored, restored.wrapped(24));
     restored.toggleMostRelevant();
   }
-  assert.equal(serializeCopyPayload(restored.recentShell(1)!), PACKAGES.join('\n'));
+  assert.equal(serializeCopyPayload(restored.recentShell(1)!), `${PACKAGES.join('\n')}\n`);
 
   const roundTrip = new OutputBuffer();
   roundTrip.restoreTranscript(saved);
