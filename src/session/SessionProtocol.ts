@@ -1,4 +1,5 @@
-import {queueTimelineFrom} from './ExecutionTimeline.js';
+import {queueHistoryRecordFrom, queueTimelineFrom, TIMELINE_HISTORY_LIMIT, type QueueHistoryRecord} from './ExecutionTimeline.js';
+import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from './QueueSummary.js';
 import {ENTRY_LIMIT, QUEUE_LIMIT, type QueueCondition, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
 import type {QueueEvent} from './QueueDispatcher.js';
 /**
@@ -25,7 +26,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -33,7 +34,7 @@ export type ServiceFeature = typeof SERVICE_FEATURES[number];
  * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
  * attached to a newer service never receives a frame it would reject.
  */
-export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline'] as const;
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
 export type ClientFeature = typeof CLIENT_FEATURES[number];
 
 export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
@@ -346,6 +347,7 @@ export function queueOpFrom(text: string): QueueOp | undefined {
 
 function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined {
   const id = Number.isSafeInteger(value.id) ? value.id as number : undefined;
+  const chainId = Number.isSafeInteger(value.chainId) && (value.chainId as number) >= 1 ? value.chainId as number : undefined;
   const text_ = typeof value.text === 'string' ? value.text : undefined;
   switch (value.op) {
     case 'failure-policy': return value.policy === 'pause' || value.policy === 'continue' ? {op: 'failure-policy', policy: value.policy} : undefined;
@@ -363,6 +365,16 @@ function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined 
     case 'edit-begin': case 'edit-cancel': case 'remove': return id === undefined ? undefined : {op: value.op, id};
     case 'move': return id === undefined || !Number.isSafeInteger(value.to) ? undefined : {op: 'move', id, to: value.to as number};
     case 'clear': case 'pause': case 'resume': return {op: value.op};
+    case 'history-detail': return value.chainId === undefined ? {op: 'history-detail'} : chainId === undefined ? undefined : {op: 'history-detail', chainId};
+    case 'save-summary': {
+      if (chainId === undefined) return undefined;
+      if (value.reviewed === undefined) return {op: 'save-summary', chainId};
+      const reviewed = value.reviewed as Record<string, unknown>;
+      if (!reviewed || typeof reviewed !== 'object' || Array.isArray(reviewed) || !Array.isArray(reviewed.text)
+        || !reviewed.text.every(item => item === null || typeof item === 'string')) return undefined;
+      return {op: 'save-summary', chainId, reviewed: {text: (reviewed.text as (string | null)[])}};
+    }
+    case 'summaries-auto': return typeof value.enabled === 'boolean' ? {op: 'summaries-auto', enabled: value.enabled} : undefined;
     default: return undefined;
   }
 }
@@ -408,12 +420,51 @@ export function queueStateFrom(text: string): QueueState | undefined {
   if (revision !== undefined && (!Number.isSafeInteger(revision) || (revision as number) < 0)) return undefined;
   const timeline = value.timeline === undefined ? undefined : queueTimelineFrom(value.timeline);
   if (value.timeline !== undefined && !timeline) return undefined;
-  return {entries, ...(dispatching ? {dispatching} : {}), ...(revision === undefined ? {} : {revision: revision as number}), ...(timeline ? {timeline} : {}), ...(paused ? {paused} : {}), ...(editing === undefined ? {} : {editing})};
+  const history = value.history === undefined ? undefined : queueHistoryFrom(value.history);
+  if (value.history !== undefined && !history) return undefined;
+  const historyDetail = value.historyDetail === undefined ? undefined : queueTimelineFrom(value.historyDetail);
+  if (value.historyDetail !== undefined && !historyDetail) return undefined;
+  const summaries = value.summaries === undefined ? undefined : queueSummariesFrom(value.summaries);
+  if (value.summaries !== undefined && !summaries) return undefined;
+  return {entries, ...(dispatching ? {dispatching} : {}), ...(revision === undefined ? {} : {revision: revision as number}), ...(timeline ? {timeline} : {}),
+    ...(history ? {history} : {}), ...(historyDetail ? {historyDetail} : {}), ...(summaries ? {summaries} : {}),
+    ...(paused ? {paused} : {}), ...(editing === undefined ? {} : {editing})};
 }
 
-/** The queue-state message for a state and its event. */
-export function queueStateMessage(state: QueueState, event: QueueEvent, timelineSupported = true): Extract<ServerMessage, {type: 'queue-state'}> {
-  const {timeline, revision, dispatching, ...legacy} = state;
-  return {type: 'queue-state', state: JSON.stringify(timelineSupported ? state : legacy), ...(event.dispatched ? {dispatched: event.dispatched.id} : {}),
+/** History is chronological, bounded and identity-unique; anything else is not a history. */
+function queueHistoryFrom(raw: unknown): QueueHistoryRecord[] | undefined {
+  if (!Array.isArray(raw) || raw.length > TIMELINE_HISTORY_LIMIT) return undefined;
+  const records: QueueHistoryRecord[] = [];
+  for (const item of raw as unknown[]) {
+    const record = queueHistoryRecordFrom(item);
+    if (!record || (records.length && records[records.length - 1]!.id >= record.id)) return undefined;
+    records.push(record);
+  }
+  return records;
+}
+
+/** One artifact per chain; a duplicated identity is refused rather than deduplicated silently. */
+function queueSummariesFrom(raw: unknown): QueueSummary[] | undefined {
+  if (!Array.isArray(raw) || raw.length > SUMMARY_LIMIT) return undefined;
+  const summaries: QueueSummary[] = [];
+  const ids = new Set<string>();
+  for (const item of raw as unknown[]) {
+    const summary = queueSummaryFrom(item);
+    if (!summary || ids.has(summary.id)) return undefined;
+    ids.add(summary.id);
+    summaries.push(summary);
+  }
+  return summaries;
+}
+
+/** The queue-state message for a state and its event; features gate what an older frontend receives. */
+export function queueStateMessage(state: QueueState, event: QueueEvent, supported: {timeline?: boolean; history?: boolean} = {}): Extract<ServerMessage, {type: 'queue-state'}> {
+  const {timeline, history, historyDetail, summaries, revision, dispatching, ...legacy} = state;
+  const value = (supported.timeline ?? true) || (supported.history ?? true)
+    ? {...legacy, revision, ...(dispatching ? {dispatching} : {}), ...((supported.timeline ?? true) && timeline ? {timeline} : {}),
+      ...((supported.history ?? true) && history ? {history} : {}), ...((supported.history ?? true) && historyDetail ? {historyDetail} : {}),
+      ...((supported.history ?? true) && summaries ? {summaries} : {})}
+    : legacy;
+  return {type: 'queue-state', state: JSON.stringify(value), ...(event.dispatched ? {dispatched: event.dispatched.id} : {}),
     ...(event.refused ? {refused: event.refused.slice(0, 200)} : {}), ...(event.dropped?.length ? {dropped: event.dropped.length} : {})};
 }

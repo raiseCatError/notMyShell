@@ -1,4 +1,5 @@
-import type {QueueFailurePolicy, QueueTimeline} from './ExecutionTimeline.js';
+import type {QueueFailurePolicy, QueueHistoryRecord, QueueTimeline} from './ExecutionTimeline.js';
+import type {QueueSummary} from './QueueSummary.js';
 import {EventEmitter} from 'node:events';
 
 /**
@@ -38,6 +39,12 @@ export interface QueueState {
   entries: readonly QueueEntry[];
   revision?: number;
   timeline?: QueueTimeline;
+  /** Settled chains, chronological and compact; detail is fetched per chain on demand. */
+  history?: QueueHistoryRecord[];
+  /** The one chain detail that was asked for, never the whole archive. */
+  historyDetail?: QueueTimeline;
+  /** Saved summaries, oldest first, exactly one per chain. */
+  summaries?: QueueSummary[];
   /** Submitted once, but no authenticated exec has arrived yet. */
   dispatching?: QueueEntry;
   paused?: QueuePause;
@@ -59,7 +66,13 @@ export type QueueOp = (
   | {op: 'move'; id: number; to: number}
   | {op: 'clear'}
   | {op: 'pause'}
-  | {op: 'resume'}) & {expectedRevision?: number};
+  | {op: 'resume'}
+  /** Ask for (or with no chain, dismiss) one settled chain's detail. */
+  | {op: 'history-detail'; chainId?: number}
+  /** Save the chain's summary; reviewed text is re-validated by the owner or the save is refused. */
+  | {op: 'save-summary'; chainId: number; reviewed?: {text: (string | null)[]}}
+  /** Automatic saving for chains that settle while it is on. */
+  | {op: 'summaries-auto'; enabled: boolean}) & {expectedRevision?: number};
 
 /** Bounds: a queue is for prepared commands, not bulk data. */
 export const QUEUE_LIMIT = 100;

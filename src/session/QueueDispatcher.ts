@@ -1,4 +1,5 @@
-import {ExecutionTimeline, systemQueueClock, type QueueClock, type QueueFailurePolicy} from './ExecutionTimeline.js';
+import {ExecutionTimeline, systemQueueClock, type QueueClock, type QueueFailurePolicy, type QueueTimeline} from './ExecutionTimeline.js';
+import {SUMMARY_LIMIT, buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSummary} from './QueueSummary.js';
 import {shellSubmission} from '../shell/submission.js';
 import {EventEmitter} from 'node:events';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -49,6 +50,10 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   private readonly timeline: ExecutionTimeline;
   private failurePolicy: QueueFailurePolicy = 'pause';
   private foreground?: {text: string; at: number; mono: number; eligible: boolean};
+  /** Automatic saving for chains that settle while on; off by default. */
+  private autoSummaries = false;
+  private summaries: QueueSummary[] = [];
+  private detailChain?: number;
 
   constructor(shell: QueueShell, queue = new CommandQueue(), private readonly clock: QueueClock = systemQueueClock) {
     super();
@@ -58,11 +63,19 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.queue.on('change', () => { if (!this.taking) this.emit('state', this.state, {}); });
   }
 
-  get state(): QueueState { const timeline = this.timeline.state; return {...this.queue.state, ...(this.sent ? {dispatching: {...this.sent}} : {}), revision: this.queue.currentRevision, ...(timeline ? {timeline} : {})}; }
+  get state(): QueueState {
+    const timeline = this.timeline.state;
+    const history = this.timeline.history;
+    const detail = this.detailChain === undefined ? undefined : this.timeline.record(this.detailChain);
+    return {...this.queue.state, ...(this.sent ? {dispatching: {...this.sent}} : {}), revision: this.queue.currentRevision,
+      ...(timeline ? {timeline} : {}), ...(history.length ? {history} : {}), ...(detail ? {historyDetail: detail} : {}),
+      ...(this.summaries.length ? {summaries: this.summaries.map(summary => structuredClone(summary))} : {})};
+  }
 
   /** A change requested by the person; the queue may run at once if the shell is idle. */
   request(change: QueueOp): void {
     if (change.op === 'failure-policy') { this.failurePolicy = change.policy; return; }
+    if (change.op === 'history-detail' || change.op === 'save-summary' || change.op === 'summaries-auto') { this.summaryRequest(change); return; }
     const before = this.queue.size;
     this.taking = true;
     let refused: string | undefined;
@@ -150,12 +163,65 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.interrupted = false;
     this.timeline.skip(dropped.length, 'shell-ended');
     if (this.timeline.running) this.timeline.abort(this.clock.now());
-    this.timeline.settle();
+    if (this.timeline.settle()) this.autoSaveSettled();
     this.emit('state', this.state, {dropped});
   }
 
   private settleTimeline(): void {
-    if (!this.queue.size && !this.sent && !this.timeline.running) this.timeline.settle();
+    if (!this.queue.size && !this.sent && !this.timeline.running && this.timeline.settle()) this.autoSaveSettled();
+  }
+
+  /** History detail, automatic saving and saved summaries: owner facts only, never dispatch or shell state. */
+  private summaryRequest(change: Extract<QueueOp, {op: 'history-detail' | 'save-summary' | 'summaries-auto'}>): void {
+    if (change.expectedRevision !== undefined && change.expectedRevision !== this.queue.currentRevision) {
+      this.emit('state', this.state, {refused: 'The queue changed; review it again before continuing.'});
+      return;
+    }
+    if (change.op === 'history-detail') {
+      this.detailChain = change.chainId !== undefined && this.timeline.record(change.chainId) ? change.chainId : undefined;
+      this.emit('state', this.state, {});
+      return;
+    }
+    if (change.op === 'summaries-auto') {
+      this.autoSummaries = change.enabled;
+      if (this.autoSummaries) this.autoSaveSettled();
+      this.emit('state', this.state, {});
+      return;
+    }
+    const saved = this.saveSummary(change.chainId, change.reviewed?.text);
+    this.emit('state', this.state, saved ? {} : {refused: 'That chain has no settled result to summarize.'});
+  }
+
+  private autoSaveSettled(): void {
+    if (!this.autoSummaries) return;
+    const latest = this.timeline.history.at(-1);
+    if (latest) this.saveSummary(latest.id);
+  }
+
+  private saveSummary(chainId: number, reviewed?: readonly (string | null)[]): boolean {
+    // Exactly one artifact per chain: a repeat save (or a replay) never rewrites or duplicates it.
+    if (this.summaries.some(summary => summary.chainId === chainId)) return true;
+    const detail = this.timeline.record(chainId);
+    const record = this.timeline.history.find(item => item.id === chainId);
+    if (!detail || !record) return false;
+    const texts = reviewed === undefined ? undefined : this.validReviewed(reviewed, detail);
+    if (reviewed !== undefined && !texts) return false;
+    this.summaries.push(buildQueueSummary(detail, {savedAt: this.clock.now(), origin: texts ? 'reviewed' : 'automatic',
+      names: recognizedExecutables(this.shell.adapter.id), ...(texts ? {reviewed: texts} : {}), entriesOmitted: record.resultsOmitted}));
+    if (this.summaries.length > SUMMARY_LIMIT) this.summaries.shift();
+    return true;
+  }
+
+  /** Reviewed text is stored only when it matches the retained detail and the owner can verify it is clean. */
+  private validReviewed(texts: readonly (string | null)[], detail: QueueTimeline): (string | null)[] | undefined {
+    if (texts.length !== detail.executions.length) return undefined;
+    const out: (string | null)[] = [];
+    for (const text of texts) {
+      if (text === null) { out.push(null); continue; }
+      if (typeof text !== 'string' || !reviewedTextSafe(text)) return undefined;
+      out.push(text);
+    }
+    return out;
   }
 
   private dispatch(): void {

@@ -264,7 +264,7 @@ export class SessionService {
             send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
             // The live input state is not a stream event: a reattaching frontend gets it now, after the replay.
             if (features.has('input-state') && info.running && session.input) send(inputStateMessage(session.input));
-            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}, features.has('queue-timeline')));
+            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}, {timeline: features.has('queue-timeline'), history: features.has('queue-history')}));
             // Background tasks kept running while detached: their list and recent output, never started again.
             this.attachTasks(session, send, features);
             this.redraw(session, message.columns, message.rows);
@@ -301,6 +301,7 @@ export class SessionService {
             if (!owned || !features.has('queue')) send({type: 'error', code: 'state', message: 'no session queue for this connection'});
             else if (!change) send({type: 'error', code: 'queue', message: 'not a queue change'});
             else if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !features.has('queue-timeline')) send({type: 'error', code: 'queue', message: 'queue timeline review not negotiated'});
+            else if ((change.op === 'history-detail' || change.op === 'save-summary' || change.op === 'summaries-auto') && !features.has('queue-history')) send({type: 'error', code: 'queue', message: 'queue history review not negotiated'});
             else owned.queue.request(change);
             break;
           }
@@ -470,7 +471,8 @@ export class SessionService {
     // The session's own shell runs each task's command; the launch environment is used for the spawn only.
     session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
     session.queue.on('state', (state, event) => {
-      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event, session.controllerFeatures.has('queue-timeline')));
+      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event,
+        {timeline: session.controllerFeatures.has('queue-timeline'), history: session.controllerFeatures.has('queue-history')}));
     });
     this.sessions.set(record.id, session);
     this.wire(session);
