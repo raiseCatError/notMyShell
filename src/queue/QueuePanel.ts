@@ -90,7 +90,7 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
   if (!entries.length) {
     out.push(`  ${secondary}Nothing queued. While a command runs, type the next one and press Enter (or Ctrl+Q).${reset}`);
   }
-  const listRoom = Math.max(1, height - (queue.timeline ? 13 : 12));
+  const listRoom = Math.max(1, height - (queue.timeline ? 14 : 13));
   const first = Math.max(0, Math.min(panel.selected - Math.floor(listRoom / 2), entries.length - listRoom));
   entries.slice(first, first + listRoom).forEach((entry, offset) => {
     const index = first + offset;
@@ -111,6 +111,7 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
   if (panel.confirmResume) out.push(`  ${accent}Resume queued commands? Enter confirms · Esc cancels${reset}`);
   else if (panel.confirmClear) out.push(`  ${accent}Clear ${entries.length} queued command${entries.length === 1 ? '' : 's'}? Enter / y confirms · Esc cancels${reset}`);
   else {
+    out.push(`  ${subtle}${truncateText('/queue settings · timeline, results and motion', width)}${reset}`);
     const approvable = conditions && selected?.condition === 'approve' && !selected.approved;
     out.push(renderControls([['↑↓', 'select'], ['Shift+↑↓', 'move'], ['Enter', 'edit'], ['Del', 'remove'], ...(conditions ? [['w', 'when it runs'] as const] : []), ...(approvable ? [['a', 'approve'] as const] : []),
       ['s', 'save as recipe'], ['p', queue.paused ? 'resume' : 'pause'], ['c', 'clear'], ['Esc', 'close']]));

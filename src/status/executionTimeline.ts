@@ -16,6 +16,10 @@ import {paintDivider, DEFAULT_TREATMENT_SETTINGS} from '../chroma/treatment.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 
 const RESET = '\u001b[0m';
+/** Presentation counts are bounded here too: a hand-edited configuration can never break the layout. */
+function countSetting(value: number | undefined, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.trunc(value))) : fallback;
+}
 /** Faint fills derive from the active selection surface and semantic hue, never a terminal-background guess. */
 function rowTint(tone: RgbColor, strength = 0.3): RgbColor | undefined {
   if (colorLevel() === 'none' || colorLevel() === 'ansi16') return undefined;
@@ -32,7 +36,9 @@ export function renderExecutionTimeline(state: QueueState, columns: number, heig
   const now = options.now ?? Date.now();
   const counts = chain.counts;
   const running = chain.executions.find(entry => entry.status === 'running');
-  const completed = chain.executions.filter(entry => entry.status !== 'running').slice(-2);
+  const recentResults = countSetting(options.recentResults, 0, 2, 2);
+  const upcoming = countSetting(options.upcoming, 1, 2, 2);
+  const completed = recentResults === 0 ? [] : chain.executions.filter(entry => entry.status !== 'running').slice(-recentResults);
   const total = counts.succeeded + counts.failed + counts.interrupted + counts.skipped + counts.unobserved + Number(Boolean(running || state.dispatching)) + state.entries.length;
   const title = options.review === 'clear' ? 'Clear queued commands?'
     : options.review === 'resume' ? `Resume the queue? ${state.entries.length} pending`
@@ -87,7 +93,7 @@ export function renderExecutionTimeline(state: QueueState, columns: number, heig
   completed.forEach((entry,index) => candidates.push({order: index, priority: 4 - index, key: queueRowKey(chain.id, 'execution', entry.id), text: result(entry)}));
   if (running) candidates.push({order: 2, priority: 0, key: queueRowKey(chain.id, 'execution', running.id), text: line(activityGlyph(options.animate === false ? 0 : options.animationElapsed ?? now - running.startedAt), running.text, 'Running', UI_COLORS.accent, UI_COLORS.accent, 0.18)});
   if (!running && state.dispatching) candidates.push({order: 2, priority: 0, key: queueRowKey(chain.id, 'pending', state.dispatching.id), text: line('·', state.dispatching.text, 'Starting')});
-  state.entries.slice(0,2).forEach((entry,index) => {
+  state.entries.slice(0, upcoming).forEach((entry,index) => {
     const next = index === 0;
     const detail = entry.condition === 'approve' && !entry.approved ? 'Approval' : state.paused ? 'Paused' : next ? 'Next' : 'Queued';
     candidates.push({order: 3 + index, priority: next ? 1 : 5, pending: true, key: queueRowKey(chain.id, 'pending', entry.id),
@@ -95,7 +101,7 @@ export function renderExecutionTimeline(state: QueueState, columns: number, heig
   });
   let room = Math.max(0, height - out.length);
   // Reserve a compact overflow count whenever pending work cannot all be listed.
-  const overflow = state.entries.length > Math.min(2, Math.max(0, room - Number(Boolean(running || state.dispatching))));
+  const overflow = state.entries.length > Math.min(upcoming, Math.max(0, room - Number(Boolean(running || state.dispatching))));
   if (overflow && room >= 3) room--;
   const selected = candidates.sort((a,b) => a.priority-b.priority).slice(0,room).sort((a,b) => a.order-b.order);
   for (const item of selected) { if (item.key) options.row?.(item.key, out.length); out.push(item.text); }

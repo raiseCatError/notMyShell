@@ -18,10 +18,12 @@ export interface RowPanelState {
   subtitle: string;
   rowIds: readonly string[];
   selected: number;
+  /** How the caller draws the preview area (the caller owns the renderer); missing draws no preview. */
+  preview?: 'statusStrip' | 'queue';
 }
 
-export function createRowPanel(title: string, subtitle: string, rowIds: readonly string[]): RowPanelState {
-  return {title, subtitle, rowIds, selected: 0};
+export function createRowPanel(title: string, subtitle: string, rowIds: readonly string[], preview?: RowPanelState['preview']): RowPanelState {
+  return {title, subtitle, rowIds, selected: 0, ...(preview ? {preview} : {})};
 }
 
 function rows(state: RowPanelState, config: PromptConfiguration): SettingsRow[] {
@@ -60,8 +62,11 @@ export function renderRowPanel(state: RowPanelState, config: PromptConfiguration
     out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${indent}${focusForeground(selected)}${padCells(row.label.trim(), labelWidth - indent.length)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : value}`);
   });
   const description = visible[state.selected]?.description;
-  if (description && height >= out.length + preview.length + 6) out.push('', `  ${subtle}${description}${reset}`);
-  if (preview.length && height >= out.length + preview.length + 4) out.push('', `  ${subtle}Preview${reset}`, ...preview);
+  // Fit exactly: the frame's top line, the controls and the preview stay visible; nothing is cut from the tail.
+  const footer = 3;
+  const previewCost = preview.length ? preview.length + 2 : 0;
+  if (description && height >= out.length + 2 + previewCost + footer) out.push('', `  ${subtle}${description}${reset}`);
+  if (preview.length && height >= out.length + previewCost + footer) out.push('', `  ${subtle}Preview${reset}`, ...preview);
   out.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ['Esc', 'close']]));
   return framePanel(out.map(line => truncateAnsi(line, columns)), columns).slice(0, Math.max(1, height));
 }

@@ -14,6 +14,7 @@ import {availabilityOf, availableValues, currentCursorHost, unavailableReason, t
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
+import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -88,7 +89,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
 
 interface SettingsRowBase {
   id: string;
@@ -171,6 +172,7 @@ const chromaMoving = (c: PromptConfiguration) => chromaOn(c) && c.presentation.m
 const nativePrompt = (c: PromptConfiguration) => c.provider === 'nmsh';
 const stripOn = (c: PromptConfiguration) => c.statusStrip.enabled;
 const withStrip = (c: PromptConfiguration, patch: Partial<StatusStripSettings>): PromptConfiguration => ({...c, statusStrip: {...c.statusStrip, ...patch}});
+const withQueue = (c: PromptConfiguration, patch: Partial<QueuePresentationSettings>): PromptConfiguration => ({...c, queue: {...c.queue, ...patch}});
 
 /** Theme family, then the family's variant and (Catppuccin) accent, as nested rows. */
 const THEME_ROWS: readonly SettingsRow[] = [
@@ -411,6 +413,19 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'queueFailurePolicy', label: 'On queued command failure', description: 'For new execution chains: pause remaining work (default), or continue after a nonzero exit. Ctrl+C always pauses; existing chains keep their reviewed policy', category: 'Sessions',
     values: ['pause', 'continue'] as const, labels: ['Pause remaining queue', 'Continue remaining queue'],
     get: config => config.queueFailurePolicy, set: (config, queueFailurePolicy) => ({...config, queueFailurePolicy})}),
+  {id: 'queueTimeline', label: 'Live timeline', description: 'Queued work as a chronological timeline above the composer: recent results, the running command and what runs next. Off keeps the one-line queue row and the pending list; the transcript is never touched', category: 'Queue',
+    control: 'boolean', get: config => config.queue.liveTimeline, set: (config, liveTimeline) => withQueue(config, {liveTimeline})},
+  {id: 'queueRecentResults', parent: 'queueTimeline', when: config => config.queue.liveTimeline, label: 'Recent results', description: 'How many finished commands stay visible above the running one; older results leave the timeline, and their output stays in the transcript', category: 'Queue',
+    control: 'stepper', steps: QUEUE_RECENT_RESULTS_STEPS, format: value => value === 0 ? 'None' : `${value}`,
+    get: config => config.queue.recentResults, set: (config, recentResults) => withQueue(config, {recentResults})},
+  {id: 'queueUpcoming', parent: 'queueTimeline', when: config => config.queue.liveTimeline, label: 'Upcoming entries', description: 'How many waiting commands the timeline lists below the running one; the rest stay behind a compact count, and the queue itself is never changed', category: 'Queue',
+    control: 'stepper', steps: QUEUE_UPCOMING_STEPS, format: value => `${value}`,
+    get: config => config.queue.upcoming, set: (config, upcoming) => withQueue(config, {upcoming})},
+  {id: 'queueTransient', label: 'Completed view', description: 'Keep the finished timeline visible briefly after a chain ends, then dismiss it; the transcript keeps every result', category: 'Queue',
+    control: 'boolean', get: config => config.queue.transient, set: (config, transient) => withQueue(config, {transient})},
+  {id: 'queueTransientSeconds', parent: 'queueTransient', when: config => config.queue.transient, label: 'Keep visible', description: 'How long the finished timeline stays before it dismisses (6–30 seconds)', category: 'Queue',
+    control: 'stepper', steps: QUEUE_TRANSIENT_SECONDS_STEPS, format: value => `${value}s`,
+    get: config => config.queue.transientSeconds, set: (config, transientSeconds) => withQueue(config, {transientSeconds})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
@@ -588,11 +603,19 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'welcome', label: 'Welcome', description: 'Native, optional external fetch provider, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
+  {id: 'queue', label: 'Queue', description: 'Execution timeline, queued-command behavior, results and motion', category: 'Sessions', control: 'child', destination: 'queue'},
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
   {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
   {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
+
+/**
+ * The rows behind the Queue destination (/settings queue, /queue settings): the same canonical rows Config and
+ * Setup edit, plus the shared motion controls the timeline follows. Never a second copy of the settings.
+ */
+export const QUEUE_SETTINGS_ROW_IDS = ['commandQueue', 'queueFailurePolicy', 'queueTimeline', 'queueRecentResults', 'queueUpcoming',
+  'queueTransient', 'queueTransientSeconds', 'motion_rendering', 'motion_eventFeedback', 'reducedMotion'] as const;
 
 /** Text cue (not color) that a value differs from its default. */
 const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
@@ -622,7 +645,7 @@ export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   Prompt: 'Prompt & Composer', Layout: 'Prompt & Composer', 'Status strip': 'Prompt & Composer',
   Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor', Copy: 'Editor',
   Cursor: 'Cursor & Motion', Motion: 'Cursor & Motion',
-  Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts',
+  Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts', Queue: 'Sessions & Alerts',
   Tools: 'Shell & Providers', Welcome: 'Shell & Providers', History: 'Shell & Providers',
   Ask: 'Local Understanding', Transcript: 'Transcript & Privacy',
 };

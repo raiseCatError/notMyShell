@@ -97,6 +97,7 @@ import {
   type SettingsView, type StatusSections,
   SETTINGS_ENTRIES,
   SETTINGS_ROWS,
+  QUEUE_SETTINGS_ROW_IDS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
@@ -195,6 +196,7 @@ import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../stat
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
+import {queueSettingsPreview} from '../status/queueSettingsPreview.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
@@ -2772,7 +2774,10 @@ export class TerminalApp {
     else if (slash.kind === 'configure') { this.panelOrigin = undefined; await this.openConfigure(slash.tool, command); }
     else if (slash.kind === 'integrations') { this.panelOrigin = undefined; await this.openIntegrations(); }
     else if (slash.kind === 'dotfiles') { this.panelOrigin = undefined; this.dotfiles = createDotfilesPanel(slash.source ?? '~/dotfiles'); if (slash.source) await this.handleDotfilesAction({kind: 'scan', source: slash.source}, this.dotfiles); this.render(); }
-    else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
+    else if (slash.kind === 'settings') {
+      if (slash.destination === 'queue') this.openQueueSettingsPanel();
+      else this.openSettingsPanel(slash.view);
+    }
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'keepAwake') this.handleKeepAwakeSlash(command, slash);
     else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
@@ -4629,8 +4634,7 @@ export class TerminalApp {
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
-    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
-      : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
+    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanelPreview(columns));
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
     if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
     if (this.dotfiles) return renderDotfilesPanel(this.dotfiles, columns, this.dimensions().rows);
@@ -4935,7 +4939,22 @@ export class TerminalApp {
     else if (destination === 'themeStudio') this.openThemeStudio();
     else if (destination === 'themeBridge') void this.openThemeBridge();
     else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
+    else if (destination === 'queue') this.rowPanel = createRowPanel('Queue', '/queue · /settings queue', [...QUEUE_SETTINGS_ROW_IDS], 'queue');
     else void this.startKeyboard();
+  }
+
+  /** The preview behind a focused row panel; the caller owns the renderer, and the panel itself holds no settings. */
+  private rowPanelPreview(columns: number): readonly string[] {
+    if (this.rowPanel?.preview === 'queue') return queueSettingsPreview(this.promptConfiguration, Math.max(24, columns - 4));
+    if (this.rowPanel?.preview === 'statusStrip') return this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)'];
+    return [];
+  }
+
+  /** Opens the Queue destination the way the palette does: Esc returns to the Settings view it was opened from. */
+  private openQueueSettingsPanel(): void {
+    this.openSettingsPanel('config');
+    const index = SETTINGS_ENTRIES.findIndex(entry => entry.control === 'child' && entry.destination === 'queue');
+    this.openSettingsDestination('queue', 'config', Math.max(0, index), this.settingsPanelState!);
   }
 
   private async startToolConfiguration(id: string): Promise<void> {
@@ -9543,6 +9562,7 @@ export class TerminalApp {
     const review = this.queueReview?.kind;
     const now = this.activityAnimationNow || Date.now();
     return budget >= 2 ? queueBlock(this.queueState, columns, budget, {now, animate: this.decorativeMotionAllowed() && colorLevel() !== 'none' && colorLevel() !== 'ansi16' && getCurrentGlyphMode() !== 'safe', treatment: this.promptConfiguration.presentation,
+      liveTimeline: this.promptConfiguration.queue.liveTimeline, recentResults: this.promptConfiguration.queue.recentResults, upcoming: this.promptConfiguration.queue.upcoming,
       row: (key, index) => this.queueVisibleRows.set(key, index),
       animationElapsed: this.running ? presentationAnimationElapsed(now - this.running.startedAt) : 0,
       ...(review ? {review} : {}), ...(this.queueAffordance() ? {affordance: this.queueAffordance()!} : {})}) : undefined;
@@ -10488,8 +10508,10 @@ export class TerminalApp {
     const chain = state.timeline;
     if (chain?.endedAt !== undefined && chain.status !== 'active' && (chain.id !== previous.timeline?.id || previous.timeline?.status === 'active')) {
       this.queueExpiry?.();
-      this.queueTransientUntil = performance.now() + 8000;
-      this.queueExpiry = presentationClock.after(() => { this.queueExpiry = undefined; if (!this.stopped) this.render(); }, 8000);
+      // The completed view is presentation only: the transcript keeps every result either way.
+      const linger = this.promptConfiguration.queue.transient ? this.promptConfiguration.queue.transientSeconds * 1000 : 0;
+      this.queueTransientUntil = linger ? performance.now() + linger : 0;
+      if (linger) this.queueExpiry = presentationClock.after(() => { this.queueExpiry = undefined; if (!this.stopped) this.render(); }, linger);
     } else if (chain?.status === 'active') { this.queueExpiry?.(); this.queueExpiry = undefined; }
     if (!this.replaying && getCurrentGlyphMode() !== 'safe' && colorLevel() !== 'ansi16') {
       for (const change of queuePresentationChanges(previous, state)) this.transitions.highlight(change.target, change.tone, Date.now(), change.phase);
@@ -10636,8 +10658,10 @@ export class TerminalApp {
   }
 
   private timelineVisible(): boolean {
+    if (!this.promptConfiguration.queue.liveTimeline) return false;
     const timeline = this.queueState.timeline;
-    return this.queueAvailable() && Boolean(timeline && (timeline.status === 'active' || performance.now() < this.queueTransientUntil));
+    return this.queueAvailable() && Boolean(timeline && (timeline.status === 'active'
+      || (this.promptConfiguration.queue.transient && performance.now() < this.queueTransientUntil)));
   }
 
   /** Load a queued entry into the composer to edit it in place; the queue holds at that entry until it is saved. */

@@ -56,6 +56,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/theme-bridge', insertion: '/theme-bridge', description: 'Theme Bridge: extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim, Vim and Helix (opt-in per tool)'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/settings queue', insertion: '/settings queue', description: 'Queue: queued-command behavior, execution timeline, results and motion'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
   {name: '/setup look', insertion: '/setup look', description: 'Setup Cat: theme, UI chrome and Chroma (the Look step)'},
@@ -120,7 +121,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/qr', insertion: '/qr', alias: '/queue', description: 'Review before resuming the queue'},
   {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
   {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
-  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear'},
+  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue settings opens its Settings'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -176,7 +177,7 @@ export type ParsedSlashCommand =
   /** /caffeinate, /awake and /zoomies: one Keep Awake action. A timeout is a validated number of seconds; `invalid` names bad input. */
   | {kind: 'keepAwake'; op: 'panel' | 'status' | 'stop' | 'start'; mode?: 'idle' | 'display' | 'system' | 'all'; timeoutSeconds?: number; invalid?: string}
   | {kind: 'setup'; entry?: string}
-  | {kind: 'settings'; view: 'config' | 'status'}
+  | {kind: 'settings'; view: 'config' | 'status'; destination?: 'queue'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
   | {kind: 'layout'}
@@ -285,6 +286,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   }
   const setup = /^\/setup(?:\s+(prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
+  if (/^\/(?:settings|config)\s+queue\s*$/u.test(input)) return {kind: 'settings', view: 'config', destination: 'queue'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
@@ -358,8 +360,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
   const shortcut = ({'/qp': 'pause', '/pause': 'pause', '/qr': 'resume', '/qc': 'clear'} as const)[input.trim() as '/qp'];
   if (shortcut) return {kind: 'queue', op: shortcut};
-  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
-  if (queue) return {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
+  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings))?\s*$/u.exec(input);
+  if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
+    : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();

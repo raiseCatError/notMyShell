@@ -649,6 +649,8 @@ export interface PromptConfiguration {
   /** Enter while a command runs queues the next command (Ctrl+S sends to the program); off: Enter sends to the program. */
   commandQueue: boolean;
   queueFailurePolicy: 'pause' | 'continue';
+  /** How the execution timeline presents observed queue work (the Queue destination: /settings queue, /queue settings). */
+  queue: QueuePresentationSettings;
   /**
    * Experimental, Off by default: the docked workspace sidebar and detail panel (/sidebar, /panel). Off, neither opens
    * and their keymap bindings do nothing; /worktrees, /sessions, /github and /background are unaffected.
@@ -745,6 +747,38 @@ export function normalizeCopy(value: unknown): CopySettings {
   return {mode: raw.mode === 'picker' ? 'picker' : 'quick', includeStatus: raw.includeStatus === true, autoExpand: raw.autoExpand === true};
 }
 
+/** The Queue settings' steppers; retention accepts any integer in 6–30, the stepper offers these presets. */
+export const QUEUE_RECENT_RESULTS_STEPS = [0, 1, 2] as const;
+export const QUEUE_UPCOMING_STEPS = [1, 2] as const;
+export const QUEUE_TRANSIENT_SECONDS_STEPS = [6, 8, 10, 15, 20, 30] as const;
+
+/**
+ * How the execution timeline presents observed queue work. Presentation only: it never changes dispatch, pause,
+ * approval or review, and the classic one-line row and pending list remain available with the timeline off.
+ */
+export interface QueuePresentationSettings {
+  /** Show queued work as the observed chronological timeline instead of the classic pending list. */
+  liveTimeline: boolean;
+  /** Finished results kept visible above the running command (0–2). */
+  recentResults: number;
+  /** Waiting commands listed below the running command (1–2); the rest stay behind a compact count. */
+  upcoming: number;
+  /** Keep a finished chain visible briefly after it ends. */
+  transient: boolean;
+  /** How long the finished chain stays visible (6–30 seconds). */
+  transientSeconds: number;
+}
+
+function boundedCount(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+export function normalizeQueuePresentation(value: unknown): QueuePresentationSettings {
+  const raw = isRecord(value) ? value : {};
+  return {liveTimeline: raw.liveTimeline !== false, recentResults: boundedCount(raw.recentResults, 0, 2, 2),
+    upcoming: boundedCount(raw.upcoming, 1, 2, 2), transient: raw.transient !== false, transientSeconds: boundedCount(raw.transientSeconds, 6, 30, 8)};
+}
+
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
   motion: {...DEFAULT_MOTION},
@@ -783,6 +817,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   agentActivity: true,
   commandQueue: true,
   queueFailurePolicy: 'pause',
+  queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8},
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',
@@ -879,7 +914,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',

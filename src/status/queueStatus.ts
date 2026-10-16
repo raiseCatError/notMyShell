@@ -32,6 +32,12 @@ export interface QueueRowOptions {
   animate?: boolean;
   animationElapsed?: number;
   treatment?: import('../chroma/treatment.js').TreatmentSettings;
+  /** The Queue settings' live timeline switch: false renders the classic pending list, never the observed timeline. */
+  liveTimeline?: boolean;
+  /** Finished results kept visible (0–2, default 2). Bounded again by the renderer. */
+  recentResults?: number;
+  /** Waiting commands listed (1–2, default 2). Bounded again by the renderer. */
+  upcoming?: number;
 }
 
 const AFFORDANCE_HINT: Record<QueueAffordance, string> = {resume: 'Enter to review', approve: 'Enter to review', clear: 'Esc to review clear'};
@@ -112,7 +118,7 @@ function connectors(): {first: string; middle: string; last: string; rail: strin
  * Returns undefined when the one-line row says it all (one plain entry, or no room for at least one listed command).
  */
 export function queueBlock(state: QueueState, columns: number, rows: number, options: QueueRowOptions = {}): string[] | undefined {
-  if (state.timeline) return renderExecutionTimeline(state, columns, rows, options);
+  if (state.timeline && options.liveTimeline !== false) return renderExecutionTimeline(state, columns, rows, options);
   const entries = state.entries;
   if (!entries.length || rows < 2 || columns < 24) return undefined;
   const plain = !state.paused && !options.review && !options.affordance && entries.length === 1 && !entries[0]!.condition;
