@@ -38,7 +38,7 @@
 - [x] Run `rtk node --import=tsx --test tests/executionTimeline.test.ts`; confirm intended failures.
 - [x] Implement observed lifecycle with injected clock and preserve prior pause cause. Capture monotonic elapsed duration and epoch chronology; do not infer subcommand facts.
 - [x] Run new tests plus commandQueue/queueConditions; confirm pass.
-- [ ] Commit coherent owner/model changes after transport validation in Task 2.
+- [x] Commit coherent owner/model changes after transport validation in Task 2.
 
 ### Task 2: Reviewed operations, aliases and captured policy
 
@@ -50,7 +50,7 @@
 - [x] Run focused tests and observe failures before implementing their behavior.
 - [x] Extend strict transport validation, session stamps and configuration; wire centralized two-step resume/clear review and Esc confirmation without changing foreground-input priority.
 - [x] Run focused model/protocol/config/queue/ownership tests; compare against unchanged legacy protocol fixtures.
-- [ ] Commit session model, transport and safe controls as a coherent checkpoint.
+- [x] Commit session model, transport and safe controls as a coherent checkpoint.
 
 ### Task 3: Shared production timeline renderer and geometry
 
@@ -62,7 +62,7 @@
 - [x] Add geometry assertions for Bottom/Top/Flow, tiny heights, input waits and unchanged ptyRows; run red.
 - [x] Implement renderer and shared-plan placement; retain old queue fallback for older services. Reuse activity glyph, duration, divider, palette and finite event feedback. Keep one running glyph, complementary aggregate activity, eight-second transient expiry and last-chain review through manager.
 - [x] Run focused renderer/geometry/motion tests; confirm exact raw-copy behavior is unaffected.
-- [ ] Commit coherent production presentation.
+- [x] Commit coherent production presentation.
 
 ### Task 4: Real-PTY integration and visual checkpoint
 
@@ -73,7 +73,7 @@
 - [x] Add and run real-PTY tests for aliases, safe clear/resume, paused independent foreground provenance and sequential success/failure/interrupt across installed zsh/Bash/Fish.
 - [x] Run relevant unchanged input ownership, queue preview/conditions, exact copy and restore tests. Preserve failures without weaker assertions/deadlines.
 - [ ] Run `rtk npm run verify:release` with one worker; inspect results and any cleanup failures. No physical QA claim.
-- [ ] Generate running/success/failure/manual pause/interrupted/completed previews at 80 and 32 columns, including Safe/NO_COLOR. Show actual production output and source SHA.
+- [x] Generate running/success/failure/manual pause/interrupted/completed previews at 80 and 32 columns, including Safe/NO_COLOR. Show actual production output and source SHA.
 - [ ] Commit coherent changes and evidence; review whole Slice 1 diff. Do not start Slice 2 before maintainer visual review. Remote feature push/CI may be recorded if connectivity and authorization permit; no merge/tag/publication.
 
 ## Execution ledger
@@ -90,3 +90,6 @@
 - First canonical `verify:release` ran the full suite and failed: Ask alias coverage, Setup coverage/order for the new policy, and three unchanged tmux/startup cases. Ask and Setup integration were corrected. The test environment inherited NMSH_RETURN_SESSION and NMSH_HANDOFF_SHELL; the repeated return-session notice was present in the failing terminal output. Follow-up verification removes these host handoff variables only from the private test process; no host session or settings are modified. Preserve the failed run as historical evidence.
 - Additional RED→GREEN regressions cover sent-before-exec shell exit (one unobserved submission, pending-only skipped work, no lingering Starting state), code-first narrow failure/interruption reasons, and captured policy disclosure in the existing manager. The shared policy wording also appears in resume review and existing batch/recipe review.
 - Final gate environment: `env -u NO_COLOR -u NMSH_RETURN_SESSION -u NMSH_HANDOFF_SHELL TERM=xterm-256color COLORTERM=truecolor NMSH_TEST_CONCURRENCY=2 npm run verify:release`. This is the complete canonical suite with bounded workers and unchanged assertions/budgets. Results for the final committed snapshot are reported in the checkpoint handoff; physical visual review remains outstanding.
+
+- Implementation checkpoint: `80b9736` contains the reviewed Slice 1 code and tests. `verify:fast` passed; focused follow-up covering every failure from the first canonical run passed with unchanged existing tmux/startup assertions after removing inherited handoff variables. Final production captures record this clean source HEAD; subsequent capture/ledger changes are documentation only.
+- Visual gate remains pending maintainer review. The committed capture gallery is the checkpoint evidence; no later slice has started. Final exact-head canonical/CI results belong to the checkpoint handoff and linked CI run, without changing this source snapshot during verification.
