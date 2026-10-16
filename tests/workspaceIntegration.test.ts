@@ -14,6 +14,8 @@ function app(columns: number, rows = 30): TerminalApp {
   Object.defineProperty(instance, 'render', {value: () => {}});
   Object.defineProperty(instance, 'terminalDimensions', {value: () => ({columns, rows})});
   instance['startupPending'] = false;
+  // The regions are experimental and Off by default; these tests are about them, so they are turned on.
+  instance['configuration'] = {...instance['configuration'], workspacePanels: true};
   // Listings are the test's: no tmux or Git is asked.
   Object.defineProperty(instance, 'refreshWorkspaceSources', {value: async () => {}});
   return instance;

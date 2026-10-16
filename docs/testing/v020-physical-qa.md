@@ -16,9 +16,9 @@
 
 | Pass | Host and version | OS | Shell and version | Commit (`--version`) | Result | Notes |
 |---|---|---|---|---|---|---|
-| 1 Workspace regions | Ghostty | macOS | zsh | | Not run | |
-| 1 Workspace regions | Terminal.app | macOS | zsh | | Not run | |
-| 1 Workspace regions | Ghostty inside tmux | macOS | zsh | | Not run | |
+| 1 Workspace regions Off (default) | Ghostty | macOS | zsh | | Not run | |
+| 1 Workspace regions Off (default) | Terminal.app | macOS | zsh | | Not run | |
+| 1E Experimental regions (optional, not a release gate) | Ghostty, Terminal.app, tmux | macOS | zsh | | Deferred | experimental, Off by default |
 | 2 Background tasks | Ghostty | macOS | zsh | | Not run | |
 | 2 Background tasks | physical Linux terminal | Linux | Fish 3.7 or Bash | | Not run | |
 | 3 Modules and worktrees | Ghostty | macOS | zsh | | Not run | |
@@ -26,6 +26,23 @@
 | 5 Regression of v0.19 core | Terminal.app | macOS | Bash or Fish | | Not run | |
 
 ## Pass 1 — workspace regions
+
+The docked sidebar and detail panel are **experimental and Off by default** in v0.20 (maintainer decision,
+`workspace-ui-decision.md`). The release gate is that Off is really off and that turning them on and off is safe;
+the docked regions themselves (1E) are not a release feature and are recorded as **Deferred** unless someone runs
+them. A 1E result never counts as release evidence for anything else.
+
+- [ ] 1.0a Fresh QA home: `/sidebar`, `/panel`, `/sidebar focus`: each prints that the regions are experimental and
+  Off and names Settings → Layout → Workspace sidebar & panel; nothing opens, the composer keeps the keyboard, and
+  `tput cols` is the full width before and after.
+- [ ] 1.0b Settings → Layout shows **Workspace sidebar & panel  Off** with its experimental description; Setup → Editor
+  shows the same row. `/keys` says the workspace bindings take no key while it is Off. `/worktrees`, `/sessions`,
+  `/github` and `/background` work as usual.
+- [ ] 1.0c Turn it On in Settings, `/sidebar` then `/panel focus` at 160 columns: both dock and `tput cols` is the
+  middle width. Turn it Off in Settings: both close at once, focus is back in the composer, and `tput cols` is the full
+  width again; `/sidebar` opens nothing until it is turned on again.
+
+### 1E — experimental regions (optional; turn the setting On first; not a release gate)
 
 - [ ] 1.1 At 200, 120, 100, 89, 80, 70 and 40 columns: `/sidebar`, then `/panel`. Wide: both dock, the transcript
   rewraps to the middle and `tput cols` in the shell matches the middle width. 70 and below: `/sidebar` opens a drawer
@@ -76,7 +93,8 @@
 ## Pass 5 — v0.19 core on the integrated build
 
 Repeat items 1.1–1.15 of [v019-physical-qa.md](v019-physical-qa.md) once on this build in Terminal.app with Bash or
-Fish, with the sidebar docked for half of them.
+Fish, with the default settings (the experimental workspace regions Off). Running half of them again with the
+regions docked belongs to 1E and is optional.
 
 ## After the pass
 

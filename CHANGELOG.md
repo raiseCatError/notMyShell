@@ -8,14 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.20.0] - Unreleased (release candidate)
 
-**Workspace, background tasks & native modules.** A workspace sidebar and detail panel sit beside the transcript; long-running commands run as background tasks beside the shell instead of in front of it; the native module catalog covers twelve more runtimes and tools; and Claude Code managed targets gain native model, effort and mod controls. Every region, task and control is reached through an explicit command or an opt-in key, and the persistent shell, the queue and program input keep their behavior.
+**Workspace, background tasks & native modules.** An experimental workspace sidebar and detail panel (Off by default) can sit beside the transcript; long-running commands run as background tasks beside the shell instead of in front of it; the native module catalog covers twelve more runtimes and tools; and Claude Code managed targets gain native model, effort and mod controls. Every region, task and control is reached through an explicit command or an opt-in key, and the persistent shell, the queue and program input keep their behavior.
 
 This release candidate is built on the **unpublished v0.19.0 release candidate**; neither is published until its physical-terminal QA passes ([v0.20 physical QA checklist](docs/testing/v020-physical-qa.md)).
 
 ### Added
 
-#### Workspace sidebar and detail panel ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
-- `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
+#### Workspace sidebar and detail panel — experimental, Off by default ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
+- **Experimental and Off by default.** Turn it on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). While Off, `/sidebar` and `/panel` say how to turn it on and open nothing, and `keymap.json` workspace bindings are kept but take no key (`/keys` says so). Turning it Off closes open regions and gives the shell every column again. `/worktrees`, `/sessions`, `/github` and `/background` never depend on it. The docked layout is expected to be replaced by integrations with dedicated Git tools in a later release.
+- When on, `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
 - On a wide terminal the regions dock beside the transcript and the shell is sized to the middle; on a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them.
 - Opening a worktree stages its `cd` in an empty composer; tmux navigation selects panes and windows by id through tmux from fixed system locations. Nothing runs by itself.
 - `keymap.json` binds workspace keys, opt-in and validated (composer keys must say what they replace); `/keys` shows the keys in effect, problems in the file and keys the terminal or tmux may take first; `/keys reload` reads it again.
@@ -55,11 +56,11 @@ This release candidate is built on the **unpublished v0.19.0 release candidate**
 - The tmux section of the sidebar needs tmux in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`.
 
 ### Upgrade notes
-- Nothing new is on after the upgrade: the sidebar and panel are opened by command, the composer binds no workspace keys, and background suggestions are off.
+- Nothing new is on after the upgrade: the experimental sidebar and panel are Off (a configuration without the new `workspacePanels` setting reads as Off, and nothing else in it changes), the composer binds no workspace keys, and background suggestions are off.
 - Restart the session service (or start a new session) to use background tasks.
 
 ### Known limitations
-- **Physical-terminal QA has not been performed** for the workspace regions, drawers, background tasks, keymap host notes or the new modules; automated tests and real-PTY suites cover them.
+- **Physical-terminal QA has not been performed** for the background tasks or the new modules; automated tests and real-PTY suites cover them. The experimental workspace regions, drawers and keymap host notes are not part of this release's physical QA gate (only their Off state is checked) and are not physically tested.
 - Clicks focus a region but do not select sidebar rows; the mouse wheel scrolls the transcript wherever the pointer is.
 - The sidebar lists tmux and worktrees only; NMSh sessions and managed targets as rows, and module diagnostics in the detail panel (they stay in `/modules` details), are not included.
 - Background tasks run in a separate shell: aliases, functions and unexported variables of the live shell are not available. A service restart ends the tasks it owned. Output kept by the task owner is 5,000 lines or 2 MiB per task.
