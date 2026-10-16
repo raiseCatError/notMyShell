@@ -239,11 +239,13 @@ test('invalidation on shell switch: switching shell clears active batchReview an
     await reviewing(instance);
     assert.ok(instance['batchReview']);
 
-    // Mock shell switch readiness and session call
+    // This is a mocked transition: target the zsh this fixture already runs, independent of optional Bash 4.4+.
     instance['startupPending'] = false;
-    instance['session'].switchShell = async () => {};
-    const targetShell = instance['shellId'] === 'bash' ? 'zsh' : 'bash';
-    await instance['switchShell'](targetShell, `/shell ${targetShell}`);
+    instance['shellId'] = 'bash';
+    let switched: string | undefined;
+    instance['session'].switchShell = async target => { switched = target; };
+    await instance['switchShell']('zsh', '/shell zsh');
+    assert.equal(switched, 'zsh', 'the mock switch actually ran');
     assert.equal(instance['batchReview'], undefined, 'batchReview cleared on shell switch');
     assert.equal(instance['pastePreview'], undefined, 'pastePreview cleared on shell switch');
   } finally {

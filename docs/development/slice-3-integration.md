@@ -22,7 +22,7 @@ Bare Copy defaults, saved Quick Copy/picker choices, aliases, explicit selectors
 
 Canonical discovery coverage caught an inherited Slice 3 omission: `/actions` and `/action` lacked an Ask concept. They now use the existing actionable concept registry, with a natural-language routing assertion. The subsequent Guide coverage assertion required adding that concept to the existing History & transcripts section as well. Both catalog audits remain intact; no new public surface is excluded.
 
-The zsh/Bash/Fish PTY fixture now checks actual 2C queued provenance and folded state before copying all 400 lines. A file-boundary timing race was fixed in the fixture: a stand-in clipboard tool truncates its file before writing; the wait now requires the exact expected bytes, preserving the byte assertion. It never treats an empty in-progress file as successful copy.
+The zsh/Bash/Fish PTY fixture checks the live session backend identity, so fallback to zsh cannot masquerade as Bash/Fish coverage. Unsupported installed shells are explicitly skipped, using the existing adapter availability check; Linux and the local supported-shell run cover the real backends. It also checks actual 2C queued provenance and folded state before copying all 400 lines. A file-boundary timing race was fixed in the fixture: a stand-in clipboard tool truncates its file before writing; the wait now requires the exact expected bytes, preserving the byte assertion. It never treats an empty in-progress file as successful copy.
 
 The real tmux test's temporary root now honors `tmpdir()` rather than hardcoded `/tmp`, so canonical tests respect the externally supplied scratch environment. Socket paths remain bounded by the short private test root. No tmux behavior changed.
 
@@ -93,3 +93,17 @@ Maintainer approval of the integrated checkpoint and physical QA are required be
 - Task bar: keyboard/pointer focus, task output/detail, cancel/return and foreground handoff while queue/selector views are present. Hidden/key prompts and fullscreen ownership retain priority.
 - Setup: Queue settings discovery, all Copy modes, saved preferences, preview fit and Safe/NO_COLOR; no accidental submission when leaving setup/review.
 - Linux Fish 3.7: run `typingAfterRead` regression coverage on the actual runtime, including immediate zero-delay input, hidden-read exit status, typing after prompt return, background-session ESRCH and the historical approval/typed-input scenario. Local macOS Fish is not a substitute. Existing #356 and physical checklists are not closed retroactively.
+
+## Exact-head CI investigation and remaining blockers
+
+[Run 38956521560](https://github.com/raiseCatError/notMyShell/actions/runs/38956521560) at `5782e10c90a117a81b134ff0c0e80f49123c41bc` failed. Quality, actual Node 22, Fedora, both timing jobs and macOS shard 1 passed. Three failed assertions remained:
+
+- Ubuntu shard 2: `queuePreviewLive` times out on the completed journal for `echo DIRECT`, reproducing historical run 38930716614. Trace: declining approval sends an asynchronous pause, immediately announces direct routing, while `routeComposer` still consults the old unpaused queue state. This is a pause-acknowledgement boundary to reconcile in the queue owner; no optimistic second queue authority or speculative execution fix is added here.
+- Ubuntu shard 1: `backgroundSession` stop returned `the task already ended` (`ESRCH`) immediately after spawn. The unchanged supervisor signals the negative child PID; it may race establishment of the process group. That cause needs Linux confirmation and a safe owner-level correction; it is not treated as fixed by a passing macOS test.
+- macOS shard 2: `pasteBatchChoice` mocked a switch to optional Bash 4.4+, absent on that runner. A system-only PATH reproduces it locally. The fixture now models a mocked Bash-to-zsh transition (zsh is already required by the fixture), additionally asserts that the switch call happened, and retains both invalidation assertions. No production shell-switch guard changed.
+
+These tests and the background-task implementation were unchanged from pinned 2C when the failures occurred. Raw job logs are `ci-ubuntu-1.log`, `ci-ubuntu-2.log`, `ci-macos-2.log`; `ci-final.json` describes that exact run. Later checkpoint manifests use distinct names; a previously failed head is never relabelled green.
+
+Backend coverage correction: `backend-identity-isolated-red.log` proves the original live fixture accepted a zsh fallback under a Bash label. `system-path-portability-green.log` proves the stronger fixture skips unsupported Bash explicitly and the mocked switch still executes. `backend-identity-red.log` is an earlier diagnostic with an incomplete system PATH that also omitted lsof; it is preserved rather than used as the identity proof. `paste-switch-portability-red.log` retains the pre-correction paste assertion failure. `checkpoint-focused-final.log` checks actual available backend identities and the full affected integration/paste/discovery cases.
+
+The checkpoint is blocked for integration while canonical/CI blockers remain. Repairing queue pause acknowledgement and Linux process-group signalling requires a separate, reviewed owner-level change; this Slice 3 checkpoint does not silently expand into that work. Physical QA and maintainer approval remain required even after those gates pass.

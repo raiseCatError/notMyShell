@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
+import {shellAdapter} from '../src/shell/adapters/registry.js';
 
-for (const shellBackend of ['zsh', 'bash', 'fish']) {
-  test(`live ${shellBackend}: new Copy navigation copies exact folded output and Actions palette returns without action`, {timeout: 90_000}, async () => {
+for (const shellBackend of ['zsh', 'bash', 'fish'] as const) {
+  const unavailable = shellAdapter(shellBackend).unavailableReason(process.env);
+  test(`live ${shellBackend}: new Copy navigation copies exact folded output and Actions palette returns without action`, {skip: unavailable ?? false, timeout: 90_000}, async () => {
     const sandbox = new LiveSandbox({provider: 'none', shellBackend, liveSessionStartup: 'never', queue: {outputDisplay: 'fold'}}, {});
     const bin = join(sandbox.root, 'fake-bin'); mkdirSync(bin);
     const clip = join(sandbox.root, 'clipboard'); writeFileSync(clip, 'KEEP');
@@ -17,6 +19,7 @@ for (const shellBackend of ['zsh', 'bash', 'fish']) {
     try {
       await frontend.waitFor(/notMyShell|Vespyr|zsh|bash|fish/u);
       await frontend.run('echo READY', /READY/u);
+      assert.equal((await sandbox.sessions())[0]?.shell, shellBackend, 'exercise the requested real shell, never a fallback');
       await frontend.run(`printf 'a\\tb\\n日本語\\n\\n'`, /日本語/u);
       let mark = frontend.mark; frontend.pty.write('/cp\r');
       await frontend.waitFor(/Copy output/u, mark); assert.equal(read(), 'KEEP');
