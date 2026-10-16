@@ -18,7 +18,7 @@ const BLACK: RgbColor = {red: 0, green: 0, blue: 0};
 
 export interface UiThemeInput {
   accent: string; separator: string; success: string; failure: string;
-  primary?: string; secondary?: string; subtle?: string; selection?: string;
+  primary?: string; secondary?: string; subtle?: string; selection?: string; warning?: string;
 }
 
 /** Chrome overrides for a theme input; text tiers only when the theme provides them. */
@@ -33,6 +33,8 @@ export function uiColorsFor(input: UiThemeInput | undefined): Partial<Record<UiK
     workingBase: separator, workingPeak: mixRgb(accent, WHITE, 0.35),
     projectBackground: project, projectForeground: readableForeground(project),
   };
+  const warning = hex(input.warning);
+  if (warning) out.warning = warning;
   const primary = hex(input.primary);
   if (primary) { out.primary = primary; out.command = primary; }
   const secondary = hex(input.secondary);
@@ -49,7 +51,7 @@ export function uiThemeInput(palette: NativePaletteId, accent: CatppuccinAccent,
   if (palette === 'custom') {
     if (!custom) return undefined;
     const ui = custom.ui;
-    return {accent: ui.accent, separator: ui.separator, success: ui.success, failure: ui.failure,
+    return {accent: ui.accent, separator: ui.separator, success: ui.success, failure: ui.failure, warning: ui.warning,
       ...(custom.dark ? {primary: ui.primary, secondary: ui.secondary, subtle: ui.subtle, selection: ui.selection} : {})};
   }
   const variant = themeVariant(palette);

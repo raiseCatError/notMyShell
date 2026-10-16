@@ -3,7 +3,7 @@ import {displayWidth} from '../util/text.js';
 import type {RgbColor} from '../ui/palette.js';
 import {colorEscape} from '../chroma/escape.js';
 import {mixRgb} from '../chroma/chroma.js';
-import {readableForeground} from '../chroma/color.js';
+import {contrastOn, readableForeground} from '../chroma/color.js';
 
 /**
  * Presentation overlays on already-rendered ANSI rows, cell by cell: cursor
@@ -25,6 +25,8 @@ export interface CellPaint {
    * portable cursor engine never set it, so a transparent terminal stays transparent for them.
    */
   fill?: RgbColor;
+  /** Opt-in for semantic UI surfaces: preserve text contrast against their actual final cell background. */
+  contrast?: number;
   dim?: boolean;
   bold?: boolean;
   underline?: boolean;
@@ -70,22 +72,32 @@ function indexedRgb(index: number): RgbColor {
   return {red: cube[Math.floor(n / 36)]!, green: cube[Math.floor(n / 6) % 6]!, blue: cube[n % 6]!};
 }
 
-/** The foreground in effect after replaying SGR sequences since the last reset; undefined when it is the terminal's default. */
-export function currentForeground(style: string): RgbColor | undefined {
+/** The color in effect after replaying SGR; extended colors consume their parameters in either layer. */
+function currentColor(style: string, layer: 38 | 48): RgbColor | undefined {
   let color: RgbColor | undefined;
+  const base = layer === 38 ? 30 : 40, bright = layer === 38 ? 90 : 100;
   for (const match of style.matchAll(/\u001B\[([\d;]*)m/gu)) {
     const params = match[1]!.split(';').map(value => (value === '' ? 0 : Number(value)));
     for (let index = 0; index < params.length; index += 1) {
       const code = params[index]!;
-      if (code === 0 || code === 39) color = undefined;
-      else if (code === 38 && params[index + 1] === 2) { color = {red: params[index + 2] ?? 0, green: params[index + 3] ?? 0, blue: params[index + 4] ?? 0}; index += 4; }
-      else if (code === 38 && params[index + 1] === 5) { color = indexedRgb(params[index + 2] ?? 0); index += 2; }
-      else if (code >= 30 && code <= 37) color = indexedRgb(code - 30);
-      else if (code >= 90 && code <= 97) color = indexedRgb(code - 90 + 8);
+      if (code === 0 || code === layer + 1) color = undefined;
+      else if ((code === 38 || code === 48) && params[index + 1] === 2) {
+        if (code === layer) color = {red: params[index + 2] ?? 0, green: params[index + 3] ?? 0, blue: params[index + 4] ?? 0};
+        index += 4;
+      } else if ((code === 38 || code === 48) && params[index + 1] === 5) {
+        if (code === layer) color = indexedRgb(params[index + 2] ?? 0);
+        index += 2;
+      } else if (code >= base && code <= base + 7) color = indexedRgb(code - base);
+      else if (code >= bright && code <= bright + 7) color = indexedRgb(code - bright + 8);
     }
   }
   return color;
 }
+
+/** The foreground in effect after replaying SGR; undefined is the terminal default. */
+export const currentForeground = (style: string): RgbColor | undefined => currentColor(style, 38);
+/** The background in effect after replaying SGR; undefined is the terminal default. */
+export const currentBackground = (style: string): RgbColor | undefined => currentColor(style, 48);
 
 /** A foreground-only treatment for a text cell: tint toward a color, plus weight. Never a background. */
 function textTreatment(paint: CellPaint, style: string): string {
@@ -93,12 +105,17 @@ function textTreatment(paint: CellPaint, style: string): string {
   if (paint.bold) out += '\u001B[1m';
   if (paint.dim) out += '\u001B[2m';
   if (paint.underline) out += '\u001B[4m';
+  const base = currentForeground(style);
+  let color: RgbColor | undefined;
   if (paint.tint && paint.tint.amount > 0.02) {
-    const base = currentForeground(style);
-    // Without an explicit foreground there is nothing to blend with, so a visible tint takes the color; a faint one does nothing.
-    const color = base ? mixRgb(base, paint.tint.color, Math.min(1, paint.tint.amount)) : paint.tint.amount >= 0.2 ? paint.tint.color : undefined;
-    if (color) out += rgb(38, color);
+    // Without an explicit foreground there is nothing to blend with, so a faint tint does nothing.
+    color = base ? mixRgb(base, paint.tint.color, Math.min(1, paint.tint.amount)) : paint.tint.amount >= 0.2 ? paint.tint.color : undefined;
   }
+  if (paint.contrast) {
+    const fill = paint.fill ?? currentBackground(style);
+    if (fill) color = contrastOn(color ?? base ?? readableForeground(fill), fill, paint.contrast);
+  }
+  if (color) out += rgb(38, color);
   return out;
 }
 

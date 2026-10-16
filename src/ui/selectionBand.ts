@@ -18,9 +18,9 @@ export function selectionForeground(color: RgbColor, selected: boolean, minimum 
 }
 
 /** Lay the band under a styled row and pad it to `columns`, keeping the band through every reset inside the row. */
-export function selectionBand(row: string, columns: number): string {
+export function selectionBand(row: string, columns: number, color: RgbColor = UI_COLORS.selection): string {
   const RESET = '\u001b[0m';
-  const fill = background(UI_COLORS.selection);
+  const fill = background(color);
   const fitted = truncateAnsi(row, columns);
   if (!fill) return fitted;
   return `${fill}${fitted.replaceAll(RESET, `${RESET}${fill}`)}${' '.repeat(Math.max(0, columns - displayWidth(fitted)))}${RESET}`;

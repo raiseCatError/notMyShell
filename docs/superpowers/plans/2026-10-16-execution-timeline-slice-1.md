@@ -93,3 +93,27 @@
 
 - Implementation checkpoint: `80b9736` contains the reviewed Slice 1 code and tests. `verify:fast` passed; focused follow-up covering every failure from the first canonical run passed with unchanged existing tmux/startup assertions after removing inherited handoff variables. Final production captures record this clean source HEAD; subsequent capture/ledger changes are documentation only.
 - Visual gate remains pending maintainer review. The committed capture gallery is the checkpoint evidence; no later slice has started. Final exact-head canonical/CI results belong to the checkpoint handoff and linked CI run, without changing this source snapshot during verification.
+
+
+## Maintainer visual feedback at 7f26f651 — presentation-only follow-up
+
+Scope: preserve Slice 1 architecture/lifecycle and its eight-second retention; do not start Slice 2 or touch copy/actions, archived command persistence, scrolling, protected branches or existing QA. Fish 3.7 remains unresolved.
+
+- [x] Add RED renderer regressions for semantic row tints, contrast/reset/capability behavior, paused next marker, and complete narrow aggregate facts.
+- [x] Reuse selection-band styling and existing perceptual color/contrast helpers for low-strength semantic backgrounds; derive colors from NMSh roles and preserve NO_COLOR/Safe/limited-color behavior.
+- [x] Keep the first pending arrow muted while paused with an explicit Paused label. Fit summaries by whole status/fact/time/count components, including in the actual Expressive activity region.
+- [x] Capture real TerminalApp.render frames at 80×30 and 32×18 using deterministic shell-event fixtures, with real OutputBuffer, screenPlan, dividers, activity and composer. No hand-composed chrome or real displayed-command execution. Include running, failure/paused, completed and command-promotion sequence; validate PTY/cursor bounds and stored raw output.
+- [x] Keep original 80b9736-sourced captures identifiable; record new source commit for regenerated renderer and integrated-frame evidence. Make SVG backgrounds reflect captured ANSI backgrounds.
+- [ ] Run affected model/presentation/geometry/motion and real-PTY checks, then canonical verification and exact-new-SHA CI. Preserve failures and distinguish all automated evidence from physical QA.
+- [ ] Update the handoff, commit/push only this isolated feature branch, and stop for final visual sign-off before Slice 2.
+
+These are the maintainer’s precise accepted presentation requirements; no additional architecture or brainstorming approval is needed.
+
+
+### Consolidated motion addendum (same follow-up)
+
+- Reuse the existing Transitions store, tuned durations, Clean/Rich painters, PresentationClock subscription and cached changed-row rendering. Add a generic identity-targeted row transition to that store, not a queue animation engine.
+- Diff successive session-owned snapshots for observed execution result/promotion and pending-entry additions; stable target keys use chain/execution/entry IDs. First/replayed snapshots are silent, stale revisions are ignored, repeated same-state snapshots do not retrigger, and hidden target rows are dropped rather than replayed later.
+- Reuse semantic completion sweeps (success/failure/warning), launch accents and event-feedback tuning for header/aggregate changes. Logical outcomes/PTY dispatch remain immediate. Completed and paused rows settle; no queue-only effect timing controls.
+- Use the existing custom-theme Warning role where available, semantic aggregate components, and theme-derived faint fills with contrast correction. Limited-color and NO_COLOR/Safe fallbacks retain full textual state; no host-background probe or terminal palette rewrite.
+- Extend tests/captures to foreground-only, first queue/add, running, success sweep phases, failure, interruption, manual pause/resume, promotion, chain completion and settled frames. Verify identity, no historical reanimation, coalescing, inactive resources, preserved raw output and fixed screen/PTY/composer geometry.

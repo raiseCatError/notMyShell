@@ -26,6 +26,8 @@ export interface QueueRowOptions {
   affordance?: QueueAffordance;
   /** The review a first Enter armed: the row says exactly what the next key does. */
   review?: QueueAffordance;
+  /** Identity of each actually visible timeline row; never its transient display index as an execution ID. */
+  row?: (key: string, index: number) => void;
   now?: number;
   animate?: boolean;
   animationElapsed?: number;

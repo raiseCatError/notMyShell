@@ -1,3 +1,9 @@
+import * as queueRendering from '../src/status/executionTimeline.js';
+import {AnsiOutputParser} from '../src/output/AnsiOutputParser.js';
+import {applyUiTheme, uiColorsFor} from '../src/appearance/uiTheme.js';
+import {currentForeground} from '../src/presentation/cellOverlay.js';
+import {UI_COLORS} from '../src/ui/palette.js';
+import {contrastRatio, relativeLuminance} from '../src/chroma/color.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {QueueDispatcher} from '../src/session/QueueDispatcher.js';
@@ -136,4 +142,101 @@ test('queue manager exposes captured failure policy without reinterpreting stage
   const panel = renderQueuePanel({selected: 0}, {...state, timeline: {...timeline, failurePolicy: 'continue'}}, undefined, 100, 30, true).join('\n');
   assert.match(stripAnsi(panel), /continue after nonzero exit/u);
   assert.match(stripAnsi(panel), /Ctrl\+C always pauses/u);
+});
+
+
+test('paused first pending entry retains a muted next marker and an explicit Paused state', () => {
+  const text = plain({...state, paused: {reason: 'user', at: 3000}}, 32, 7);
+  assert.match(text, /› echo next1 +Paused/u);
+  assert.doesNotMatch(text, /› test/u, 'running uses the activity glyph');
+});
+
+test('semantic row tints are restrained, readable and reset before subsequent terminal content', () => {
+  const failed = structuredClone(state);
+  failed.timeline!.executions[1] = {...failed.timeline!.executions[1]!, status: 'failed', endedAt: 3000, durationMs: 1000, exitCode: 17};
+  const states = [state, failed, {...failed, paused: {reason: 'user' as const, at: 3000}}];
+  const backgrounds = new Set<string>();
+  const rgb = (style: string, layer: number) => {
+    const match = [...style.matchAll(new RegExp(`\\u001b\\[${layer};2;(\\d+);(\\d+);(\\d+)m`, 'gu'))].at(-1);
+    return match ? {red: Number(match[1]), green: Number(match[2]), blue: Number(match[3])} : undefined;
+  };
+  for (const snapshot of states) {
+    for (const row of queueBlock(snapshot, 80, 7, {animate: false})!) {
+      if (!/build|exit 17.*1.0s|echo next1.*(?:Next|Paused)/u.test(stripAnsi(row))) continue;
+      const parser = new AnsiOutputParser(); parser.write(row + '\nUNSTYLED');
+      const cells = parser.allLines()[0]!.filter(cell => cell && cell.text.trim());
+      assert.ok(cells.some(cell => rgb(cell!.style, 48)), `missing semantic background: ${stripAnsi(row)}`);
+      for (const cell of cells) {
+        const bg = rgb(cell!.style, 48), fg = rgb(cell!.style, 38);
+        assert.ok(bg && fg, 'every tinted text cell has a complete readable style');
+        assert.ok(contrastRatio(fg!, bg!) >= 4.5, 'text contrast on tint');
+        assert.ok(relativeLuminance(bg!) < relativeLuminance(UI_COLORS.selection), 'quieter than full focus band');
+        backgrounds.add(JSON.stringify(bg));
+      }
+      assert.ok(parser.allLines()[1]!.every(cell => !cell || !rgb(cell.style, 48)), 'background never leaks into later output');
+      assert.ok(displayWidth(row) <= 80);
+    }
+  }
+  assert.ok(backgrounds.size >= 4, 'success, failure, pause and next remain distinct');
+});
+
+test('narrow aggregate summaries keep complete priority facts instead of clipped phrases', () => {
+  const failed = structuredClone(state);
+  failed.paused = {reason: 'failed', command: 'test', at: 3000, exitCode: 17};
+  const interrupted = structuredClone(state);
+  interrupted.paused = {reason: 'interrupted', command: 'test', at: 3000};
+  interrupted.timeline!.executions[1] = {...interrupted.timeline!.executions[1]!, status: 'interrupted', exitCode: 130};
+  const finished = structuredClone(state); finished.entries = []; finished.timeline!.status = 'finished'; finished.timeline!.executions.pop();
+  const cases: Array<[QueueState, RegExp[]]> = [
+    [state, [/Running/u, /2.0s/u, /3 pending/u]],
+    [{...state, paused: {reason: 'user', at: 3000}}, [/Paused/u, /2.0s wall/u, /3 pending/u]],
+    [failed, [/Paused/u, /exit 17/u, /2.0s/u]],
+    [interrupted, [/Interrupted/u, /exit 130/u, /2.0s/u]],
+    [finished, [/Finished/u, /2.0s/u, /1 succeeded/u]],
+  ];
+  for (const [snapshot, facts] of cases) {
+    const summary = queueActivitySummary(snapshot, 0, 32);
+    assert.ok(displayWidth(summary) <= 32, summary);
+    assert.doesNotMatch(summary, /…|\(incl|wa$/u);
+    for (const fact of facts) assert.match(summary, fact);
+  }
+});
+
+
+test('aggregate parts preserve semantic colors and never celebrate failed or discarded chains', () => {
+  const failed = structuredClone(state); failed.timeline!.status = 'finished'; failed.timeline!.counts.failed = 1;
+  const rendered = queueRendering.renderQueueActivitySummary(failed, 0, 100);
+  const parser = new AnsiOutputParser(); parser.write(rendered);
+  const cells = parser.allLines()[0]!.filter(Boolean);
+  assert.ok(cells.some(cell => cell!.style.includes(`38;2;${UI_COLORS.failure.red};${UI_COLORS.failure.green};${UI_COLORS.failure.blue}`)));
+  const text = stripAnsi(rendered);
+  assert.match(text, /1 failed/u);
+  assert.ok(displayWidth(text) <= 100);
+  const narrow = queueRendering.renderQueueActivitySummary({...state, paused: {reason: 'failed', command: 'test', exitCode: 17, at: 3000}}, 0, 32);
+  assert.match(stripAnsi(narrow), /exit 17/u);
+  assert.doesNotMatch(stripAnsi(narrow), /…/u);
+});
+
+
+test('semantic surfaces follow custom dark/light text roles with readable contrast', () => {
+  const saved = structuredClone(UI_COLORS);
+  try {
+    const backgrounds: string[] = [];
+    for (const theme of [
+      {accent: '#dd88bb', separator: '#557799', success: '#448844', failure: '#bb4455', warning: '#bb8800', primary: '#f7eeee', secondary: '#ddd0dd', subtle: '#887788', selection: '#53435a'},
+      {accent: '#883366', separator: '#557799', success: '#227744', failure: '#992233', warning: '#996600', primary: '#222222', secondary: '#444444', subtle: '#666666', selection: '#e0ddee'},
+    ]) {
+      applyUiTheme(uiColorsFor(theme));
+      const rows = queueBlock(state, 80, 7, {animate: false})!;
+      const row = rows.find(row => stripAnsi(row).includes('build'))!;
+      backgrounds.push(row);
+      const parser = new AnsiOutputParser(); parser.write(row);
+      for (const cell of parser.allLines()[0] ?? []) if (cell?.text.trim()) {
+        const fill = [...cell.style.matchAll(/\u001b\[48;2;(\d+);(\d+);(\d+)m/gu)].at(-1)!;
+        const background = {red: +fill[1]!, green: +fill[2]!, blue: +fill[3]!};
+        assert.ok(contrastRatio(currentForeground(cell.style)!, background) >= 4.5);
+      }
+    }
+    assert.notEqual(backgrounds[0], backgrounds[1], 'surfaces are theme derived');
+  } finally { applyUiTheme(saved); }
 });
