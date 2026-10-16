@@ -8,14 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.20.0] - Unreleased (release candidate)
 
-**Workspace, background tasks & native modules.** A workspace sidebar and detail panel sit beside the transcript; long-running commands run as background tasks beside the shell instead of in front of it; the native module catalog covers twelve more runtimes and tools; and Claude Code managed targets gain native model, effort and mod controls. Every region, task and control is reached through an explicit command or an opt-in key, and the persistent shell, the queue and program input keep their behavior.
+**Workspace, background tasks & native modules.** An experimental workspace sidebar and detail panel (Off by default) can sit beside the transcript; long-running commands run as background tasks beside the shell instead of in front of it; the native module catalog covers twelve more runtimes and tools; and Claude Code managed targets gain native model, effort and mod controls. Every region, task and control is reached through an explicit command or an opt-in key, and the persistent shell, the queue and program input keep their behavior.
 
 This release candidate is built on the **unpublished v0.19.0 release candidate**; neither is published until its physical-terminal QA passes ([v0.20 physical QA checklist](docs/testing/v020-physical-qa.md)).
 
 ### Added
 
-#### Workspace sidebar and detail panel ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
-- `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
+#### Workspace sidebar and detail panel — experimental, Off by default ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
+- **Experimental and Off by default.** Turn it on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). While Off, `/sidebar` and `/panel` say how to turn it on and open nothing, and `keymap.json` workspace bindings are kept but take no key (`/keys` says so). Turning it Off closes open regions and gives the shell every column again. `/worktrees`, `/sessions`, `/github` and `/background` never depend on it. The docked layout is expected to be replaced by integrations with dedicated Git tools in a later release.
+- When on, `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
 - On a wide terminal the regions dock beside the transcript and the shell is sized to the middle; on a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them.
 - Opening a worktree stages its `cd` in an empty composer; tmux navigation selects panes and windows by id through tmux from fixed system locations. Nothing runs by itself.
 - `keymap.json` binds workspace keys, opt-in and validated (composer keys must say what they replace); `/keys` shows the keys in effect, problems in the file and keys the terminal or tmux may take first; `/keys reload` reads it again.
@@ -33,7 +34,7 @@ This release candidate is built on the **unpublished v0.19.0 release candidate**
 
 #### Managed Claude Code ([#347](https://github.com/raiseCatError/notMyShell/pull/347))
 - `/model` and `/effort` as native pickers over Claude's documented control requests; a change shows as requested until Claude reports it.
-- Claude mods with their real types and states per launch identity; enable and disable go through Claude's own `claude plugin` command at the installed scope, then running managed sessions reload. NMSh never edits Claude's settings files.
+- Claude mods with their real types and states per launch identity (read only). Turning a Claude plugin on or off from NMSh is **off in this release**: it was never verified against a live account and it would write your Claude settings, so the row names the `claude plugin enable|disable … --scope …` command to run yourself. Behind the experimental `NMSH_EXPERIMENTAL_CLAUDE_PLUGIN_TOGGLE=1`, it goes through Claude's own command at the installed scope and running managed sessions reload. NMSh never edits Claude's settings files. Managed Claude stays beta; its physical QA was deferred for this release.
 - A context panel beside the agent conversation, provenance on every runtime fact, and Markdown rendering for agent output that reveals real link destinations and refuses smuggled characters.
 
 #### Worktrees and controls
@@ -55,11 +56,11 @@ This release candidate is built on the **unpublished v0.19.0 release candidate**
 - The tmux section of the sidebar needs tmux in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`.
 
 ### Upgrade notes
-- Nothing new is on after the upgrade: the sidebar and panel are opened by command, the composer binds no workspace keys, and background suggestions are off.
+- Nothing new is on after the upgrade: the experimental sidebar and panel are Off (a configuration without the new `workspacePanels` setting reads as Off, and nothing else in it changes), the composer binds no workspace keys, and background suggestions are off.
 - Restart the session service (or start a new session) to use background tasks.
 
 ### Known limitations
-- **Physical-terminal QA has not been performed** for the workspace regions, drawers, background tasks, keymap host notes or the new modules; automated tests and real-PTY suites cover them.
+- **Physical-terminal QA has not been performed** for the background tasks or the new modules; automated tests and real-PTY suites cover them. The experimental workspace regions, drawers and keymap host notes are not part of this release's physical QA gate (only their Off state is checked) and are not physically tested.
 - Clicks focus a region but do not select sidebar rows; the mouse wheel scrolls the transcript wherever the pointer is.
 - The sidebar lists tmux and worktrees only; NMSh sessions and managed targets as rows, and module diagnostics in the detail panel (they stay in `/modules` details), are not included.
 - Background tasks run in a separate shell: aliases, functions and unexported variables of the live shell are not available. A service restart ends the tasks it owned. Output kept by the task owner is 5,000 lines or 2 MiB per task.
@@ -113,6 +114,9 @@ Verification: automated CI (unit and real-PTY suites on macOS and Ubuntu, Node 2
 - Module details explain where a fact came from, its freshness, cache retention and measured collection time, and say when a fact is uncollected or unknown rather than implying it; `/doctor` reports Context Engine health ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
 - Ruby and PHP version modules read the project's own files and the install location, never running an interpreter. The Gemfile `ruby` declaration is parsed in linear time.
 - `/theme` imports **Starship** configurations as Native themes from their static colors only; format strings and custom commands are never evaluated, and the preview lists what was not carried over.
+
+### Changed
+- **Setup Cat order: Look → Prompt → Motion.** The first steps after Terminal are now **Look** (formerly Appearance): theme family, variant, accent, theme text, UI chrome, then Chroma (the only place Setup chooses it) with its dependent rows under it; **Prompt**, which shows Chroma as a read-only line that goes to Look; and **Motion**, which now starts with Reduced Motion, Decorative effects, Shimmer and Milestone effects above the motion rows they govern. Cursor follows Motion. Every setting stays reachable and saved values are unchanged; `/setup look` opens Look (`/setup appearance` and `/setup chroma` still work).
 
 ### Fixed
 - **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.

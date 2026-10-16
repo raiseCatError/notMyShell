@@ -28,27 +28,34 @@ export function inputHeadline(request: Pick<InputRequest, 'confidence'>): string
   return request.confidence === 'confirmed' ? 'Waiting for input' : 'Probably waiting for input';
 }
 
-/** How typing reaches the program, in a few words. */
-export function inputHint(request: InputRequest, program: string): string {
-  if (request.confidence === 'likely') return `Enter sends a line to ${program}`;
-  switch (request.mode) {
-    case 'hidden': return `typing is hidden and goes straight to ${program} · Enter sends`;
-    case 'key': return `each key goes straight to ${program}`;
-    case 'line': return `Enter sends a line to ${program}`;
-  }
+/** What the program is reading, for a wait that left no question on its line. */
+export function inputReading(request: InputRequest, program: string): string {
+  const what = request.mode === 'hidden' ? 'hidden input' : request.mode === 'key' ? 'a single key' : 'a line';
+  return request.confidence === 'likely' ? `${program} is probably reading ${what}` : `${program} is reading ${what}`;
+}
+
+/**
+ * The composer's one instruction while a program waits: what to do and where Enter goes, said once (the activity
+ * rows carry the state and the question). Hidden input never shows what is typed, not even as dots.
+ */
+export function inputComposerHint(request: InputRequest, program: string, queue: boolean): string {
+  const queueing = queue ? ' · Ctrl+Q queues a command' : '';
+  if (request.confidence === 'confirmed' && request.mode === 'hidden') return `Hidden input · nothing you type is shown · Enter sends it to ${program}${queueing}`;
+  if (request.confidence === 'confirmed' && request.mode === 'key') return `Press a key · it goes straight to ${program}${queueing}`;
+  return `Type your answer · Enter sends it to ${program}${queueing}`;
 }
 
 /**
  * The two rows of the live activity region while a command waits: the attention line (headline, program, how long
- * it has waited, and the total when it differs) and the prompt it left open with how input reaches it. Fits
- * `columns` by dropping the least important parts first.
+ * it has waited, and the total when it differs) and the question it left open, or what it reads when it left none.
+ * Fits `columns` by dropping the least important parts first.
  */
 export function inputActivityRows(state: InputState & {request: InputRequest}, command: string, startedAt: number, now: number, columns: number): [string, string] {
   const request = state.request;
   const program = inputProgram(request, command);
-  const accent = foreground(UI_COLORS.accent);
+  const attention = foreground(UI_COLORS.attention);
+  const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
-  const subtle = foreground(UI_COLORS.subtle);
   // The wait comes from the session's clock and the total from this frontend's: never show a wait longer than the run.
   const total = Math.max(0, now - startedAt);
   const waitedMs = Math.min(Math.max(0, now - request.since), total);
@@ -57,16 +64,12 @@ export function inputActivityRows(state: InputState & {request: InputRequest}, c
   const head = `${inputGlyph(request)} ${inputHeadline(request)}`;
   const tails = [[program, waiting, ...(showTotal ? [`${formatDuration(total)} total`] : [])], [program, waiting], [waiting]];
   const tail = tails.find(parts => displayWidth(`${head} · ${parts.join(' · ')}`) <= columns) ?? [];
-  const first = `${accent}${BOLD}${truncateText(head, columns)}${RESET}${tail.length ? `${secondary} · ${tail.join(' · ')}${RESET}` : ''}`;
-  const prompt = request.prompt ?? '';
-  const hint = inputHint(request, program);
+  const first = `${attention}${BOLD}${truncateText(head, columns)}${RESET}${tail.length ? `${secondary} · ${tail.join(' · ')}${RESET}` : ''}`;
   const indent = '  ';
   const room = Math.max(1, columns - displayWidth(indent));
-  let second: string;
-  // The question outranks the hint: the hint only shows when both fit; otherwise the question takes the row.
-  if (!prompt) second = `${indent}${subtle}${truncateText(hint, room)}${RESET}`;
-  else if (displayWidth(`${prompt}  ·  ${hint}`) <= room) second = `${indent}${BOLD}${prompt}${RESET}${subtle}  ·  ${hint}${RESET}`;
-  else second = `${indent}${BOLD}${truncateText(prompt, room)}${RESET}`;
+  // The program's own question, as it wrote it; without one, what it is reading. How to answer is the composer's.
+  const second = request.prompt ? `${indent}${primary}${BOLD}${truncateText(request.prompt, room)}${RESET}`
+    : `${indent}${secondary}${truncateText(inputReading(request, program), room)}${RESET}`;
   return [first, second];
 }
 
@@ -80,9 +83,4 @@ export function waitedDetail(state: InputState | undefined, now: number, elapsed
 export function completionWaitFact(timing: InputTiming | undefined): string {
   if (!timing?.waits || timing.waitedMs < 1000) return '';
   return ` · ${formatDuration(timing.waitedMs)} waiting for input${timing.waits > 1 ? ` (${timing.waits} prompts)` : ''}`;
-}
-
-/** The composer's placeholder while keys go straight to the program (hidden or key input). Never shows what is typed. */
-export function directInputPlaceholder(request: InputRequest, program: string): string {
-  return request.mode === 'hidden' ? `Hidden input for ${program} · nothing you type is shown` : `Keys go straight to ${program}`;
 }

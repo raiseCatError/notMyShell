@@ -58,7 +58,9 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
-  {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
+  {name: '/setup look', insertion: '/setup look', description: 'Setup Cat: theme, UI chrome and Chroma (the Look step)'},
+  {name: '/setup appearance', insertion: '/setup appearance', description: 'Same as /setup look'},
+  {name: '/setup motion', insertion: '/setup motion', description: 'Setup Cat: Reduced Motion, decorative effects and motion, with a live preview'},
   {name: '/setup transcript', insertion: '/setup transcript', description: 'Setup Cat: transcript presentation, history colors, dividers and folding'},
   {name: '/setup cursor', insertion: '/setup cursor', description: 'Setup Cat: cursor shape, effects and colors, with a live preview'},
   {name: '/setup syntax', insertion: '/setup syntax', description: 'Setup Cat: editor, syntax colors and suggestions'},
@@ -103,8 +105,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/extensions', insertion: '/extensions', description: 'Alias of /mods'},
   {name: '/worktrees', insertion: '/worktrees', description: 'This repository\'s Git worktrees: open one, create or remove with a reviewed plan'},
   {name: '/github', insertion: '/github', description: 'Read-only GitHub workspace for this repository: PRs, issues, checks and diffs (uses gh)'},
-  {name: '/sidebar', insertion: '/sidebar', description: 'Workspace sidebar beside the transcript: tmux panes, worktrees and managers (/sidebar focus)'},
-  {name: '/panel', insertion: '/panel', description: 'Detail panel for what the sidebar selects (/panel focus); q or /panel closes it'},
+  {name: '/sidebar', insertion: '/sidebar', description: 'Experimental (Off by default; Settings → Layout): workspace sidebar beside the transcript: tmux panes, worktrees and managers'},
+  {name: '/panel', insertion: '/panel', description: 'Experimental (Off by default; Settings → Layout): detail panel for what the sidebar selects; q or /panel closes it'},
   {name: '/keys', insertion: '/keys', description: 'Workspace keys in effect, problems in keymap.json and host notes (/keys reload)'},
   {name: '/background', insertion: '/background', description: 'Background tasks: list, output, stop and remove (/background run <command> · stop|kill|remove t3 · clear · suggestions on|off)'},
   {name: '/bg', insertion: '/bg', description: 'Same as /background'},
@@ -276,7 +278,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     }
     return {kind: 'keepAwake', op: 'panel', invalid: word};
   }
-  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
+  const setup = /^\/setup(?:\s+(prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};

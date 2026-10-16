@@ -375,6 +375,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'transcriptPresentation', label: 'Transcript presentation', description: 'Normal rows, or Chat with commands on the right', category: 'Layout',
     values: TRANSCRIPT_PRESENTATIONS, labels: TRANSCRIPT_PRESENTATIONS.map(presentation => TRANSCRIPT_PRESENTATION_LABELS[presentation]),
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
+  {id: 'workspacePanels', label: 'Workspace sidebar & panel', description: 'Experimental, Off by default: /sidebar and /panel dock tmux panes, worktrees and details beside the transcript. Off, they never open; /worktrees, /sessions, /github and /background work either way', category: 'Layout',
+    control: 'boolean', get: config => config.workspacePanels, set: (config, workspacePanels) => ({...config, workspacePanels})},
   {id: 'composerDividers', label: 'Composer dividers', description: 'The horizontal lines around the composer; Off gives their rows back. Transcript dividers and prompt separators are separate', category: 'Layout',
     control: 'boolean', get: config => config.composerDividers, set: (config, composerDividers) => ({...config, composerDividers})},
   enumRow({id: 'copyMode', label: '/copy without a number', description: 'Quick Copy copies the latest command output at once; Interactive Picker lists recent outputs to choose one or several. /copy N, -N, A-B and 1,3,5 always copy directly',

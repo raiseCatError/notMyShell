@@ -52,12 +52,12 @@ test('live: /copy and /cp select by number, count, range and list, oldest first;
   try {
     await ready(frontend);
     await history(frontend);
-    assert.equal(await copied(frontend, '/copy'), 'omega');
-    assert.equal(await copied(frontend, '/copy -3'), 'boom\nomega', 'the silent command adds nothing');
-    assert.equal(await copied(frontend, '/cp -3'), 'boom\nomega', '/cp is /copy');
-    assert.equal(await copied(frontend, '/copy 2-4'), 'alpha\n  two\nboom');
-    assert.equal(await copied(frontend, '/cp 4,1'), 'alpha\n  two\nomega', 'a list copies in the order the commands ran');
-    assert.equal(await copied(frontend, '/cp latest'), 'omega');
+    assert.equal(await copied(frontend, '/copy'), 'omega\n', 'exactly as printed, with its line break');
+    assert.equal(await copied(frontend, '/copy -3'), 'boom\nomega\n', 'the silent command adds nothing');
+    assert.equal(await copied(frontend, '/cp -3'), 'boom\nomega\n', '/cp is /copy');
+    assert.equal(await copied(frontend, '/copy 2-4'), 'alpha\n  two\nboom\n');
+    assert.equal(await copied(frontend, '/cp 4,1'), 'alpha\n  two\nomega\n', 'a list copies in the order the commands ran');
+    assert.equal(await copied(frontend, '/cp latest'), 'omega\n');
     const withStatus = await copied(frontend, '/cp -3 --status');
     assert.match(withStatus, /^boom\n✘ Command failed · exit 3 · [^\n]+\n✔ Completed · [^\n]+\nomega\n✔ Completed · [^\n]+$/u,
       `each status follows its own output; the silent one copies its status alone: ${JSON.stringify(withStatus)}`);
@@ -91,7 +91,7 @@ test('live: Interactive Picker mode: bare /copy opens the picker; it says whethe
     await ready(frontend);
     await history(frontend);
     // Explicit forms behave the same in both modes.
-    assert.equal(await copied(frontend, '/copy 1'), 'omega');
+    assert.equal(await copied(frontend, '/copy 1'), 'omega\n');
     let mark = frontend.mark;
     frontend.pty.write('/copy\r');
     await frontend.waitFor(/Copy output[\s\S]*Completion status: not included \(s\)[\s\S]*echo omega/u, mark);
@@ -132,7 +132,7 @@ test('live: /copy settings changes the default and the status setting; they pers
     }, 10_000, 'the setting saved');
     frontend.pty.write('\u001b');
     assert.match(await copied(frontend, '/copy'), /^PERSIST\n✔ Completed · /u, 'the setting applies at once');
-    assert.equal(await copied(frontend, '/copy --no-status'), 'PERSIST', '--no-status overrides it once');
+    assert.equal(await copied(frontend, '/copy --no-status'), 'PERSIST\n', '--no-status overrides it once');
     frontend.pty.kill('SIGKILL');
     const next = launch();
     await ready(next);
@@ -151,7 +151,7 @@ test('live: after detach and reattach, /copy reaches the commands of the restore
     const back = launch(['--attach', session!.id]);
     await back.waitFor(/omega/u, 0, 30_000);
     await back.waitFor(/❯/u);
-    assert.equal(await copied(back, '/copy -3'), 'boom\nomega');
+    assert.equal(await copied(back, '/copy -3'), 'boom\nomega\n');
     assert.match(await copied(back, '/cp 1 --status'), /^omega\n✔ Completed · /u);
   } finally { await sandbox.dispose(); }
 });

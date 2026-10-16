@@ -4,12 +4,13 @@ import {OpenLine, promptShaped, promptText} from '../src/session/openLine.js';
 import {parseCpuTime, parseForeground, parseStty, parseSyscall, type TerminalSample} from '../src/session/terminalProbe.js';
 import {InputWatch} from '../src/session/InputWatch.js';
 import {directInput, waitedSoFar, type InputState} from '../src/session/inputState.js';
-import {decodeMessage, encodeMessage, inputStateFrom, inputStateMessage, parseClientFeatures, type SessionInfo} from '../src/session/SessionProtocol.js';
+import {decodeMessage, encodeMessage, inputStateFrom, inputStateMessage, parseClientFeatures, parseFeatures, type SessionInfo} from '../src/session/SessionProtocol.js';
 import {describeNotice, noticeVisibleMs, SessionNoticeTracker} from '../src/session/SessionNotices.js';
 import {liveStatusParts} from '../src/session/liveStatus.js';
 import {LIVE_ROW_LABELS, liveRowState} from '../src/sessions/ResumeBrowser.js';
 import {directKeyBytes} from '../src/terminal/keyBytes.js';
-import {completionWaitFact, directInputPlaceholder, inputActivityRows, waitedDetail} from '../src/status/inputStatus.js';
+import {completionWaitFact, inputActivityRows, inputComposerHint, waitedDetail} from '../src/status/inputStatus.js';
+import {foreground, UI_COLORS} from '../src/ui/palette.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T {
@@ -202,6 +203,84 @@ test('watch: ordinary line input is only "likely", and only after the group is s
   assert.equal(h.watch.state.request, undefined);
 });
 
+/** The shell itself in the terminal's foreground group: the session leader (ps state `s`) runs a builtin. */
+const shellFg = (state = 'Ss+', cpuMs = 10) => [{pid: 4000, state, cpuMs, command: 'zsh'}];
+
+test('watch: the shell holding the terminal with line input off (read -k 1, read -n 1, no prompt) reads keys: confirmed at once', async () => {
+  const h = harness('read -k 1 x; echo got:$x');
+  h.set({modes: keyModes, foreground: shellFg()});
+  await h.advance(450);
+  assert.equal(h.watch.state.request?.confidence, 'confirmed');
+  assert.equal(h.watch.state.request?.mode, 'key');
+  assert.equal(directInput(h.watch.state.request), true);
+  // The same line settings with another program in the foreground and no prompt stay what they were: not a request.
+  const other = harness('docker run -it image');
+  other.set({modes: keyModes, foreground: fg('S+', 100, 'docker')});
+  await other.advance(30_000);
+  assert.equal(other.watch.state.request, undefined);
+});
+
+test('watch: the shell holding the terminal with line input (read -r reply, no prompt) is likely after two idle samples, the second soon after', async () => {
+  const h = harness("read -r QA_REPLY; printf 'ANSWER=%s\\n' \"$QA_REPLY\"");
+  h.set({modes: lineModes, foreground: shellFg()});
+  await h.advance(450);
+  assert.equal(h.watch.state.request, undefined, 'one sample cannot tell a read from a loop between commands');
+  await h.advance(120);
+  assert.equal(h.watch.state.request?.confidence, 'likely');
+  assert.equal(h.watch.state.request?.mode, 'line');
+  assert.equal(directInput(h.watch.state.request), false, 'a line read keeps the composer\'s editor; Enter sends it');
+  h.watch.onInput('hello\r', h.at());
+  assert.equal(h.watch.state.request, undefined, 'the answer ends the wait');
+});
+
+test('watch: a loop\'s shell between commands, or a shell computing, is not a request', async () => {
+  // The follow-up sample sees the loop's next command in the foreground.
+  const loop = harness('for i in 1 2 3; do sleep 1; done');
+  loop.set({modes: lineModes, foreground: shellFg()});
+  await loop.advance(450);
+  loop.set({modes: lineModes, foreground: fg('S+', 1, 'sleep')});
+  await loop.advance(30_000);
+  assert.equal(loop.watch.state.request, undefined);
+  assert.ok(loop.changes.every(state => !state.request), 'never reported, not even for a moment');
+  // A builtin loop computing in the shell: on a CPU, or using it across samples.
+  const busy = harness('while :; do :; done');
+  let cpu = 10;
+  for (let index = 0; index < 20; index++) {
+    cpu += 400;
+    busy.set({modes: lineModes, foreground: shellFg(index % 2 ? 'Rs+' : 'Ss+', cpu)});
+    await busy.advance(500);
+  }
+  assert.equal(busy.watch.state.request, undefined);
+});
+
+test('watch: lookNow samples at once, outside the backed-off schedule; nothing running means nothing to look at', async () => {
+  const h = harness('sleep 70; read -k 1 x');
+  h.set({modes: lineModes, foreground: fg('S+', 1, 'sleep')});
+  // Long quiet: the schedule has backed off to one look every ten seconds.
+  await h.advance(90_000);
+  h.set({modes: keyModes, foreground: shellFg()});
+  let probes = 0;
+  const looked = h.watch.lookNow().then(() => { probes += 1; });
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  await looked;
+  assert.equal(probes, 1);
+  assert.equal(h.watch.state.request?.mode, 'key', 'seen at once, not at the next scheduled look');
+  // A line read needs its second sample: lookNow takes it after the short follow-up.
+  const line = harness('sleep 70; read reply');
+  line.set({modes: lineModes, foreground: fg('S+', 1, 'sleep')});
+  await line.advance(90_000);
+  line.set({modes: lineModes, foreground: shellFg()});
+  const second = line.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  await line.advance(100);
+  await second;
+  assert.equal(line.watch.state.request?.confidence, 'likely');
+  // At the prompt there is no command: lookNow returns without a sample.
+  line.watch.onPrompt(line.at());
+  await line.watch.lookNow();
+  assert.equal(line.watch.state.request, undefined);
+});
+
 test('watch: no false positives for builds, sleep, network waits, progress bars, statuses or log streams', async () => {
   // A build that printed a colon-ended status and is computing.
   const build = harness('make');
@@ -363,6 +442,16 @@ test('protocol: input-state round-trips; unknown values are dropped, never guess
   assert.ok(hello.ok && hello.message.type === 'hello');
   assert.deepEqual([...parseClientFeatures((hello.message as {features?: string}).features)], ['input-state']);
   assert.deepEqual([...parseClientFeatures(undefined)], [], 'an older frontend says nothing and gets nothing new');
+  // On-demand looks: a numbered request and its answer; only between peers that both listed 'input-look'.
+  for (const message of [{type: 'input-look', id: 7}, {type: 'input-looked', id: 7}] as const) {
+    const look = decodeMessage(encodeMessage(message).trimEnd());
+    assert.ok(look.ok);
+    assert.deepEqual(look.message, message);
+  }
+  assert.equal(decodeMessage(encodeMessage({type: 'input-look', id: 'x'} as never).trimEnd()).ok, false);
+  assert.deepEqual([...parseClientFeatures('input-state,input-look')], ['input-state', 'input-look']);
+  assert.ok(parseFeatures('queue,input-look').has('input-look'));
+  assert.equal(parseFeatures('queue').has('input-look'), false, 'an older service is never asked to look');
   const prompt = decodeMessage(encodeMessage({type: 'prompt', exitCode: 0, cwd: '/', seq: 1, at: 2, inputWaitMs: 18000, inputWaits: 2}).trimEnd());
   assert.ok(prompt.ok && prompt.message.type === 'prompt' && (prompt.message as {inputWaitMs?: number}).inputWaitMs === 18000);
 });
@@ -413,13 +502,22 @@ test('presentation: distinct from Running in words and glyphs; fits narrow width
   withEnv({NO_COLOR: undefined, NMSH_ICONS: undefined, TERM: 'xterm-256color'}, () => {
     const [first, second] = inputActivityRows(state, 'e2fsck -f disk.img', 0, 100_000, 100);
     assert.equal(stripAnsi(first), '◆ Waiting for input · e2fsck · 18.0s · 1m 40s total');
-    assert.equal(stripAnsi(second), '  Padding at end of inode bitmap is not set. Fix<y>?  ·  each key goes straight to e2fsck');
+    assert.equal(stripAnsi(second), '  Padding at end of inode bitmap is not set. Fix<y>?', 'the question as written; how to answer is the composer\'s');
+    // Its own hue: never the running shimmer's lavender or the accent.
+    assert.ok(first.startsWith(foreground(UI_COLORS.attention)), 'the attention color leads the row');
+    for (const other of [UI_COLORS.accent, UI_COLORS.workingBase, UI_COLORS.workingPeak]) assert.notDeepEqual(UI_COLORS.attention, other);
+    // No question on the line (`read -r reply`): the second row says what the program reads, never empty.
+    const bare = inputActivityRows({...state, request: {since: 82_000, confidence: 'likely', mode: 'line', program: 'zsh'}}, 'read -r reply', 0, 100_000, 100).map(stripAnsi);
+    assert.equal(bare[0], '◇ Probably waiting for input · zsh · 18.0s · 1m 40s total');
+    assert.equal(bare[1], '  zsh is probably reading a line');
+    assert.equal(stripAnsi(inputActivityRows({...state, request: {since: 82_000, confidence: 'confirmed', mode: 'hidden', program: 'bash'}}, 'read -s', 0, 100_000, 100)[1]),
+      '  bash is reading hidden input');
     for (const columns of [20, 32, 48]) {
       for (const row of inputActivityRows(state, 'e2fsck -f disk.img', 0, 100_000, columns)) assert.ok(displayWidth(stripAnsi(row)) <= columns, `${columns}: ${stripAnsi(row)}`);
     }
     const narrow = inputActivityRows(state, 'e2fsck', 0, 100_000, 32).map(stripAnsi);
     assert.match(narrow[0], /^◆ Waiting for input · 18\.0s$/u, 'the wait and its time survive; detail goes first');
-    assert.match(narrow[1], /^ {2}Padding at end/u, 'the question outranks the hint');
+    assert.match(narrow[1], /^ {2}Padding at end/u, 'the question keeps its row');
     assert.equal(displayWidth(narrow[1]), 32, 'without the hint, the question takes the whole row');
   });
   withEnv({NO_COLOR: '1', NMSH_ICONS: 'safe'}, () => {
@@ -429,7 +527,10 @@ test('presentation: distinct from Running in words and glyphs; fits narrow width
     assert.match(stripAnsi(first), /^\? Probably waiting for input · e2fsck · 18\.0s$/u);
     assert.equal(stripAnsi(inputActivityRows(state, 'e2fsck', 0, 100_000, 80)[0]).charAt(0), '!');
   });
-  assert.equal(directInputPlaceholder({...state.request, mode: 'hidden'}, 'sudo'), 'Hidden input for sudo · nothing you type is shown');
+  // One instruction in the composer per kind of read; hidden input never shows what is typed.
+  assert.equal(inputComposerHint({...state.request, mode: 'hidden'}, 'sudo', true), 'Hidden input · nothing you type is shown · Enter sends it to sudo · Ctrl+Q queues a command');
+  assert.equal(inputComposerHint(state.request, 'e2fsck', true), 'Press a key · it goes straight to e2fsck · Ctrl+Q queues a command');
+  assert.equal(inputComposerHint({...state.request, confidence: 'likely', mode: 'line'}, 'bash', false), 'Type your answer · Enter sends it to bash');
   assert.equal(completionWaitFact({waitedMs: 18_000, waits: 1}), ' · 18.0s waiting for input');
   assert.equal(completionWaitFact({waitedMs: 65_000, waits: 3}), ' · 1m 5s waiting for input (3 prompts)');
   assert.equal(completionWaitFact({waitedMs: 300, waits: 1}), '', 'an instant answer is not worth a fact');

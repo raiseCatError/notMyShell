@@ -24,7 +24,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -32,7 +32,7 @@ export type ServiceFeature = typeof SERVICE_FEATURES[number];
  * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
  * attached to a newer service never receives a frame it would reject.
  */
-export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks'] as const;
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look'] as const;
 export type ClientFeature = typeof CLIENT_FEATURES[number];
 
 export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
@@ -68,6 +68,11 @@ export type ClientMessage =
   | {type: 'queue'; change: string}
   /** One background task request (TaskOp as JSON); only from frontends that listed 'background-tasks'. */
   | {type: 'task'; change: string}
+  /**
+   * Look at the running command's input state now (a key is about to be routed); answered by input-looked with the
+   * same id, after any input-state the look produced. Only to services that advertised 'input-look'.
+   */
+  | {type: 'input-look'; id: number}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -107,6 +112,8 @@ export type ServerMessage =
    */
   /** The session's command queue (QueueState as JSON) and what just happened to it. */
   | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
+  /** The look asked for by input-look id is done; only to frontends that listed 'input-look'. */
+  | {type: 'input-looked'; id: number}
   | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
   | {type: 'tasks'; state: string}
@@ -193,6 +200,8 @@ const SHAPES: Record<string, Shape> = {
   kill: {sessionId: 'string'},
   dismiss: {sessionId: 'string'},
   queue: {change: 'string'},
+  'input-look': {id: 'int'},
+  'input-looked': {id: 'int'},
   'queue-state': {state: 'string', dispatched: 'int?', refused: 'string?', dropped: 'int?'},
   task: {change: 'string'},
   tasks: {state: 'string'},

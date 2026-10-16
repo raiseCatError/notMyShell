@@ -55,9 +55,9 @@ test('live: failure keys and reference copies use restored command records and p
       assert.equal(readFileSync(clipboard, 'utf8'), expected);
     }
     // Successful output containing "error" is skipped. Navigation chooses records, not matching output rows.
-    await copyOutput('\u001b[19~', 'src/latest.ts:42:7\nhttps://example.com/docs');
-    await copyOutput('\u001b[19~', 'OLDER-FAILURE');
-    await copyOutput('\u001b[19;2~', 'src/latest.ts:42:7\nhttps://example.com/docs');
+    await copyOutput('\u001b[19~', 'src/latest.ts:42:7\nhttps://example.com/docs\n');
+    await copyOutput('\u001b[19~', 'OLDER-FAILURE\n');
+    await copyOutput('\u001b[19;2~', 'src/latest.ts:42:7\nhttps://example.com/docs\n');
 
     await palette(back, 'files links', /Files, links and more/u);
     const mark = back.mark;

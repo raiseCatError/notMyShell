@@ -11,7 +11,7 @@ import type {TaskOp} from '../backgroundTasks/protocol.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>
-  & Partial<Pick<ShellSession, 'removeAllListeners' | 'isReady' | 'pid'>>;
+  & Partial<Pick<ShellSession, 'removeAllListeners' | 'isReady' | 'pid' | 'inputWatch'>>;
 const NO_STAMP = {};
 
 /** SessionClient backed by a ShellSession living in this process. */
@@ -77,6 +77,12 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   }
   interrupt(): void { this.dispatcher.onInterrupt(); this.shell.interrupt(); }
   queue(change: QueueOp): void { this.dispatcher.request(change); }
+  async lookInput(): Promise<boolean> {
+    const watch = this.shell.inputWatch;
+    if (!watch) return false;
+    await watch.lookNow();
+    return true;
+  }
 
   private queueShell(): QueueShell {
     const client = this;

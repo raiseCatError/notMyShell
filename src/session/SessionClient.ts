@@ -90,6 +90,11 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
    * 'background-tasks'). Tasks run beside the shell in their own terminals; they never use the shell's PTY.
    */
   task?(change: TaskOp): void;
+  /**
+   * Look at the running command's input state now; resolves true once the look is done (any change it found has
+   * already been emitted as inputState), false when whatever owns the shell cannot look on demand.
+   */
+  lookInput?(): Promise<boolean>;
   /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
   readonly features: ReadonlySet<ServiceFeature>;
   /** Build of the session service, when it reported one. */

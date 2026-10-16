@@ -4,7 +4,11 @@ import {chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, 
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {claudePluginEntries, drawsOnly, inspectPlugin, managedRuntime, readComponents, setPluginEnabled, standaloneSkills} from '../src/agents/mods/claudePlugins.js';
+import {CLAUDE_PLUGIN_WRITES_ENV, claudePluginEntries, drawsOnly, inspectPlugin, managedRuntime, readComponents, setPluginEnabled, standaloneSkills} from '../src/agents/mods/claudePlugins.js';
+
+// The enable/disable path is off by default in this release (unverified against a live account); these tests
+// exercise it behind its experimental switch. The default is checked on its own below.
+process.env[CLAUDE_PLUGIN_WRITES_ENV] = '1';
 import {withLoadedIn} from '../src/agents/mods/inventory.js';
 import {ModsController, modsKeyAction} from '../src/agents/mods/controller.js';
 import {renderMods} from '../src/agents/mods/view.js';
@@ -221,5 +225,21 @@ test('the real installed Claude, read-only: every listed plugin parses, with a t
   for (const configDir of (process.env.NMSH_REAL_CLAUDE_DIRS ?? '').split(':').filter(Boolean)) {
     const entries = await claudePluginEntries(await listClaudePlugins('claude', process.cwd(), configDir), process.cwd(), {name: configDir, configDir});
     assert.ok(entries.every(entry => entry.nativeType && entry.enabled !== 'unknown'), configDir);
+  }
+});
+
+test('default: plugin changes are off and explained; the inventory stays; Claude is never run to change anything', async () => {
+  const saved = process.env[CLAUDE_PLUGIN_WRITES_ENV];
+  delete process.env[CLAUDE_PLUGIN_WRITES_ENV];
+  try {
+    const listing = [{id: 'skins@market', version: '1.0.0', scope: 'user', enabled: true, installPath: '/nonexistent/skins'}];
+    const [entry] = await claudePluginEntries(listing, '/nonexistent-project');
+    assert.equal(entry!.enabled, 'yes', 'what Claude reports is still read and shown');
+    assert.deepEqual(entry!.toggle, {supported: false, reason: 'Turning plugins on and off from NMSh is not verified in this release. Run it yourself: claude plugin disable skins@market --scope user'});
+    // Even a direct call never starts Claude: the executable here would fail the test if it ran.
+    assert.deepEqual(await setPluginEnabled('/nonexistent/claude-must-not-run', entry!, false, new Set(['skins@market'])),
+      {ok: false, message: 'Turning plugins on and off from NMSh is not verified in this release'});
+  } finally {
+    if (saved === undefined) delete process.env[CLAUDE_PLUGIN_WRITES_ENV]; else process.env[CLAUDE_PLUGIN_WRITES_ENV] = saved;
   }
 });

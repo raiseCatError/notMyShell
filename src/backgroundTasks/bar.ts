@@ -1,6 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
-import {displayWidth, truncateText} from '../util/text.js';
+import {selectionBand, selectionForeground} from '../ui/selectionBand.js';
+import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import type {StopLevel, TaskRecord, TaskState} from './supervisor.js';
 
@@ -55,6 +56,26 @@ export function entersBar(key: Key, composer: ComposerState, tasks: number, upAr
 }
 
 const LIVE: ReadonlySet<TaskState> = new Set(['running', 'stopping']);
+
+/**
+ * How long a finished task stays on the bar with its outcome before the bar lets it go (the task itself stays in
+ * /background, bounded by finishedKept). A failure stays longer than a clean end. Nothing that still runs is ever let
+ * go: a live task, or a finished one whose processes are left, stays until it is stopped.
+ */
+export const FINISHED_ON_BAR_MS: Record<'exited' | 'stopped' | 'failed', number> = {exited: 6000, stopped: 6000, failed: 30_000};
+
+/** Whether the bar shows a task now; `keep` is a task the person has selected or is viewing (never pulled away). */
+export function onBar(task: TaskRecord, now: number, keep?: string): boolean {
+  if (LIVE.has(task.state) || task.leftovers || task.id === keep || task.endedAt === undefined) return true;
+  return now - task.endedAt < FINISHED_ON_BAR_MS[task.state as keyof typeof FINISHED_ON_BAR_MS];
+}
+
+/** When the next finished task leaves the bar, so the frontend can redraw then (undefined: nothing will). */
+export function nextBarChange(tasks: readonly TaskRecord[], now: number, keep?: string): number | undefined {
+  const times = tasks.filter(task => onBar(task, now, keep) && !LIVE.has(task.state) && !task.leftovers && task.id !== keep && task.endedAt !== undefined)
+    .map(task => task.endedAt! + FINISHED_ON_BAR_MS[task.state as keyof typeof FINISHED_ON_BAR_MS]);
+  return times.length ? Math.min(...times) : undefined;
+}
 const LEVEL_WORDS: Record<StopLevel, string> = {interrupt: 'interrupt', terminate: 'terminate (SIGTERM)', kill: 'kill (SIGKILL)'};
 
 /**
@@ -194,9 +215,14 @@ export function stateWords(task: TaskRecord): string {
   }
 }
 
+/**
+ * One narrow cell each: these are not East Asian ambiguous-width characters (● ◐ ■ are, and some terminals draw them
+ * wider than the cell their width is counted as, pushing the label off its column). A small dot reads as "live" without
+ * a large disc, and never as a second pointer beside the selection's ›.
+ */
 const marks = (safe: boolean): Record<TaskState, string> => safe
   ? {running: '*', stopping: '~', exited: '+', failed: 'x', stopped: '-'}
-  : {running: '●', stopping: '◐', exited: '✓', failed: '✗', stopped: '■'};
+  : {running: '∙', stopping: '◦', exited: '✓', failed: '✗', stopped: '▪'};
 
 /**
  * Task text as NMSh may draw it. Commands, families and directory names are not NMSh's words: a pasted command or a
@@ -240,13 +266,21 @@ export function renderTaskBar(controller: TaskBarController, tasks: readonly Tas
   const width = Math.max(1, options.width);
   const m = marks(options.safe);
   const reset = options.color ? '\u001b[0m' : '';
-  const tone = (state: TaskState) => state === 'failed' ? UI_COLORS.failure : state === 'running' ? UI_COLORS.accent : state === 'stopping' ? UI_COLORS.secondary : UI_COLORS.subtle;
-  const paint = (text: string, color: {red: number; green: number; blue: number}, bold = false) => options.color ? `${bold ? '\u001b[1m' : ''}${foreground(color)}${text}${reset}` : text;
+  const tone = (state: TaskState) => state === 'failed' ? UI_COLORS.failure : state === 'running' ? UI_COLORS.accent
+    : state === 'exited' ? UI_COLORS.success : state === 'stopping' ? UI_COLORS.secondary : UI_COLORS.subtle;
+  const ink = (color: {red: number; green: number; blue: number}, selected = false, minimum = 4.5) => options.color ? selectionForeground(color, selected, minimum) : '';
+  const bold = options.color ? '\u001b[1m' : '';
   const selected = tasks.find(task => task.id === controller.selectedId) ?? tasks[0]!;
+  const up = options.safe ? '^' : '↑';
+  const enter = options.upArrow === 'off' ? `Shift+${up}` : up;
   const keysFor = (task: TaskRecord) => [
     'Enter view', stopHint(task, options.next, options.now), removalBlocked(task) ? '' : 'Del remove', 'Esc back',
   ].filter(Boolean);
-  const rowText = (task: TaskRecord, focused: boolean, suffix = '') => {
+  /**
+   * A task row in parts: the pointer and state mark, the label, then its time and state words. Each part keeps its
+   * meaning in color (the mark and a failure's words by state, the label as text), on the selection band when focused.
+   */
+  const rowParts = (task: TaskRecord, focused: boolean, suffix = '') => {
     const lead = `${focused ? (options.safe ? '>' : '›') : ' '}${m[task.state]} `;
     const time = elapsed((task.endedAt ?? options.now) - task.startedAt);
     const label = taskLabel(task);
@@ -256,34 +290,47 @@ export function renderTaskBar(controller: TaskBarController, tasks: readonly Tas
     const tails = [`  ${time}  ${stateWords(task)}${suffix}`, `  ${stateWords(task)}${suffix}`, `  ${shortState(task)}${suffix}`, `  ${shortState(task)}`];
     const tail = tails.find(candidate => width - displayWidth(lead) - displayWidth(candidate) >= keep) ?? tails.at(-1)!;
     const room = Math.max(1, width - displayWidth(lead) - displayWidth(tail));
-    return truncateText(`${lead}${truncateText(label, Math.max(1, Math.min(room, 32)))}${tail}`, width);
+    return {lead, label: truncateText(label, Math.max(1, Math.min(room, 32))), tail};
   };
-  const row = (task: TaskRecord, focused: boolean) => paint(rowText(task, focused), tone(task.state), focused);
+  const paintRow = (task: TaskRecord, focused: boolean, suffix = '', after = '') => {
+    const {lead, label, tail} = rowParts(task, focused, suffix);
+    const pointer = lead.slice(0, lead.length - displayWidth(`${m[task.state]} `));
+    const plain = truncateText(`${lead}${label}${tail}${after}`, width);
+    if (!options.color) return plain;
+    const tailTone = task.state === 'failed' ? UI_COLORS.failure : UI_COLORS.subtle;
+    const styled = `${ink(UI_COLORS.accent, focused, 3)}${pointer}${reset}${ink(tone(task.state), focused, 3)}${m[task.state]}${reset} `
+      + `${focused ? bold : ''}${ink(focused ? UI_COLORS.primary : UI_COLORS.secondary, focused, 7)}${label}${reset}`
+      + `${ink(tailTone, focused)}${tail}${reset}${after ? `${ink(UI_COLORS.secondary, focused)}${after}${reset}` : ''}`;
+    // The same selected-row treatment as every NMSh list: a band behind the row, never the whole row in one color.
+    return focused ? selectionBand(styled, width) : truncateAnsi(styled, width);
+  };
   if (!controller.expanded) {
     if (controller.focused) {
       const position = tasks.length > 1 ? `  ${tasks.indexOf(selected) + 1}/${tasks.length}` : '';
-      const base = rowText(selected, true, position);
-      const room = width - displayWidth(base) - 2;
+      const {lead, label, tail} = rowParts(selected, true, position);
+      const room = width - displayWidth(`${lead}${label}${tail}`) - 2;
       // Keys only when at least the way back fits beside the task; otherwise the task row alone.
       const keys = room >= displayWidth('Esc back') ? `  ${fitHints(keysFor(selected), room)}` : '';
-      return [paint(`${base}${keys}`, tone(selected.state), true)];
+      return [paintRow(selected, true, position, keys)];
     }
-    const order: TaskState[] = ['running', 'stopping', 'failed', 'stopped', 'exited'];
-    const counts = order.map(state => [state, tasks.filter(task => task.state === state).length] as const).filter(([, count]) => count);
-    const running = tasks.filter(task => LIVE.has(task.state)).length;
-    const summary = `${running ? m.running : m.exited} ${tasks.length} background task${tasks.length === 1 ? '' : 's'} · ${counts.map(([state, count]) => `${count} ${state}`).join(' · ')}`;
-    return [paint(truncateText(summary, width), running ? UI_COLORS.secondary : UI_COLORS.subtle)];
+    // At rest: the task that matters most by name (a failure, else the newest that runs), the rest counted, and how to
+    // open it, so a running task is readable without entering anything.
+    const lead = [...tasks].sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed') || Number(LIVE.has(b.state)) - Number(LIVE.has(a.state)) || b.startedAt - a.startedAt)[0]!;
+    const others = tasks.length - 1;
+    const live = tasks.filter(task => task !== lead && LIVE.has(task.state)).length;
+    const more = others ? ` · +${others} more${live ? ` (${live} running)` : ''}` : '';
+    const open = `${enter} open`;
+    const after = width - displayWidth(rowParts(lead, false).lead) - 12 >= displayWidth(`${more}  ${open}`) ? `${more}  ${open}` : more && width >= 40 ? more : '';
+    return [paintRow(lead, false, '', after)];
   }
   const {visible} = expandedLayout(tasks.length, options.maxRows ?? 4);
   const index = Math.max(0, tasks.indexOf(selected));
   const start = Math.max(0, Math.min(index - visible + 1, tasks.length - visible));
-  const up = options.safe ? '^' : '↑';
-  const enter = options.upArrow === 'off' ? `Shift+${up}` : up;
   const title = 'Background tasks  ';
   const header = !controller.focused ? `${title}${enter} or /background`
     : width - displayWidth(title) >= displayWidth('Esc back') ? `${title}${fitHints(keysFor(selected), width - displayWidth(title))}` : title.trim();
-  const lines = [paint(truncateText(header, width), UI_COLORS.subtle)];
-  for (const task of tasks.slice(start, start + visible)) lines.push(row(task, controller.focused && task.id === selected.id));
-  if (tasks.length > visible) lines.push(paint(truncateText(`  +${tasks.length - visible} more · /background lists all`, width), UI_COLORS.subtle));
+  const lines = [`${ink(UI_COLORS.subtle)}${truncateText(header, width)}${reset}`];
+  for (const task of tasks.slice(start, start + visible)) lines.push(paintRow(task, controller.focused && task.id === selected.id));
+  if (tasks.length > visible) lines.push(`${ink(UI_COLORS.subtle)}${truncateText(`  +${tasks.length - visible} more · /background lists all`, width)}${reset}`);
   return lines;
 }

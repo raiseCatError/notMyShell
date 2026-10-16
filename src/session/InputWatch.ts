@@ -17,6 +17,10 @@ import {type InputMode, type InputRequest, type InputState} from './inputState.j
  *  3. Ordinary line input: a question-shaped line left open, output quiet, the foreground group idle across two
  *     samples (no CPU, nothing running) → likely. A long build, `sleep`, a stalled download or a log stream does
  *     not leave a question open, rewrites its line, or is busy.
+ *  4. The shell itself holds the terminal while its command runs: a builtin has it (`read`, `select`). With line
+ *     input off (`read -k 1`, `read -n 1`) it reads keys → confirmed key input; with ordinary line settings and the
+ *     shell idle across two samples → likely line input, prompt or not. Without the kernel's report (macOS) a `wait`
+ *     builtin looks the same; Linux's report tells them apart.
  * A program that owns the terminal (full screen, or input modes such as bracketed paste) draws and reads its own
  * interface; it is never reported as waiting. The kernel saying the group is blocked elsewhere vetoes 2 and 3.
  *
@@ -53,6 +57,8 @@ const CLOSED_LINE_INTERVAL_MS = 2000;
 const LIKELY_QUIET_MS = 700;
 /** CPU share across two samples above which a foreground process is computing, not waiting. */
 const BUSY_SHARE = 0.25;
+/** The second sample when the first saw the shell holding the terminal: soon, so a prompt-less `read` is seen in time. */
+const FOLLOW_UP_MS = 100;
 
 const defaultTimer = (callback: () => void, ms: number) => {
   const timer = setTimeout(callback, ms);
@@ -87,8 +93,10 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   /** Bumped by every stream event; a probe that started before the latest event is stale. */
   private generation = 0;
   private looks = 0;
+  /** The last sample saw the shell holding the terminal with ordinary line settings; a second sample decides. */
+  private followUp = false;
   private cancelTimer?: () => void;
-  private probing = false;
+  private probing?: Promise<void>;
   private lastProbeAt = -Infinity;
   private previous = new Map<number, {cpuMs: number; at: number}>();
   private disposed = false;
@@ -166,6 +174,22 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.emit('change', this.state);
   }
 
+  /**
+   * Look at once, outside the schedule: a key is about to be routed and must not be routed on old or missing
+   * evidence (the schedule backs off to one look every few seconds). Resolves once a fresh sample was applied, or
+   * at once when nothing runs. When the first sample saw the shell holding the terminal, a second one decides.
+   */
+  async lookNow(): Promise<void> {
+    for (let sample = 0; sample < 2; sample += 1) {
+      while (this.probing) await this.probing;
+      if (this.disposed || !this.running || !this.options.probe) return;
+      this.followUp = false;
+      await this.look(true);
+      if (!this.followUp || this.request) return;
+      await new Promise<void>(done => { this.setTimer(done, FOLLOW_UP_MS); });
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.cancelTimer?.();
@@ -190,6 +214,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.lastActivity = at;
     this.generation += 1;
     this.looks = 0;
+    this.followUp = false;
     this.schedule();
   }
 
@@ -200,25 +225,28 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     const quiet = this.now() - this.lastActivity;
     const planned = this.looks === 0 ? (this.line.open ? FIRST_LOOK_OPEN_MS : FIRST_LOOK_MS)
       : LOOKS_MS[this.looks - 1] ?? (quiet > SLOW_LOOK_AFTER_MS ? SLOW_LOOK_MS : STEADY_LOOK_MS);
-    const delay = this.line.open ? planned : Math.max(planned, this.lastProbeAt + CLOSED_LINE_INTERVAL_MS - this.now());
+    const delay = this.followUp ? FOLLOW_UP_MS : this.line.open ? planned : Math.max(planned, this.lastProbeAt + CLOSED_LINE_INTERVAL_MS - this.now());
     this.cancelTimer = this.setTimer(() => { this.cancelTimer = undefined; void this.look(); }, delay);
   }
 
-  private async look(): Promise<void> {
+  /** One sample; onDemand looks (lookNow) leave the schedule's back-off where it was. */
+  private async look(onDemand = false): Promise<void> {
     if (this.disposed || !this.running || this.probing) return;
-    this.looks += 1;
+    if (!onDemand) this.looks += 1;
     if (this.ownsTerminal) {
       if (this.request) this.closeWait(this.now(), true);
       this.schedule();
       return;
     }
     const tty = this.options.tty?.();
-    if (!tty || !this.options.probe) return;
+    const probe = this.options.probe;
+    if (!tty || !probe) return;
     const generation = this.generation;
-    this.probing = true;
     this.lastProbeAt = this.now();
     let sample: TerminalSample | undefined;
-    try { sample = await this.options.probe({tty}); } catch { sample = undefined; } finally { this.probing = false; }
+    const probing = (async () => { try { sample = await probe({tty}); } catch { sample = undefined; } })();
+    this.probing = probing;
+    try { await probing; } finally { this.probing = undefined; }
     if (this.disposed || !this.running) return;
     if (generation === this.generation && sample) this.apply(sample, this.now());
     this.schedule();
@@ -228,6 +256,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   apply(sample: TerminalSample, now: number): void {
     if (!this.running || this.ownsTerminal) return;
     const busy = this.busy(sample.foreground, now);
+    this.followUp = false;
     const next = this.decide(sample, busy, now);
     const current = this.request;
     if (!next) {
@@ -260,9 +289,17 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     // The kernel says every foreground thread is blocked on something other than the terminal.
     if (sample.readingTerminal === false || busy === true) return undefined;
     if (modes && modes.canonical && !modes.echo) return {confidence: 'confirmed', mode: 'hidden'};
-    if (modes && !modes.canonical) return this.line.open ? {confidence: 'confirmed', mode: 'key'} : undefined;
+    const shellHolds = shellHoldsTerminal(sample.foreground);
+    if (modes && !modes.canonical) return this.line.open || shellHolds ? {confidence: 'confirmed', mode: 'key'} : undefined;
     // Ordinary line input: only a question left open, quiet output, and an idle group seen across two samples.
     if (busy === false && this.line.open && promptShaped(this.line.line) && now - this.lastOutput >= LIKELY_QUIET_MS) return {confidence: 'likely', mode: 'line'};
+    // The shell's own builtin holds the terminal with ordinary line settings (`read reply`, no prompt needed): idle
+    // across two samples is a line read. One sample is not enough: a loop's shell holds it for a moment between
+    // commands.
+    if (shellHolds && modes) {
+      if (busy === false) return {confidence: 'likely', mode: 'line'};
+      if (busy === undefined) this.followUp = true;
+    }
     return undefined;
   }
 
@@ -285,4 +322,13 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   private remember(foreground: ForegroundProcess[], now: number): void {
     this.previous = new Map(foreground.flatMap(item => item.cpuMs === undefined ? [] : [[item.pid, {cpuMs: item.cpuMs, at: now}] as const]));
   }
+}
+
+/**
+ * The shell itself is the terminal's foreground group: it is the session leader of its own terminal (ps state `s`),
+ * and a command it runs as a job takes the foreground in its own group. So while a command runs, the shell holding
+ * the terminal means a builtin of the shell has it.
+ */
+export function shellHoldsTerminal(foreground: ForegroundProcess[]): boolean {
+  return foreground.some(item => item.state.includes('s'));
 }

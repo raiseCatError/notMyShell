@@ -24,6 +24,8 @@ import type {WorktreeSnapshot} from '../worktrees/model.js';
 
 export type WorkspaceEffect =
   | {kind: 'none'}
+  /** The experimental regions are Off: nothing opened; the frontend says how to turn them on. */
+  | {kind: 'disabled'}
   | {kind: 'render'}
   | {kind: 'refresh'}
   | {kind: 'intent'; intent: ActivationIntent; resource: WorkspaceResource};
@@ -37,8 +39,18 @@ export interface WorkspaceSources {
   cwd: string;
 }
 
+/** Actions that open or focus a region: the only ways in, so the experimental switch gates exactly these. */
+const OPENING: ReadonlySet<WorkspaceActionId> = new Set(['sidebar.toggle', 'sidebar.focus', 'panel.toggle', 'panel.focus']);
+
+export const WORKSPACE_DISABLED_MESSAGE = 'The workspace sidebar and detail panel are experimental and Off. Turn them on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). /worktrees, /sessions, /github and /background work without them.';
+
 export class WorkspaceHost {
   state: WorkspaceFocusState = {owner: 'COMPOSER', sidebarOpen: false, panelOpen: false};
+  /** `enabled`: the experimental setting (the frontend passes its configuration; on by default for the host alone). */
+  constructor(private readonly enabled: () => boolean = () => true) {}
+  get available(): boolean { return this.enabled(); }
+  /** Close both regions and give the keyboard back to the composer (the setting was turned Off). */
+  close(): void { this.state = {owner: 'COMPOSER', sidebarOpen: false, panelOpen: false}; this.message = undefined; }
   readonly sidebar = new SidebarController();
   readonly panel = new PanelController();
   bindings: readonly Binding[] = DEFAULT_BINDINGS;
@@ -93,6 +105,7 @@ export class WorkspaceHost {
   }
 
   perform(action: WorkspaceActionId, columns: number, viewRows = 10): WorkspaceEffect {
+    if (!this.enabled() && OPENING.has(action) && !this.open) return {kind: 'disabled'};
     this.message = undefined;
     if (isFocusAction(action)) {
       const before = this.state;
