@@ -59,14 +59,14 @@ test('gate: completed or previously introduced installations never auto-open onb
   } finally { f.dispose(); }
 });
 
-test('the picker is a static centered modal with the three new choices and no replay', () => {
+test('the picker shows the four starting points and no replay', () => {
   const f = executionFrameFixture(80, 24);
   try {
     f.app['startSetup']('quick');
     const first = f.capture().frame.rows.map(stripAnsi);
     const shown = first.join('\n');
     for (const label of QUICK_SETUP_LABELS) assert.ok(shown.includes(label), label);
-    assert.deepEqual([...QUICK_SETUP_LABELS], ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything']);
+    assert.deepEqual([...QUICK_SETUP_LABELS], ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything', 'Keep Existing']);
     assert.ok(!shown.includes('Replay'), 'the replay affordance is gone');
     assert.equal(f.app['setupCursorClock'], undefined, 'no playback timer');
     f.tick(5700); f.capture();
@@ -79,15 +79,17 @@ test('the picker is a static centered modal with the three new choices and no re
   } finally { f.dispose(); }
 });
 
-test('choices: Up/Down and 1–3 move the selection', () => {
+test('choices: Up/Down wrap over the four starting points and 1–4 jump', () => {
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   assert.equal(state.quick?.choice, 0);
   setupKey(state, {kind: 'down'}); assert.equal(state.quick?.choice, 1);
   setupKey(state, {kind: 'down'}); assert.equal(state.quick?.choice, 2);
+  setupKey(state, {kind: 'down'}); assert.equal(state.quick?.choice, 3);
   setupKey(state, {kind: 'down'}); assert.equal(state.quick?.choice, 0);
-  setupKey(state, {kind: 'up'}); assert.equal(state.quick?.choice, 2);
+  setupKey(state, {kind: 'up'}); assert.equal(state.quick?.choice, 3);
   setupKey(state, {kind: 'text', value: '1'}); assert.equal(state.quick?.choice, 0);
   setupKey(state, {kind: 'text', value: '3'}); assert.equal(state.quick?.choice, 2);
+  setupKey(state, {kind: 'text', value: '4'}); assert.equal(state.quick?.choice, 3);
 });
 
 test('minimal: Two-line first; Left/Right/Tab toggle One-line and Two-line on the real draft and apply persists it', () => {
@@ -129,13 +131,13 @@ test('review: Enter applies the preset and a customized installation is told it 
   assert.equal(fresh.saved.onboardingComplete, false);
 });
 
-test('leave confirmation: Escape opens it with Continue default; arrows cycle; Exit for now cancels without applying', () => {
+test('leave confirmation: Escape opens it with Stay focused; arrows cycle; Leave cancels without applying', () => {
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   assert.equal(setupKey(state, {kind: 'escape'}), undefined);
   assert.equal(state.quick?.confirm, true);
   assert.equal(state.quick?.confirmIndex, 0);
   const shown = text(state);
-  assert.match(shown, /Leave setup\?/u); assert.match(shown, /Continue/u); assert.match(shown, /Exit for now/u);
+  assert.match(shown, /Leave setup\?/u); assert.match(shown, /Stay/u); assert.match(shown, /Leave/u);
   setupKey(state, {kind: 'right'});
   assert.equal(state.quick?.confirmIndex, 1);
   setupKey(state, {kind: 'complete'});
@@ -144,7 +146,7 @@ test('leave confirmation: Escape opens it with Continue default; arrows cycle; E
   assert.equal(state.quick?.confirmIndex, 1);
   setupKey(state, {kind: 'left'});
   assert.equal(state.quick?.confirmIndex, 0);
-  // Continue returns to the picker untouched.
+  // Stay returns to the picker untouched.
   assert.equal(setupKey(state, {kind: 'enter'}), undefined);
   assert.equal(state.quick?.confirm, false);
   assert.equal(state.quick?.review, false);
@@ -152,21 +154,23 @@ test('leave confirmation: Escape opens it with Continue default; arrows cycle; E
   setupKey(state, {kind: 'escape'});
   setupKey(state, {kind: 'escape'});
   assert.equal(state.quick?.confirm, false);
-  // Exit for now cancels; nothing was applied.
+  // Leave cancels; nothing was applied.
   setupKey(state, {kind: 'escape'});
   setupKey(state, {kind: 'right'});
   assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
 });
 
-test('leave confirmation from review: Esc asks before discarding the chosen preset', () => {
+test('review: Esc goes back to the choices; only Esc from the choices asks to leave', () => {
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'enter'});
   assert.equal(state.quick?.review, true);
   setupKey(state, {kind: 'escape'});
+  assert.equal(state.quick?.review, false);
+  assert.equal(state.quick?.confirm ?? false, false);
+  setupKey(state, {kind: 'escape'});
   assert.equal(state.quick?.confirm, true);
   setupKey(state, {kind: 'enter'});
-  assert.equal(state.quick?.confirm, false);
-  assert.equal(state.quick?.review, true, 'Continue returns to the review step');
+  assert.equal(state.quick?.confirm, false, 'Stay returns to the choices');
 });
 
 test('customize: Enter opens the manual wizard from the saved configuration and leaving it returns to the picker', () => {
@@ -280,6 +284,8 @@ test('failed preset persistence keeps draft and modal ownership for retry or can
     assert.match(text(f.app['setupState']!), /Could not save/u, 'the modal shows the failure');
     assert.equal(JSON.stringify(f.app['promptConfiguration']), before);
     assert.equal(readFileSync(path, 'utf8'), '{invalid');
+    f.app['handleKey']({kind: 'escape'});
+    assert.equal(f.app['setupState']?.quick?.review, false, 'Esc returns to the choices with the draft kept');
     f.app['handleKey']({kind: 'escape'});
     f.app['handleKey']({kind: 'right'});
     f.app['handleKey']({kind: 'enter'});

@@ -139,7 +139,7 @@ import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, t
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
-import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
+import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
@@ -6591,6 +6591,20 @@ export class TerminalApp {
     if (action.kind === 'apply') state.draft = {...state.draft, cursor: action.settings};
   }
 
+  /**
+   * A on the selector: the backdrop is saved at once (local presentation state, never exported). The selector's saved
+   * copy and draft follow, so a later Apply keeps it; a failed save is shown and the selector keeps working.
+   */
+  private saveOnboardingBackdrop(state: SetupState, backdrop: OnboardingBackdrop): void {
+    const next = {...this.promptConfiguration, onboardingBackdrop: backdrop};
+    try {
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
+      this.promptConfiguration = next;
+      state.saved.onboardingBackdrop = backdrop; state.draft.onboardingBackdrop = backdrop;
+      state.message = undefined;
+    } catch (error) { state.message = `The backdrop could not be saved: ${error instanceof Error ? error.message : String(error)}`; }
+  }
+
   /** Presets deliberately bypass discovery; completed or already-introduced installs never reopen setup. */
   private startOnboarding(): void {
     if (this.presetStartup || this.attachedSession) return;
@@ -6645,13 +6659,7 @@ export class TerminalApp {
     const result = setupKey(state, key);
     if (!result) return;
     if (result.kind === 'manual') { void this.loadSetupContext(state); return; }
-    if (result.kind === 'link') {
-      const opener = selectOpener();
-      if (!opener) { state.message = result.url; return; }
-      try { const child = spawn(opener, [result.url], {detached: true, stdio: 'ignore'}); child.once('error', () => { state.message = result.url; if (this.setupState === state) this.render(); }); child.unref(); }
-      catch { state.message = result.url; }
-      return;
-    }
+    if (result.kind === 'backdrop') { this.saveOnboardingBackdrop(state, result.backdrop); return; }
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     if (result.kind === 'cursorEditor') {
       // The shared /cursor panel over the draft's cursor settings: changes land in the draft, nothing is saved until Apply.

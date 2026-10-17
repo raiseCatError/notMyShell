@@ -567,8 +567,12 @@ export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
   return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops, style};
 }
 
-/** First-run static setup backdrop; local presentation state, never exported. */
+/** The starting-point selector's backdrop (Aurora on, subtle or off); local presentation state, never exported. */
 export type OnboardingBackdrop = 'off' | 'subtle' | 'aurora';
+
+/** The starting points the selector offers, in order. */
+export const STARTING_POINT_IDS = ['recommended', 'minimal', 'customize', 'existing'] as const;
+export type StartingPointId = typeof STARTING_POINT_IDS[number];
 
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
@@ -585,8 +589,13 @@ export interface PromptConfiguration {
   /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
   glyphStyle: GlyphStyle;
   glyphChoiceComplete: boolean;
-  /** Backdrop behind the static first-run setup modal; never exported. */
+  /** Backdrop behind the starting-point selector; never exported. */
   onboardingBackdrop: OnboardingBackdrop;
+  /**
+   * The starting point last applied from the selector: a label only, shown as current when it reopens.
+   * Never used to recompute settings (the effective configuration stays the only source of truth) and never exported.
+   */
+  startingPoint?: StartingPointId;
   /** Maximum unpinned presentation sessions; null disables rotation. */
   sessionRetention: SessionRetention;
   /** Automatic updates: Automatic prepares verified releases, Notify only announces them, Off never checks. `/update` always works on request. */
@@ -1008,7 +1017,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // A custom palette without a valid library theme falls back instead of rendering nothing.
   const storedPalette = normalizePaletteId(nativeValue.palette);
   const palette = storedPalette === 'custom' && !customTheme ? 'lavender' : storedPalette;
-  const themed = {...tooling, contextRail: normalizeContextRail(value.contextRail, library.themes), themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
+  const startingPoint = STARTING_POINT_IDS.includes(value.startingPoint as StartingPointId) ? value.startingPoint as StartingPointId : undefined;
+  const themed = {...tooling, ...(startingPoint ? {startingPoint} : {}), contextRail: normalizeContextRail(value.contextRail, library.themes), themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const notifications = normalizeNotificationSettings(value.notifications);

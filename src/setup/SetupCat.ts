@@ -4,9 +4,11 @@ import {isReducedMotion} from '../presentation/environment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {Key} from '../terminal/keys.js';
 import {
-  DEFAULT_PROMPT_CONFIGURATION, minimalPromptConfiguration, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
-  type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId,
+  DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
+  type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId, type StartingPointId,
 } from '../prompt/configuration.js';
+import {STARTING_POINT_COPY, STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
+import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
 import {separatorLabel} from '../prompt/glyphChoices.js';
 import {appearanceRows, PROMPT_PROVIDERS, type AppearanceRow} from '../prompt/PromptPanel.js';
@@ -514,11 +516,11 @@ function completionFacts(facts: CompletionFacts | undefined): string[] {
 export interface SetupState {
   message?: string;
   /**
-   * The static first-run picker (also `/setup quick`): one centered modal over the saved
-   * configuration, with no animation or timers. `confirm` is the leave confirmation and
-   * `manual` is the full wizard opened over the picker.
+   * The starting-point selector (first run, `/startup`, `/setup quick`): four choices over the
+   * saved configuration, an explicit review and Apply. `confirm` is the Leave setup? sheet and
+   * `manual` is the guided setup opened over the selector.
    */
-  quick?: {choice: number; review: boolean; confirm?: boolean; confirmIndex?: number; manual?: boolean; layout: 'oneLine' | 'twoLine'; backdrop: OnboardingBackdrop};
+  quick?: StartupSelectorState;
   /** Initial discovery uses the same draft and marks completion only on Apply. */
   onboarding?: boolean;
   section: number;
@@ -574,44 +576,23 @@ export function createSetup(configuration: PromptConfiguration, entry?: string):
   return state;
 }
 
-export const QUICK_SETUP_LABELS = ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything'] as const;
-const QUICK_SETUP_SHORT = ['Recommended', 'Minimal', 'Customize'] as const;
-const QUICK_SETUP_NOTES = [
-  'Lavender Native, rich motion, smart output folding',
-  'Plain and quiet: no greetings, snapshots or effects',
-  'Open the full Setup Cat and choose every detail',
-] as const;
+export const QUICK_SETUP_LABELS = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].title);
+const QUICK_SETUP_SHORT = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].short);
+const QUICK_SETUP_NOTES = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].line);
 
-/** Apply only the preset's presentation preferences; retain shell, tools, integrations and accessibility choices. */
-function quickDraft(state: SetupState): PromptConfiguration {
-  if (state.quick?.choice === 2) return structuredClone(state.saved);
-  const preset = state.quick?.choice === 1 ? minimalPromptConfiguration(state.quick.layout) : structuredClone(DEFAULT_PROMPT_CONFIGURATION);
-  const saved = state.saved;
-  return normalizePromptConfiguration({...saved, provider: 'nmsh', welcome: preset.welcome,
-    motion: preset.motion, transcript: preset.transcript, transcriptPresentation: preset.transcriptPresentation,
-    outputFolding: preset.outputFolding, composerPosition: preset.composerPosition, composerLayout: preset.composerLayout, placement: preset.placement,
-    composerDividers: preset.composerDividers, spacing: preset.spacing, gap: preset.gap,
-    nmsh: {...saved.nmsh, ...preset.nmsh}, uiChrome: preset.uiChrome,
-    presentation: {...saved.presentation, ...preset.presentation, reducedMotion: saved.presentation.reducedMotion},
-    cursor: {...preset.cursor, shape: saved.cursor.shape, blink: saved.cursor.blink,
-      ...(state.quick?.choice === 0 && saved.cursor.particles.colors.length ? {particles: saved.cursor.particles} : {})},
-    idleVisuals: {...saved.idleVisuals, timeout: 0}, statusStrip: {...saved.statusStrip, enabled: false},
-    liveActivity: {...saved.liveActivity, style: preset.liveActivity.style}, terminalTitle: preset.terminalTitle,
-    queue: {...saved.queue, ...preset.queue, outputDisplay: saved.queue.outputDisplay}, queueFailurePolicy: 'pause'});
+/** The highlighted starting point's draft; the saved configuration is never touched. */
+function selectorDraft(state: SetupState): PromptConfiguration {
+  const quick = state.quick!;
+  return startingPointDraft(startingPointAt(quick.choice), state.saved, {layout: quick.layout});
 }
 
-export function createQuickSetup(configuration: PromptConfiguration): SetupState {
+/** The starting-point selector over a copy of the saved configuration; it opens on the current starting point. */
+export function createQuickSetup(configuration: PromptConfiguration, now = Date.now()): SetupState {
   const state = createSetup(configuration);
-  state.quick = {choice: 0, review: false, layout: 'twoLine', backdrop: configuration.onboardingBackdrop};
-  state.draft = quickDraft(state);
+  state.quick = createSelector(state.saved, now);
+  state.draft = selectorDraft(state);
   return state;
 }
-
-export const SETUP_LINKS = [
-  {key: 'd', label: 'Docs', url: 'https://github.com/raiseCatError/notMyShell#readme'},
-  {key: 'b', label: 'Report a bug', url: 'https://github.com/raiseCatError/notMyShell/issues/new?template=bug_report.yml'},
-  {key: 'f', label: 'Request a feature', url: 'https://github.com/raiseCatError/notMyShell/issues/new?template=feature_request.yml'},
-] as const;
 
 /** One finite installation scene over existing wordmark, Powerline tabs and Vespyr assets. */
 export function renderSetupIntro(columns: number, height: number, elapsed: number, still: boolean): {rows: string[]; busy: boolean} {
@@ -635,13 +616,25 @@ export function renderSetupIntro(columns: number, height: number, elapsed: numbe
   return {rows: [...content.slice(0, Math.max(1, height - footer.length)), ...footer].slice(0, height).map(row => truncateAnsi(row, columns)), busy: !still && t < 2600};
 }
 
-function quickKey(state: SetupState, key: Key): SetupResult | undefined {
+const SWITCH_KEYS: ReadonlySet<Key['kind']> = new Set(['left', 'right', 'complete', 'focusPrevious']);
+
+/** Applying a starting point: the reviewed draft, with completion and the starting-point label. */
+function applyStartingPoint(state: SetupState, draft: PromptConfiguration, startingPoint: StartingPointId, tools: ToolChoice = 'keep', changed = true): Extract<SetupResult, {kind: 'apply'}> {
+  // The backdrop chosen with A is kept even if saving it on its own failed.
+  const backdrop = state.quick ? {onboardingBackdrop: state.quick.backdrop} : {};
+  return {kind: 'apply', configuration: normalizePromptConfiguration({...draft, ...backdrop, startingPoint, onboardingComplete: true,
+    glyphChoiceComplete: true, toolsSetupComplete: true}), tools, changed, startingPoint};
+}
+
+/**
+ * Choices: ↑↓ move, 1–4 jump, ←→/Tab Minimal's layout, Enter review (Customize: the guided setup), Esc Leave setup?, A backdrop.
+ * Review: Enter Apply, Esc/← back, A backdrop. Leave setup?: ←→/Tab choose, Enter confirm, Esc Stay (focused first).
+ */
+function quickKey(state: SetupState, key: Key, now: number): SetupResult | undefined {
   const quick = state.quick!;
+  resumeSky(quick, now);
   if (quick.confirm) {
-    if (key.kind === 'left' || key.kind === 'right' || key.kind === 'complete' || key.kind === 'focusPrevious') {
-      quick.confirmIndex = quick.confirmIndex === 1 ? 0 : 1;
-      return undefined;
-    }
+    if (SWITCH_KEYS.has(key.kind)) { quick.confirmIndex = quick.confirmIndex === 1 ? 0 : 1; return undefined; }
     if (key.kind === 'enter') {
       if (quick.confirmIndex === 1) return {kind: 'cancel'};
       quick.confirm = false; quick.confirmIndex = 0;
@@ -650,28 +643,35 @@ function quickKey(state: SetupState, key: Key): SetupResult | undefined {
     if (key.kind === 'escape' || key.kind === 'interrupt') { quick.confirm = false; quick.confirmIndex = 0; }
     return undefined;
   }
+  if (key.kind === 'text' && key.value.toLowerCase() === 'a') {
+    quick.backdrop = nextBackdrop(quick.backdrop);
+    return {kind: 'backdrop', backdrop: quick.backdrop};
+  }
+  if (quick.review) {
+    if (key.kind === 'enter') return applyStartingPoint(state, state.draft, startingPointAt(quick.choice));
+    if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'left') quick.review = false;
+    return undefined;
+  }
   if (key.kind === 'escape' || key.kind === 'interrupt') { quick.confirm = true; quick.confirmIndex = 0; return undefined; }
-  if (key.kind === 'text') { const link = SETUP_LINKS.find(link => link.key === key.value.toLowerCase()); if (link) return {kind: 'link', url: link.url}; }
   if (key.kind === 'enter') {
-    if (quick.choice === 2) {
+    if (startingPointAt(quick.choice) === 'customize') {
       quick.manual = true; quick.review = false;
       state.section = 0; state.row = 0; state.chooser = undefined; state.confirmDiscard = undefined;
       state.draft = structuredClone(state.saved);
       return {kind: 'manual'};
     }
-    if (!quick.review) { quick.review = true; return undefined; }
-    return {kind: 'apply', configuration: normalizePromptConfiguration({...state.draft, onboardingComplete: true,
-      glyphChoiceComplete: true, toolsSetupComplete: true}), tools: 'keep', changed: true};
+    quick.review = true;
+    return undefined;
   }
-  if (quick.review) return undefined;
-  let changed = false;
-  if (key.kind === 'down' || key.kind === 'up') {
-    quick.choice = (quick.choice + (key.kind === 'up' ? 2 : 1)) % 3; changed = true;
-  } else if (key.kind === 'text' && /^[123]$/u.test(key.value)) { quick.choice = Number(key.value) - 1; changed = true; }
-  else if (quick.choice === 1 && ['left', 'right', 'complete'].includes(key.kind)) {
-    quick.layout = quick.layout === 'oneLine' ? 'twoLine' : 'oneLine'; changed = true;
+  let next: number | undefined;
+  if (key.kind === 'down' || key.kind === 'up') next = (quick.choice + (key.kind === 'up' ? STARTING_POINTS.length - 1 : 1)) % STARTING_POINTS.length;
+  else if (key.kind === 'text' && /^[1-4]$/u.test(key.value)) next = Number(key.value) - 1;
+  if (next !== undefined) {
+    if (highlightChoice(quick, next, now)) state.draft = selectorDraft(state);
+  } else if (startingPointAt(quick.choice) === 'minimal' && SWITCH_KEYS.has(key.kind)) {
+    quick.layout = quick.layout === 'oneLine' ? 'twoLine' : 'oneLine';
+    state.draft = selectorDraft(state);
   }
-  if (changed) state.draft = quickDraft(state);
   return undefined;
 }
 
@@ -733,15 +733,15 @@ function quickModalContent(state: SetupState, inner: number, room: number): stri
   const controls = (phrases: readonly string[]) => packHints(phrases, inner).map(line => `${secondary}${line}${reset}`);
   const messages = () => state.message ? wrapWords(state.message, inner).map(line => `${primary}${line}${reset}`) : [];
   if (quick.confirm) {
-    const options = ['Continue', 'Exit for now'];
+    const options = ['Stay', 'Leave'];
     const option = (index: number) => {
       const selected = (quick.confirmIndex ?? 0) === index;
       return `${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${options[index]}${reset}`;
     };
     const pair = `${option(0)}    ${option(1)}`;
-    return [`${bold}${primary}Leave setup?${reset}`, ...wrapWords('Your settings stay exactly as they are.', inner).map(line => `${subtle}${line}${reset}`), '',
+    return [`${bold}${primary}Leave setup?${reset}`, ...wrapWords('Nothing changes: NMSh keeps its current settings. /startup reopens this anytime.', inner).map(line => `${subtle}${line}${reset}`), '',
       ...(displayWidth(stripAnsi(pair)) <= inner ? [pair] : [option(0), option(1)]),
-      ...controls(['←→ / Tab choose', 'Enter confirm', 'Esc keep editing'])].slice(0, Math.max(1, room));
+      ...controls(['←→ / Tab choose', 'Enter confirm', 'Esc stay'])].slice(0, Math.max(1, room));
   }
   if (quick.review) {
     const chosen = `${quick.choice + 1}  ${label(quick.choice)}${quick.choice === 1 ? ` · ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'}` : ''}`;
@@ -750,7 +750,7 @@ function quickModalContent(state: SetupState, inner: number, room: number): stri
       : 'This is your starting point; shell, tools and accessibility stay as they are.';
     return [`${bold}${primary}Ready to apply${reset}`, `${primary}${chosen}${reset}`,
       ...wrapWords(note, inner).map(line => `${subtle}${line}${reset}`), ...messages(), '',
-      ...controls(['Enter apply', 'Esc leave setup'])].slice(0, Math.max(1, room));
+      ...controls(['Enter apply', 'Esc back'])].slice(0, Math.max(1, room));
   }
   const heading = (): string[] => {
     const lines: string[] = [];
@@ -761,7 +761,7 @@ function quickModalContent(state: SetupState, inner: number, room: number): stri
   };
   const choices = (notes: boolean): string[] => {
     const lines: string[] = [];
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index < STARTING_POINTS.length; index++) {
       const selected = index === quick.choice;
       lines.push(`${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${index + 1}  ${label(index)}${reset}`);
       if (notes) for (const part of wrapWords(QUICK_SETUP_NOTES[index], inner - 4)) lines.push(`    ${subtle}${part}${reset}`);
@@ -770,8 +770,7 @@ function quickModalContent(state: SetupState, inner: number, room: number): stri
     return lines;
   };
   const assemble = (rich: boolean): string[] => [...heading(), ...choices(rich), ...(rich ? [''] : []),
-    ...controls(['↑↓ / 1–3 choose', 'Enter continue', 'Esc leave setup']),
-    ...(rich ? [`${subtle}D Docs · B Report a bug · F Request a feature${reset}`] : [])];
+    ...controls(['↑↓ / 1–4 choose', 'Enter continue', 'Esc leave setup'])];
   const rich = inner >= 48;
   let lines = assemble(rich);
   if (lines.length > room && rich) lines = assemble(false);
@@ -785,13 +784,13 @@ function quickTinyRows(state: SetupState, width: number, height: number): string
   const layout = quick.layout === 'oneLine' ? 'One-line' : 'Two-line';
   let rows: string[];
   if (quick.confirm) {
-    rows = ['Leave setup?', `${(quick.confirmIndex ?? 0) === 0 ? mark : ' '} Continue`, `${(quick.confirmIndex ?? 0) === 1 ? mark : ' '} Exit for now`,
-      'Enter confirm', 'Esc keep editing'];
+    rows = ['Leave setup?', `${(quick.confirmIndex ?? 0) === 0 ? mark : ' '} Stay`, `${(quick.confirmIndex ?? 0) === 1 ? mark : ' '} Leave`,
+      'Enter confirm', 'Esc stay'];
   } else if (quick.review) {
-    rows = [`${quick.choice + 1} ${QUICK_SETUP_SHORT[quick.choice]}`, ...(quick.choice === 1 ? [layout] : []), 'Enter Apply', 'Esc Leave setup'];
+    rows = [`${quick.choice + 1} ${QUICK_SETUP_SHORT[quick.choice]}`, ...(quick.choice === 1 ? [layout] : []), 'Enter Apply', 'Esc back'];
   } else {
-    rows = [0, 1, 2].map(index => `${quick.choice === index ? mark : ' '} ${index + 1} ${QUICK_SETUP_SHORT[index]}`)
-      .concat(quick.choice === 1 ? [`${layout} ←→/Tab`] : [], ['Enter Continue', 'Esc Leave setup']);
+    rows = STARTING_POINTS.map((_, index) => `${quick.choice === index ? mark : ' '} ${index + 1} ${QUICK_SETUP_SHORT[index]}`)
+      .concat(quick.choice === 1 ? [`${layout} ←→/Tab`] : [], ['Enter · Esc leave']);
   }
   if (state.message) rows = [state.message, ...rows];
   return rows.slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
@@ -870,13 +869,14 @@ function applyToolChoice(draft: PromptConfiguration, choice: ToolChoice): Prompt
 export type SetupResult =
   | {kind: 'cancel'}
   | {kind: 'manual'}
-  | {kind: 'link'; url: string}
+  /** The selector's backdrop changed (A): saved at once, never part of the draft. */
+  | {kind: 'backdrop'; backdrop: OnboardingBackdrop}
   /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
   | {kind: 'browseTools'; toolId?: string}
   /** Open the shared /cursor panel inside Setup Cat, over the draft. */
   | {kind: 'cursorEditor'; advanced: boolean; row?: string}
-  /** `then`: an editor to open after Apply (a route row). */
-  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; then?: SettingsDestination};
+  /** `then`: an editor to open after Apply (a route row). `startingPoint`: applied from the starting-point selector. */
+  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; then?: SettingsDestination; startingPoint?: StartingPointId};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
 function sectionRows(section: SetupSection, draft: PromptConfiguration, context?: SetupContext): readonly SetupRow[] {
@@ -937,19 +937,23 @@ function toolChoiceNote(choice: ToolChoice): string {
  * ↑↓ rows · ←→ change · Tab / Shift+Tab sections · Enter next (Apply on
  * the last step) · Esc cancel (asks when there are unapplied edits).
  */
-export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
-  if (state.quick && !state.quick.manual) return quickKey(state, key);
+export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupResult | undefined {
+  if (state.quick && !state.quick.manual) return quickKey(state, key, now);
   const changes = () => setupChanges(state).length > 0;
-  /** Leaving the full wizard opened from the picker returns to the picker instead of closing setup. */
+  /** Leaving the guided setup opened from the selector returns to the choices instead of closing setup. */
   const leaveQuickManual = (): boolean => {
     if (!state.quick?.manual) return false;
     state.quick.manual = false;
     state.confirmDiscard = undefined;
     state.chooser = undefined;
     state.tools = 'keep';
-    state.draft = quickDraft(state);
+    state.draft = selectorDraft(state);
     return true;
   };
+  /** The guided setup opened from the selector applies as the Customize starting point. */
+  const applied = (configuration: PromptConfiguration, then?: SettingsDestination): SetupResult => state.quick?.manual
+    ? {...applyStartingPoint(state, configuration, 'customize', state.tools, changes()), ...(then ? {then} : {})}
+    : {kind: 'apply', configuration: normalizePromptConfiguration(configuration), tools: state.tools, changed: changes(), ...(then ? {then} : {})};
   if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {
     if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return leaveQuickManual() ? undefined : {kind: 'cancel'};
@@ -993,7 +997,7 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : row.id === 'cursorFireCustom' ? 'fireEdit' : 'colorCustom'};
     // An in-draft action (reset a list), or a route: apply this Setup, then open the real editor.
     if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
-    if (row.control === 'action' && row.destination !== 'tools') return {kind: 'apply', configuration: normalizePromptConfiguration(state.draft), tools: state.tools, changed: changes(), then: row.destination};
+    if (row.control === 'action' && row.destination !== 'tools') return applied(state.draft, row.destination);
     return {kind: 'browseTools'};
   } else if (key.kind === 'enter' && rows[state.row] && rows[state.row]!.row.id !== TOOL_CHOICE_ROW.row.id && !rows[state.row]!.row.unavailable?.(state.draft) && chooserOptions(rows[state.row]!.row, state.draft).length) {
     const {row} = rows[state.row]!;
@@ -1006,10 +1010,7 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     if (tool) return {kind: 'browseTools', toolId: tool};
   } else if (key.kind === 'enter') {
     if (state.section < last) go(state.section + 1);
-    else {
-      const configuration = normalizePromptConfiguration(state.draft);
-      return {kind: 'apply', configuration, tools: state.tools, changed: changes()};
-    }
+    else return applied(state.draft);
   }
   return undefined;
 }

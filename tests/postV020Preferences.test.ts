@@ -113,7 +113,7 @@ test('quick setup previews choices, reviews replacement, cancels and retains Man
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'down'}); setupKey(state, {kind: 'enter'});
   assert.equal(state.draft.composerPosition, 'flow');
-  setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'right'});
+  setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'right'});
   assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'down'}); setupKey(state, {kind: 'down'});
