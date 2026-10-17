@@ -11,6 +11,7 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
  * Enter takes the default) and repairs nothing.
  */
 const ASKYN = resolve('tests/fixtures/askyn.py');
+const FINISHABLE_READ = resolve('tests/fixtures/finishableRead.py');
 const bash = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/usr/bin/bash', '/bin/bash']
   .find(path => existsSync(path) && /version (?:4\.[4-9]|[5-9]\.)/u.test(spawnSync(path, ['--version'], {encoding: 'utf8'}).stdout ?? ''));
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
@@ -273,15 +274,19 @@ test('live: narrow, NO_COLOR and Safe glyphs keep the request legible', {skip: s
   } finally { await sandbox.dispose(); }
 });
 
-test('live: a reply typed for a command that finishes first is discarded, never run as a shell command', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+test('live: a reply typed for a command that finishes first is discarded, never run as a shell command', {skip: supported && python ? false : 'python3 with termios not available', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     const marker = join(sandbox.home, 'must-not-exist');
+    const finish = join(sandbox.home, 'finish-read');
     const mark = frontend.mark;
-    frontend.pty.write(`read -t 4 'x?Quick? ' || echo TIMED-OUT\r`);
-    // A timed read waits in poll/select, not read(), so even Linux's kernel evidence leaves it "probably".
+    // Hold the real terminal reader until both the observed wait and the partial reply exist. A short timed read
+    // could expire before a loaded runner observed it, never reaching the safety behavior under test.
+    frontend.pty.write(`python3 ${FINISHABLE_READ} ${finish}\r`);
     await frontend.waitFor(/[◆◇] (?:Probably w|W)aiting for input/u, mark);
     frontend.pty.write(`touch ${marker}`);
+    await frontend.waitFor(/touch[\s\S]*must-not-exist/u, mark);
+    writeFileSync(finish, 'finish\n');
     await frontend.waitFor(/reply was discarded, not run/u, mark, 20_000);
     frontend.pty.write('\r');
     await pause(1500);
