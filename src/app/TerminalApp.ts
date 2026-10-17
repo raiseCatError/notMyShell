@@ -1228,6 +1228,9 @@ export class TerminalApp {
     if (queued !== undefined) command = queued;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       this.historicalContext(this.shellCwd, this.context, command));
+    // The same highlighting as a command typed in the composer: command words NMSh has not classified yet are
+    // classified now, and the stored command line is recolored when they resolve (queued, attached and restored runs).
+    this.formatCommandAnsi(command, startId);
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed, ...(queued !== undefined ? {queued: true} : {})};
     if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
