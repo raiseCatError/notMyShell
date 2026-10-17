@@ -1,6 +1,6 @@
 ---
 title: "Accessibility baseline"
-description: "Canonical accessibility baseline from v0.18.0."
+description: "Canonical accessibility baseline from the v0.20.0 candidate source."
 group: Technical reference
 order: 110
 source: "docs/accessibility/baseline.md"

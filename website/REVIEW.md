@@ -1,4 +1,69 @@
-# Website delivery review — 2026-10-17
+# Website delivery review
+
+## Refinement pass (2026-10-18)
+
+This record supersedes the initial delivery's version strategy and measurements below.
+The site now targets cumulative v0.20 candidate `82533639`; actual published release
+history remains separate. `LAUNCH.md` records feature evidence, exact branch ancestry,
+the unintegrated Reactive Horizon onboarding boundary and final publication checklist.
+No v0.20 release date, published tag or Homebrew availability is fabricated.
+
+Changes: stronger “A richer way to use the terminal” hook, concrete supporting copy,
+Vespyr-only header signature, native tab icons and one authorized 1200×630 social
+composition. Website-owned prose has an automated em-dash/stock-language guard;
+canonical snapshots and real historical release notes retain their original wording.
+The handbook adds practical Setup and execution guides, expands copy/report/compare,
+agent/workspace/module coverage, and refreshes canonical references from the candidate.
+
+The docs bug was reproduced: a sidebar at 631px reset to zero after native navigation,
+leaving its active item out of view. Per-tab sidebar-only restoration fixes it without
+overriding article scrolling, history or heading anchors. Current-item clicks no longer
+reload the article. Thin scrollbar styling was removed; native scrolling stays intact.
+
+Search now has an aligned icon/label/key hint, a sharp top-anchored dialog, full-row
+result links and coordinate-based outside dismissal. Long results grow downward rather
+than repositioning the input. A reviewer-identified viewport-height issue was reproduced
+by a failing browser test (728px bottom in a 720px viewport), then corrected by deriving
+height from the actual top offset and bottom clearance. Keyboard and focus behavior
+remain native. Pagefind's relaxed matching found the short `^Z` token for the old
+nonsense fixture after the canonical changelog was indexed; a quoted exact nonexistent
+term now tests the real no-results path without changing the search engine.
+
+Motion is limited to a short six-pixel hero entry, short native dialog transitions and
+hover feedback. No scroll reveals, hidden waiting content or documentation animation.
+Footer personality is confined to one human sentence and “Also, meows.” Existing
+editorial layouts, theme palette, static architecture and all eight media placeholders
+are deliberately preserved. No NMSh application or capture tooling was launched.
+
+Current verification includes Node/content/brand/launch tests, Astro diagnostics,
+production build, internal links/anchors, metadata/assets, Pagefind and Chrome tests.
+The complete `npm run verify` gate passed on 2026-10-18 after the review fixes, with
+no Astro errors, warnings or hints. The build validates every HTML page and internal
+link/anchor; shared JavaScript is 2,171 bytes gzip, with Pagefind separate.
+An additional Git-object audit verifies all 34 curated/canonical source paths at
+the pinned candidate. `npm run check:upstream` passes; `npm run build:launch` exits
+nonzero with the intended unpublished-candidate refusal, not a site build failure.
+Rendered website-only QA was inspected at desktop, tablet and mobile sizes, in both
+themes, including the hero, long docs, search and footer. Full-size social artwork and
+its 400×210 thumbnail were visually inspected. Transparent icon dimensions/alpha and
+real local production URLs are checked; human review of actual OS tab presentation,
+Safari/Firefox and assistive technology remains appropriate.
+
+Independent read-only review identified the modal-height issue, a hardcoded candidate
+label in tests and stale delivery notes. All are addressed; browser expectations now
+derive candidate/published behavior from launch data. No other Critical/Important
+finding was reported. Website-only verification does not establish physical NMSh QA.
+
+The production launch command intentionally refuses candidate metadata. Freshness
+checking agrees on candidate `82533639`, published v0.18.0 and Homebrew v0.17.0.
+Publication still requires the actual final tag, integrated onboarding/default review,
+release acceptance, tap verification, human visual review and separate deployment
+approval. The feature worktree is retained; no merge, release or deployment occurs.
+
+## Initial delivery (2026-10-17, historical)
+
+The measurements and stable-source decisions below describe the earlier implementation,
+not the revised v0.20 baseline. They are retained as historical verification evidence.
 
 ## Scope and isolation
 

@@ -1,10 +1,11 @@
 ---
 import Docs from '../../layouts/Docs.astro';
 import { documents, docGroups } from '../../lib/docs';
+import { launchLabel } from '../../lib/site';
 const entries = await documents();
 ---
-<Docs title="Documentation" description="A good place to get your bearings. Start with familiar commands, learn the frontend a little at a time, and go deeper when the details matter." slug="" headings={docGroups.map(group => ({ depth: 2, slug: group.toLowerCase().replaceAll(' ', '-'), text: group }))}>
+<Docs title="Documentation" description="Install NMSh, learn the everyday controls and find the technical details when you need them." slug="" headings={docGroups.map(group => ({ depth: 2, slug: group.toLowerCase().replaceAll(' ', '-'), text: group }))}>
     <div class="actions doc-index-intro"><a class="button" href="/docs/getting-started/">Start here <span>→</span></a><a class="text-link" href="/install/">Installation <span>→</span></a></div>
-    <aside class="note doc-index-intro"><strong>Read the right version.</strong><p>These guides describe the verified stable release, not current release candidates. Canonical references preserve their original historical notes. Learn Mode is planned only. Search indexes the guides and technical references locally; browse the complete map below if JavaScript is unavailable.</p></aside>
+    <aside class="note doc-index-intro"><strong>{launchLabel}</strong><p>These guides follow the verified launch-candidate code. <a href="/releases/#launch-baseline">Version and publication status</a> explains the source checkpoint. Technical references retain their original design notes. Learn Mode remains a future proposal.</p></aside>
     <div class="docs-index">{docGroups.map(group => <section id={group.toLowerCase().replaceAll(' ', '-')}><h2>{group}</h2><ul>{entries.filter(entry => entry.data.group === group).map(entry => <li><a href={`/docs/${entry.slug}/`}>{entry.data.title}<span class="doc-index-arrow" aria-hidden="true">→</span></a></li>)}</ul></section>)}</div>
 </Docs>

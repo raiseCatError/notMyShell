@@ -26,13 +26,21 @@ groups. Width fitting is deliberate; a narrow terminal cannot display everything
 
 ## Context Packs
 
-v0.18.0 ships bundled declarative packs and the `nmsh.context-pack/v1` format.
+NMSh includes bundled declarative packs and the `nmsh.context-pack/v1` format.
 `nmsh packs` manages local pack files with integrity checks and optional SHA-256
 pinning. Packs name core capabilities and presentation; they cannot carry arbitrary
 commands, hooks, includes or executable code.
 
 There is no remote pack registry in this release. Installing a pack does not grant
 new execution authority, and opening a repository does not install its suggestions.
+
+## More project and runtime context
+
+Native facts include .NET, Swift, Zig, Deno, Elixir, Dart, Flutter, Ruby and PHP.
+The shared build module recognizes Bazel, Gradle, Maven, CMake, Meson and Make.
+Version-control extras include Mercurial and Jujutsu. Requested versions come from
+project files; active versions come from supported install metadata, without
+executing a project-controlled runtime binary to ask its version.
 
 ## Discovery must not execute the project
 

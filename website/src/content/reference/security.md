@@ -1,6 +1,6 @@
 ---
 title: "Security policy"
-description: "Canonical security policy from v0.18.0."
+description: "Canonical security policy from the v0.20.0 candidate source."
 group: Technical reference
 order: 113
 source: "SECURITY.md"

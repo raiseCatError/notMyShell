@@ -21,6 +21,22 @@ narrows what is shown; `/copy` copies plain text without NMSh presentation chrom
 See [Transcript and history](/docs/transcript/) for the distinction between output
 history and recallable command history.
 
+When several commands belong together, use the [serial queue](/docs/execution/).
+For a dev server or log stream that should run alongside the shell, start a separate
+background task. These are different execution paths, not interchangeable labels.
+
+## Keep something useful for later
+
+`/pins` keeps commands and recipes. A pin stages text for editing; a recipe is
+reviewed before it can enter the queue. Neither runs merely because you open it.
+`/clips` holds deliberately kept text in this frontend's memory, not a permanent
+cross-machine clipboard. `/ps` reads the system clipboard only when you request
+it and presents the paste for review before insertion.
+
+For a result you want to share, open `/actions` and choose an operation for that
+completed output. Reports include a review step with best-effort redaction. Plain
+copy does not redact secrets; always inspect what you share.
+
 ## Keep input and output comfortable
 
 `/layout` chooses Bottom, Top or Flow composer placement. Bottom and Top dock the

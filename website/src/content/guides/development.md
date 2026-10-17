@@ -41,7 +41,7 @@ The site has its own package, lockfile, source tree and tests under `website/`.
 It does not import the application runtime or compile NMSh. Its README explains
 content updates, pinned source refresh, media replacement and deployment.
 
-Canonical reference pages are generated from verified release sources; edit the
+Canonical reference pages are generated from the verified launch source; edit the
 original document in a proper application contribution, not its website snapshot.
 Curated guides provide the beginner-friendly path and link directly to that source.
 

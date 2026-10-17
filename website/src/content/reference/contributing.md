@@ -1,6 +1,6 @@
 ---
 title: "Contributing to NMSh"
-description: "Canonical contributing to nmsh from v0.18.0."
+description: "Canonical contributing to nmsh from the v0.20.0 candidate source."
 group: Technical reference
 order: 114
 source: "CONTRIBUTING.md"

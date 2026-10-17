@@ -23,6 +23,7 @@ for (const file of htmlFiles) {
   if ((html.match(/<h1\b/g) || []).length !== 1) errors.push(`${pathname}: needs one h1`);
   if (!html.includes(`<link rel="canonical" href="${origin}${pathname}"`)) errors.push(`${pathname}: incorrect canonical`);
   for (const marker of ['name="description"', 'property="og:title"', 'property="og:description"', 'property="og:image"']) if (!html.includes(marker)) errors.push(`${pathname}: missing ${marker}`);
+  for (const marker of [`property="og:url" content="${origin}${pathname}"`, `property="og:image" content="${origin}/brand/social-preview.png"`, 'property="og:image:width" content="1200"', 'property="og:image:height" content="630"', 'property="og:image:alt"', 'name="twitter:card" content="summary_large_image"', `name="twitter:image" content="${origin}/brand/social-preview.png"`, 'name="twitter:image:alt"', 'href="/brand/favicon.svg"', 'href="/brand/favicon-32.png"', 'href="/brand/apple-touch-icon.png"']) if (!html.includes(marker)) errors.push(`${pathname}: incorrect social/icon metadata ${marker}`);
   if (html.includes('<video') && /<video[^>]*\bautoplay/.test(html)) errors.push(`${pathname}: autoplay is forbidden`);
   if (/<img[^>]+src="(?!\/brand\/|\/media\/)/.test(html)) errors.push(`${pathname}: unexpected image outside brand/media`);
 }
@@ -47,6 +48,7 @@ for (const [pathname, { html }] of pages) {
 const sitemap = await readFile(new URL('sitemap.xml', root), 'utf8');
 for (const pathname of pages.keys()) if (pathname !== '/404.html' && !sitemap.includes(`<loc>${origin}${pathname}</loc>`)) errors.push(`${pathname}: absent from sitemap`);
 await stat(new URL('pagefind/pagefind.js', root));
+for (const filename of ['social-preview.png', 'favicon.svg', 'favicon-16.png', 'favicon-32.png', 'apple-touch-icon.png']) await stat(new URL(`brand/${filename}`, root));
 const scripts = files.filter(file => file.pathname.includes('/_astro/') && file.pathname.endsWith('.js'));
 const javascriptBytes = (await Promise.all(scripts.map(async file => gzipSync(await readFile(file)).length))).reduce((total, size) => total + size, 0);
 if (javascriptBytes > 15000) errors.push(`Site JS exceeds 15KB gzip: ${javascriptBytes}`);

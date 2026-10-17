@@ -1,6 +1,6 @@
 ---
 title: "Platform evidence and limitations"
-description: "Canonical platform evidence and limitations from v0.18.0."
+description: "Canonical platform evidence and limitations from the v0.20.0 candidate source."
 group: Technical reference
 order: 102
 source: "docs/architecture/platforms.md"

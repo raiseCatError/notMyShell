@@ -1,6 +1,7 @@
 {
-  "commit": "9ec0676877a9ead3afe82528dced3f8d2a56ac20",
-  "tag": "v0.18.0",
+  "commit": "825336393562a37cb5cdf9baf916e8d6d3bb4e6d",
+  "version": "0.20.0",
+  "state": "candidate",
   "routes": {
     "ARCHITECTURE.md": "architecture",
     "docs/architecture/shell-adapter.md": "shell-adapter",
@@ -13,10 +14,16 @@
     "docs/design/session-interaction-ux.md": "session-interaction",
     "docs/privacy.md": "privacy",
     "docs/accessibility/baseline.md": "accessibility",
-    "docs/testing/v018-physical-qa.md": "physical-qa",
+    "docs/testing/v020-physical-qa.md": "physical-qa",
     "docs/development-verification.md": "verification",
     "SECURITY.md": "security",
-    "CONTRIBUTING.md": "contributing"
+    "CONTRIBUTING.md": "contributing",
+    "CHANGELOG.md": "changelog",
+    "docs/design/terminal-workflow.md": "terminal-workflow",
+    "docs/design/background-tasks.md": "background-tasks",
+    "docs/design/workspace-keymap.md": "workspace-keymap",
+    "docs/architecture/github-workspace.md": "github-workspace",
+    "docs/development/copy-actions-slice-3.md": "copy-actions"
   },
   "files": [
     {
@@ -24,105 +31,147 @@
       "slug": "architecture",
       "title": "Runtime architecture",
       "sourceSha256": "815181b91495f94f32d5b4a5b83a79b7bc0db6a416b1a022e7ab43ccc1f98cc0",
-      "generatedSha256": "a2154e927d2ee45a2f227f614f0fb728f36f277051f164712f7fdb4f6fcffd10"
+      "generatedSha256": "9e258216e388354944f8419aeeb952bab200b5488ada82d3a1c5e533f2074659"
     },
     {
       "path": "docs/architecture/shell-adapter.md",
       "slug": "shell-adapter",
       "title": "ShellAdapter contract",
-      "sourceSha256": "38c660795ce123a0e28972ed6713db81dc4655e95c12e785aa25ba567452bbcc",
-      "generatedSha256": "33ef9c12ccda23683658e1590fc807db29f2073675497cbe2feae47e6acb7ac9"
+      "sourceSha256": "6e32125e770f92ec561034364213b95817a2d024e788ada243dd6fafed5099e7",
+      "generatedSha256": "e0b3826f150b930a8a3e61cc1c870167f446b39156da7c71d401c56622b09b54"
     },
     {
       "path": "docs/architecture/platforms.md",
       "slug": "platforms",
       "title": "Platform evidence and limitations",
       "sourceSha256": "0973407ce888bf58b226880861fc285657e8f6016267171a12a0464814fa3de4",
-      "generatedSha256": "7156962eb74f635079d8f2266fcd7c47d09c0da24bb5a7a9aa0102d3a622d6b8"
+      "generatedSha256": "0af4dc4bc211f90c611f462ff5d6789eeaed89cbd9e969f5c425dbf39bfca371"
     },
     {
       "path": "docs/architecture/context-modules.md",
       "slug": "context-modules",
       "title": "Context modules and packs",
-      "sourceSha256": "8604f852860bf92091482fda15c7d195eeddf27bce4cb42bb71ec5e83ea3e53b",
-      "generatedSha256": "d951052881b3e2f6fccd8760d6ca518091a9d5c14547e504f0295599fa9b6ff0"
+      "sourceSha256": "735b91b0fadd0ea2c33b3b9e4a56f530150e083038781e2b89e918e1385f966c",
+      "generatedSha256": "c5ad978466b2c93aafadad1e2ab7050a11d44c51e6f0e7c3e54109948ed7e84d"
     },
     {
       "path": "docs/architecture/prompt-customization.md",
       "slug": "prompt-customization",
       "title": "Native prompt customization",
       "sourceSha256": "60d115e99e6d60aca96f626bd7c91dea16145d9cdffc85dd2994b715b93f6ae9",
-      "generatedSha256": "3bde9c538115e7c42e7b3b10969781003505a203ead46e0bb976397561a448be"
+      "generatedSha256": "98cd8ebedb2033ad638e740d64254512ca742d61cbf867ff08cf542462b7b90d"
     },
     {
       "path": "docs/architecture/optional-tools.md",
       "slug": "optional-tools",
       "title": "Optional tools and providers",
       "sourceSha256": "43256bf45c501dc525afb2330c44a004b8907f28204f208a640ca3453e45af92",
-      "generatedSha256": "978aed9df526f1f40cb3df5e1fbe456b8aaba72b109c34907608369ff1873a4e"
+      "generatedSha256": "e971348f84dcaaf16e6b916af6d8a8f2effc8876a540c48051f3ddf7c21bddc7"
     },
     {
       "path": "docs/design/theme-bridge.md",
       "slug": "theme-bridge",
       "title": "Theme Bridge design and ownership",
       "sourceSha256": "dce83c87b7bfeaaeace9135780eaddeaa682c28de7d4a1f3905a54c09a7e1b94",
-      "generatedSha256": "10cd186a46d353a7718e60fe4f11465078625acf0a34290e72d439a1ca7acb05"
+      "generatedSha256": "55d4ba193571bf0e0c72a8ef77c948c06d9c7af6e004ce66a2b7068bceb2ebc3"
     },
     {
       "path": "docs/design/configured-completion.md",
       "slug": "configured-completion",
       "title": "Configured completion",
       "sourceSha256": "c52b36be63d645658ee29343f1e72a68cc0fbafc547d98a119d84b58473a7d63",
-      "generatedSha256": "27a34b633faa2a3e1dc10ccadbeb5e19ccab32abb9dd66780eace7ea4e7c4c2a"
+      "generatedSha256": "427e435eec9527c60dab39cd716e15c0833cf619da5f33481ee768311ce1f4d0"
     },
     {
       "path": "docs/design/session-interaction-ux.md",
       "slug": "session-interaction",
       "title": "Session interaction design",
       "sourceSha256": "abfeed3680ebeebf77abf2b2e614fe4f9d1cc220d4e23284f7d6cf29c42bcc9b",
-      "generatedSha256": "640b36afb5f999338abb7b699f14139ca166b7ce8e7ba223a07f0852cd5fab3d"
+      "generatedSha256": "af36ac2adf320187ec35e28117c6cadd2ac4940d7e0ec168135af00e41bd945e"
     },
     {
       "path": "docs/privacy.md",
       "slug": "privacy",
       "title": "Privacy and local data",
       "sourceSha256": "9be31812270caa5b33e2a1cc57a6a3ac96eac3f4e7efc539a1db242f1363891f",
-      "generatedSha256": "63dbc07ee0246a8a9a9bd972cb68685c2b5df1d6058bcd9bf431349d66bc724c"
+      "generatedSha256": "6384a6805dc3838ab76152f305cb9d6611affe514a77ac38bc24d202d1750ed8"
     },
     {
       "path": "docs/accessibility/baseline.md",
       "slug": "accessibility",
       "title": "Accessibility baseline",
       "sourceSha256": "3992eaac2c2680eeb6c55e021bed7682a1ed2598d235ff29b76be385b2b1bb61",
-      "generatedSha256": "3d9240d6ded9a9ea97517e86f2d596effd012d4a68dc4d41d12612c79f657a18"
+      "generatedSha256": "d814fa5083a85ca927637bfc796e937656bf6ad1424a9dd5ccab9afed7327aa7"
     },
     {
-      "path": "docs/testing/v018-physical-qa.md",
+      "path": "docs/testing/v020-physical-qa.md",
       "slug": "physical-qa",
-      "title": "v0.18 physical QA checklist",
-      "sourceSha256": "ee13793622148e972162bcec476fee18d643a9a1ca9d2357f6646b34ff166b5e",
-      "generatedSha256": "9a4d0838e318eaa2fc55c080387957ae91537a5f279ee3bc045d0ee9f83c6751"
+      "title": "v0.20 physical QA checklist",
+      "sourceSha256": "8e4e43dd3d88318dd6e157b7073205f25ff7fd873cbf638244a7b19f9631a798",
+      "generatedSha256": "320d6b19d6cb568d8e229f0c5a1bb05826dee07dc7ab276d8489f72464a53574"
     },
     {
       "path": "docs/development-verification.md",
       "slug": "verification",
       "title": "Development verification",
-      "sourceSha256": "4ace22f2cb2a8ff443f671aef9b1e1dc8f2cc2278297a7b6d0ed241e2a752804",
-      "generatedSha256": "608e5e0e52f39d21c7ca54bf33e90c367081e9158f79fa26ff27b9d74df4743e"
+      "sourceSha256": "5809936f97421a81c1335d3276993e0b42455b365bfc392d40aa7fa6f3f66521",
+      "generatedSha256": "4899d1067f75b0c539b1874239777c5ac11d3188ffc67014460e4b6faf60ce44"
     },
     {
       "path": "SECURITY.md",
       "slug": "security",
       "title": "Security policy",
       "sourceSha256": "306bb71dfd5def7e12153c35983f3cf433764f21f8bc21f13af5fd982fa164d5",
-      "generatedSha256": "0898bd40efa171171c93c209a7a7fa8544ba95839998d269ca210d16f800bf63"
+      "generatedSha256": "b13d4eeac41fb4c2d71df4983aaa53b2955a7abde7be9b7e0d8970115d7dfb43"
     },
     {
       "path": "CONTRIBUTING.md",
       "slug": "contributing",
       "title": "Contributing to NMSh",
       "sourceSha256": "3c1274b83ec7011f3c3d2e9201a63f83506f9c12a1a43c92caff38270fe767ac",
-      "generatedSha256": "917c1ddf84067ae84de502f3cbdfab7b45d66cea65223350c4a3db6eab0f8b2c"
+      "generatedSha256": "cf1e37943f99b46bd83959a7861dead2fd5789c7308605887519bd00f3abeafb"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "slug": "changelog",
+      "title": "Canonical changelog",
+      "sourceSha256": "07e9fcdf59cdb6ded990925f7d19332b94b0d31e1342b2618387478a5ee28b04",
+      "generatedSha256": "3f4d8ee7cdbb459f4cfda170e0faaa5bf6c28ac99dc51d616d6d1b5096c2bdef"
+    },
+    {
+      "path": "docs/design/terminal-workflow.md",
+      "slug": "terminal-workflow",
+      "title": "Terminal workflow design",
+      "sourceSha256": "755cf1b18ebfd3766f0135b658fbdb93729f6600f5f5638ff21e407e5d2c1fcf",
+      "generatedSha256": "79739fcbde754261d08d8e78e594cbb87cf28d2b69397bb2b42dba193748f580"
+    },
+    {
+      "path": "docs/design/background-tasks.md",
+      "slug": "background-tasks",
+      "title": "Background task architecture",
+      "sourceSha256": "f2a208586c4b1e8b9c27372f2de43d5e59e03c0643861c12da9ab80299c7eb7c",
+      "generatedSha256": "56340df930302ddc2d60bc43315d0550f7bb4eb4033c8691888c1e5f8bb252f7"
+    },
+    {
+      "path": "docs/design/workspace-keymap.md",
+      "slug": "workspace-keymap",
+      "title": "Workspace keymap",
+      "sourceSha256": "30b8c3abb9fcdee3faeca9a4fe90f20512b9aab34d3f22794e2a7f657bca7286",
+      "generatedSha256": "6d18d761067009eab3da4167116bbe64432f58b3e44d6a8c0760a49fca1893af"
+    },
+    {
+      "path": "docs/architecture/github-workspace.md",
+      "slug": "github-workspace",
+      "title": "Read-only GitHub workspace",
+      "sourceSha256": "f63d9ef38e3dc660576b31db27d8f6e3eb972d437dae3b9d0cff404f07d5f9b9",
+      "generatedSha256": "d341d2f589c0e0825a75e0fafaefd9344398eb059405cac7a9a2ee369bb6da49"
+    },
+    {
+      "path": "docs/development/copy-actions-slice-3.md",
+      "slug": "copy-actions",
+      "title": "Output selection and Copy Actions",
+      "sourceSha256": "2c013683ce91dfefd32e556919a6904c74e04c616ba14b55f98da5f698cef5d8",
+      "generatedSha256": "dce994a0e172e274a5331c089f8f282988357e824965f3fc82e41d38f8bc7a15"
     }
   ]
 }

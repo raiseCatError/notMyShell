@@ -11,7 +11,8 @@ terminal simulation or media-generation work is permitted. All media is pending.
 The user authorizes autonomous design and inline implementation, without intermediate
 approval gates. No publishing, merging, release creation or production configuration.
 Keep the dedicated external worktree intact. Only website files and narrowly scoped
-CI filtering may change.
+CI filtering may change. The later branding addendum explicitly authorizes Vespyr
+favicons and one static social-preview composition, not product captures.
 
 ## Discovery (2026-10-17)
 
@@ -70,8 +71,10 @@ Marketing sections use editorial splits, numbered explanations and comparison ro
 not endless cards. A fine ruled media field with an abstract registration mark,
 purpose label and honest pending notice reserves its real aspect ratio. No fake
 commands, output, playback buttons or product UI. Learn is a conceptual introduction,
-not a functional lesson player. Motion only for short hover feedback; reduced motion
-disables it. Focus rings and text labels carry state independently of color.
+not a functional lesson player. Motion is limited to a six-pixel initial hero entry,
+short native dialog entry/exit and hover feedback. No scroll-triggered reveals or
+hidden content. Reduced motion disables it. Focus rings and text labels carry state
+independently of color.
 
 ## Responsive and accessible behavior
 
@@ -102,3 +105,36 @@ search index and bundle budgets. Browser checks at desktop/tablet/mobile: naviga
 search, theme persistence, copy feedback, keyboard, no overflow, reduced motion,
 contrast and automated accessibility. These checks never launch NMSh or create
 terminal media. Manual human visual/product review and Cloudflare setup remain.
+
+## Refinement and launch correction (2026-10-17)
+
+The intended baseline is now the cumulative v0.20 product, not the last published
+v0.18 release. `LAUNCH.md` records exact source ancestry, integrated feature coverage,
+onboarding gaps and publication gates. Candidate provenance and actual public release
+history are separate; generated references follow the candidate checkpoint. Publication
+requires a real immutable released tag, final content review and explicit approval.
+
+Primary hook: **A richer way to use the terminal.** Supporting copy describes command
+editing, output, queueing and live sessions before clarifying the real-shell model.
+Authored copy uses natural punctuation and concrete descriptions, without em dashes.
+Canonical snapshots, code and actual historical release notes retain their text.
+
+Preserve the existing editorial splits, reading measure, neutral palette and honest
+media fields. Refine hierarchy rather than adding cards or decorative effects. The
+hero aligns headline and supporting copy at their top edges, including tablet sizes.
+Primary actions have one clear visual priority; GitHub remains a quiet secondary link.
+
+Header: the exact existing pixel Vespyr silhouette plus plain notMyShell text. No
+miniature duplicate wordmark. Personality is limited to this brand signature and a
+short footer aside. Search uses a compact icon/label/key hint and a sharp, top-anchored
+native dialog; results grow downward without moving the input after entry.
+
+Docs keep ordinary full-page links, native Back/Forward and anchor behavior. Only
+the independently scrolling sidebar position persists in session storage, restored
+before article parsing; unavailable storage falls back to native navigation. Clicking
+the current item does not reload the article. Native scrollbars replace thin styling.
+
+The editable 1200×630 social composition uses charcoal, neutral typography, the
+lavender hook and genuine Vespyr. It is branding, never a simulated terminal. SVG
+geometry is extracted from the approved lockup; deterministic Sharp exports are
+checked in and are not rebuilt by ordinary site builds.

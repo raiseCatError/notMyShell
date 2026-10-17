@@ -1,6 +1,6 @@
 ---
 title: "Configured completion"
-description: "Canonical configured completion from v0.18.0."
+description: "Canonical configured completion from the v0.20.0 candidate source."
 group: Technical reference
 order: 107
 source: "docs/design/configured-completion.md"

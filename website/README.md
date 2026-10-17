@@ -15,10 +15,11 @@ adapter, app bundle, analytics, external font, account system or capture pipelin
 website/
   src/
     components/       Code blocks, media slots, native search dialog
+    brand/            Editable social-preview SVG composition
     content/guides/   Curated user handbook (editable Markdown)
     content/reference/ Generated canonical release documents (do not edit)
     content/releases/ Generated actual public release notes
-    data/            Release snapshot, source hashes/routes, media inventory
+    data/            Launch baseline, public releases, source hashes, media inventory
     layouts/         Shared product shell and documentation layout
     lib/             Shared release metadata and docs navigation
     pages/           Product, install, Learn, roadmap, docs and release routes
@@ -32,6 +33,8 @@ website/
 `DESIGN.md` records the brief, discovery and visual specification. `PLAN.md` tracks
 implementation; `REVIEW.md` records delivery evidence and review limits. Keep ongoing
 maintenance instructions here rather than copying them into those records.
+`LAUNCH.md` contains the v0.20 coverage inventory and the short release/onboarding
+checklist, with exact inspected commits and explicit integration gaps.
 
 ## Local setup and preview
 
@@ -68,11 +71,13 @@ build environment; they do not depend on local paths, credentials or T7 tooling.
 | `npm test` | Content helpers, Markdown transforms and real workflow classifier |
 | `npm run check` | Astro and TypeScript diagnostics |
 | `npm run build` | Validate provenance, static build, Pagefind, link/anchor/SEO/budget checks |
+| `npm run build:launch` | Reject candidates, verify published-source freshness online, then build |
+| `npm run brand` | Export authorized Vespyr icons and static social image; no product media |
 | `npm run preview` | Serve the built site, including search |
 | `npm run test:browser` | Chrome responsive, theme, clipboard, keyboard, no-JS and axe checks |
 | `npm run verify` | All website checks including browser tests |
-| `npm run check:upstream` | Network check for release/tag/tap drift; never writes |
-| `npm run sync:upstream` | Explicitly update canonical sources and public releases; review required |
+| `npm run check:upstream` | Network check for candidate/release/tag/tap drift; never writes |
+| `npm run sync:upstream` | Refresh the chosen launch source and actual release history; review required |
 
 Builds force a fresh content layer so Markdown-transform changes cannot leave stale
 rendered links in Astro's cache. Static checks cover every generated HTML page's
@@ -90,12 +95,12 @@ a comprehensive human accessibility audit or physical-terminal validation of NMS
 
 User guides are a curated explanation layer, not a second invented specification.
 Each has `title`, `description`, `group`, `order` and `sources` frontmatter. Sources
-link directly to a verified stable Git commit. Add a `.md` file in
+link directly to the verified launch-source Git commit. Add a `.md` file in
 `src/content/guides/`; navigation, previous/next links, sitemap, llms and search update
 from the collection. Group names are in `src/lib/docs.ts`. Do not add empty sections.
 
 Longer technical documents are generated from canonical Markdown in this repository
-at the verified stable tag's resolved commit. The source list lives in
+at the independently verified launch commit. The source list lives in
 `scripts/upstream-sources.mjs`; `src/data/upstream.json` records original and generated
 SHA-256 hashes plus route mappings. Import removes the first h1 because the layout
 supplies its own title, normalizes trailing whitespace/EOF, and preserves Markdown
@@ -104,29 +109,48 @@ links to local imported references when available, otherwise the pinned GitHub s
 Historical release-note links stay at their own tag. Do not edit generated snapshots.
 
 This deliberate versioned mirror makes a shallow Git clone and an **offline build**
-work even when `dev` is older than the public release. It avoids promoting development
-docs to stable. Historical design records retain their caveats and have an explicit
+work even when `dev` is older than the launch candidate. It does not falsely promote
+a candidate to a published release. Historical design records retain their caveats and have an explicit
 source-snapshot notice. Curated guides explain current behavior; the presence of a
 proposal inside an old design document is not a release promise.
 
-### Updating for a release
+### Preparing and finalizing the v0.20 launch
 
-1. Run `check:upstream`. If GitHub is unavailable or rate-limited, normal builds keep
-   using the existing reviewed snapshot; they do not silently guess a new version.
-2. When authorized to update site content, run `sync:upstream`. It accepts only public,
-   non-draft, non-prerelease `vX.Y.Z` releases, resolves the tag's commit, fetches the
-   selected canonical docs and actual release notes, and independently reads the tap.
-   Check-only mode compares release titles, notes, dates, URLs and the full historical
-   release set too—not just the latest tag. Notes are hash-validated during builds.
-   An optional `GITHUB_TOKEN` increases API limits; never commit credentials.
-3. Review `src/data/release.json`, reference/release diffs, installation requirements,
-   platform evidence, curated guides, feature copy, roadmap and known limitations.
-   `requirements` in the snapshot are explicit maintained values: verify them against
-   the new release; the sync script is not a semantic product audit.
-4. Keep pending/unreleased features labeled. Inspect the tap discrepancy rather than
-   assuming Homebrew offers the latest tag. Update the release-specific QA source in
-   `upstream-sources.mjs` when appropriate; do not relabel an old checklist as a new one.
-5. Run website verification, review, commit and push. Publishing still needs approval.
+`src/data/launch.json` is the product/documentation baseline: state, intended version,
+public ref, immutable commit and verification date. Candidate metadata has no invented
+publication date or release URL. `src/data/release.json` independently records actual
+public releases and the tap. Generated references must agree with the launch manifest,
+not necessarily with the latest published version. This keeps v0.20 product writing
+confident without describing a candidate as a released download.
+
+1. Run `npm run check:upstream`. If GitHub is unavailable or rate-limited, normal
+   builds remain offline and buildable. The freshness check and publication build
+   fail closed rather than guessing. An optional `GITHUB_TOKEN` increases API limits.
+2. After inspecting an approved public integration checkpoint, refresh explicitly:
+   `npm run sync:upstream -- --candidate <public-ref> --version 0.20.0`.
+   This resolves the exact GitHub commit, fetches canonical documents and genuine
+   brand sources, and refreshes only actual published release history and tap data.
+   No application branch is checked out, merged or compiled. See `LAUNCH.md` before
+   replacing onboarding controls or defaults with claims from an unfinished branch.
+3. Review reference diffs, guides, defaults, feature coverage, known limits, platform
+   evidence and installation instructions. The sync is a source refresh, not a
+   semantic audit. Requirements remain explicit maintained values. The QA source in
+   `upstream-sources.mjs` must match the actual release, not a renamed old checklist.
+4. Once the official public stable v0.20.0 release exists, run
+   `npm run sync:upstream -- --published v0.20.0`. It rejects a missing, draft or
+   prerelease target, resolves the immutable tag commit and imports the real notes
+   and date. Review the final source integration and checklist before continuing.
+5. Verify the tap separately. Until it really provides v0.20, keep its discrepancy
+   visible. Candidate source installs use an exact detached SHA; published installs
+   switch to the verified tag. `/update` targets stable releases, not candidate review.
+6. Finish `LAUNCH.md`, run `npm run verify` and `npm run build:launch`, then seek
+   publication approval. The latter rejects candidate state and also performs the
+   online freshness check. Candidate HTML is `noindex` and omits released-version
+   structured data; verified publication restores normal indexing automatically.
+
+Check-only mode compares public release titles, bodies, dates, URLs and the historical
+set as well as the launch ref/commit and tap. Notes are hash-validated during builds.
+Historical notes are never rewritten to match the website voice or launch version.
 
 Generated collections must exactly match their provenance manifests. An explicit
 sync prunes a removed/renamed generated page only when its old recorded hash still
@@ -176,7 +200,25 @@ Learn image a working interface. Requirements in `altRequirement` are instructio
 for a future author, never fabricated alt text for an unavailable asset. Build
 validation rejects missing local assets, missing alt text, bad dimensions and
 unapproved external media URLs. Genuine existing logo/lockup assets are copied
-unchanged from the verified release, not newly generated terminal imagery.
+unchanged from the pinned source, not newly generated terminal imagery.
+
+### Authorized brand assets
+
+`npm run brand` extracts the exact rect-based Vespyr sprite from the approved
+`public/brand/nmsh-lockup.svg`, originally sourced from `assets/brand/nmsh-lockup.svg`
+and the production `catSprite.ts` artwork. It does not invent a new cat or use the
+embedded wordmark bitmap. Header `vespyr.svg` keeps its natural wide proportions;
+`favicon.svg` centers it on a transparent square. The transparent 16px/32px PNGs
+provide tab fallbacks; the 180px PNG is the Apple touch icon. No filled bounding box.
+
+The editable composition is `src/brand/social-preview.svg`. Sharp, an explicit
+development-only dependency already used by Astro, substitutes genuine Vespyr and
+exports `public/brand/social-preview.png` at 1200×630. Text uses the local Arial or
+Helvetica installation; the checked-in production PNG is the reviewed output, so
+ordinary builds neither rasterize artwork nor depend on the maintainer's fonts.
+After a deliberate edit, regenerate on the approved workstation, visually inspect
+the full image and a small thumbnail, then run the asset tests and website build.
+This branding-only command is not a terminal capture or demonstration system.
 
 ## Theme, accessibility and metadata
 
@@ -186,9 +228,16 @@ the manual toggle persists it when storage is available and remains functional w
 storage writes are blocked. No JS means readable default-dark HTML. Reduced-motion
 CSS disables transitions; videos never start themselves.
 
+Hero motion is a short six-pixel entry with content always readable, not hidden
+pending scrolling. Dialog entry/exit uses native discrete CSS transitions with a
+plain native fallback. Docs never reveal on scroll. Their independent sidebar
+scroll offset persists per tab in session storage; article scrolling, browser
+Back/Forward and heading hashes remain native. Blocked storage stays usable.
+
 `src/lib/site.ts` is the origin/identity configuration. `Base` provides canonical,
-Open Graph, Twitter and accurate software metadata. The social image is the genuine
-existing wordmark, not a fake product capture. Sitemap and llms endpoints derive docs
+Open Graph, Twitter and accurate software metadata. All pages use the real 1200×630
+brand composition, absolute production image URLs, dimensions, image alt text and
+`summary_large_image` cards. Sitemap and llms endpoints derive docs
 links from the same collections. `robots.txt` points only to the official domain.
 Preview URLs never become canonicals. `public/_headers` supplies basic security and
 cache headers; hashed Astro assets are immutable, Pagefind revalidates to prevent
@@ -204,7 +253,7 @@ the **existing `raiseCatError/notMyShell` repository** through Pages' Git integr
 | --- | --- |
 | Root directory | `website` |
 | Framework preset | Astro (static, no adapter/Workers runtime) |
-| Build command | `npm ci && npm run build` |
+| Build command | `npm ci && npm run build:launch` |
 | Build output directory | `dist` (relative to `website`) |
 | Environment | `NODE_VERSION=22.22.0`, `SKIP_DEPENDENCY_INSTALL=1` |
 | Build image | Current supported Pages build image (v3 at verification) |
@@ -217,6 +266,9 @@ The repository default `master` does not yet contain this site. Do not select it
 claim deployment is ready without integrating the website. Use `dev` for normal PR
 integration, then make a separate, authorized production-branch decision. Connecting
 a Pages Git project can trigger deployment; do not do that as a harmless setup step.
+The production command intentionally refuses the current candidate baseline. Local
+review and inexpensive website CI use `npm run build`; no preview deployment is
+needed to review it. Do not bypass the release guard to make a production build green.
 
 No Wrangler configuration or GitHub Actions deploy workflow is needed. The inexpensive
 `Website` workflow runs only site checks. The application's existing aggregate CI

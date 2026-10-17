@@ -8,10 +8,10 @@ sources: [ARCHITECTURE.md, docs/architecture/terminal-stack.md]
 
 ## Four layers, different responsibilities
 
-1. **Terminal host** — the window, fonts, cells, keyboard protocols and terminal selection.
-2. **NMSh frontend** — the composer, suggestions, transcript, panels and prompt presentation.
-3. **ShellAdapter and PTY** — the shell-specific bootstrap and pseudo-terminal transport.
-4. **Your real shell** — parsing, expansion, aliases, functions, environment and jobs.
+1. **Terminal host:** the window, fonts, cells, keyboard protocols and terminal selection.
+2. **NMSh frontend:** the composer, suggestions, transcript, panels and prompt presentation.
+3. **ShellAdapter and PTY:** the shell-specific bootstrap and pseudo-terminal transport.
+4. **Your real shell:** parsing, expansion, aliases, functions, environment and jobs.
 
 NMSh is not a terminal emulator, a replacement shell or a multiplexer. It can run
 inside an integrated editor terminal or alongside tmux without replacing either.

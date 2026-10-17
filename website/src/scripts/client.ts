@@ -61,13 +61,19 @@ let searchTimer: ReturnType<typeof setTimeout>;
 function openSearch() { dialog?.showModal(); input?.focus(); }
 if (trigger && dialog) {
   trigger.hidden = false;
+  const modifier = document.querySelector('#search-modifier');
+  if (modifier && !/Mac|iPhone|iPad/.test(navigator.userAgent)) modifier.textContent = 'Ctrl';
   trigger.addEventListener('click', openSearch);
   document.querySelector('#search-close')?.addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => trigger.focus());
   dialog.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); dialog.close(); }
   });
-  dialog.addEventListener('click', event => { if (event.target === dialog && event.offsetY < 0) dialog.close(); });
+  dialog.addEventListener('click', event => {
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+  });
   document.addEventListener('keydown', event => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openSearch(); }
   });
@@ -96,11 +102,13 @@ input?.addEventListener('input', () => {
         const url = new URL(match.url, location.origin);
         if (url.origin !== location.origin) continue;
         link.href = url.pathname + url.hash;
-        link.textContent = match.meta.title || 'Documentation';
+        const title = document.createElement('span');
+        title.textContent = match.meta.title || 'Documentation';
         const excerpt = document.createElement('p');
         const parsed = new DOMParser().parseFromString(match.excerpt, 'text/html');
         excerpt.textContent = parsed.body.textContent;
-        item.append(link, excerpt);
+        link.append(title, excerpt);
+        item.append(link);
         results.append(item);
       }
     } catch {

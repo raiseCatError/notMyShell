@@ -1,12 +1,15 @@
 import { readFile, access, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { validateMedia, assertFileMembership } from './content.mjs';
+import { assertLaunch } from './launch.mjs';
 
 const root = new URL('../', import.meta.url);
 const read = async path => JSON.parse(await readFile(new URL(path, root), 'utf8'));
 const release = await read('src/data/release.json');
 const manifest = await read('src/data/upstream.json');
-if (!/^v\d+\.\d+\.\d+$/.test(release.latest.tag) || release.latest.tag !== manifest.tag || release.sourceCommit !== manifest.commit) throw new Error('Release and canonical source snapshots disagree.');
+const launch = await read('src/data/launch.json');
+assertLaunch(launch, release, process.argv.includes('--require-published'));
+if (launch.version !== manifest.version || launch.commit !== manifest.commit || launch.state !== manifest.state) throw new Error('Launch and canonical source snapshots disagree.');
 assertFileMembership((await readdir(new URL('src/content/reference/', root))).filter(name => name.endsWith('.md')), manifest.files.map(file => `${file.slug}.md`), 'Reference');
 assertFileMembership((await readdir(new URL('src/content/releases/', root))).filter(name => name.endsWith('.md')), release.history.map(item => `${item.tag}.md`), 'Release');
 for (const file of manifest.files) {
@@ -27,4 +30,4 @@ for (const slot of slots) {
 }
 const guides = await readdir(new URL('src/content/guides/', root));
 if (guides.filter(file => file.endsWith('.md')).length < 18) throw new Error('The complete curated guide set is missing.');
-console.log(`Content valid: ${manifest.files.length} pinned sources, ${guides.length} guides, ${slots.length} media slots; stable ${release.latest.tag}.`);
+console.log(`Content valid: ${manifest.files.length} pinned sources, ${guides.length} guides, ${slots.length} media slots; launch v${launch.version} ${launch.state}, public stable ${release.latest.tag}.`);

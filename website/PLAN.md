@@ -9,7 +9,8 @@ checked-in public-release/source snapshots, no CLI runtime dependency.
 - Source under website/, independent install/build/test. Node >=22.22.0 for Astro.
 - No captures, recordings, demo tooling, app launches or production deployments.
 - Worktree on verified T7, feature/nmsh-website from origin/dev; leave it intact.
-- v0.18.0 is stable; Homebrew snapshot is v0.17.0; Learn is planned only.
+- Launch target is v0.20.0, currently a verified candidate checkpoint; published
+  release history remains separate. `LAUNCH.md` records source coverage and gates.
 
 ## Review focus
 - Offline external data: builds use reviewed snapshots, never live network requests.

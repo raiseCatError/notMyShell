@@ -1,12 +1,12 @@
 ---
 title: Command reference
-description: Find stable frontend actions by purpose, with links to deeper guides.
+description: Find frontend actions by purpose, with links to deeper guides.
 group: Understand the system
 order: 18
 sources: [README.md, src/commands/slashCommands.ts]
 ---
 
-This is a map of common stable actions, not a replacement for the generated
+This is a map of common actions in the launch baseline, not a replacement for the generated
 `/help` in your installed version. A slash action controls NMSh; ordinary programs
 and absolute executable paths still run in your real shell.
 
@@ -19,6 +19,10 @@ and absolute executable paths still run in your real shell.
 | `/syntax`, `/cursor` | Input presentation |
 | `/transcript` | Transcript settings |
 | `/history`, `/find`, `/filter`, `/copy` | Recall, inspect, narrow and copy |
+| `/actions`, `/compare` | Act on completed output and compare results |
+| `/queue`, `/pause`, `/qr`, `/qc` | Serial execution, pause and reviewed resume/clear |
+| `/background` (`/bg`) | Separate session-owned background tasks |
+| `/pins`, `/clips`, `/ps` | Kept commands, in-memory clips and reviewed clipboard paste |
 | `/resume`, `/sessions` | Session navigation |
 | `/shell` | Switch supported shell backend |
 | `/zsh`, `/exit` | Hand off to an ordinary shell |
@@ -41,6 +45,7 @@ and absolute executable paths still run in your real shell.
 | `/configure`, `/tmux`, `/dotfiles` | Reviewed configuration workflows |
 | `/claude`, `/ai`, `/mods` | Managed Claude Code, agent surfaces and mod inventory |
 | `/worktrees` | Worktree inventory and explicit management plans |
+| `/sidebar`, `/panel`, `/keys` | Opt-in experimental workspace regions and bindings |
 | `/github` (`/prs`, `/issues`) | Read-only GitHub workspace |
 | `/zoomies` (`/awake`, `/caffeinate`) | Keep Awake |
 | `/btw` (`/ask`) | Local typed-action guidance |

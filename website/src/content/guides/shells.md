@@ -16,7 +16,7 @@ sources: [README.md, docs/architecture/shell-adapter.md, docs/architecture/platf
 
 `/shell` switches the current backend with safety checks. Jobs and session state
 matter: switching is not just changing the text in a shell label. PowerShell and
-Nushell are not supported shell backends in the stable release.
+Nushell are not supported shell backends in this launch baseline.
 
 Your startup configuration is loaded through a controlled private bootstrap.
 NMSh does not silently rewrite your rc files. Prompt widgets, instant prompts,

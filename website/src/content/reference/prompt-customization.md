@@ -1,6 +1,6 @@
 ---
 title: "Native prompt customization"
-description: "Canonical native prompt customization from v0.18.0."
+description: "Canonical native prompt customization from the v0.20.0 candidate source."
 group: Technical reference
 order: 104
 source: "docs/architecture/prompt-customization.md"

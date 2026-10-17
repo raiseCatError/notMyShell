@@ -23,6 +23,10 @@ The tap can trail the latest public release. The [installation page](/install/)
 shows the independently verified release and tap versions, plus exact source-build
 instructions. NMSh requires Node.js 22+ and zsh, Bash 4.4+ or Fish.
 
+These docs target the v0.20 launch baseline. Until its official release and tap
+update, use the installation page's pinned candidate build to review that version.
+On first launch, [Setup](/docs/setup/) walks through preferences before applying them.
+
 > **Do not use `chsh` to make NMSh your login shell.** NMSh is a frontend, not a
 > shell. Launch it from your terminal or configure your terminal to start it.
 
@@ -57,6 +61,6 @@ hands off to ordinary interactive zsh. Closing the terminal window normally deta
 a service-backed session; that is not the same as stopping its running programs.
 Read [Sessions and resume](/docs/sessions/) before relying on this behavior.
 
-New surfaces in the latest release still need physical-terminal validation.
+The final launch candidate still needs physical-terminal acceptance.
 See [compatibility](/docs/shells/) for limitations rather than assuming every host
 and shell configuration behaves identically.

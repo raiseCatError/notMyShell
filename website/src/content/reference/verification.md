@@ -1,6 +1,6 @@
 ---
 title: "Development verification"
-description: "Canonical development verification from v0.18.0."
+description: "Canonical development verification from the v0.20.0 candidate source."
 group: Technical reference
 order: 112
 source: "docs/development-verification.md"
@@ -106,3 +106,17 @@ Final shard runs passed in 52.2s and 79.9s with four workers. Every shard and re
 all assertions and budgets. Higher local fan-out exposed intermittent existing
 completion, resume-browser latency and terminal-mode timing failures; focused
 reruns and final bounded-worker verification passed without assertion changes.
+
+### Explicit temporary storage
+
+For verification on another disk, set `NMSH_TEST_TMPDIR` to an existing short
+absolute directory on a filesystem supporting Unix sockets and permissions.
+The runner creates and cleans its private `nt-*` directories there. Test children
+receive a private home inside that root so shell completion caches and other
+home-relative test artifacts cannot write to the host home. An invalid
+directory fails instead of falling back to the system disk. Keep paths short:
+nested PTY/session socket names still have the operating system's length limit.
+
+Set `TMPDIR`, `TMP` and `TEMP` to that directory too for launchers and benchmark
+helpers. Point npm and tool caches at the same disk when needed. Default CI
+storage and all verification gates remain unchanged.

@@ -1,13 +1,15 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import launch from '../../src/data/launch.json' with { type: 'json' };
 
-test('home explains the product, pending media and released version', async ({ page }) => {
+test('home explains the product, pending media and intended launch version', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Your shell.');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('A richer way to use');
   await expect(page.getByRole('link', { name: 'Get started', exact: true }).first()).toHaveAttribute('href', '/install/');
   await expect(page.locator('[data-media="home-overview"]')).toContainText('Media pending');
   await expect(page.locator('[data-media] img, [data-media] video')).toHaveCount(0);
-  await expect(page.getByText('v0.18.0', { exact: false }).first()).toBeVisible();
+  const label = `v${launch.version}${launch.state === 'candidate' ? ' preview' : ''}`;
+  await expect(page.getByText(label, { exact: false }).first()).toBeVisible();
 });
 
 test('theme persists and remains usable when local storage is blocked', async ({ page }) => {
@@ -30,7 +32,7 @@ test('local docs search returns useful results and closes back to its trigger', 
   await page.getByRole('searchbox', { name: 'Search documentation' }).fill('Theme Bridge');
   await expect(page.locator('#search-results a').first()).toBeVisible();
   await expect(page.locator('#search-results')).toContainText(/theme/i);
-  await page.getByRole('searchbox').fill('zzzznoresultxyz');
+  await page.getByRole('searchbox').fill('"zzzznoresultxyz"');
   await expect(page.locator('#search-status')).toContainText('No results');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();

@@ -49,9 +49,12 @@ transcripts and live processes are different; see [Sessions](/docs/sessions/).
 
 ## Known release limitations
 
-v0.18.0 physical QA is pending. Fish can still drop type-ahead while `read` owns
-input. A lone `ESC[3J` clears the transcript. Managed targets are Claude Code only,
-and the GitHub workspace is read-only. Full details are in [Releases](/releases/).
+Physical acceptance for the final v0.20 launch build is pending. Fish type-ahead
+during `read` remains a tracked compatibility concern. Managed targets are Claude
+Code beta only; the GitHub workspace is read-only and workspace regions are
+experimental, Off by default. Background tasks need a matching session service.
+Check the [candidate changelog](/docs/reference/changelog/) and
+[release status](/releases/#launch-baseline) for the exact source checkpoint.
 
 ## Ask for help safely
 
