@@ -175,7 +175,8 @@ import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from 
 import type {CapabilityScopeInput} from '../context/capability.js';
 import {safeContextText, type ContextFact} from '../context/facts.js';
 import {discoverLocalExecutables} from '../tools/localDiscovery.js';
-import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
+import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, quickRunner, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
+import {renderUpdateNotice, type UpdateProvenance} from '../output/UpdateNotice.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
@@ -3883,8 +3884,26 @@ export class TerminalApp {
       }
       return;
     }
+    // Notify: once per newly seen stable release (never when Off, never without one).
     if (!('release' in result) || !result.release || !result.announce) return;
-    this.output.addHistoryLine(`${INFO}NMSh ${result.release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
+    await this.announceUpdate(result.release);
+  }
+
+  /** How this copy was installed, from facts only (Homebrew metadata, a verified official checkout), with a short bound. */
+  private async updateProvenance(): Promise<UpdateProvenance> {
+    try {
+      const install = await detectInstall(installRoot(), quickRunner);
+      return install.kind === 'homebrew' ? 'homebrew' : install.kind === 'checkout' ? 'checkout' : 'manual';
+    } catch { return 'manual'; }
+  }
+
+  /** The update notice in the transcript: amber accent, the versions, short notes and how to update this installation. */
+  private async announceUpdate(release: ReleaseInfo, ready = false): Promise<void> {
+    const provenance = ready ? 'manual' : await this.updateProvenance();
+    if (this.stopped) return;
+    for (const row of renderUpdateNotice({installed: this.buildIdentity.version, available: release.version, summary: release.summary, url: release.url, provenance, ready})) {
+      this.output.addHistoryLine(row);
+    }
     this.render();
   }
 
@@ -3906,10 +3925,10 @@ export class TerminalApp {
     try {
       const outcome = await prepareAutomaticUpdate(release);
       if (this.stopped || !outcome.announce) return;
-      const line = outcome.kind === 'ready' ? `NMSh ${outcome.version} ready · Restart NMSh to use it`
-        : outcome.kind === 'skipped' ? `NMSh ${outcome.version} is available · Automatic update skipped · Run /update for details`
-        : `Automatic update to ${outcome.version} did not complete and was rolled back · Run /update for details`;
-      this.output.addHistoryLine(`${outcome.kind === 'ready' ? SUCCESS : INFO}${line}${RESET}`);
+      // Ready: a restart is all that is left. Skipped (Homebrew, a manual copy): the notice says how to update it.
+      if (outcome.kind === 'ready') await this.announceUpdate(release, true);
+      else if (outcome.kind === 'skipped') await this.announceUpdate(release);
+      else this.output.addHistoryLine(`${INFO}Automatic update to ${outcome.version} did not complete and was rolled back · Run /update for details${RESET}`);
     } catch { /* an automatic update never crashes the session */ } finally {
       this.updateInProgress = false;
       this.preparingUpdate = undefined;
