@@ -1,0 +1,577 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NMSh First Run</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&family=Martian+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: a long design review. A masthead, then one band per direction where the terminal captures dominate
+   and the notes sit in a narrow column beside them; comparison, recommendation and architecture follow. */
+:root {
+  --ground: #121117;
+  --panel: #1b1923;
+  --well: #0d0c11;
+  --rule: #2c2937;
+  --ink: #edeaf4;
+  --ink-2: #b8b3c7;
+  --ink-3: #8a849b;
+  --lavender: #a67cf3;
+  --lavender-ink: #1d1530;
+  --aurora: #3ee8b5;
+  --amber: #e2b04e;
+  --display: "Martian Mono", "JetBrains Mono", ui-monospace, monospace;
+  --body: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --ground: #f4f2f8; --panel: #ffffff; --well: #e9e6f1; --rule: #dcd7e7; --ink: #17151d; --ink-2: #464156; --ink-3: #686279; --lavender: #6a44c8; --lavender-ink: #ffffff; --aurora: #0d8a68; --amber: #8f6400; color-scheme: light; }
+}
+:root[data-theme="light"] { --ground: #f4f2f8; --panel: #ffffff; --well: #e9e6f1; --rule: #dcd7e7; --ink: #17151d; --ink-2: #464156; --ink-3: #686279; --lavender: #6a44c8; --lavender-ink: #ffffff; --aurora: #0d8a68; --amber: #8f6400; color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--ground); color: var(--ink); font: 16px/1.6 var(--body); margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.7rem, 4vw, 2.6rem); line-height: 1.15; }
+h2 { font-size: clamp(1.3rem, 2.6vw, 1.75rem); line-height: 1.2; }
+h3 { font-size: 1rem; line-height: 1.3; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--lavender); }
+code, kbd, .mono { font-family: var(--mono); font-size: 0.88em; }
+kbd { background: var(--panel); border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 0.4em; border-radius: 2px; white-space: nowrap; }
+.eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+
+/* masthead */
+.masthead { padding-block: 56px 32px; display: grid; gap: 18px; border-bottom: 1px solid var(--rule); }
+.masthead .lead { font-size: 1.08rem; color: var(--ink-2); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.fact { font: 0.78rem/1.4 var(--mono); color: var(--ink-2); background: var(--panel); border: 1px solid var(--rule); padding: 4px 9px; }
+.fact b { color: var(--ink); font-weight: 600; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-block: 14px; border-bottom: 1px solid var(--rule); font: 0.85rem/1.4 var(--mono); }
+.toc a { color: var(--ink-2); text-decoration: none; }
+.toc a:hover, .toc a:focus-visible { color: var(--lavender); }
+
+section { padding-block: 48px; border-bottom: 1px solid var(--rule); display: grid; gap: 22px; }
+.section-head { display: grid; gap: 10px; }
+.section-head p { color: var(--ink-2); }
+
+/* the powerline mark used for direction names: a notch, a fill, a wedge (NMSh's own segment geometry) */
+.seg { display: inline-flex; justify-self: start; align-items: center; font: 700 0.78rem/1 var(--mono); color: var(--lavender-ink); background: var(--lavender); padding: 6px 12px 6px 14px;
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 7px 50%); }
+.seg.quiet { background: var(--well); color: var(--ink-2); }
+.seg.go { background: var(--aurora); color: #062a1f; }
+
+/* glance cards */
+.glance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.card { background: var(--panel); border: 1px solid var(--rule); display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+.card .body { padding: 16px; display: grid; gap: 10px; align-content: start; }
+.card p { color: var(--ink-2); font-size: 0.95rem; }
+.shot { display: block; width: 100%; height: auto; background: var(--well); border: 0; padding: 0; cursor: zoom-in; }
+.shot img { display: block; width: 100%; height: auto; image-rendering: auto; }
+
+/* concept bands */
+.concept-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 28px; align-items: start; }
+.notes { display: grid; gap: 16px; font-size: 0.94rem; }
+.notes dl { margin: 0; display: grid; gap: 12px; }
+.notes dt { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.notes dd { margin: 4px 0 0; color: var(--ink-2); }
+.verdict { display: grid; gap: 8px; padding: 14px; background: var(--panel); border: 1px solid var(--rule); }
+.verdict h3 { font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.verdict ul { margin: 0; padding-left: 1.1em; color: var(--ink-2); }
+.plus li::marker { content: "+  "; color: var(--aurora); }
+.minus li::marker { content: "−  "; color: var(--amber); }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--rule); }
+.tabs button { font: 600 0.8rem/1 var(--mono); color: var(--ink-3); background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 10px 9px; cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--lavender); }
+.tabs button:focus-visible { outline: 2px solid var(--lavender); outline-offset: 2px; }
+.panel { display: grid; gap: 14px; padding-top: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+figcaption { font-size: 0.82rem; color: var(--ink-3); }
+figcaption b { color: var(--ink-2); font-weight: 600; }
+video { display: block; width: 100%; height: auto; background: var(--well); }
+
+/* tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; min-width: 640px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+thead th { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); background: var(--panel); }
+tbody th { font-weight: 600; color: var(--ink); width: 22%; }
+td { color: var(--ink-2); }
+tr:last-child th, tr:last-child td { border-bottom: 0; }
+.best { color: var(--aurora); font-weight: 600; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+.cols3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.box { background: var(--panel); border: 1px solid var(--rule); padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.box h3 { display: flex; align-items: center; gap: 8px; }
+.box ul { margin: 0; padding-left: 1.1em; color: var(--ink-2); font-size: 0.93rem; display: grid; gap: 6px; }
+.dot { width: 9px; height: 9px; flex: none; }
+.ok { background: var(--aurora); } .mid { background: var(--lavender); } .no { background: var(--amber); }
+.callout { border-left: 3px solid var(--lavender); padding: 4px 0 4px 14px; color: var(--ink-2); max-width: 74ch; }
+pre { margin: 0; overflow-x: auto; background: var(--well); border: 1px solid var(--rule); padding: 14px; font: 0.84rem/1.6 var(--mono); color: var(--ink-2); }
+ol.steps, ul.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; color: var(--ink-2); max-width: 76ch; }
+
+/* lightbox */
+.lightbox { position: fixed; inset: 0; background: rgba(6, 5, 9, 0.92); display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); z-index: 20; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 100%; }
+.lightbox p { color: #d9d4e6; font-size: 0.85rem; margin-top: 8px; text-align: center; max-width: none; }
+
+@media (max-width: 960px) {
+  .glance, .cols3 { grid-template-columns: minmax(0, 1fr); }
+  .concept-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { video { display: none; } .reduced-note { display: block !important; } }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <span class="eyebrow">notMyShell · first-run onboarding · design review</span>
+    <h1>Three directions for the first run</h1>
+    <p class="lead">Each direction below is a working terminal prototype built on NMSh's own renderers: the real Aurora engine, Vespyr's approved pixels, the Native prompt, theme chrome, and the production renderer and key decoder. Every image is a capture of that prototype running in a terminal emulator (VHS: xterm.js in headless Chrome). There are no HTML mockups here. All three show the same four starting points.</p>
+    <div class="facts">
+      <span class="fact"><b>Design only</b> · no production code changed</span>
+      <span class="fact">feature/post-v020-preferences-onboarding @ <b>13a47f8</b> · clean</span>
+      <span class="fact">Prototypes and captures on the T7 only</span>
+    </div>
+  </header>
+  <nav class="toc" aria-label="Sections">
+    <a href="#glance">At a glance</a><a href="#shared">Shared ground</a><a href="#horizon">1 · Horizon</a><a href="#stage">2 · Stage</a><a href="#prompt">3 · First Prompt</a>
+    <a href="#compare">Compare</a><a href="#recommend">Recommendation</a><a href="#keep">Keep Existing</a><a href="#startup">/startup</a><a href="#defaults">Defaults &amp; welcome</a><a href="#run">Try it in Ghostty</a><a href="#limits">Limits</a>
+  </nav>
+
+  <section id="glance">
+    <div class="section-head"><span class="eyebrow">At a glance</span><h2>Three compositions, one product</h2>
+      <p>They differ in where the light lives, how you move between choices, and how much of the screen setup owns.</p></div>
+    <div class="glance">
+      <article class="card"><button class="shot" data-full="captures/horizon/pick-1-wide.png" data-caption="Horizon · NMSh Recommended highlighted"><img src="captures/horizon/pick-1-wide.png" alt="Horizon: an aurora sky band above a list of four choices and a detail column" loading="lazy"></button>
+        <div class="body"><span class="seg go">Recommended direction</span><h3>1 · Horizon</h3><p>A living sky above, solid ground below. All four choices in one list; the highlighted one points at what it means.</p></div></article>
+      <article class="card"><button class="shot" data-full="captures/stage/pick-1-wide.png" data-caption="Stage · NMSh Recommended page"><img src="captures/stage/pick-1-wide.png" alt="Stage: a page of words beside a tall aurora window" loading="lazy"></button>
+        <div class="body"><span class="seg quiet">Most dramatic</span><h3>2 · Stage</h3><p>Each choice gets the whole stage. The Aurora is the lighting, and each choice is lit differently.</p></div></article>
+      <article class="card"><button class="shot" data-full="captures/prompt/pick-1-wide.png" data-caption="First Prompt · the /startup card in the transcript"><img src="captures/prompt/pick-1-wide.png" alt="First Prompt: a first-run banner, a /startup card with four chips, and the live composer" loading="lazy"></button>
+        <div class="body"><span class="seg quiet">Most integrated</span><h3>3 · First Prompt</h3><p>No installer. NMSh runs /startup in the transcript and the real composer previews each choice live.</p></div></article>
+    </div>
+  </section>
+
+  <section id="shared">
+    <div class="section-head"><span class="eyebrow">Shared ground</span><h2>What all three directions share</h2></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Starting point</th><th>Line on screen</th><th>What it sets</th></tr></thead>
+      <tbody>
+        <tr><th>1 · NMSh Recommended</th><td>The full NMSh experience · expressive, colorful, complete</td><td>Lavender powerline prompt, rich motion, smart folding, Vespyr welcome, plus the one-time first-run hello. Cursor effects stay Off.</td></tr>
+        <tr><th>2 · Minimal Terminal</th><td>Calm and familiar · NMSh's quiet look, nothing moves</td><td>NMSh's Minimal prompt, <b>Two-line by default</b> (One-line on the same control), plain output, no effects or greeting.</td></tr>
+        <tr><th>3 · Customize Everything</th><td>Make every choice · a guided tour of every setting</td><td>Opens the full guided setup over the selector, with live previews; Esc returns to the four choices; nothing applies until its last step.</td></tr>
+        <tr><th>4 · Keep Existing</th><td>Your terminal, as it is · your setup, plus NMSh's features</td><td>Keeps your shell, prompt provider and its config, terminal theme, font and cursor; NMSh's own chrome goes neutral and adds no motion. Details in <a href="#keep">Keep Existing</a>.</td></tr>
+      </tbody></table></div>
+    <div class="cols3">
+      <div class="box"><h3><span class="dot ok"></span>Real Aurora</h3><ul>
+        <li>The screensaver's own engine, <code>renderScene('aurora')</code>, drawn into a reused <code>CellGrid</code>. No second animation engine.</li>
+        <li>Theme-aware sky: an aurora's green rim and blue glow with the theme's accent in the upper curtains, over the theme's own night.</li>
+        <li><kbd>A</kbd> switches Aurora on, Subtle or Off and saves it in <code>onboardingBackdrop</code>; a new Settings row offers the same switch later.</li>
+        <li>After a minute without a key the sky settles to a still frame, and the next key wakes it.</li></ul></div>
+      <div class="box"><h3><span class="dot mid"></span>Calm by rule</h3><ul>
+        <li>Reduced Motion: one still frame and no clock. NO_COLOR, Effects Off and 16-color terminals turn the sky off.</li>
+        <li>Light never sits behind text. Only the sky and deliberate fills paint backgrounds, so transparent terminals stay transparent everywhere else.</li>
+        <li>Keys work from the first frame; no intro to wait through.</li></ul></div>
+      <div class="box"><h3><span class="dot no"></span>Sharp, keyboard-first</h3><ul>
+        <li>NMSh's own powerline geometry for selection (notch, fill, wedge), half-block buttons, square keycaps. No rounded corners.</li>
+        <li><kbd>1</kbd>–<kbd>4</kbd> jump, <kbd>⏎</kbd> reviews, <kbd>⏎</kbd> again applies. <kbd>esc</kbd> steps back, and from the top asks <i>Leave setup?</i> with Stay focused.</li>
+        <li>Nothing applies because it is highlighted.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== HORIZON -->
+  <section id="horizon">
+    <div class="section-head"><span class="eyebrow">Direction 1</span><h2>Horizon</h2>
+      <p>A living sky above, solid ground below. The real Aurora fills the top of the screen and ends at a sharp, luminous horizon where Vespyr stands. Everything you read and press sits on your terminal's own background, below the light.</p></div>
+    <div class="concept-grid">
+      <div data-tabs>
+        <div class="tabs" role="tablist" aria-label="Horizon captures">
+          <button role="tab" aria-selected="true">Four choices</button><button role="tab" aria-selected="false">Review &amp; leave</button><button role="tab" aria-selected="false">Tour &amp; welcome</button><button role="tab" aria-selected="false">Keep Existing cases</button><button role="tab" aria-selected="false">Sizes</button><button role="tab" aria-selected="false">Fallbacks</button><button role="tab" aria-selected="false">Motion</button>
+        </div>
+        <div class="panel" role="tabpanel"><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/pick-1-wide.png" data-caption="Horizon · 1 NMSh Recommended"><img src="captures/horizon/pick-1-wide.png" alt="Horizon with Recommended highlighted" loading="lazy"></button><figcaption><b>Recommended</b> · features and the real Lavender prompt it will draw</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-2-wide.png" data-caption="Horizon · 2 Minimal Terminal"><img src="captures/horizon/pick-2-wide.png" alt="Horizon with Minimal highlighted" loading="lazy"></button><figcaption><b>Minimal</b> · Two-line by default, One-line with ←→</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-3-wide.png" data-caption="Horizon · 3 Customize Everything"><img src="captures/horizon/pick-3-wide.png" alt="Horizon with Customize highlighted" loading="lazy"></button><figcaption><b>Customize</b> · the tour's steps as a map</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-4-wide.png" data-caption="Horizon · 4 Keep Existing"><img src="captures/horizon/pick-4-wide.png" alt="Horizon with Keep Existing highlighted" loading="lazy"></button><figcaption><b>Keep Existing</b> · read-only evidence and your prompt as NMSh would show it</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/review-1-wide.png" data-caption="Horizon · review before Apply"><img src="captures/horizon/review-1-wide.png" alt="Horizon review of Recommended" loading="lazy"></button><figcaption><b>Review</b> · what changes and what stays; one solid Apply</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/review-4-wide.png" data-caption="Horizon · Keep Existing review"><img src="captures/horizon/review-4-wide.png" alt="Horizon review of Keep Existing" loading="lazy"></button><figcaption><b>Keep Existing review</b> · stays exactly, drawn from yours, NMSh adds</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/confirm-wide.png" data-caption="Horizon · Leave setup? sheet"><img src="captures/horizon/confirm-wide.png" alt="Horizon leave confirmation" loading="lazy"></button><figcaption><b>Leave setup?</b> · a sheet rises from the bottom; Stay is focused</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/kept-standard.png" data-caption="Horizon · after Keep Existing"><img src="captures/horizon/kept-standard.png" alt="NMSh after Keep Existing" loading="lazy"></button><figcaption><b>After Keep Existing</b> · your prompt, neutral chrome, one receipt line</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/customize-wide.png" data-caption="Horizon · the guided tour"><img src="captures/horizon/customize-wide.png" alt="Horizon guided setup" loading="lazy"></button><figcaption><b>Customize Everything</b> · a route of steps under a slim sky, live preview beside the rows</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/welcome-wide.png" data-caption="Horizon · first-run welcome in the transcript"><img src="captures/horizon/welcome-wide.png" alt="First-run welcome in the transcript" loading="lazy"></button><figcaption><b>Welcome</b> · the sky folds into a short luminous rule; the hello lives in the transcript</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/keep-multi-wide.png" data-caption="Horizon · two prompts found"><img src="captures/horizon/keep-multi-wide.png" alt="Keep Existing with two prompts found" loading="lazy"></button><figcaption><b>Two prompts found</b> · one question, nothing guessed</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/keep-custom-wide.png" data-caption="Horizon · custom prompt"><img src="captures/horizon/keep-custom-wide.png" alt="Keep Existing with a custom prompt" loading="lazy"></button><figcaption><b>Custom prompt</b> · said plainly, never swapped silently</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/pick-1-standard.png" data-caption="Horizon · 108×31"><img src="captures/horizon/pick-1-standard.png" alt="Horizon at about 108 columns" loading="lazy"></button><figcaption><b>~108×31</b> · the sky gives way first</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-2-medium.png" data-caption="Horizon · 85×28"><img src="captures/horizon/pick-2-medium.png" alt="Horizon at about 85 columns" loading="lazy"></button><figcaption><b>~85×28</b> · the highlighted choice opens in place</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-1-narrow.png" data-caption="Horizon · 63×24"><img src="captures/horizon/pick-1-narrow.png" alt="Horizon at about 63 columns" loading="lazy"></button><figcaption><b>~63×24</b> · accordion list</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/pick-4-small.png" data-caption="Horizon · 45×18"><img src="captures/horizon/pick-4-small.png" alt="Horizon at about 45 columns" loading="lazy"></button><figcaption><b>~45×18</b> · no sky, still all four</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/horizon/backdrop-subtle-standard.png" data-caption="Horizon · Aurora subtle"><img src="captures/horizon/backdrop-subtle-standard.png" alt="Horizon with subtle aurora" loading="lazy"></button><figcaption><b>Aurora subtle</b> · dimmer, slower</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/backdrop-off-standard.png" data-caption="Horizon · Aurora off"><img src="captures/horizon/backdrop-off-standard.png" alt="Horizon with aurora off" loading="lazy"></button><figcaption><b>Aurora off</b> · Vespyr on a quiet hairline</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/theme-ocean-standard.png" data-caption="Horizon · Ocean theme"><img src="captures/horizon/theme-ocean-standard.png" alt="Horizon in the Ocean theme" loading="lazy"></button><figcaption><b>Ocean theme</b> · chrome, rays and prompt follow the theme</figcaption></figure>
+          <figure><button class="shot" data-full="captures/horizon/nocolor-standard.png" data-caption="Horizon · NO_COLOR and Safe glyphs"><img src="captures/horizon/nocolor-standard.png" alt="Horizon without color and with safe glyphs" loading="lazy"></button><figcaption><b>NO_COLOR + Safe glyphs</b> · reverse video selection, ASCII edges</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden>
+          <video src="captures/horizon/motion.mp4" controls muted loop playsinline preload="none" poster="captures/horizon/pick-1-wide.png"></video>
+          <p class="reduced-note" hidden>Reduced motion is on, so the clip is hidden.</p>
+          <figcaption>Real key presses, about 20 s: the moving sky, <kbd>A</kbd> through Off and Subtle, all four choices, review, back, <i>Leave setup?</i>, Stay, Apply, welcome.</figcaption>
+        </div>
+      </div>
+      <aside class="notes">
+        <dl>
+          <div><dt>Layout</dt><dd>Sky band (up to 42% of the height, the same height whichever choice is lit), a luminous one-eighth-block horizon, then a list of four on the left and a detail column on the right.</dd></div>
+          <div><dt>Choosing</dt><dd>The highlighted choice is a filled powerline segment whose wedge points at its details: a lead line, what it brings, and proof (the real prompt, the tour's map, or what was found on this machine).</dd></div>
+          <div><dt>Keys</dt><dd><kbd>↑↓</kbd> choose · <kbd>1</kbd>–<kbd>4</kbd> · <kbd>←→</kbd> Minimal layout · <kbd>⏎</kbd> review, <kbd>⏎</kbd> apply · <kbd>esc</kbd> back, then a <i>Leave setup?</i> sheet · <kbd>A</kbd> Aurora</dd></div>
+          <div><dt>Aurora</dt><dd>Ambient sky, never behind text. Vespyr stands on the horizon, blinks now and then, and flicks its tail when the choice changes.</dd></div>
+          <div><dt>Scaling</dt><dd>List and details from ~96 columns; an accordion below that; no sky under 20 rows; a four-line list under 40×14.</dd></div>
+        </dl>
+        <div class="verdict"><h3>Assessment</h3>
+          <ul class="plus"><li>All four visible and comparable at once</li><li>Clearest hierarchy; light never behind text</li><li>Scales cleanly to short, narrow terminals</li><li>Bounded cost; the simplest of the three to build and test</li></ul>
+          <ul class="minus"><li>The band squeezes the aurora's curtains</li><li>List and details is the most familiar pattern, so execution has to carry it</li></ul></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================================================================== STAGE -->
+  <section id="stage">
+    <div class="section-head"><span class="eyebrow">Direction 2</span><h2>Stage</h2>
+      <p>Each starting point gets the whole stage. A tall window of real Aurora is the lighting, and each choice is lit for what it is: vivid for Recommended, a calm still night for Minimal, a spectrum behind the tour's map for Customize. For Keep Existing the light goes out and your own terminal stands there.</p></div>
+    <div class="concept-grid">
+      <div data-tabs>
+        <div class="tabs" role="tablist" aria-label="Stage captures">
+          <button role="tab" aria-selected="true">Four choices</button><button role="tab" aria-selected="false">Review &amp; leave</button><button role="tab" aria-selected="false">Tour &amp; welcome</button><button role="tab" aria-selected="false">Keep Existing cases</button><button role="tab" aria-selected="false">Sizes</button><button role="tab" aria-selected="false">Fallbacks</button><button role="tab" aria-selected="false">Motion</button>
+        </div>
+        <div class="panel" role="tabpanel"><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/pick-1-wide.png" data-caption="Stage · Recommended, vivid lighting"><img src="captures/stage/pick-1-wide.png" alt="Stage Recommended page" loading="lazy"></button><figcaption><b>Recommended</b> · vivid sky, real prompt, one solid button</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-2-wide.png" data-caption="Stage · Minimal, calm night"><img src="captures/stage/pick-2-wide.png" alt="Stage Minimal page" loading="lazy"></button><figcaption><b>Minimal</b> · the light calms to a still night; Vespyr sits</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-3-wide.png" data-caption="Stage · Customize, the map of every step"><img src="captures/stage/pick-3-wide.png" alt="Stage Customize page" loading="lazy"></button><figcaption><b>Customize</b> · every step as a tile, the sky through the gutters</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-4-wide.png" data-caption="Stage · Keep Existing, the lights go down"><img src="captures/stage/pick-4-wide.png" alt="Stage Keep Existing page" loading="lazy"></button><figcaption><b>Keep Existing</b> · no lighting; your terminal, inset, with NMSh's additions</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/review-1-wide.png" data-caption="Stage · review"><img src="captures/stage/review-1-wide.png" alt="Stage review" loading="lazy"></button><figcaption><b>Review</b> · the page turns into the change list</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/review-4-wide.png" data-caption="Stage · Keep Existing review"><img src="captures/stage/review-4-wide.png" alt="Stage Keep Existing review" loading="lazy"></button><figcaption><b>Keep Existing review</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/confirm-wide.png" data-caption="Stage · Leave setup?"><img src="captures/stage/confirm-wide.png" alt="Stage leave confirmation" loading="lazy"></button><figcaption><b>Leave setup?</b> · the stage dims to dusk</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/kept-standard.png" data-caption="Stage · after Keep Existing"><img src="captures/stage/kept-standard.png" alt="After Keep Existing" loading="lazy"></button><figcaption><b>After Keep Existing</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/customize-wide.png" data-caption="Stage · the guided tour"><img src="captures/stage/customize-wide.png" alt="Stage guided setup" loading="lazy"></button><figcaption><b>Customize Everything</b> · the stage becomes a large live preview</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/welcome-wide.png" data-caption="Stage · welcome with a postcard"><img src="captures/stage/welcome-wide.png" alt="Stage welcome" loading="lazy"></button><figcaption><b>Welcome</b> · a postcard of the stage that settles after a few seconds</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/keep-multi-wide.png" data-caption="Stage · two prompts found"><img src="captures/stage/keep-multi-wide.png" alt="Two prompts found" loading="lazy"></button><figcaption><b>Two prompts found</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/keep-custom-wide.png" data-caption="Stage · custom prompt"><img src="captures/stage/keep-custom-wide.png" alt="Custom prompt" loading="lazy"></button><figcaption><b>Custom prompt</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/pick-1-standard.png" data-caption="Stage · 108×31"><img src="captures/stage/pick-1-standard.png" alt="Stage at about 108 columns" loading="lazy"></button><figcaption><b>~108×31</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-2-medium.png" data-caption="Stage · 85×28"><img src="captures/stage/pick-2-medium.png" alt="Stage at about 85 columns" loading="lazy"></button><figcaption><b>~85×28</b> · the window becomes a band</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-1-narrow.png" data-caption="Stage · 63×24"><img src="captures/stage/pick-1-narrow.png" alt="Stage at about 63 columns" loading="lazy"></button><figcaption><b>~63×24</b> · tabs shrink to numbers</figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/pick-4-small.png" data-caption="Stage · 45×18"><img src="captures/stage/pick-4-small.png" alt="Stage at about 45 columns" loading="lazy"></button><figcaption><b>~45×18</b> · a one-card pager</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/stage/backdrop-subtle-standard.png" data-caption="Stage · Aurora subtle"><img src="captures/stage/backdrop-subtle-standard.png" alt="Stage subtle" loading="lazy"></button><figcaption><b>Aurora subtle</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/backdrop-off-standard.png" data-caption="Stage · Aurora off"><img src="captures/stage/backdrop-off-standard.png" alt="Stage off" loading="lazy"></button><figcaption><b>Aurora off</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/theme-ocean-standard.png" data-caption="Stage · Ocean theme"><img src="captures/stage/theme-ocean-standard.png" alt="Stage Ocean" loading="lazy"></button><figcaption><b>Ocean theme</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/stage/nocolor-standard.png" data-caption="Stage · NO_COLOR and Safe glyphs"><img src="captures/stage/nocolor-standard.png" alt="Stage without color" loading="lazy"></button><figcaption><b>NO_COLOR + Safe glyphs</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden>
+          <video src="captures/stage/motion.mp4" controls muted loop playsinline preload="none" poster="captures/stage/pick-1-wide.png"></video>
+          <p class="reduced-note" hidden>Reduced motion is on, so the clip is hidden.</p>
+          <figcaption>Real key presses: the lighting cross-fades between pages while the aurora keeps moving; each page arrives with a left-to-right wipe.</figcaption>
+        </div>
+      </div>
+      <aside class="notes">
+        <dl>
+          <div><dt>Layout</dt><dd>A rail of four powerline tabs; below it, the page's words on the left and a full-height art window on the right; pagination dots and keycaps along the bottom.</dd></div>
+          <div><dt>Choosing</dt><dd>One choice at a time. <kbd>←→</kbd> pages; the lighting cross-fades in 700 ms while the engine keeps flowing; the words arrive with a short wipe. Vespyr's pose follows the page.</dd></div>
+          <div><dt>Keys</dt><dd><kbd>←→</kbd>/<kbd>Tab</kbd> browse · <kbd>1</kbd>–<kbd>4</kbd> · <kbd>↑↓</kbd> Minimal layout · <kbd>⏎</kbd> review, <kbd>⏎</kbd> apply · <kbd>esc</kbd> back, then a <i>Leave setup?</i> page · <kbd>A</kbd> Aurora</dd></div>
+          <div><dt>Aurora</dt><dd>The hero: a tall window, about half the screen, where the curtains and rays show their real form.</dd></div>
+          <div><dt>Scaling</dt><dd>Split from ~96 columns; below that the window becomes a top band, tabs shrink to numbers and optional blocks drop so the button stays visible.</dd></div>
+        </dl>
+        <div class="verdict"><h3>Assessment</h3>
+          <ul class="plus"><li>The most dramatic single frames</li><li>Every choice gets equal grandeur</li><li>Best storytelling for Customize and Keep Existing</li></ul>
+          <ul class="minus"><li>Only one choice visible at a time</li><li>Highest animation cost and the most code to test</li><li>Closest to a web landing page; on narrow screens it converges with Horizon</li></ul></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================================================================== FIRST PROMPT -->
+  <section id="prompt">
+    <div class="section-head"><span class="eyebrow">Direction 3</span><h2>First Prompt</h2>
+      <p>No installer. The first frame is NMSh itself: the transcript opens with a first-run banner, Vespyr and the wordmark under a short ribbon of Aurora. NMSh runs <code>/startup</code> for you, and the real composer at the bottom previews whichever starting point is highlighted.</p></div>
+    <div class="concept-grid">
+      <div data-tabs>
+        <div class="tabs" role="tablist" aria-label="First Prompt captures">
+          <button role="tab" aria-selected="true">Four choices</button><button role="tab" aria-selected="false">Review &amp; leave</button><button role="tab" aria-selected="false">Tour &amp; welcome</button><button role="tab" aria-selected="false">Keep Existing cases</button><button role="tab" aria-selected="false">Sizes</button><button role="tab" aria-selected="false">Fallbacks</button><button role="tab" aria-selected="false">Motion</button>
+        </div>
+        <div class="panel" role="tabpanel"><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/pick-1-wide.png" data-caption="First Prompt · Recommended; the composer shows the Lavender prompt"><img src="captures/prompt/pick-1-wide.png" alt="First Prompt with Recommended highlighted" loading="lazy"></button><figcaption><b>Recommended</b> · the composer below becomes the Lavender powerline</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-2-wide.png" data-caption="First Prompt · Minimal"><img src="captures/prompt/pick-2-wide.png" alt="First Prompt with Minimal highlighted" loading="lazy"></button><figcaption><b>Minimal</b> · the composer becomes the Minimal prompt</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-3-wide.png" data-caption="First Prompt · Customize"><img src="captures/prompt/pick-3-wide.png" alt="First Prompt with Customize highlighted" loading="lazy"></button><figcaption><b>Customize</b> · the composer keeps your current settings</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-4-wide.png" data-caption="First Prompt · Keep Existing; the composer shows your prompt"><img src="captures/prompt/pick-4-wide.png" alt="First Prompt with Keep Existing highlighted" loading="lazy"></button><figcaption><b>Keep Existing</b> · the composer shows your detected prompt, neutral chrome</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/review-1-wide.png" data-caption="First Prompt · inline review"><img src="captures/prompt/review-1-wide.png" alt="Inline review" loading="lazy"></button><figcaption><b>Review</b> · inline, in the card</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/review-4-wide.png" data-caption="First Prompt · Keep Existing review"><img src="captures/prompt/review-4-wide.png" alt="Keep Existing review" loading="lazy"></button><figcaption><b>Keep Existing review</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/confirm-wide.png" data-caption="First Prompt · Leave setup?"><img src="captures/prompt/confirm-wide.png" alt="Inline leave confirmation" loading="lazy"></button><figcaption><b>Leave setup?</b> · one inline row, Stay focused</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/kept-standard.png" data-caption="First Prompt · after Keep Existing"><img src="captures/prompt/kept-standard.png" alt="After Keep Existing" loading="lazy"></button><figcaption><b>After Keep Existing</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/customize-wide.png" data-caption="First Prompt · the tour as NMSh's own bottom panel"><img src="captures/prompt/customize-wide.png" alt="First Prompt guided setup panel" loading="lazy"></button><figcaption><b>Customize Everything</b> · opens as NMSh's bottom panel under the card</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/welcome-wide.png" data-caption="First Prompt · receipt and welcome"><img src="captures/prompt/welcome-wide.png" alt="First Prompt welcome" loading="lazy"></button><figcaption><b>Welcome</b> · the card folds into a receipt; the banner stays as a still keepsake</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/keep-multi-wide.png" data-caption="First Prompt · two prompts found"><img src="captures/prompt/keep-multi-wide.png" alt="Two prompts found" loading="lazy"></button><figcaption><b>Two prompts found</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/keep-custom-wide.png" data-caption="First Prompt · custom prompt"><img src="captures/prompt/keep-custom-wide.png" alt="Custom prompt" loading="lazy"></button><figcaption><b>Custom prompt</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/pick-1-standard.png" data-caption="First Prompt · 108×31"><img src="captures/prompt/pick-1-standard.png" alt="First Prompt at about 108 columns" loading="lazy"></button><figcaption><b>~108×31</b> · chips switch to short labels</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-2-medium.png" data-caption="First Prompt · 85×28"><img src="captures/prompt/pick-2-medium.png" alt="First Prompt at about 85 columns" loading="lazy"></button><figcaption><b>~85×28</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-1-narrow.png" data-caption="First Prompt · 63×24"><img src="captures/prompt/pick-1-narrow.png" alt="First Prompt at about 63 columns" loading="lazy"></button><figcaption><b>~63×24</b> · no banner, chips stack</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/pick-4-small.png" data-caption="First Prompt · 45×18"><img src="captures/prompt/pick-4-small.png" alt="First Prompt at about 45 columns" loading="lazy"></button><figcaption><b>~45×18</b> · the composer always fits</figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden><div class="grid2">
+          <figure><button class="shot" data-full="captures/prompt/backdrop-subtle-standard.png" data-caption="First Prompt · Aurora subtle"><img src="captures/prompt/backdrop-subtle-standard.png" alt="Subtle" loading="lazy"></button><figcaption><b>Aurora subtle</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/backdrop-off-standard.png" data-caption="First Prompt · Aurora off"><img src="captures/prompt/backdrop-off-standard.png" alt="Off" loading="lazy"></button><figcaption><b>Aurora off</b> · the ordinary Vespyr welcome block</figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/theme-ocean-standard.png" data-caption="First Prompt · Ocean theme"><img src="captures/prompt/theme-ocean-standard.png" alt="Ocean" loading="lazy"></button><figcaption><b>Ocean theme</b></figcaption></figure>
+          <figure><button class="shot" data-full="captures/prompt/nocolor-standard.png" data-caption="First Prompt · NO_COLOR and Safe glyphs"><img src="captures/prompt/nocolor-standard.png" alt="No color" loading="lazy"></button><figcaption><b>NO_COLOR + Safe glyphs</b></figcaption></figure>
+        </div></div>
+        <div class="panel" role="tabpanel" hidden>
+          <video src="captures/prompt/motion.mp4" controls muted loop playsinline preload="none" poster="captures/prompt/pick-1-wide.png"></video>
+          <p class="reduced-note" hidden>Reduced motion is on, so the clip is hidden.</p>
+          <figcaption>Real key presses: the composer changes with each chip; Apply folds the card into a receipt and the welcome carries on.</figcaption>
+        </div>
+      </div>
+      <aside class="notes">
+        <dl>
+          <div><dt>Layout</dt><dd>The real NMSh screen: a first-run banner at the top of the transcript, a <code>/startup</code> card with four chips, and the live composer at the bottom.</dd></div>
+          <div><dt>Choosing</dt><dd>Four chips in NMSh's powerline geometry, read like a prompt row; a callout for the highlighted one. The composer is the preview: the real prompt renderer in its real place.</dd></div>
+          <div><dt>Keys</dt><dd><kbd>←→</kbd>/<kbd>Tab</kbd> choose · <kbd>1</kbd>–<kbd>4</kbd> · <kbd>↑↓</kbd> Minimal layout · <kbd>⏎</kbd> review, <kbd>⏎</kbd> apply · <kbd>esc</kbd> back, then an inline <i>Leave setup?</i> · <kbd>A</kbd> Aurora</dd></div>
+          <div><dt>Aurora</dt><dd>The smallest presence: a 4–6 row banner that freezes into the transcript after Apply.</dd></div>
+          <div><dt>Scaling</dt><dd>Chips shorten, then stack; no banner under 26 rows; the composer always fits.</dd></div>
+        </dl>
+        <div class="verdict"><h3>Assessment</h3>
+          <ul class="plus"><li>The most honest preview there is</li><li>Teaches <code>/startup</code>; reopening looks identical</li><li>Least new UI and the lowest cost</li></ul>
+          <ul class="minus"><li>The least spectacular first impression</li><li>A first decision squeezed into transcript conventions</li><li>Previews the prompt, not motion or folding</li></ul></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================================================================== COMPARE -->
+  <section id="compare">
+    <div class="section-head"><span class="eyebrow">Compare</span><h2>How they stack up</h2>
+      <p>Costs are measured on the prototypes with the production renderer's row diffing, Aurora on, at 130×38: median frame time, and bytes the terminal receives per second at a 200 ms cadence. For reference, the full-screen screensaver sends about 450 KB/s at 120×40. Subtle halves the rate, Reduced Motion is zero, and the prototypes' composition is unoptimized.</p></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th>Horizon</th><th>Stage</th><th>First Prompt</th></tr></thead>
+      <tbody>
+        <tr><th>First impression</th><td>Strong: sky, horizon, Vespyr</td><td class="best">Strongest</td><td>Quiet, familiar</td></tr>
+        <tr><th>Comparing the four</th><td class="best">All visible with details</td><td>One at a time (rail shows names)</td><td>All visible as chips; details for one</td></tr>
+        <tr><th>Discoverability</th><td class="best">High</td><td>Good</td><td>Good; teaches <code>/startup</code></td></tr>
+        <tr><th>Keep Existing story</th><td>Evidence plus your prompt</td><td class="best">The lights go down; your terminal stands there</td><td>Your prompt appears in the real composer</td></tr>
+        <tr><th>Customize appeal</th><td>Tile map of the tour</td><td class="best">Mosaic over the sky</td><td>Bottom panel</td></tr>
+        <tr><th>Aurora presence</th><td>Ambient band</td><td>Hero window</td><td>Small banner</td></tr>
+        <tr><th>Animation cost</th><td class="tabular">3.0 ms · 258 KB/s</td><td class="tabular">3.7 ms · 308 KB/s</td><td class="tabular best">2.1 ms · 109 KB/s</td></tr>
+        <tr><th>Short and narrow terminals</th><td class="best">Graceful at every size</td><td>Converges to band plus text</td><td>Good</td></tr>
+        <tr><th>Build and test effort</th><td>Moderate</td><td>High</td><td class="best">Low to moderate</td></tr>
+        <tr><th>Fits NMSh</th><td>Strong</td><td>Strong</td><td class="best">Native by construction</td></tr>
+      </tbody></table></div>
+  </section>
+
+  <!-- ===================================================================== RECOMMENDATION -->
+  <section id="recommend">
+    <div class="section-head"><span class="eyebrow">Recommendation</span><h2>Build Horizon, lit like Stage, ending like First Prompt</h2>
+      <p>Horizon is the only direction that shows all four starting points and their consequences at once, keeps light away from text, scales cleanly to small and short terminals, and has a bounded cost. Stage makes the most beautiful single frame, but it hides three choices at any moment and costs the most to build and run. First Prompt is the most honest, but it asks the transcript to carry a decision that deserves its own moment.</p></div>
+    <ol class="steps">
+      <li><b>Take Stage's lighting.</b> Horizon's sky follows the highlighted choice: vivid for Recommended, a calm still night for Minimal, a spectrum for Customize, and for Keep Existing it goes out, leaving the bare horizon. One palette cross-fade on the same engine, and the difference between the four is felt as well as read. Captures below come from the prototype with this switched on.</li>
+      <li><b>Take First Prompt's ending.</b> After Apply, setup folds into one receipt line in the transcript (<i>Started with NMSh Recommended · /startup changes it anytime</i>) and the welcome carries on there. Minimal and Keep Existing end on the receipt alone.</li>
+    </ol>
+    <div class="grid2">
+      <figure><button class="shot" data-full="captures/reactive/pick-2-wide.png" data-caption="Recommended direction · Minimal: the sky calms"><img src="captures/reactive/pick-2-wide.png" alt="Reactive Horizon, Minimal" loading="lazy"></button><figcaption><b>Minimal</b> · the sky calms to a still night</figcaption></figure>
+      <figure><button class="shot" data-full="captures/reactive/pick-3-wide.png" data-caption="Recommended direction · Customize: spectrum"><img src="captures/reactive/pick-3-wide.png" alt="Reactive Horizon, Customize" loading="lazy"></button><figcaption><b>Customize</b> · spectrum, with the tour's map</figcaption></figure>
+      <figure><button class="shot" data-full="captures/reactive/pick-4-wide.png" data-caption="Recommended direction · Keep Existing: the light goes out"><img src="captures/reactive/pick-4-wide.png" alt="Reactive Horizon, Keep Existing" loading="lazy"></button><figcaption><b>Keep Existing</b> · the light goes out; only the horizon stays</figcaption></figure>
+      <figure><button class="shot" data-full="captures/reactive/pick-1-wide.png" data-caption="Recommended direction · Recommended: vivid"><img src="captures/reactive/pick-1-wide.png" alt="Reactive Horizon, Recommended" loading="lazy"></button><figcaption><b>Recommended</b> · vivid</figcaption></figure>
+    </div>
+    <figure>
+      <video src="captures/reactive/motion.mp4" controls muted loop playsinline preload="none" poster="captures/reactive/pick-1-wide.png"></video>
+      <p class="reduced-note" hidden>Reduced motion is on, so the clip is hidden.</p>
+      <figcaption>The recommended direction in motion, real key presses: the sky follows each highlighted choice and goes out for Keep Existing; review, leave, Apply and the welcome follow.</figcaption>
+    </figure>
+    <div class="cols3">
+      <div class="box"><h3><span class="dot no"></span>Discard</h3><ul>
+        <li>The centered 56-column rounded box and the dialog-over-wallpaper composition</li>
+        <li>The static hand-rolled gradient (<code>backdropColor</code>, <code>BACKDROP_PALETTES</code>)</li>
+        <li>Equal-weight list rows with a <code>›</code> pointer and text-heavy notes</li>
+        <li>Docs / bug / feature keys on the selector (they stay in /help)</li>
+        <li><kbd>esc</kbd> in review jumping straight to <i>Leave setup?</i></li></ul></div>
+      <div class="box"><h3><span class="dot ok"></span>Keep</h3><ul>
+        <li>One selector state and draft (<code>quickDraft</code>, review before Apply)</li>
+        <li><code>introSeen</code> once-only semantics and Stay-first leave confirmation</li>
+        <li>Customize returning to the selector; <code>onboardingBackdrop</code></li>
+        <li>The retained intro and preview engines, still never invoked automatically</li></ul></div>
+      <div class="box"><h3><span class="dot mid"></span>Add</h3><ul>
+        <li>The real Aurora engine with moods, and the <kbd>A</kbd> switch</li>
+        <li>Keep Existing with read-only detection</li>
+        <li><code>/startup</code>, the transcript receipt and the one-time welcome</li>
+        <li>The guided setup restyled in the same language</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== KEEP EXISTING -->
+  <section id="keep">
+    <div class="section-head"><span class="eyebrow">Keep Existing</span><h2>Keep your look, add NMSh's features</h2>
+      <p>What follows comes from reading the shell adapters, provider adapters and configuration code on this branch. Nothing in it is implemented yet.</p></div>
+    <p class="callout">How NMSh works today shapes everything here. It runs your real shell and sources your own startup files, so aliases, functions, PATH and plugin hooks survive. It also owns line editing (ZLE off, Bash <code>--noediting</code>) and blanks the shell's own prompt every cycle (<code>PROMPT</code>/<code>RPROMPT</code>, <code>PS1</code>, <code>fish_prompt</code>). Prompts reach the screen only through NMSh's adapters.</p>
+    <div class="cols3">
+      <div class="box"><h3><span class="dot ok"></span>Preserved exactly</h3><ul>
+        <li>Terminal host appearance: palette, background, font, transparency, cursor. Keep Existing writes no host config and enables no managed cursor shader.</li>
+        <li>Your shell and its startup files: zsh (<code>.zshenv</code>, <code>.zprofile</code>, <code>.zshrc</code>), Bash (system and <code>~/.bashrc</code>), Fish (<code>config.fish</code>).</li>
+        <li>Aliases, functions, environment and non-UI hooks (zoxide, Atuin, direnv).</li>
+        <li><code>starship.toml</code>, <code>~/.p10k.zsh</code>, Oh My Posh configs and tool themes: read, never written.</li>
+        <li>Saved NMSh preferences on an already-configured install.</li>
+        <li>Theme Bridge stays independent.</li></ul></div>
+      <div class="box"><h3><span class="dot mid"></span>Through an existing adapter</h3><ul>
+        <li><b>Starship</b>: <code>starship prompt</code> with your config. Multi-line prompts are flattened to one line and the right prompt is not drawn. Today the flattened line also ends with Starship's own <code>❯</code> above NMSh's marker; Keep Existing would drop that trailing character (a small adapter change).</li>
+        <li><b>Powerlevel10k</b>: an isolated <code>zsh -f</code> helper with your theme and config. gitstatus is off (vcs_info fallback), the right prompt is not drawn, and instant and transient prompts do not apply.</li>
+        <li><b>Oh My Posh</b>: <code>oh-my-posh print primary</code>; remote configs are never fetched.</li>
+        <li>zoxide, Atuin, fzf, Television and fetch welcomes through NMSh's provider adapters.</li></ul></div>
+      <div class="box"><h3><span class="dot no"></span>Not reproducible today</h3><ul>
+        <li>Custom prompts: <code>PS1</code>/<code>PROMPT</code>, Oh My Zsh themes other than p10k, pure, spaceship, Fish <code>fish_prompt</code>, Tide.</li>
+        <li>ZLE and readline behavior: custom widgets, vi-mode, zsh-autosuggestions, zsh-syntax-highlighting. NMSh's composer, suggestions and syntax colors stand in.</li>
+        <li>Right, transient and async prompt features.</li>
+        <li>Banners your rc prints at startup (suppressed while NMSh boots; a Welcome provider can bring fastfetch back).</li>
+        <li>NMSh chrome in your terminal's exact palette: no ANSI-indexed chrome or palette query exists yet.</li></ul></div>
+    </div>
+
+    <h3>Custom prompts: an honest path</h3>
+    <ul class="plain">
+      <li>Detect it with evidence and say so: <i>NMSh can't draw custom prompts yet. What should it show?</i></li>
+      <li>Default to <b>Composer only</b> (Prompt None): nothing imitates yours, and your prompt keeps working everywhere outside NMSh. <b>NMSh Minimal</b> is offered by name, never substituted.</li>
+      <li>Proposed adapter, <b>Your prompt, captured</b>: just before NMSh blanks the prompt, the managed shell expands it and reports it over the existing OSC 777 channel. zsh expands <code>PROMPT</code> as the p10k helper already does; Bash 4.4+ uses <code>${PS1@P}</code> (macOS Bash 3.2 cannot); Fish keeps a copy of your <code>fish_prompt</code> and calls it. Limits: no async repaint, no right prompt at first, multi-line flattened, control sequences stripped. It is opt-in and labeled experimental. It runs only your own prompt code in your own shell, never as a way to discover anything.</li>
+    </ul>
+
+    <h3>Read-only detection</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Evidence</th><th>How it is read</th><th>What it can say</th></tr></thead>
+      <tbody>
+        <tr><th>Login shell</th><td><code>$SHELL</code> against the shell adapter registry</td><td>Which supported shell to keep (zsh, Bash, Fish)</td></tr>
+        <tr><th>Startup files</th><td>Bounded text reads of that shell's files, following plain <code>source</code> lines one level inside $HOME; nothing is executed</td><td><code>starship init</code>, <code>oh-my-posh init … --config</code>, p10k theme lines, <code>ZSH_THEME</code>, <code>PROMPT=</code>/<code>PS1=</code>, <code>fish_prompt</code>, <code>zoxide init</code>, <code>atuin init</code></td></tr>
+        <tr><th>Config files</th><td>Existing path rules: <code>STARSHIP_CONFIG</code>/XDG, <code>POWERLEVEL9K_CONFIG_FILE</code>, <code>POSH_CONFIG</code></td><td>Configured, not necessarily used</td></tr>
+        <tr><th>Executables</th><td>Existing <code>detectStarship</code>, <code>detectPowerlevel10k</code>, <code>detectOhMyPosh</code>, <code>detectProvider</code> (PATH plus <code>--version</code> only)</td><td>Installed, not necessarily used</td></tr>
+      </tbody></table></div>
+    <ol class="steps">
+      <li>An already-configured NMSh keeps its chosen provider. Keep Existing changes nothing unless you ask it to <i>re-detect my terminal setup</i>, which shows a reviewed diff.</li>
+      <li>Fresh install with exactly one <b>active</b> prompt (started by your rc and runnable): keep it.</li>
+      <li>More than one active: ask which. One prompt runs at a time.</li>
+      <li>Configured or installed but not started: offer it by name, don't assume it.</li>
+      <li>Started by your rc but missing or broken: explain, offer Composer only or NMSh Minimal, never install.</li>
+      <li>Never: run rc files to discover anything, download, install, edit rc/terminal/theme files, or enable two prompts.</li>
+    </ol>
+
+    <h3>What Keep Existing applies</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Area</th><th>Fresh install</th><th>Already configured</th></tr></thead>
+      <tbody>
+        <tr><th>Shell</th><td>Your login shell, if NMSh supports it</td><td>Unchanged</td></tr>
+        <tr><th>Prompt</th><td>The one active provider and its config path; Composer only when it is custom or unknown</td><td>Unchanged</td></tr>
+        <tr><th>Tools</th><td>Detected zoxide and Atuin as Navigation and History providers</td><td>Unchanged</td></tr>
+        <tr><th>NMSh chrome</th><td>Neutral (Grayscale chrome and syntax), proposed later: ANSI-indexed Terminal palette chrome</td><td>Unchanged</td></tr>
+        <tr><th>Motion and effects</th><td>None added: effects Off, Chroma Off, host cursor, no idle visuals</td><td>Unchanged</td></tr>
+        <tr><th>Transcript and composer</th><td>Normal transcript, your prompt in past entries, composer in flow</td><td>Unchanged</td></tr>
+        <tr><th>Welcome</th><td>None, or your fetch tool when your rc ran one</td><td>Unchanged</td></tr>
+      </tbody></table></div>
+    <p class="callout">Three things stay separate. <b>Starting point</b> is one small label saved on Apply, used only so <code>/startup</code> can say <i>Current: Keep Existing</i>. <b>Effective configuration</b> is the normal config, the only source of truth. <b>Detected environment</b> is computed when the selector opens, shown with its evidence, and never saved. No preset snapshot is stored to drift away from the real settings.</p>
+  </section>
+
+  <!-- ===================================================================== /startup -->
+  <section id="startup">
+    <div class="section-head"><span class="eyebrow">/startup</span><h2>One selector, two doors</h2></div>
+    <ul class="plain">
+      <li><b>Nothing to collide with.</b> No <code>/startup</code> command or alias exists in <code>slashCommands.ts</code>, the parser, help, docs or the palette. The word appears only in the <i>Live session startup</i> setting and the startup progress panel, neither of which is a command. <code>/presets</code> and <code>nmsh --preset</code>/<code>--presets</code> are separate and stay untouched.</li>
+      <li><b>Exact parsing.</b> The parser already matches commands with anchored patterns (<code>/^\/presets\s*$/</code>). <code>/^\/startup\s*$/</code> routes to the same state as <code>/setup quick</code>, sharing rendering, review, confirmation and Apply. No <code>/preset</code>.</li>
+      <li><b>Discoverable everywhere.</b> Slash suggestions, the palette, <code>/help</code>, the README, Settings (<i>Choose a preset</i> becomes <i>Starting point · /startup</i>) and Setup Cat's header and Start step.</li>
+      <li><b>First run is not reopening.</b> The first-use welcome plays only on a genuine first run (<code>!onboardingComplete &amp;&amp; !introSeen</code>) after Recommended. <code>/startup</code> and <code>/setup quick</code> never replay it.</li>
+      <li><b>Reopening is safe.</b> Highlighting applies nothing. Review lists the real differences from your current settings and says when a choice replaces customized presentation. Custom themes and gradients survive unless you approve replacing them. Shell, provider, queue and integrations change only through Keep Existing's explicit re-detect.</li>
+    </ul>
+  </section>
+
+  <!-- ===================================================================== DEFAULTS + WELCOME -->
+  <section id="defaults">
+    <div class="section-head"><span class="eyebrow">Defaults &amp; welcome</span><h2>The requested defaults, and the first hello</h2></div>
+    <div class="cols3">
+      <div class="box"><h3>Minimal</h3><ul><li>Two-line by default, One-line on the same control: the default argument of <code>minimalPromptConfiguration</code> and the selector's initial layout.</li></ul></div>
+      <div class="box"><h3>Cursor</h3><ul><li>Effects Off in the canonical fresh and Recommended configuration.</li><li>Choosing Fire defaults to the <b>Classic</b> orange gradient; Purple, Blue, Green, Follow theme and Custom remain.</li></ul></div>
+      <div class="box"><h3>Legacy</h3><ul><li>Saved or imported explicit cursor settings and custom gradients survive normalization unchanged. Only missing fields take defaults, as the existing migration policy requires.</li></ul></div>
+    </div>
+    <ul class="plain">
+      <li><b>Where it lives.</b> In the transcript, after Recommended on a first run only. It is never a splash screen.</li>
+      <li><b>What it says.</b> <i>You're all set. Welcome to notMyShell!</i> · <i>We're so glad you're here. Your shell is still yours; NMSh just makes it a nicer place to live.</i> Then four things to try: <code>/guide</code>, <code>/btw</code>, <kbd>F1</kbd>, <code>/startup</code>. It closes with <i>The aurora lives on in /screensaver.</i></li>
+      <li><b>How it moves.</b> The Vespyr welcome block blinks and flicks its tail, a short gradient rule keeps the horizon's light, and lines arrive in under 600 ms with one light sweep on the headline. Under Reduced Motion it appears complete.</li>
+      <li><b>Quiet paths stay quiet.</b> Minimal and Keep Existing get the receipt line and nothing else.</li>
+    </ul>
+  </section>
+
+  <!-- ===================================================================== RUN -->
+  <section id="run">
+    <div class="section-head"><span class="eyebrow">Try it in Ghostty</span><h2>The prototypes run live in your terminal</h2>
+      <p>Throwaway code on the T7 that imports NMSh's real modules from the feature worktree. It writes no configuration and runs no commands.</p></div>
+<pre>t7run /Volumes/T7Tmp/ai-dev/qa/post-v020-preferences-onboarding/design-concepts/run.sh --concept horizon
+t7run /Volumes/T7Tmp/ai-dev/qa/post-v020-preferences-onboarding/design-concepts/run.sh --concept horizon --reactive
+t7run /Volumes/T7Tmp/ai-dev/qa/post-v020-preferences-onboarding/design-concepts/run.sh --concept stage
+t7run /Volumes/T7Tmp/ai-dev/qa/post-v020-preferences-onboarding/design-concepts/run.sh --concept prompt</pre>
+    <ul class="plain">
+      <li>Keys: each direction's own arrows, <kbd>1</kbd>–<kbd>4</kbd>, <kbd>⏎</kbd>, <kbd>esc</kbd>, <kbd>A</kbd> Aurora. Prototype extras: <kbd>T</kbd> next theme, <kbd>R</kbd> Reduced Motion, <kbd>q</kbd> quit.</li>
+      <li>Flags: <code>--backdrop subtle|off</code>, <code>--theme ocean</code>, <code>--nocolor --safe</code>, <code>--case multi|custom</code> (Keep Existing evidence), <code>--screen review|customize|welcome</code>.</li>
+    </ul>
+  </section>
+
+  <!-- ===================================================================== LIMITS -->
+  <section id="limits">
+    <div class="section-head"><span class="eyebrow">Limits</span><h2>What this review does not show</h2></div>
+    <ul class="plain">
+      <li>Captures come from xterm.js through VHS at an 18px font. Ghostty's glyph drawing and metrics differ slightly, and at your usual font size the Aurora's pixels are finer. The live prototype in Ghostty is the real check.</li>
+      <li>Keep Existing evidence in every frame is a fixed, fictional sample. Nothing on this Mac was read.</li>
+      <li>Detection, neutral chrome for Keep Existing, Terminal palette chrome and the shell-prompt adapter are proposals. None exist yet.</li>
+      <li>Prototype code is throwaway and never joins the branch. Production work starts after approval: an updated spec and acceptance criteria, tests first, then the implementation.</li>
+    </ul>
+  </section>
+</div>
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Capture, full size"><div><img alt=""><p></p></div></div>
+
+<script>
+document.querySelectorAll('[data-tabs]').forEach(group => {
+  const tabs = [...group.querySelectorAll('[role="tab"]')];
+  const panels = [...group.querySelectorAll('[role="tabpanel"]')];
+  tabs.forEach((tab, i) => tab.addEventListener('click', () => {
+    tabs.forEach((t, j) => t.setAttribute('aria-selected', String(i === j)));
+    panels.forEach((p, j) => { p.hidden = i !== j; });
+  }));
+});
+const box = document.getElementById('lightbox');
+const boxImg = box.querySelector('img');
+const boxCaption = box.querySelector('p');
+document.querySelectorAll('.shot').forEach(button => button.addEventListener('click', () => {
+  const inline = button.querySelector('img');
+  boxImg.src = button.dataset.full || (inline && inline.currentSrc) || (inline && inline.src) || ''; boxImg.alt = button.dataset.caption || '';
+  boxCaption.textContent = button.dataset.caption || '';
+  box.hidden = false;
+}));
+box.addEventListener('click', () => { box.hidden = true; });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') box.hidden = true; });
+if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) document.querySelectorAll('.reduced-note').forEach(note => { note.hidden = false; });
+</script>
