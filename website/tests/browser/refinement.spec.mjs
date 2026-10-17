@@ -127,3 +127,17 @@ test('production metadata points to real social artwork and transparent Vespyr t
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(320);
 });
+
+test('first-run documentation follows production-wired Horizon at the pinned source', async ({ page }) => {
+  await page.goto('/docs/setup/');
+  await expect(page.getByRole('heading', { name: 'Reactive Horizon', exact: false })).toBeVisible();
+  for (const label of ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything', 'Keep Existing']) {
+    await expect(page.locator('.prose')).toContainText(label);
+  }
+  await expect(page.locator('.prose')).toContainText('/startup');
+  await expect(page.locator('.prose')).toContainText('brings the real composer into place');
+  await expect(page.locator('.doc-provenance').getByRole('link', { name: 'view.ts', exact: true })).toHaveAttribute('href', `https://github.com/raiseCatError/notMyShell/blob/${launch.commit}/src/setup/startup/view.ts`);
+  await page.goto('/docs/execution/');
+  await expect(page.locator('.prose')).toContainText('Fresh Recommended configurations enable typed queue-summary saving');
+  await expect(page.locator('.prose')).toContainText('historical Off behavior');
+});

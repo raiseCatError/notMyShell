@@ -62,10 +62,11 @@ successful output while retaining the full text. Failures, interruptions and act
 inspection remain visible. Ctrl+O reverses the relevant fold state. Folding does not
 discard lines or shorten what plain-text copy receives.
 
-Automatic queue-summary saving is **Off** at the documented candidate checkpoint.
-If enabled, automatic summaries omit raw command arguments and output. Check the
-saved text and retention settings before sharing it. First-run defaults will be
-rechecked against the final integrated release.
+Fresh Recommended configurations enable typed queue-summary saving. Existing saved
+configurations with that field omitted keep the historical Off behavior; selecting
+a different starting point can also change the preference. Automatic summaries omit
+raw command arguments and output. Check the saved text and retention settings before
+sharing it. The final release's first-run defaults remain a launch validation item.
 
 ## Review multiline pastes
 

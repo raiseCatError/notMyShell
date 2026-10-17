@@ -1,5 +1,5 @@
 {
-  "commit": "825336393562a37cb5cdf9baf916e8d6d3bb4e6d",
+  "commit": "15d776eeb242cda330bbe654efae7fbac744b58d",
   "version": "0.20.0",
   "state": "candidate",
   "routes": {
@@ -23,7 +23,8 @@
     "docs/design/background-tasks.md": "background-tasks",
     "docs/design/workspace-keymap.md": "workspace-keymap",
     "docs/architecture/github-workspace.md": "github-workspace",
-    "docs/development/copy-actions-slice-3.md": "copy-actions"
+    "docs/development/copy-actions-slice-3.md": "copy-actions",
+    "docs/testing/post-v020-preferences-onboarding.md": "onboarding"
   },
   "files": [
     {
@@ -172,6 +173,13 @@
       "title": "Output selection and Copy Actions",
       "sourceSha256": "2c013683ce91dfefd32e556919a6904c74e04c616ba14b55f98da5f698cef5d8",
       "generatedSha256": "dce994a0e172e274a5331c089f8f282988357e824965f3fc82e41d38f8bc7a15"
+    },
+    {
+      "path": "docs/testing/post-v020-preferences-onboarding.md",
+      "slug": "onboarding",
+      "title": "First-run behavior and validation",
+      "sourceSha256": "b9773d268e38629f7bf36c3bfc2abe8ab5c59520fdc3c9312302478a47b940cf",
+      "generatedSha256": "5802feccda3a8c354e0c5bd5a8f2bc34c90758d85d2abc47d9b30ff094ae7a1b"
     }
   ]
 }

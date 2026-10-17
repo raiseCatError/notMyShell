@@ -31,7 +31,7 @@ and absolute executable paths still run in your real shell.
 
 | Action | Purpose |
 | --- | --- |
-| `/settings` (`/config`), `/setup` | Preferences and setup |
+| `/settings` (`/config`), `/setup`, `/startup` | Preferences, guided setup and starting points |
 | `/prompt`, `/modules` | Prompt providers and native modules |
 | `/appearance`, `/theme`, `/theme-bridge` | Appearance, palettes and opt-in tool themes |
 | `/chroma`, `/motion`, `/glyphs`, `/chrome` | Frontend presentation controls |

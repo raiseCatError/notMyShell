@@ -20,4 +20,5 @@ export const sources = [
   { path: 'docs/design/workspace-keymap.md', slug: 'workspace-keymap', title: 'Workspace keymap' },
   { path: 'docs/architecture/github-workspace.md', slug: 'github-workspace', title: 'Read-only GitHub workspace' },
   { path: 'docs/development/copy-actions-slice-3.md', slug: 'copy-actions', title: 'Output selection and Copy Actions' },
+  { path: 'docs/testing/post-v020-preferences-onboarding.md', slug: 'onboarding', title: 'First-run behavior and validation' },
 ];

@@ -8,13 +8,19 @@ sources: [README.md, docs/privacy.md, docs/design/session-interaction-ux.md]
 
 ## Prefer the supported interface
 
-`/settings` (alias `/config`) is the main settings surface. `/setup` revisits setup;
+`/settings` (alias `/config`) is the main settings surface. `/startup` revisits
+starting points and `/setup` opens the guided wizard;
 focused studios such as `/theme`, `/prompt`, `/layout` and `/strip` expose related
 choices without making you memorize every JSON property.
 
 NMSh uses its own config directory, normally `~/.config/nmsh`, or an absolute
 `$XDG_CONFIG_HOME/nmsh` where configured. `config.json` stores preferences; separate
 files hold sessions, presets and integration ownership records.
+
+Fresh installs receive the Recommended configuration. An existing saved object with
+omitted fields retains historical defaults rather than silently receiving every new
+visual or retention preference. Explicit choices are preserved. See
+[Setup and first run](/docs/setup/) before applying a different starting point.
 
 ## Move settings, not the whole history
 

@@ -1,7 +1,7 @@
 {
   "state": "candidate",
   "version": "0.20.0",
-  "ref": "stabilize/post-v020-slice3",
-  "commit": "825336393562a37cb5cdf9baf916e8d6d3bb4e6d",
+  "ref": "15d776eeb242cda330bbe654efae7fbac744b58d",
+  "commit": "15d776eeb242cda330bbe654efae7fbac744b58d",
   "verifiedAt": "2026-10-17"
 }

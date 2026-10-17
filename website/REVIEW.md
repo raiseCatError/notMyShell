@@ -3,9 +3,9 @@
 ## Refinement pass (2026-10-18)
 
 This record supersedes the initial delivery's version strategy and measurements below.
-The site now targets cumulative v0.20 candidate `82533639`; actual published release
+The site now targets cumulative v0.20 candidate `15d776ee`; actual published release
 history remains separate. `LAUNCH.md` records feature evidence, exact branch ancestry,
-the unintegrated Reactive Horizon onboarding boundary and final publication checklist.
+the integrated Reactive Horizon evidence, newer follow-up boundary and publication checklist.
 No v0.20 release date, published tag or Homebrew availability is fabricated.
 
 Changes: stronger “A richer way to use the terminal” hook, concrete supporting copy,
@@ -40,7 +40,7 @@ production build, internal links/anchors, metadata/assets, Pagefind and Chrome t
 The complete `npm run verify` gate passed on 2026-10-18 after the review fixes, with
 no Astro errors, warnings or hints. The build validates every HTML page and internal
 link/anchor; shared JavaScript is 2,171 bytes gzip, with Pagefind separate.
-An additional Git-object audit verifies all 34 curated/canonical source paths at
+An additional Git-object audit verifies curated/canonical source paths at
 the pinned candidate. `npm run check:upstream` passes; `npm run build:launch` exits
 nonzero with the intended unpublished-candidate refusal, not a site build failure.
 Rendered website-only QA was inspected at desktop, tablet and mobile sizes, in both
@@ -55,10 +55,17 @@ derive candidate/published behavior from launch data. No other Critical/Importan
 finding was reported. Website-only verification does not establish physical NMSh QA.
 
 The production launch command intentionally refuses candidate metadata. Freshness
-checking agrees on candidate `82533639`, published v0.18.0 and Homebrew v0.17.0.
+checking agrees on the pinned public candidate, published v0.18.0 and Homebrew v0.17.0.
 Publication still requires the actual final tag, integrated onboarding/default review,
 release acceptance, tap verification, human visual review and separate deployment
 approval. The feature worktree is retained; no merge, release or deployment occurs.
+
+The initial refinement checkpoint `b580d42c` passed local verification and GitHub
+Website CI. A final read-only source check then found newly public onboarding
+implementation at `15d776ee`, beyond the earlier evidence audit. The website was
+repinned as one unified candidate, the real starting-point controls and transition
+were documented, and fresh versus legacy queue-summary defaults were corrected.
+The remaining newer local-only follow-ups are explicitly listed in `LAUNCH.md`.
 
 ## Initial delivery (2026-10-17, historical)
 
