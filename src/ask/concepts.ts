@@ -227,8 +227,11 @@ export const CONCEPTS: readonly Concept[] = [
     aliases: ['settings', 'preferences'],
     description: 'Settings (/settings or /config) holds every NMSh option, grouped by area.'},
   {id: 'setup', label: 'Setup Cat', support: 'actionable', open: '/setup', covers: ['/setup'],
-    aliases: ['setup cat', 'setup', 'guided setup', 'onboarding', 'first run'],
+    aliases: ['setup cat', 'setup', 'guided setup'],
     description: 'Setup Cat is the guided, rerunnable setup; it keeps your current choices.'},
+  {id: 'startup', label: 'Starting point', support: 'actionable', open: '/startup', covers: ['/startup'],
+    aliases: ['starting point', 'start over', 'onboarding', 'first run', 'minimal terminal', 'keep existing', 'keep my prompt', 'recommended settings'],
+    description: 'The starting point (/startup) chooses how NMSh feels: NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing. Nothing changes until you review and apply.'},
   {id: 'welcome', label: 'Welcome', support: 'actionable', open: '/providers', where: 'Settings → Welcome, or /providers', covers: ['settings:Welcome', 'family:welcome'],
     aliases: ['welcome', 'welcome screen', 'startup logo', 'banner', 'fastfetch', 'neofetch', 'vespyr', 'startup screen'],
     description: 'The welcome is what a new session shows first: Vespyr (NMSh\'s own), fastfetch, neofetch, or none.'},
@@ -355,7 +358,7 @@ export interface GuideSection {id: string; title: string; why: string; concepts:
 
 export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'start', title: 'Getting started', why: 'NMSh is a terminal frontend over a real, persistent shell: your shell keeps its state, and NMSh adds the editor, transcript and tools around it.',
-    concepts: ['setup', 'help', 'palette', 'settings', 'version', 'updates', 'status']},
+    concepts: ['startup', 'setup', 'help', 'palette', 'settings', 'version', 'updates', 'status']},
   {id: 'look', title: 'Prompt & appearance', why: 'Make the prompt and colors yours without editing dotfiles.', concepts: ['prompt', 'modules', 'theme', 'themeStudio', 'themeBridge', 'uiChrome', 'glyphs', 'syntax']},
   {id: 'cursorEffects', title: 'Cursor & effects', why: 'Cursor trails and motion for NMSh-owned chrome; Reduced Motion, Effects Off and NO_COLOR are always respected.', concepts: ['cursor', 'motion']},
   {id: 'chroma', title: 'Chroma', why: 'Optional gradients and motion for NMSh-owned chrome only; your command output is never recolored.', concepts: ['chroma', 'effects', 'activity']},

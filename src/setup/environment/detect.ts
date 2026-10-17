@@ -29,6 +29,8 @@ export interface ProviderEvidence {
   state: IntegrationState;
   started: boolean;
   runnable: boolean;
+  /** The executable found on PATH (or the package-manager prefixes). */
+  binary?: string;
   version?: string;
   /** The config file NMSh's adapter would read (absolute), when there is one. */
   configPath?: string;
@@ -258,6 +260,7 @@ export async function detectEnvironment(options: {env?: NodeJS.ProcessEnv; home?
   const starshipConfigured = readable(starshipConfig);
   const starshipState = state(Boolean(startedBy('starship')), Boolean(starship?.installed), starshipConfigured);
   if (starshipState) prompts.push({id: 'starship', label: 'Starship', state: starshipState, started: Boolean(startedBy('starship')), runnable: Boolean(starship?.installed),
+    ...(starshipBinary ? {binary: starshipBinary} : {}),
     ...(starship?.version ? {version: starship.version} : {}), ...(starshipConfigured ? {configPath: starshipConfig} : {}), configExists: starshipConfigured,
     ...(startedBy('starship') ? {startedBy: startedBy('starship')} : {})});
 
@@ -283,6 +286,7 @@ export async function detectEnvironment(options: {env?: NodeJS.ProcessEnv; home?
   const poshConfigured = readable(poshConfig);
   const poshState = state(Boolean(poshHit), Boolean(posh?.installed), poshConfigured);
   if (poshState) prompts.push({id: 'ohMyPosh', label: 'Oh My Posh', state: poshState, started: Boolean(poshHit), runnable: Boolean(posh?.installed),
+    ...(poshBinary ? {binary: poshBinary} : {}),
     ...(posh?.version ? {version: posh.version} : {}), ...(poshConfigured ? {configPath: poshConfig} : {}), configExists: poshConfigured,
     ...(poshHit ? {startedBy: poshHit.file} : {})});
 

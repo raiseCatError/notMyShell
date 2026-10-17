@@ -59,8 +59,9 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/settings queue', insertion: '/settings queue', description: 'Queue: queued-command behavior, execution timeline, results and motion'},
+  {name: '/startup', insertion: '/startup', description: 'Starting point: NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing; review before applying'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
-  {name: '/setup quick', insertion: '/setup quick', description: 'Preview Recommended, Minimal or Manual; review before replacing preferences'},
+  {name: '/setup quick', insertion: '/setup quick', description: 'Same as /startup: choose a starting point and review it before applying'},
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
   {name: '/setup look', insertion: '/setup look', description: 'Setup Cat: theme, UI chrome and Chroma (the Look step)'},
   {name: '/setup appearance', insertion: '/setup appearance', description: 'Same as /setup look'},
@@ -295,6 +296,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     }
     return {kind: 'keepAwake', op: 'panel', invalid: word};
   }
+  // The starting-point selector; exactly /startup (it takes no arguments, and there is no /preset).
+  if (/^\/startup\s*$/u.test(input)) return {kind: 'setup', entry: 'quick'};
   const setup = /^\/setup(?:\s+(quick|manual|prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s+queue\s*$/u.test(input)) return {kind: 'settings', view: 'config', destination: 'queue'};

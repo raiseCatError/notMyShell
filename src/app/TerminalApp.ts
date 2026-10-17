@@ -34,8 +34,11 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, GUIDED_STEPS, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {detectEnvironment, type EnvironmentEvidence} from '../setup/environment/detect.js';
+import {createStartupContext, defaultStartupPreview} from '../setup/startup/view.js';
+import {skyFrameMs} from '../setup/startup/sky.js';
+import {keepExistingPlan} from '../setup/environment/keepExisting.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
@@ -141,7 +144,7 @@ import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type Tr
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
-import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
+import {detectStarship, normalizeStarshipConfigPath, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {detectOhMyPosh, renderOhMyPoshPrompt} from '../prompt/ohMyPosh.js';
@@ -4915,6 +4918,12 @@ export class TerminalApp {
     if (this.setupState) {
       const state = this.setupState;
       if (state.cursorPanel) return this.withDraftTheme(state.draft, () => framePanel(this.cursorPanelRows(state.cursorPanel!, columns, this.cursorEnv(state.cursorPanel!.draft, state.draft)), columns));
+      if (state.quick && !state.quick.manual && !state.toolBrowser) {
+        // The selector draws in the saved theme's chrome; its previews draw with the highlighted draft's own settings.
+        const startup = state.context.startup ??= createStartupContext({reopened: !state.onboarding, steps: GUIDED_STEPS});
+        startup.preview = (config, width) => this.withDraftTheme(config, () => defaultStartupPreview(config, width));
+        return this.withDraftTheme(state.saved, () => renderSetup(state, columns, this.dimensions().rows));
+      }
       if (!state.toolBrowser && !(state.quick && !state.quick.manual)) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
       state.context.title = this.setupTitle(state);
       return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
@@ -6648,7 +6657,28 @@ export class TerminalApp {
     }
     if (this.stopped || this.setupState !== state || read !== this.startupEvidenceRead) return;
     setStartupEvidence(state, evidence);
+    if (state.context.startup) state.context.startup.sample = undefined;
     this.render();
+    void this.loadStartupSample(state, evidence, read);
+  }
+
+  /**
+   * Keep Existing shows the detected Starship prompt as NMSh will draw it: the real adapter, once, in this directory.
+   * Starship's cache points somewhere uncreatable, so nothing is written. Powerlevel10k and Oh My Posh keep a caption:
+   * they are not run before Apply.
+   */
+  private async loadStartupSample(state: SetupState, evidence: EnvironmentEvidence, read: number): Promise<void> {
+    const plan = keepExistingPlan(evidence, state.saved, state.quick?.keep.redetect ?? false);
+    const starship = evidence.prompts.find(prompt => prompt.id === 'starship' && prompt.runnable && prompt.binary);
+    const offered = plan.kept?.id === 'starship' || plan.question?.options.some(option => option.answer === 'starship');
+    if (!starship?.binary || !offered) return;
+    try {
+      const status: StarshipStatus = {installed: true, binary: starship.binary, configPath: starship.configPath ?? normalizeStarshipConfigPath(process.env), configExists: starship.configExists};
+      const result = await renderStarshipPrompt(this.context, status, {...process.env, STARSHIP_CACHE: '/dev/null/nmsh-read-only'});
+      if (this.stopped || this.setupState !== state || read !== this.startupEvidenceRead || !state.context.startup) return;
+      state.context.startup.sample = result.ansi;
+      this.render();
+    } catch { /* The caption stays: Starship draws this row from your own config. */ }
   }
 
   /** Provider install state and completion facts, detected once per Setup Cat open; never on render. */
@@ -10211,6 +10241,32 @@ export class TerminalApp {
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
     this.syncPresentationClock();
+    this.syncStartupSky();
+  }
+
+  /**
+   * The starting-point selector's sky: one clock at the band's own cadence (40 ms while a cross-fade or tail flick
+   * runs, 200/320 ms at rest) that repaints only the panel. None under Reduced Motion, Effects Off, Off, NO_COLOR or
+   * 16 colors, after 60 s without a key, while the guided setup is open, and never after the selector closes.
+   */
+  private startupSkyClock?: () => void;
+  private startupSkyInterval = 0;
+  private syncStartupSky(now = Date.now()): void {
+    const state = this.setupState, quick = state?.quick;
+    const shown = Boolean(quick && !quick.manual && !state!.cursorPanel && !state!.toolBrowser) && !this.stopped && !this.idle
+      && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended;
+    const interval = shown && quick ? skyFrameMs({now, changedAt: quick.changedAt, activeAt: quick.sky.activeAt, backdrop: quick.backdrop,
+      reduced: state!.context.startup?.reduced ?? !this.decorativeMotionAllowed()}) : 0;
+    if (interval === this.startupSkyInterval && Boolean(this.startupSkyClock) === interval > 0) return;
+    this.startupSkyClock?.(); this.startupSkyClock = undefined;
+    this.startupSkyInterval = interval;
+    if (interval > 0) this.startupSkyClock = presentationClock.subscribe(() => this.paintStartupSky(), interval, Math.min(40, interval));
+  }
+
+  /** One sky frame: the panel region of the cached frame is redrawn (the ground comes from its cache); nothing else. */
+  private paintStartupSky(): void {
+    if (!this.stopped && this.setupState?.quick && !this.setupState.quick.manual) this.renderTaskPresentation();
+    this.syncStartupSky();
   }
 
   /** /about: build identity and the logo, as an image where the host supports one, text otherwise. */
@@ -10366,6 +10422,7 @@ export class TerminalApp {
   }
 
   private cancelPresentation(): void {
+    this.startupSkyClock?.(); this.startupSkyClock = undefined; this.startupSkyInterval = 0;
     this.transitions.cancel();
     this.transitionClock?.(); this.transitionClock = undefined;
     this.effects.cancel();

@@ -260,7 +260,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     NATIVE_FIRST_DETAIL,
     'Your current choices are already selected. Nothing changes until you apply on the last step.',
   ], rows: [
-    routeRow('setupPresets', 'Choose a preset', 'Recommended, Minimal or Manual · /setup quick', 'setupQuick', 'General'),
+    routeRow('setupPresets', 'Starting point', 'NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing · /startup', 'setupQuick', 'General'),
     {row: configRow('panelPosition'), note: draft => draft.panelPosition === 'top' ? 'Panels like this one sit at the top of the screen' : 'Panels like this one sit at the bottom of the screen'},
   ]},
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
@@ -496,7 +496,7 @@ function localUnderstandingNote(draft: PromptConfiguration): string {
 export const SETUP_EQUIVALENTS: Readonly<Record<string, string>> = {
   provider: 'setupPromptProvider', welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', navigation: 'setupNavigation', picker: 'setupPicker',
   cursorSpeed: 'cursorAdvanced', cursorIntensity: 'cursorAdvanced', cursorTrail: 'cursorAdvanced', cursorParticles: 'cursorAdvanced',
-  tools: 'setupToolChoice', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
+  tools: 'setupToolChoice', themeStudio: 'setupThemeStudio', onboardingBackdrop: 'setupPresets', themeBridge: 'setupThemeBridge', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
 };
 
 /** Where each Settings entry point (a full panel) is reached from Setup: a section, or the route row that opens it. */

@@ -34,7 +34,7 @@ export interface StartupContext {
   preview: (config: PromptConfiguration, width: number) => string[];
   /** The guided setup's steps, for Customize's tiles. */
   steps: readonly string[];
-  /** The detected prompt as NMSh draws it (Keep Existing), once the app has rendered it. */
+  /** Keep Existing: the detected Starship prompt as NMSh draws it, once the app has rendered it (shown while Starship is the answer). */
   sample?: string;
   /** Ground rows cached per state and size. */
   ground?: {key: string; rows: string[]};
@@ -301,7 +301,7 @@ function preview(g: Ground, x: number, y: number, width: number, maxY: number): 
     const plan = keepExistingPlan(state.quick!.evidence, state.saved, state.quick!.keep.redetect);
     const row = keepEvidence(g, x, y, width, maxY - 3, plan);
     if (row + 2 >= maxY || !state.quick!.evidence) return;
-    const sample = context.sample;
+    const sample = state.draft.provider === 'starship' ? context.sample : undefined;
     if (sample) {
       canvas.ansi(x, row + 1, sample, width);
       canvas.text(x, row + 2, GLYPHS.prompt, `${BOLD}${fg(paint, paint.t.accent)}`);

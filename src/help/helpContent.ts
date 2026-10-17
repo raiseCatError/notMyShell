@@ -111,9 +111,12 @@ After an unambiguous simple command-not-found typo in zsh, Bash or Fish, NMSh ma
 
 ## Setup and community
 
-/setup opens the full Setup Cat wizard. /setup quick previews Recommended, Minimal
-(One-line or Two-line) and Manual, with a review before changing preferences.
-Everything can be changed later with /setup.
+/startup (also /setup quick, or Settings → General → Starting point) chooses how NMSh
+feels: NMSh Recommended, Minimal Terminal (Two-line or One-line), Customize Everything
+(the guided setup) or Keep Existing (your own prompt and tools, detected read-only).
+Nothing changes until you review it and press Enter to apply; Esc goes back, and Esc
+from the choices asks before leaving. A cycles its Aurora backdrop: on, subtle or off.
+/setup opens the full Setup Cat wizard; everything can be changed later.
 
 [Docs](https://github.com/raiseCatError/notMyShell#readme) ·
 [Report a bug](https://github.com/raiseCatError/notMyShell/issues/new?template=bug_report.yml) ·

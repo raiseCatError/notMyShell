@@ -327,6 +327,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
     get: config => config.glyphStyle, set: (config, glyphStyle) => ({...config, glyphStyle, glyphChoiceComplete: true})}),
+  enumRow({id: 'onboardingBackdrop', label: 'Starting point backdrop', description: 'The sky behind the starting-point selector (/startup): the real Aurora, subtle, or off. A cycles it there too', category: 'General',
+    values: ['aurora', 'subtle', 'off'] as const, labels: ['Aurora on', 'Subtle', 'Off'],
+    get: config => config.onboardingBackdrop, set: (config, onboardingBackdrop) => ({...config, onboardingBackdrop})}),
   enumRow({id: 'panelPosition', label: 'NMSh panel position', description: 'Where full-width NMSh panels (Setup, Settings, Tools, ...) sit: Bottom (default) or Top. Independent of the composer position', category: 'General',
     values: PANEL_POSITIONS, labels: ['Bottom', 'Top'],
     get: config => config.panelPosition, set: (config, panelPosition) => ({...config, panelPosition})}),
@@ -632,7 +635,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
   {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
-  {id: 'setupQuick', label: 'Choose a preset', description: 'Recommended, Minimal or Manual · /setup quick · review before applying', category: 'General', control: 'child', destination: 'setupQuick'},
+  {id: 'setupQuick', label: 'Starting point', description: 'Recommended, Minimal, Customize or Keep Existing · /startup', category: 'General', control: 'child', destination: 'setupQuick'},
   {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
 
