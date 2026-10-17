@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readlinkSync} from 'node:fs';
+import nodePty from 'node-pty';
 import {drive, driveSync, type Command, type CommandResult} from '../src/host/window/run.js';
 import {systemFiles, windowHost, type WindowContext, type WindowFiles} from '../src/host/window/route.js';
 import {TERMINAL_MAXIMIZE_SCRIPT, TERMINAL_PROBE_SCRIPT, TERMINAL_RESTORE_SCRIPT} from '../src/host/window/terminalApp.js';
@@ -356,7 +357,6 @@ test('Hyprland: maximize and restore name the exact window with set and unset, a
 });
 
 test('Linux: a real pty master is found through /proc; the process on the other side is not its holder', {skip: process.platform !== 'linux'}, async () => {
-  const nodePty = (await import('node-pty')).default;
   const child = nodePty.spawn('/bin/sh', ['-c', 'sleep 5'], {cols: 80, rows: 24});
   try {
     let tty = '';
