@@ -1,0 +1,17 @@
+export const sources = [
+  { path: 'ARCHITECTURE.md', slug: 'architecture', title: 'Runtime architecture' },
+  { path: 'docs/architecture/shell-adapter.md', slug: 'shell-adapter', title: 'ShellAdapter contract' },
+  { path: 'docs/architecture/platforms.md', slug: 'platforms', title: 'Platform evidence and limitations' },
+  { path: 'docs/architecture/context-modules.md', slug: 'context-modules', title: 'Context modules and packs' },
+  { path: 'docs/architecture/prompt-customization.md', slug: 'prompt-customization', title: 'Native prompt customization' },
+  { path: 'docs/architecture/optional-tools.md', slug: 'optional-tools', title: 'Optional tools and providers' },
+  { path: 'docs/design/theme-bridge.md', slug: 'theme-bridge', title: 'Theme Bridge design and ownership' },
+  { path: 'docs/design/configured-completion.md', slug: 'configured-completion', title: 'Configured completion' },
+  { path: 'docs/design/session-interaction-ux.md', slug: 'session-interaction', title: 'Session interaction design' },
+  { path: 'docs/privacy.md', slug: 'privacy', title: 'Privacy and local data' },
+  { path: 'docs/accessibility/baseline.md', slug: 'accessibility', title: 'Accessibility baseline' },
+  { path: 'docs/testing/v018-physical-qa.md', slug: 'physical-qa', title: 'v0.18 physical QA checklist' },
+  { path: 'docs/development-verification.md', slug: 'verification', title: 'Development verification' },
+  { path: 'SECURITY.md', slug: 'security', title: 'Security policy' },
+  { path: 'CONTRIBUTING.md', slug: 'contributing', title: 'Contributing to NMSh' },
+];

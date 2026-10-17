@@ -1,0 +1,179 @@
+---
+title: "Session interaction design"
+description: "Canonical session interaction design from v0.18.0."
+group: Technical reference
+order: 108
+source: "docs/design/session-interaction-ux.md"
+---
+
+**Milestone:** v0.3.0 — Session & Interaction UX
+
+## Goal
+
+Improve routine interaction with NMSh through a safe return to ordinary zsh, configurable context presentation, manageable large text pastes, persistent local transcripts, and first-run setup. NMSh remains a frontend over one persistent real shell.
+
+## Safe shell transition
+
+`/zsh` exits the NMSh frontend and hands the same terminal window to a real interactive zsh. It preserves cwd when practical, while making no promise to preserve shell-local state, jobs, or the hidden managed shell's runtime. Terminal modes owned by NMSh must be restored before handoff. An active foreground command must finish or be interrupted before transition. A managed-shell marker prevents recursive NMSh startup; it must not leak into the ordinary zsh handed to the user.
+
+## Prompt providers and composer layout
+
+NMSh has three prompt-provider choices: built-in NMSh Native (the default), optional Starship, and optional Powerlevel10k. The provider supplies prompt/context content and semantic styled segments. NMSh owns the editor, composer boundaries, multiline input, history, execution behavior, and where provider content appears. `composerLayout` is independently `twoLine` (default) or `oneLine`, and works with either provider.
+
+NMSh Native uses the ordered context modules (project, cwd, git branch, detected toolchains, and previous exit status). The `toolchain` module shows one segment per toolchain found by marker files in the cwd or repository root (Node `package.json`, Go `go.mod`, Python `pyproject.toml`/`requirements.txt`/`setup.py`/`Pipfile`/`.python-version`, Docker `Dockerfile`/compose files); saved configurations gain it at its default position. `palette` selects one of five role-based themes, each a complete map from segment role (project, cwd, git, each toolchain, success, failure) to colors: `lavender` (Lavender Native, default) uses a lavender/violet/iris family led by the NMSh brand lavender `#A67CF3`, alternating lightness so neighbours stay distinct; `brand` (Brand / Semantic) pairs `#A67CF3` project with slate path, charcoal git, and full Node green, Go cyan, Python yellow, and Docker blue; `cool` (Cool First) leads with periwinkle, slate, and teal; `warm` (Warm First) uses amber, sand, rust, and olive-adjacent tones; `grayscale` separates segments by graphite-to-silver luminance alone. Semantic themes keep the existing success/failure colors. The retired `semantic` (Soft Semantic) id, which overlapped Brand / Semantic, normalizes to `brand` in prompt and history settings. Geometry (Start, Connector, Gap, End), icons, and the module manager are described below. `gap` remains the number of neutral cells when enabled; `/prompt` exposes Off (connected), Compact (`gap` 0: caps touch with no neutral cell), and Normal (`gap` 1). The existing `placement` key (`header` | `composer`) is exposed through the `/prompt` layout step together with `composerLayout`: "Two-line · prompt row is the divider" (`twoLine` + `header`: the prompt row's `─` fill is the composer's top edge), "Two-line · prompt inside bordered composer" (`twoLine` + `composer`: a separate border above the prompt row), and "One-line · prompt inline with input" (`oneLine`; stored placement is kept). Starship rows follow the same placement rule. `spacing` remains internal body padding. Explicit per-module colors still override any theme.
+
+Nerd Font mode uses U+E0D7 (``) to open a segment on neutral background and U+E0B0 (``) for every transition and trailing wedge. With gaps disabled, only the first segment opens; a single transition cell uses the previous segment's background as foreground and the next segment's background as background. With gaps enabled, each segment closes on neutral background, the configured cells remain neutral, and the next segment opens independently. Safe glyph mode maps these shapes to ASCII `<` and `>`.
+
+Native geometry has four independent parts. **Start** shapes only the outer left edge of the whole prompt, **Connector** only module-to-module geometry, **Gap** only whether modules are joined (one transition cell) or separated by neutral cells, and **End** only the outer right edge. Shapes are `wedge` (U+E0D7 opening, U+E0B0 join/close; the approved default), `flat`, `rounded` (U+E0B6/U+E0B4), `slash` `/` (U+E0BA/U+E0BC), and `backslash` `\` (U+E0BE/U+E0B8), with ASCII equivalents in safe glyph mode. Connectors are always solid shapes; with Gap on they close each module and reopen the next in the connector shape. Start and End may also be faded: `fadeWedge`, `fadeFlat`, `fadeRounded`, and `fadeSlash` step through three same-hue dimmer colors (`fadeFlat` uses `░▒▓`/`▓▒░` cells), with the start fade mirroring the end fade so it brightens into the prompt. Legacy `startStyle: "pointed"` normalizes to `wedge`, and older snapshots without a connector render with `wedge`. Two-line mode then draws a solid divider; one-line mode feeds the selected ending into the editable prompt width budget.
+
+`icons` (`nerd` default, `off`) controls Native module icons only: git branch (U+F418) and Node/Go/Python/Docker toolchain icons. Status glyphs (✔/✘) always remain. The value is a mode rather than a boolean so a future `text` mode can be added without migration. Starship and other providers keep their own symbols.
+
+The JSON config remains in `~/Library/Application Support/notMyShell/config.json` on macOS (or `$XDG_CONFIG_HOME/nmsh/config.json` when set). Legacy top-level module, placement, spacing, gap, and composer fields remain accepted. The provider configuration is:
+
+```json
+{
+  "provider": "nmsh",
+  "onboardingComplete": false,
+  "nmsh": {
+    "gapEnabled": true,
+    "endStyle": "fadeWedge",
+    "startStyle": "wedge",
+    "connector": "wedge",
+    "icons": "nerd",
+    "palette": "lavender"
+  },
+  "starship": {
+    "configPath": null
+  },
+  "placement": "header",
+  "composerLayout": "twoLine",
+  "separator": "",
+  "gap": 1,
+  "spacing": 1,
+  "modules": [
+    { "id": "project", "visible": true, "condition": "always" },
+    { "id": "cwd", "visible": true, "condition": "always" },
+    { "id": "gitBranch", "visible": true, "condition": "inRepository" },
+    { "id": "exitStatus", "visible": true, "condition": "nonzeroExit" }
+  ]
+}
+```
+
+Older valid configs normalize to NMSh Native, two-line layout, gap enabled, and `fadeWedge`. Invalid provider, end-style, and layout values fall back safely. Settings are written only after onboarding or `/prompt` is completed; Starship's own config is never rewritten by provider switching.
+
+Starship rendering uses the installed `starship prompt` binary in the current cwd with the command status. Output is parsed into text and ANSI-derived foreground/background spans before display or transcript storage. Prompt output is cached between meaningful shell prompt/context refreshes and is not invoked on shimmer render ticks. Newlines are flattened into one provider row so NMSh retains its two-line or one-line composer structure. Provider errors fall back to NMSh and update NMSh configuration to avoid claiming a broken provider. Starship may still emit theme-specific glyphs that depend on the user's font; NMSh does not promise to reproduce arbitrary shell initialization hooks or every multiline/right-prompt feature.
+
+Powerlevel10k has no standalone render command; it is a zsh theme that builds a lazily evaluated `PROMPT` in `precmd` hooks. NMSh renders it in an isolated helper, `zsh -f -i +o zle`, spawned detached (own session, no controlling TTY), with stdin ignored and a 3 s timeout. The helper sources only the detected theme (Homebrew, manual clone, Oh My Zsh custom, zinit, or distro path, overridable via `powerlevel10k.themePath`) and the user's config (`POWERLEVEL9K_CONFIG_FILE`, `powerlevel10k.configPath`, or `~/.p10k.zsh`). It runs the precmd hooks with the command status and cwd, then expands `PROMPT` as zsh would under `prompt_subst`. It never reads `.zshrc`, never writes `.zshrc` or `.p10k.zsh`, and never touches NMSh's managed shell or ZLE. NMSh-specific overrides are applied after the user config: `prompt_char` and `newline` are removed (NMSh owns the input prompt and composer layout), gitstatus is disabled because its daemon needs job control (p10k falls back to `vcs_info` for git state), and the right prompt is not rendered until NMSh has a right-prompt area (#69). Output is parsed into semantic spans exactly like Starship's. Missing installations are reported with guidance only; NMSh never installs Powerlevel10k. Failures fall back to NMSh Native and record that truthfully. Known limitations: prompt settings defined only in `.zshrc` (outside the p10k config) are not seen, and segments that depend on interactive-shell state (background jobs, instant prompt) are not reproduced.
+
+Starship detection respects `STARSHIP_CONFIG`, otherwise the documented `~/.config/starship.toml` default. A missing config uses Starship defaults. Presets use Starship's supported `starship preset <name> -o <path>` command; choose a new path to preserve any existing file. On macOS, NMSh offers `brew install starship` behind a confirmation screen. It does not edit `.zshrc` or run curl-based installers. Starship has no separate official interactive onboarding command, so NMSh presents this small provider setup flow.
+
+## Composer position: Flow
+
+Composer position is Bottom (default), Top or Flow. Bottom and Top dock the composer to an edge. Flow makes the prompt and input part of NMSh's own document, right after the newest output, like a conventional terminal. It is not a switch to the host's scrollback: NMSh keeps its editor, highlighting, suggestions and structured execution.
+
+- **Following:** the composer sits directly after the newest output (with the usual breathing space, or the live activity row while a command runs). It moves down as output grows. Once output fills the screen, it lands where Bottom docks it. The shell PTY always gets the full transcript capacity, so output growth never resizes it.
+- **Scrolling back:** the composer scrolls with the document. A few rows back, it moves down by that many rows and is clipped at the screen edge. A page back, it is off-screen and the cursor is hidden. The history viewport keeps the following capacity as its height, so a small scroll never snaps back to the bottom.
+- **Returning:** typing, pasting, deleting, completing, history search or Enter while scrolled back returns to the newest output first, and the key still applies. Scrolling, paging and mouse movement alone never return. Bottom and Top are unchanged: typing does not move a scrolled view.
+- **Placement rules:** suggestion and completion menus open below the input, like a terminal completion list. Full-width panels (settings, `/resume`, …) pin to the bottom edge, as with Bottom.
+- **Chat:** with Chat presentation, the live composer renders normally and historical commands render right-aligned.
+- **Passthrough:** fullscreen apps get the raw terminal as before. Returning repaints the document and the composer from the plan.
+
+## `/layout` showcase
+
+`/layout` (also `/settings` → Config → Layout) previews composer position (Bottom, Top, Flow) × transcript presentation (Normal, Chat) before you choose. It has two rows, Composer position and Transcript: ↑↓ move, ←→ change, Enter saves and applies live, and Esc cancels.
+
+- **Sample content:** a folded build, a multi-line command, a failure and a running command with its activity row. It lives in its own `OutputBuffer` and never runs anything or reaches the transcript, journal or `/copy`. Completion times use a fixed date, so the preview is deterministic.
+- **Real rendering:** the preview goes through the real transcript presenter and `planScreen`, the same geometry the live screen uses. Only the prompt and input text are placeholders.
+- **Size:** the preview is sized to show the whole sample with spare rows, so Flow's prompt visibly follows the output. A short terminal gets a shorter preview in which, just as on a real full screen, Flow looks like Bottom. A caption describes the selected position.
+- **One configuration:** the choices come from the same value lists as the Config rows and the palette toggles, and saving writes the same `composerPosition` and `transcriptPresentation` settings.
+
+## Rich text paste
+
+Large multiline text-only pastes appear as one editable logical atom, labeled in current editor order (for example, `[Text #1 · 7 lines]`). Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O optionally unwraps the atom beside the caret back into editable source. Enter submits the exact underlying source of every atom in place, together with typed prefix, interstitial, and suffix text; visual labels are presentation-only and never reach zsh. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
+
+## Local transcript sessions
+
+`/clear` archives the current NMSh transcript locally, clears its visible presentation, and starts a new presentation session while retaining the same live zsh. It does not normally reset cwd/environment, kill zsh or jobs, or delete the archived transcript. While a foreground command is running, `/clear` is refused so its transcript is not detached from active execution. `/resume` offers a keyboard-friendly archive picker and restores transcript history without rewinding real shell state; if the current presentation is non-empty, NMSh archives it before switching views. Archives live under `~/Library/Application Support/notMyShell/sessions/` on macOS (or `$XDG_CONFIG_HOME/nmsh/sessions/` when set), use schema version 1 JSON, and are written with mode `0600` in a mode `0700` directory to a synced temporary file before atomic rename and directory sync. They retain structured command/raw-text records and styled terminal cells, not ANSI-only output. Corrupt and unsupported-version archives are left untouched and omitted from the picker. Data is local-only, with no cloud, telemetry, model API, AI summary, or automatic destructive pruning. A temporary file left by a crash is ignored; the final archive is either present after atomic rename or absent.
+
+Both `/clear` and `/resume` wait until the foreground command has finished or been interrupted; neither is sent as input to a running command.
+
+## Historical command context
+
+Each submitted command freezes a semantic prompt snapshot: provider identity, layout, text spans, foreground/background colors, Native geometry/end style when applicable, cwd, and branch metadata. Historical headers are rendered from that captured snapshot, not today's provider or theme. Snapshots also record the Native theme, geometry, and each segment's semantic role. Their generic OKLab archive transform reduces chroma/lightness while preserving each segment's pigment, caps light live backgrounds (such as the lime project block) to a muted lightness, and turns dark live text into light muted text; colored Starship greens/oranges/cyans stay those hues rather than becoming lavender. No raw ANSI string is the stored representation. The header is presentation metadata, not PTY output, and is excluded from `/copy`. Optional prompt snapshots persist in transcript schema version 1; older records without them remain readable through their older cwd/branch snapshot behavior.
+
+`/transcript` configures how those snapshots are presented, independently of the live prompt: `Divider` On/Off, `Divider density` Normal/Compact, `Historical prompt` On/Off, and `History colors` Follow prompt / Choose theme / Grayscale (with a `History theme` row and one preview row per theme while Choose theme is selected). The header row is prompt + divider fill, prompt only, a full-width divider only, or omitted entirely when both are off; commands and output keep their normal structure. Compact density uses a finer dashed `┈` rule in a quieter tone on the same single row rather than any font-size change. Follow prompt is the muted version of each command's captured colors; Choose theme recolors stored segments by their recorded semantic role (older snapshots and Starship spans without roles keep their captured colors); Grayscale applies the archive transform with all chroma removed. Settings persist under `transcript` in the NMSh config (`/history` keeps its search meaning). Rendering is presentation only: stored snapshots, archived transcripts, and raw PTY output are never modified.
+
+Each fresh presentation begins at the top of the output viewport with a compact welcome snapshot containing the compiled build identity, frozen start cwd, and zsh label. The text block reads `notMyShell v<version>` (the wordmark bold, only `My` in NMSh brand lavender `#A67CF3`, the version in subdued non-bold gray), then `build <sha> · <branch>`, the start cwd, and the shell in progressively quieter grays, without labels. To its left, a four-row full-body lavender cat drawn from half-block pixels (ears, dark rectangular eyes, `=` whiskers, back, four legs, raised tail) matches the metadata height; narrow widths omit the cat while keeping metadata in bounds. The cat blinks occasionally: one app-owned timeout waits a deterministic 5.6–9.8 s gap, swaps the eyes for dark lid slits for 150 ms, and reschedules. The frame is presentation state on the output buffer, never persisted, and never changes row count or width. The timer is cleared on exit and skips blinks while no welcome is present or passthrough owns the screen. The welcome uses the exact `notMyShell` spelling; `nmsh` names only the binary. One muted lavender divider follows. Welcome and commands remain contiguous transcript rows: empty viewport space follows the short transcript and fills as commands are added; there is no reserved spacer or sticky header. `/clear` archives the old presentation and creates a new welcome at the current cwd without resetting zsh. `/resume` restores the archived snapshot if present and never injects another welcome. Welcome chrome is excluded from PTY output and `/copy`; it is separate from onboarding.
+
+## Nested execution activities
+
+The persistent shell PTY currently reports aggregate output and root command boundaries; it does not expose a reliable generic child-process tree or per-child PTY output attribution. NMSh therefore reports a narrow deterministic subset: a complete Node TAP v13 stream observed in actual PTY output. It does not infer `npm`, shell, compiler, or other subprocesses from the submitted command or customary tool behavior. Incomplete TAP streams keep their output in the parent transcript but do not create a persisted child range. Arbitrary child processes and individual nested TAP subtests are not currently exposed as separate activities.
+
+Live-activity shimmer is a per-glyph traveling luminance wave, not a whole-line pulse: glyph text and positions never change; each glyph's brightness follows a cosine wave with a 12-glyph wavelength moving left to right at a length-independent speed (one wavelength per 1.8 s, or 1.2 s while output is arriving), so a 100 ms frame moves the crest under one glyph. Primary live activity keeps the purple accent colors; secondary TAP rows use the silver/gray pair. For manual shimmer and folding checks after rebuilding, run `node --test scripts/slow-tap-fixture.mjs` inside NMSh. The fixture emits a real delayed Node TAP stream so the secondary row remains active long enough to inspect, then completes and folds its retained details.
+
+An observed activity stores semantic identity/kind, label, start/completion time, status, expansion state, and a range into the parent's retained parsed output lines. The parent remains the source of truth for raw PTY presentation data; activity chrome and labels are not copied to `/copy`. The optional activity field is backward-compatible with transcript schema version 1. No ANSI presentation strings are stored for the activity itself.
+
+While a parent is running, its activity timeline is rendered at the end of the active history viewport so chronological child status remains visible; observed child output is indented beneath its activity row. The existing primary activity and blank breathing row above the composer are unchanged. A running TAP activity shows its observed raw stream. When the protocol summary closes, its output folds by default and the completed activity is static and muted; its inline disclosure can reveal the retained lines. After the parent completes, activity rows render inside the parent's expandable output details and are hidden when the parent is collapsed. No process-tree polling, guessed output attribution, AI, model, or cloud service is used.
+
+## Onboarding
+
+First-run onboarding asks for NMSh Native or Starship (NMSh is preselected), then the independent two-line/one-line composer choice. NMSh Native then shows an appearance step for theme, start, connector, gap, end, icons, and a module manager (Space shows/hides, Shift+↑↓ reorders, ←→ changes the exit-status condition; custom module colors are preserved), with a live preview from the real renderer and a one-row preview of every theme (the gallery is omitted on short terminals). Theme rows use the draft's real geometry over a synthetic preview-only context (project, cwd, git, Node, Go, Python, Docker) so every role is visible; the live prompt still shows only detected modules. The panel shows the saved configuration as `Current`, marks each changed value with its saved value, and labels the preview `unsaved preview` or `matches current`; nothing is applied until Enter saves. Every step ends with a consistent controls row listing its keys. Starship setup reports binary version and config path, supports existing/default configuration and truthful preset guidance, and offers an explicit Homebrew install confirmation on macOS when available. Both provider paths ask for composer layout. Escape can skip; completion and choices persist in the existing prompt config. `/prompt` reopens the same settings flow. Switching providers retains inactive provider settings and never edits Starship config or the user's ordinary `.zshrc`.
+
+## Live sessions
+
+The frontend talks to its shell only through a `SessionClient` using a versioned, newline-delimited JSON protocol (#126). By default the shell and its PTY live in a per-user session service, `nmshd`. The frontend starts it on demand, and it listens on a Unix socket in a private (`0700`) runtime directory (#127). Each new session receives the launching frontend's environment and working directory. If the service can't be used, the frontend runs the shell in-process and says so. `NMSH_SESSION_SERVICE=0` forces in-process mode, and `NMSH_SESSION_MODE` in the shell shows which mode is active.
+
+- **Detach (#128):** closing the window (SIGHUP/SIGTERM, or the frontend disappearing) detaches the session: its shell and any running command keep going. `exit`, Ctrl+D and `/zsh` end it. The service exits once it has no sessions and no windows.
+- **Reattach (#128, #130, #197):** through the startup prompt, `/resume` (LIVE rows above ARCHIVED ones: Enter attaches, and Ctrl+K kills after confirmation), or `nmsh --attach <id>`. `nmsh --sessions` lists live sessions, and `nmsh --new` skips restoring. Only one window is attached to a session at a time, and an attached session is never offered or taken over.
+- **Detached output (#129):** output produced while detached is kept in memory (1 MB) and then spooled to disk in the runtime directory (up to 64 MB; `NMSH_BACKLOG_MEMORY_BYTES`, `NMSH_BACKLOG_SPOOL_BYTES`). The reattaching window continues the session's journal and appends what it missed, noting commands that completed while detached and anything beyond the limit. A fullscreen app is nudged to repaint at the new window's size.
+
+## Live-session recovery, updates and limits
+
+Live sessions are owned by the per-user session service (`nmshd`), which listens on a Unix socket in a private (`0700`) runtime directory. Each protocol version has its own socket (`nmshd.sock` for v1, `nmshd-v<N>.sock` afterwards).
+
+- **Updates:** after an update, the older service keeps running the sessions it owns until they end. A newer frontend starts or attaches only through a service that speaks its own protocol. While a service of another version is reachable, the newer frontend does not archive, attach to or end that service's sessions, because it cannot verify them. It says so once at launch.
+- **Sessions that end with no window attached:** at launch, NMSh compares unfinished journals and output spools against the sessions its service reports. It archives each session that is gone so it appears in `/resume`, with a factual note:
+  - If the shell exited while detached, the note gives its exit code, and the output captured while detached is kept.
+  - If the service died or the machine restarted, the note says the shell and anything running in it could not be recovered.
+  Launch recovery and Kill Session share one ownership boundary. The journal is locked across processes (a lock left by a dead process is taken over), the spool is claimed by renaming it, and a journal that is already ended is never rewritten from a leftover spool. So a session is archived exactly once, and a second launch never overwrites a complete archive with a journal-only one. Live journal checkpoints take the same lock. If archiving fails, or a launch crashes while holding a claim, the spool is put back for the next launch.
+- **Reattaching to a fullscreen app:** the service remembers the terminal modes the app turned on (mouse reporting, bracketed paste, application cursor keys and keypad, focus events, hidden cursor). A reattaching window re-applies them, so mouse and paste keep working in `vim`, `htop`, `less` and similar apps.
+- **Service death under an attached window:** the frontend reports that it lost the service, archives the transcript, and exits. It never claims the session survived.
+- **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. That window's shell ends when the window closes; it cannot be detached or reattached. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
+- **Startup restore:** two settings in Config → Sessions.
+  - **Startup restore:** Ask (default), Always or Never.
+    - Ask: with one detached session, the launch shows its directory, what it is running and its age, then offers Resume (R/Enter), Not now (N/Esc), Always resume (A) or Don't resume at startup (D). A and D also save the setting.
+    - Never only skips restoring at launch. It never ends a session, and `/resume`, detach and reattach are unaffected.
+  - **Multiple detached sessions:** Ask which (default) or Open all.
+    - The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions. Esc, or Enter with nothing selected, starts fresh.
+  - Both screens have one destructive key, `X`, which only opens a confirmation (Enter/Y kills, Esc/N/Ctrl+C cancels). The kill is the same confirmed termination `/resume` uses; the transcript is archived and stays in `/resume`. Sessions attached elsewhere are never touched, and killing the last one starts a fresh session. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
+  - When several sessions are restored, this window attaches the first. Each other one opens in a new window of the host terminal, running `nmsh --attach <id>`:
+    - Ghostty on macOS: Ghostty's AppleScript API (`new surface configuration`, then `new window with configuration`). It opens a normal window in the running Ghostty app. The command words are passed as `osascript` arguments and shell-quoted with `quoted form of`, never written into the script. macOS asks once for Automation permission. If AppleScript is disabled or permission is denied, NMSh names the session's `nmsh --attach` command instead.
+    - Ghostty on Linux: `ghostty -e`.
+    - Terminal.app: AppleScript `do script`. macOS asks once for Automation permission.
+    - kitty: `kitten @ launch --type=os-window`, which needs kitty remote control.
+    - Hosts without a way to open windows (VS Code, Zed, others), or a launcher that fails: the remaining sessions keep running, and this window names the `nmsh --attach` command for each one.
+- **Live status (#174):** `/resume` LIVE rows and `nmsh --sessions` show evidence-based status for each live session. The service gathers it from the session's own output and reads it only when sessions are listed. Nothing polls, and nothing reads the screen.
+  - What runs and for how long. The foreground process is shown when it differs from the command (for example `process node` for `npm test`). A known interactive CLI (Claude Code, Codex, Aider, Gemini CLI, OpenCode, Goose, …) gets its display name. The table only supplies names: every program gets the same states.
+  - Output recency: *active* if the session wrote in the last 10 s, otherwise *quiet* for how long.
+  - *needs attention*: the running program asked for it with a terminal notification (OSC 9 excluding progress, OSC 777 notify) or a bell. It clears when someone types into the session or the command ends.
+  - *fullscreen* while the program holds the alternate screen, and the window title it set (OSC 0/2, sanitized and bounded).
+  - While idle: how long, and whether the last command succeeded or failed with its exit code.
+  - NMSh never claims what a program is doing or waiting for (thinking, approval, input). What the stream does not say is not shown. Status lives in the service, so it survives detach and reattach. Older services omit it, and the rows simply show less.
+- **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
+
+Known limitations:
+- Nothing running in a shell survives the service being killed or the machine restarting. Only the transcript and the output captured so far are kept.
+- Sessions owned by an older service version can't be attached from a newer frontend. They stay listed as unverified until they end.
+- Recovery runs at launch and when `/resume` opens. A session that ends while another window is open is archived the next time either of those happens.
+
+## Current scope and planned follow-up
+
+- Implemented onboarding configures prompt provider (NMSh Native, Starship, or Powerlevel10k), composer layout, and Native appearance (theme, start, connector, gap, end, icons, modules), with real-renderer previews. The next onboarding scope is optional tool discovery/setup for zoxide, fzf, and Atuin, offering Recommended / Choose individually / Skip. Any installer that modifies the system requires explicit confirmation. Starship remains an optional prompt provider. NMSh replaces the UI roles of zsh-autosuggestions and zsh-syntax-highlighting; neither is a required dependency. This v0.4 work is tracked in #9.
+- Native prompt themes style prompt roles. The v0.3 visible themes are Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale (Soft Semantic retired). Theme-aware syntax highlighting and `/syntax` are v0.4 work (#68).
+- Safe user zsh config/plugin interoperability (#16), native parity with common zsh editor plugins (#75), and configured-zsh completion parity with fzf-tab interoperability (#52) are v0.4 work; the documentation does not claim current native fzf-tab support.
+- Composer layout uses the same `composerLayout` preference and is independent of provider choice.
+- Composer layout changes only input presentation and does not change the primary live activity row or its existing breathing-space row. It is independent of the nested activity architecture in #47.
+- Nested activity reporting is limited to completed, directly observed Node TAP v13 streams until the shell/PTy architecture provides stronger per-child boundaries and output attribution.
+- Rich paste and transcript persistence are otherwise independent interaction features.
+- TerminalHost architecture (#10–#13), platform support, ShellAdapter research, broad compatibility/polish (#20), and unrelated future work are outside this milestone unless a narrow implementation dependency proves necessary.
+- No shell-state time travel, chat-composer behavior, or image paste. Starship and Powerlevel10k supply prompt content only; they never replace NMSh's editor, composer, or history presentation.
