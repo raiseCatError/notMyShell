@@ -45,12 +45,16 @@ export function findStarshipBinary(pathValue = process.env.PATH ?? ''): string |
   return undefined;
 }
 
-export async function detectStarship(env: NodeJS.ProcessEnv = process.env, binary = findStarshipBinary(env.PATH)): Promise<StarshipStatus> {
+/**
+ * `versionEnv`: the environment for the `--version` child, when it must differ from NMSh's own (read-only detection
+ * points STARSHIP_CACHE somewhere uncreatable, because Starship otherwise creates ~/.cache/starship even for --version).
+ */
+export async function detectStarship(env: NodeJS.ProcessEnv = process.env, binary = findStarshipBinary(env.PATH), versionEnv?: NodeJS.ProcessEnv): Promise<StarshipStatus> {
   const configPath = normalizeStarshipConfigPath(env);
   if (!binary) return {installed: false, configPath, configExists: false};
   let version: string | undefined;
   try {
-    const result = await execFileAsync(binary, ['--version'], {timeout: 3000, maxBuffer: 4096});
+    const result = await execFileAsync(binary, ['--version'], {timeout: 3000, maxBuffer: 4096, ...(versionEnv ? {env: versionEnv} : {})});
     version = result.stdout.trim() || result.stderr.trim() || undefined;
   } catch {
     // The binary was found; a version command failure does not hide that fact.
@@ -123,6 +127,23 @@ export function parseStarshipPrompt(output: string): StarshipPromptResult {
   return {text: ansi.replace(SGR, ''), ansi, segments, normalizedMultiline};
 }
 
+const VISIBLE = (line: string) => line.replace(/\u001B\][\s\S]*?(?:\u0007|\u001B\\)/gu, '').replace(/\u001B\[[0-?]*[ -/]*[@-~]/gu, '').trim();
+
+/**
+ * A multi-line Starship prompt usually ends with its own prompt character
+ * alone on the last line (`❯`). NMSh draws its own marker after the flattened
+ * prompt, so that lone character is dropped (with a reset for any style it
+ * closed); a single-line prompt, or a last line with real content, is unchanged.
+ */
+export function withoutTrailingPromptCharacter(output: string): string {
+  const lines = output.replace(/[\r\n]+$/u, '').split(/\r\n|\r|\n/u);
+  if (lines.length < 2) return output;
+  const last = VISIBLE(lines.at(-1)!);
+  const glyphs = [...new Intl.Segmenter(undefined, {granularity: 'grapheme'}).segment(last)];
+  if (glyphs.length !== 1 || /[\p{L}\p{N}]/u.test(last)) return output;
+  return `${lines.slice(0, -1).join('\n')}\u001B[0m`;
+}
+
 export async function renderStarshipPrompt(
   context: PromptContext,
   status: StarshipStatus,
@@ -134,5 +155,7 @@ export async function renderStarshipPrompt(
   const result = await execFileAsync(status.binary, ['prompt', `--status=${context.exitStatus ?? 0}`, '--jobs=0'], {
     cwd: isAbsolute(context.cwd) ? context.cwd : process.cwd(), env: childEnv, timeout: 1500, maxBuffer: 256 * 1024,
   });
-  return parseStarshipPrompt(result.stdout);
+  const parsed = parseStarshipPrompt(withoutTrailingPromptCharacter(result.stdout));
+  // Still a flattened multi-line prompt even when only one line remains.
+  return {...parsed, normalizedMultiline: parsed.normalizedMultiline || /[\r\n]/u.test(result.stdout.trimEnd())};
 }

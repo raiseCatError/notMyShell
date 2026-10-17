@@ -1,5 +1,7 @@
 import {pureMix, type MoodMix} from '../../idle/auroraMoods.js';
 import type {OnboardingBackdrop, PromptConfiguration} from '../../prompt/configuration.js';
+import type {EnvironmentEvidence} from '../environment/detect.js';
+import type {KeepState} from '../environment/keepExisting.js';
 import {AURORA_EPOCH, SKY_HOLD_MS, skyMix, skySceneTime} from './sky.js';
 import {STARTING_POINT_MOODS, startingPointAt, startingPointIndex, type MinimalLayout} from './startingPoints.js';
 
@@ -31,6 +33,10 @@ export interface StartupSelectorState {
   previousChoice: number;
   changedAt: number;
   sky: StartupSkyClock;
+  /** Keep Existing's answer to its question, and whether a configured install asked to re-detect. */
+  keep: KeepState;
+  /** The read-only detection result, filled asynchronously; absent while it loads. */
+  evidence?: EnvironmentEvidence;
 }
 
 const BACKDROP_CYCLE: readonly OnboardingBackdrop[] = ['aurora', 'subtle', 'off'];
@@ -41,7 +47,7 @@ export function createSelector(saved: PromptConfiguration, now: number): Startup
   const choice = startingPointIndex(saved.startingPoint);
   const layout: MinimalLayout = saved.startingPoint === 'minimal' ? saved.composerLayout : 'twoLine';
   return {choice, review: false, layout, backdrop: saved.onboardingBackdrop, previousChoice: choice, changedAt: Number.NEGATIVE_INFINITY,
-    sky: {started: now, from: pureMix(STARTING_POINT_MOODS[startingPointAt(choice)]), timeAt: 0, activeAt: now}};
+    sky: {started: now, from: pureMix(STARTING_POINT_MOODS[startingPointAt(choice)]), timeAt: 0, activeAt: now}, keep: {answer: 0, redetect: false}};
 }
 
 function timing(quick: StartupSelectorState, now: number) {

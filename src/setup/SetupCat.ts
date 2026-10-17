@@ -9,6 +9,8 @@ import {
 } from '../prompt/configuration.js';
 import {STARTING_POINT_COPY, STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
 import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
+import type {EnvironmentEvidence} from './environment/detect.js';
+import {keepExistingPlan} from './environment/keepExisting.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
 import {separatorLabel} from '../prompt/glyphChoices.js';
 import {appearanceRows, PROMPT_PROVIDERS, type AppearanceRow} from '../prompt/PromptPanel.js';
@@ -583,7 +585,17 @@ const QUICK_SETUP_NOTES = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].line
 /** The highlighted starting point's draft; the saved configuration is never touched. */
 function selectorDraft(state: SetupState): PromptConfiguration {
   const quick = state.quick!;
-  return startingPointDraft(startingPointAt(quick.choice), state.saved, {layout: quick.layout});
+  return startingPointDraft(startingPointAt(quick.choice), state.saved, {layout: quick.layout, keep: quick.keep, ...(quick.evidence ? {evidence: quick.evidence} : {})});
+}
+
+/** Keep Existing's read-only evidence arrived (or was re-detected): its answer stays in range and the draft follows. */
+export function setStartupEvidence(state: SetupState, evidence: EnvironmentEvidence): void {
+  const quick = state.quick;
+  if (!quick) return;
+  quick.evidence = evidence;
+  const options = keepExistingPlan(evidence, state.saved, quick.keep.redetect).question?.options.length ?? 0;
+  quick.keep.answer = Math.max(0, Math.min(Math.max(0, options - 1), quick.keep.answer));
+  if (!quick.manual) state.draft = selectorDraft(state);
 }
 
 /** The starting-point selector over a copy of the saved configuration; it opens on the current starting point. */
@@ -648,8 +660,26 @@ function quickKey(state: SetupState, key: Key, now: number): SetupResult | undef
     return {kind: 'backdrop', backdrop: quick.backdrop};
   }
   if (quick.review) {
-    if (key.kind === 'enter') return applyStartingPoint(state, state.draft, startingPointAt(quick.choice));
-    if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'left') quick.review = false;
+    const keeping = startingPointAt(quick.choice) === 'existing';
+    if (key.kind === 'enter') {
+      // A first run applies Keep Existing only from evidence; a configured install keeps everything without it.
+      if (keeping && !quick.evidence && (!state.saved.onboardingComplete || quick.keep.redetect)) return undefined;
+      return applyStartingPoint(state, state.draft, startingPointAt(quick.choice));
+    }
+    if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'left') { quick.review = false; return undefined; }
+    if (keeping && (key.kind === 'up' || key.kind === 'down')) {
+      const options = keepExistingPlan(quick.evidence, state.saved, quick.keep.redetect).question?.options.length ?? 0;
+      if (options > 1) {
+        quick.keep.answer = Math.max(0, Math.min(options - 1, quick.keep.answer + (key.kind === 'up' ? -1 : 1)));
+        state.draft = selectorDraft(state);
+      }
+      return undefined;
+    }
+    if (keeping && key.kind === 'text' && key.value.toLowerCase() === 'r' && state.saved.onboardingComplete) {
+      quick.keep = {answer: 0, redetect: true};
+      state.draft = selectorDraft(state);
+      return {kind: 'redetect'};
+    }
     return undefined;
   }
   if (key.kind === 'escape' || key.kind === 'interrupt') { quick.confirm = true; quick.confirmIndex = 0; return undefined; }
@@ -871,6 +901,8 @@ export type SetupResult =
   | {kind: 'manual'}
   /** The selector's backdrop changed (A): saved at once, never part of the draft. */
   | {kind: 'backdrop'; backdrop: OnboardingBackdrop}
+  /** Keep Existing on a configured install: read the environment again (R). */
+  | {kind: 'redetect'}
   /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
   | {kind: 'browseTools'; toolId?: string}
   /** Open the shared /cursor panel inside Setup Cat, over the draft. */

@@ -66,6 +66,8 @@ export function executionFrameFixture(columns = 80, rows = 30, mode: CaptureMode
   Object.defineProperty(app, 'terminalDimensions', {value: () => ({columns, rows}), configurable: true});
   Object.defineProperty(app, 'fetchSuggestions', {value: async () => {}});
   Object.defineProperty(app, 'refreshContext', {value: async () => {}});
+  // Keep Existing's detection would run tools' --version; frames use fixed, neutral evidence instead.
+  app['detectStartupEnvironment'] = async () => ({shell: {id: 'zsh', label: 'zsh 5.9'}, files: ['~/.zshrc'], prompts: [], custom: [], tools: [], notes: []});
   let frame: TerminalFrame | undefined;
   app['renderer'].render = value => { frame = structuredClone(value); };
   const owner = new QueueDispatcher({isReady: true, adapter: {id: 'fish'}, submit() {}}, new CommandQueue(() => now), {now: () => now, monotonic: () => now});

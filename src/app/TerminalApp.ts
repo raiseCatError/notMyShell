@@ -34,7 +34,8 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {detectEnvironment, type EnvironmentEvidence} from '../setup/environment/detect.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
@@ -6626,6 +6627,28 @@ export class TerminalApp {
     this.stopSetupPlayback();
     const state = this.setupState = entry === 'quick' ? createQuickSetup(this.promptConfiguration) : createSetup(this.promptConfiguration, entry);
     if (!state.quick) void this.loadSetupContext(state);
+    else void this.loadStartupEvidence(state);
+  }
+
+  /**
+   * Keep Existing's read-only evidence: read once per open (and again for R), in the background; keys never wait for it.
+   * Only the latest read for the open selector lands. If the environment cannot be read, Keep Existing says so and
+   * still offers Composer only or NMSh Minimal.
+   */
+  private startupEvidenceRead = 0;
+  /** The read-only detector (tests substitute fixed evidence so no tool runs). */
+  private detectStartupEnvironment: () => Promise<EnvironmentEvidence> = () => detectEnvironment();
+  private async loadStartupEvidence(state: SetupState): Promise<void> {
+    const read = ++this.startupEvidenceRead;
+    let evidence: EnvironmentEvidence;
+    try { evidence = await this.detectStartupEnvironment(); }
+    catch {
+      const shell = process.env.SHELL?.split('/').at(-1) ?? 'your shell';
+      evidence = {shell: {label: shell}, files: [], prompts: [], custom: [], tools: [], notes: ['NMSh could not read your startup files; nothing was changed.']};
+    }
+    if (this.stopped || this.setupState !== state || read !== this.startupEvidenceRead) return;
+    setStartupEvidence(state, evidence);
+    this.render();
   }
 
   /** Provider install state and completion facts, detected once per Setup Cat open; never on render. */
@@ -6660,6 +6683,7 @@ export class TerminalApp {
     if (!result) return;
     if (result.kind === 'manual') { void this.loadSetupContext(state); return; }
     if (result.kind === 'backdrop') { this.saveOnboardingBackdrop(state, result.backdrop); return; }
+    if (result.kind === 'redetect') { void this.loadStartupEvidence(state); return; }
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     if (result.kind === 'cursorEditor') {
       // The shared /cursor panel over the draft's cursor settings: changes land in the draft, nothing is saved until Apply.

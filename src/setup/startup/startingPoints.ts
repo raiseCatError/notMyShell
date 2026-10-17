@@ -3,6 +3,8 @@ import {
   type PromptConfiguration, type StartingPointId,
 } from '../../prompt/configuration.js';
 import type {SkyMood} from '../../idle/auroraMoods.js';
+import type {EnvironmentEvidence} from '../environment/detect.js';
+import {keepExistingDraft, type KeepState} from '../environment/keepExisting.js';
 
 /**
  * The four starting points, each a legitimate way to use NMSh. Highlighting
@@ -48,6 +50,10 @@ export const startingPointIndex = (id: StartingPointId | undefined): number => M
 
 export interface StartingPointOptions {
   layout: MinimalLayout;
+  /** Keep Existing: the answer to its question and whether to re-detect a configured install. */
+  keep?: KeepState;
+  /** Keep Existing: the read-only detection result, once it is in. */
+  evidence?: EnvironmentEvidence;
 }
 
 /**
@@ -70,11 +76,11 @@ function presetDraft(id: 'recommended' | 'minimal', saved: PromptConfiguration, 
     queue: {...saved.queue, ...preset.queue, outputDisplay: saved.queue.outputDisplay}, queueFailurePolicy: 'pause'});
 }
 
-/** The draft a starting point would apply. Customize and Keep Existing start from the saved configuration. */
+/** The draft a starting point would apply. Customize starts from the saved configuration; Keep Existing from what was detected. */
 export function startingPointDraft(id: StartingPointId, saved: PromptConfiguration, options: StartingPointOptions): PromptConfiguration {
   switch (id) {
     case 'recommended': case 'minimal': return presetDraft(id, saved, options.layout);
     case 'customize': return structuredClone(saved);
-    case 'existing': return structuredClone(saved);
+    case 'existing': return keepExistingDraft(saved, options.evidence, options.keep?.answer ?? 0, options.keep?.redetect ?? false);
   }
 }
