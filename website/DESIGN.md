@@ -71,9 +71,9 @@ Marketing sections use editorial splits, numbered explanations and comparison ro
 not endless cards. A fine ruled media field with an abstract registration mark,
 purpose label and honest pending notice reserves its real aspect ratio. No fake
 commands, output, playback buttons or product UI. Learn is a conceptual introduction,
-not a functional lesson player. Motion is limited to a six-pixel initial hero entry,
-short native dialog entry/exit and hover feedback. No scroll-triggered reveals or
-hidden content. Reduced motion disables it. Focus rings and text labels carry state
+not a functional lesson player. Motion is limited to a masked, staggered hero headline
+entry, short native dialog entry/exit and hover feedback. No scroll-triggered reveals
+or JavaScript-gated content. Reduced motion disables it. Focus rings and text labels carry state
 independently of color.
 
 ## Responsive and accessible behavior
@@ -126,13 +126,18 @@ Primary actions have one clear visual priority; GitHub remains a quiet secondary
 
 Header: the exact existing pixel Vespyr silhouette plus plain notMyShell text. No
 miniature duplicate wordmark. Personality is limited to this brand signature and a
-short footer aside. Search uses a compact icon/label/key hint and a sharp, top-anchored
-native dialog; results grow downward without moving the input after entry.
+short footer aside. Search uses a compact icon/label/key hint and a softly rounded,
+top-anchored native dialog. This is the exception to the site's sharper geometry;
+results grow downward without moving the input after entry.
 
 Docs keep ordinary full-page links, native Back/Forward and anchor behavior. Only
-the independently scrolling sidebar position persists in session storage, restored
-before article parsing; unavailable storage falls back to native navigation. Clicking
-the current item does not reload the article. Native scrollbars replace thin styling.
+the independently scrolling sidebar position and native category disclosures persist
+in session storage, restored before article parsing. The active article's ancestors
+always open; unavailable storage falls back to the server-rendered active path.
+Clicking the current item does not reload the article. A passive section indicator
+follows reading position without scrolling or rewriting history. Eight-pixel square
+scrollbars use theme-specific graphite and lavender colors with a native forced-color
+fallback. Scrolling itself remains native.
 
 The editable 1200×630 social composition uses charcoal, neutral typography, the
 lavender hook and genuine Vespyr. It is branding, never a simulated terminal. SVG

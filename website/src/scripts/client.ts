@@ -48,6 +48,39 @@ document.querySelectorAll<HTMLPreElement>('pre').forEach(pre => {
   wrapper.append(button);
 });
 
+const sectionLinks = [...document.querySelectorAll<HTMLAnchorElement>('.docs-toc nav a[href^="#"], .toc-mobile nav a[href^="#"]')];
+const sections = [...new Set(sectionLinks.map(link => document.getElementById(decodeURIComponent(link.hash.slice(1)))).filter((section): section is HTMLElement => section !== null))];
+if (sections.length) {
+  let scheduled = false;
+  let active = '';
+  function updateSection() {
+    scheduled = false;
+    const marker = (document.querySelector('.site-header')?.getBoundingClientRect().bottom || 0) + 24;
+    const target = document.querySelector(':target');
+    let current = sections[0].id;
+    let nearest = -Infinity;
+    for (const section of sections) {
+      const top = Math.floor(section.getBoundingClientRect().top);
+      if (top <= marker && (top > nearest || (top === nearest && section === target))) { current = section.id; nearest = top; }
+    }
+    if (current === active) return;
+    active = current;
+    for (const link of sectionLinks) {
+      if (decodeURIComponent(link.hash.slice(1)) === current) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    }
+  }
+  function scheduleSection() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(updateSection);
+  }
+  document.addEventListener('scroll', scheduleSection, { passive: true });
+  window.addEventListener('resize', scheduleSection);
+  window.addEventListener('hashchange', scheduleSection);
+  updateSection();
+}
+
 interface SearchData { url: string; meta: { title?: string }; excerpt: string }
 interface SearchModule { search: (query: string) => Promise<{ results: { data: () => Promise<SearchData> }[] }> }
 const dialog = document.querySelector<HTMLDialogElement>('#docs-search');

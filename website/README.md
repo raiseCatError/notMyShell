@@ -228,11 +228,16 @@ the manual toggle persists it when storage is available and remains functional w
 storage writes are blocked. No JS means readable default-dark HTML. Reduced-motion
 CSS disables transitions; videos never start themselves.
 
-Hero motion is a short six-pixel entry with content always readable, not hidden
-pending scrolling. Dialog entry/exit uses native discrete CSS transitions with a
-plain native fallback. Docs never reveal on scroll. Their independent sidebar
-scroll offset persists per tab in session storage; article scrolling, browser
-Back/Forward and heading hashes remain native. Blocked storage stays usable.
+The hero headline has a short CSS-only masked entry with a small stagger. It runs
+once, needs no JavaScript and is disabled by reduced motion. Dialog entry/exit uses
+native discrete CSS transitions with a plain native fallback. Only search has softer
+corners. Docs never reveal on scroll. Their native category disclosures and sidebar
+scroll offset persist per tab in session storage; active ancestors always open.
+`src/lib/docs.ts` groups existing references into nested categories and rejects an
+uncategorized new reference. A passive TOC indicator tracks the current section;
+article scrolling, browser Back/Forward and heading hashes remain native. Blocked
+storage stays usable. CSS supplies thin, square theme-colored scrollbars through
+standard properties and compatible eight-pixel WebKit styling, with native forced colors.
 
 `src/lib/site.ts` is the origin/identity configuration. `Base` provides canonical,
 Open Graph, Twitter and accurate software metadata. All pages use the real 1200×630

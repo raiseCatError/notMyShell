@@ -1,0 +1,19 @@
+---
+import { docNavigation, type documents } from '../lib/docs';
+interface Props { entries: Awaited<ReturnType<typeof documents>>; slug: string; label: string }
+const { entries, slug, label } = Astro.props;
+const groups = docNavigation(entries);
+const containsCurrent = (articles: Props['entries']) => articles.some(entry => entry.slug === slug);
+---
+<nav class="doc-navigation" aria-label={label}>
+  {groups.map(group => <details class="nav-group" data-doc-group={group.id} open={containsCurrent(group.articles) || group.children.some(child => containsCurrent(child.articles)) || (!slug && group.id === 'start-here')}>
+    <summary>{group.title}</summary>
+    <div class="nav-children">
+      {group.articles.map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}
+      {group.children.map(child => <details class="nav-subgroup" data-doc-group={child.id} open={containsCurrent(child.articles)}>
+        <summary>{child.title}</summary>
+        <div class="nav-children">{child.articles.map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}</div>
+      </details>)}
+    </div>
+  </details>)}
+</nav>

@@ -62,7 +62,8 @@ test('desktop, tablet and mobile preserve layout, links and accessible navigatio
   await page.locator('.mobile-menu summary').click();
   await page.locator('.mobile-menu').getByRole('link', { name: 'Docs', exact: true }).click();
   await expect(page).toHaveURL(/\/docs\//);
-  await page.locator('.docs-mobile summary').click();
+  await page.locator('.docs-mobile > summary').click();
+  await page.locator('.docs-mobile details[data-doc-group="daily-work"] > summary').click();
   await page.locator('.docs-mobile').getByRole('link', { name: 'Composer and input', exact: true }).click();
   await expect(page).toHaveURL(/\/docs\/composer\//);
 });
@@ -83,7 +84,7 @@ test('planned learning is explicit and documentation works without JavaScript', 
 test('reduced motion, skip link and both themes pass automated accessibility checks', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   for (const theme of ['dark', 'light']) {
-    for (const path of ['/', '/install/', '/docs/getting-started/', '/learn/', '/docs/reference/context-modules/']) {
+    for (const path of ['/', '/features/', '/install/', '/docs/', '/docs/getting-started/', '/learn/', '/roadmap/', '/releases/', '/architecture/', '/404.html', '/docs/reference/context-modules/']) {
       await page.goto(path);
       await page.evaluate(value => document.documentElement.dataset.theme = value, theme);
       const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
