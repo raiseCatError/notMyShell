@@ -27,13 +27,19 @@ const colors = (ansi: string) => [...ansi.matchAll(/\u001B\[38;2;(\d+);(\d+);(\d
 
 function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; cleanup: () => void} {
   const isolation = isolateConfig();
+  // Divider geometry must not depend on the checkout path or branch filling the prompt.
+  const previousCwd = process.cwd();
+  process.chdir(isolation.directory);
   const app = new TerminalApp();
   const frames: TerminalFrame[] = [];
   app['renderer'].render = (frame: TerminalFrame) => { frames.push(frame); };
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['configuration'] = normalizePromptConfiguration({...DEFAULT_PROMPT_CONFIGURATION, ...config});
-  return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); isolation.restore(); }};
+  return {app, frames, cleanup: () => {
+    try { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); }
+    finally { process.chdir(previousCwd); isolation.restore(); }
+  }};
 }
 
 // ---- A. Defaults, layouts and copy ---------------------------------------------------

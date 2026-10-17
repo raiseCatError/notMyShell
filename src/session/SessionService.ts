@@ -499,7 +499,7 @@ export class SessionService {
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.
-      const queued = session.queue.onExec(command, at)?.text;
+      const queued = session.queue.onExec(command, at, historyAllowed)?.text;
       session.running = {command, since: at, ...(queued === undefined ? {} : {queued})};
       session.evidence.onExec();
       session.notices.onExec(command, at);

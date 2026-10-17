@@ -200,7 +200,7 @@ import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock
 import {queueSettingsPreview} from '../status/queueSettingsPreview.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import {queueHistoryPanelKey, renderQueueHistoryPanel, type QueueHistoryPanelState} from '../queue/QueueHistoryPanel.js';
-import {queueSummaryLine, renderQueueSummary, type QueueSummaryViewOptions} from '../status/queueSummaryView.js';
+import {queueSummaryLine, renderQueueSummary, queueSummaryLines, type QueueSummaryViewOptions} from '../status/queueSummaryView.js';
 import {buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSummary} from '../session/QueueSummary.js';
 import type {QueueTimeline} from '../session/ExecutionTimeline.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
@@ -258,7 +258,7 @@ import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '.
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, createBatchReview, createBatchReviewWithRefusal, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -835,6 +835,8 @@ export class TerminalApp {
    * While it is armed it owns the keys: Enter or y confirms, n or Esc leaves everything as it was, e edits.
    */
   private queueReview?: {kind: QueueAffordance; id: number; revision?: number};
+  /** A requested pause is not a pause until its owner acknowledges it. No draft is submitted on acknowledgement. */
+  private pendingQueuePause?: {command: string; revision?: number; declined: boolean};
   private queueExpiry?: () => void;
   private queueObservedMono = 0;
   private queueVisibleRows = new Map<string, number>();
@@ -858,7 +860,7 @@ export class TerminalApp {
    * An armed summary save review: the exact artifact the container showed and the redacted texts it would keep.
    * Enter stores precisely that through the owner, which re-validates everything; Esc stores nothing.
    */
-  private summaryReview?: {chainId: number; revision?: number; texts: (string | null)[]; summary: QueueSummary};
+  private summaryReview?: {chainId: number; revision?: number; texts: (string | null)[]; summary: QueueSummary; document: ReportReviewState};
   /** `/queue save-summary` asked for one chain's retained results; the review arms when the owner answers. */
   private pendingSummarySave?: number;
   private pinsPanel?: PinsPanelState;
@@ -1065,6 +1067,7 @@ export class TerminalApp {
   private beginReattach(attached: AttachedSession, journal: TranscriptSession | undefined): void {
     this.noteActivity();
     this.attachedSession = attached;
+    this.pendingQueuePause = undefined;
     this.replaying = true;
     this.shellCwd = attached.cwd;
     this.streamSeq = attached.ackedSeq;
@@ -1184,6 +1187,7 @@ export class TerminalApp {
    * detached, or came from type-ahead): give it its own transcript block.
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number, queued?: string): void {
+    this.pendingQueuePause = undefined;
     this.queueReview = undefined;
     // New work makes an older chain's save review stale, and a pending detail fetch has nothing left to show.
     this.summaryReview = undefined;
@@ -1615,6 +1619,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.summaryReview) { this.summaryReviewKey(key); return; }
     if (this.reportReview) {
       const {columns, rows} = this.dimensions();
       const action = reportReviewKey(this.reportReview, key, rows - 4, columns);
@@ -1945,9 +1950,9 @@ export class TerminalApp {
         done();
       } else if (action?.kind === 'block') {
         done();
-        void this.runReviewedBlock(review.source);
+        void this.runReviewedBlock(batchBlockText(review));
       } else if (action?.kind === 'edit') {
-        this.editor.insertPaste(review.source);
+        this.editor.insertPaste(batchBlockText(review));
         done();
       } else if (action?.kind === 'text') {
         this.editor.insertPaste(review.source);
@@ -2215,7 +2220,6 @@ export class TerminalApp {
       return;
     }
     if (this.queueReview) { this.queueReviewKey(key); return; }
-    if (this.summaryReview) { this.summaryReviewKey(key); return; }
     if (this.ownershipLook) {
       // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
       if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
@@ -3629,6 +3633,7 @@ export class TerminalApp {
     this.pendingSummarySave = undefined;
     this.queueHistoryPanel = undefined;
     this.output.clearPresentation();
+    this.pendingQueuePause = undefined;
     this.presentationOwned = true;
     this.presentationStartCwd = this.shellCwd;
     this.startWelcome(this.presentationStartCwd);
@@ -3785,6 +3790,7 @@ export class TerminalApp {
     this.queueHistoryPanel = undefined;
     this.output.restoreTranscript(restored.transcript);
     this.presentationOwned = false;
+    this.pendingQueuePause = undefined;
     this.welcomeGeneration += 1;
     this.presentationStartCwd = restored.startCwd;
     this.resumeBrowser = undefined;
@@ -4839,7 +4845,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4875,6 +4881,7 @@ export class TerminalApp {
     if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
       (configuration, width) => this.statusStripRow(width, configuration));
     if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
+    if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
@@ -9880,7 +9887,7 @@ export class TerminalApp {
    * that asks first offers a review before approving. Nothing ever runs from one key.
    */
   private queueAffordance(): QueueAffordance | undefined {
-    if (this.running || this.passthrough || this.startupPending || this.editor.text || this.queueEdit || this.queueCompose || this.queuePanel) return undefined;
+    if (this.running || this.passthrough || this.startupPending || this.editor.text || this.queueEdit || this.queueCompose || this.queuePanel || this.pendingQueuePause) return undefined;
     if (!this.queueAvailable() || !this.queueState.entries.length) return undefined;
     if (this.queueState.paused) return 'resume';
     const next = this.queueState.entries[0]!;
@@ -9903,8 +9910,7 @@ export class TerminalApp {
       this.queueReview = undefined;
       // Not now: an entry that asks first would hold everything typed behind it, so the queue pauses and commands run.
       if (review.kind === 'approve' && value === 'n') {
-        this.session.queue({op: 'pause'});
-        this.output.addFrontendInteraction('/queue', 'Not approved; the queue is paused, so your commands run directly. /queue to come back to it.', INFO);
+        this.requestQueuePause('/queue', true, review.revision);
       }
     } else if (value === 'e') {
       this.queueReview = undefined;
@@ -10821,9 +10827,19 @@ export class TerminalApp {
   }
 
   private onQueueState(state: QueueState, news: QueueNews): void {
+    if (this.stopped) return;
     const previous = this.queueState;
     if (staleQueueSnapshot(previous, state)) return;
     this.queueState = state;
+    const pause = this.pendingQueuePause;
+    if (pause && (news.refused || pause.revision === undefined || (state.revision !== undefined && state.revision > pause.revision))) {
+      this.pendingQueuePause = undefined;
+      if (!news.refused && state.paused?.reason === 'user') {
+        this.output.addFrontendInteraction(pause.command, pause.declined
+          ? 'Not approved; the queue is paused, so your commands run directly. /queue to come back to it.'
+          : `Queue paused${state.entries.length ? ` with ${state.entries.length} waiting` : ''}; /qr reviews before continuing.`, INFO);
+      } else if (!news.refused) this.output.addFrontendInteraction(pause.command, 'The queue changed before the pause was acknowledged; review it again. Your draft was kept.', INFO);
+    }
     this.queueObservedMono = performance.now();
     const chain = state.timeline;
     if (chain?.endedAt !== undefined && chain.status !== 'active' && (chain.id !== previous.timeline?.id || previous.timeline?.status === 'active')) {
@@ -10957,6 +10973,7 @@ export class TerminalApp {
       return;
     }
     if (intent === 'send') return;
+    if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
     const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
     if (affordance && Date.now() - this.queueConfirmedAt >= QUEUE_CONFIRM_SETTLE_MS) {
@@ -10985,8 +11002,7 @@ export class TerminalApp {
     if (op === 'save-summary') { this.beginSummarySave(); return; }
     const count = this.queueState.entries.length;
     if (op === 'pause') {
-      this.session.queue({op: 'pause'});
-      this.output.addFrontendInteraction(command, `Queue paused${count ? ` with ${count} waiting` : ''}; /qr reviews before continuing.`, INFO);
+      this.requestQueuePause(command);
       return;
     }
     if (!count) { this.output.addFrontendInteraction(command, 'The queue is empty.', INFO); return; }
@@ -10997,6 +11013,13 @@ export class TerminalApp {
       this.panelOrigin = undefined; this.queuePanel = {selected: 0, ...(op === 'clear' ? {confirmClear: true} : {})}; return;
     }
     this.openQueueReview(op === 'clear' ? 'clear' : this.queueState.paused ? 'resume' : 'approve');
+  }
+
+  private requestQueuePause(command: string, declined = false, revision = this.queueState.revision): void {
+    if (this.pendingQueuePause) return;
+    const expectedRevision = this.session.features.has('queue-timeline') ? revision : undefined;
+    this.pendingQueuePause = {command, declined, revision: expectedRevision};
+    this.session.queue({op: 'pause', ...(expectedRevision === undefined ? {} : {expectedRevision})});
   }
 
   private openQueueReview(kind: QueueAffordance): void {
@@ -11016,6 +11039,7 @@ export class TerminalApp {
     if (!(this.queueState.history?.length)) {
       this.output.addFrontendInteraction(command, 'No finished chains yet; settled chains stay reviewable in history, newest first.', INFO); return;
     }
+    this.summaryReview = undefined;
     this.panelOrigin = undefined;
     this.queueHistoryPanel = {selected: 0};
   }
@@ -11061,7 +11085,14 @@ export class TerminalApp {
       ...(omitted ? {entriesOmitted: omitted} : {}), reviewed: texts});
     // One review owns the keys: arming this one gives up any entry review that was open.
     this.queueReview = undefined;
-    this.summaryReview = {chainId: detail.id, texts, summary, ...(this.session.features.has('queue-timeline') ? {revision: this.queueState.revision} : {})};
+    const facts = queueSummaryLines(summary, 80, {detail: 'compact', placement: 'left'}).slice(1, -1).join('\n');
+    const exactText = facts + '\n\n' + summary.entries.map((entry, index) =>
+      `${index + 1}. ${entry.text ?? entry.label}\n   ${entry.outcome}${entry.exitCode === undefined ? '' : ` · exit ${entry.exitCode}`}`).join('\n\n');
+    const document = createTextReview('Save this Queue Summary?', () => ({text: exactText, findings: []}), [],
+      {...DEFAULT_REPORT_OPTIONS, home: homedir()}, false);
+    document.fixed = true;
+    document.confirmLabel = 'save';
+    this.summaryReview = {chainId: detail.id, texts, summary, document, ...(this.session.features.has('queue-timeline') ? {revision: this.queueState.revision} : {})};
   }
 
   /** The save review's keys: Enter or y stores exactly what the container showed; Esc, n or Ctrl+C stores nothing. */
@@ -11074,7 +11105,9 @@ export class TerminalApp {
       this.render();
       return;
     }
-    if (key.kind === 'enter' || value === 'y') {
+    const action = reportReviewKey(review.document, key.kind === 'text' && value === 'y' ? {kind: 'enter'} : key, this.dimensions().rows - 4, this.dimensions().columns);
+    if (action?.kind === 'close') this.summaryReview = undefined;
+    if (action?.kind === 'copy') {
       this.summaryReview = undefined;
       this.queueConfirmedAt = Date.now();
       this.session.queue({op: 'save-summary', chainId: review.chainId, reviewed: {text: review.texts},
@@ -11457,6 +11490,7 @@ export class TerminalApp {
   private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string; returnSession?: string};
 
   private stop(exitCode: number): void {
+    this.pendingQueuePause = undefined;
     this.queueExpiry?.(); this.queueExpiry = undefined;
     if (this.stopped) return;
     this.hostTitle.end();

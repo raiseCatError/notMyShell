@@ -1,6 +1,7 @@
 import {ExecutionTimeline, systemQueueClock, type QueueClock, type QueueFailurePolicy, type QueueTimeline} from './ExecutionTimeline.js';
 import {SUMMARY_LIMIT, buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSummary} from './QueueSummary.js';
 import {shellSubmission} from '../shell/submission.js';
+import {ignorePatternFromEnv, isPrivateCommand} from '../suggestions/types.js';
 import {EventEmitter} from 'node:events';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CommandQueue, type QueueEntry, type QueueOp, type QueueState} from './CommandQueue.js';
@@ -46,10 +47,13 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   private taking = false;
   /** The entry submitted at the last prompt, until the shell reports the command it started. */
   private sent?: QueueEntry;
+  /** A manual submission can precede its exec marker; only a newly joined chain may adopt that predecessor. */
+  private manualStarting = false;
+  private startingChain?: number;
 
   private readonly timeline: ExecutionTimeline;
   private failurePolicy: QueueFailurePolicy = 'pause';
-  private foreground?: {text: string; at: number; mono: number; eligible: boolean};
+  private foreground?: {text: string; at: number; mono: number; eligible: boolean; summaryEligible: boolean};
   /** Automatic saving for chains that settle while on; off by default. */
   private autoSummaries = false;
   private summaries: QueueSummary[] = [];
@@ -84,7 +88,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     if (change.op === 'add') {
       const opening = !this.timeline.active;
       this.timeline.open(this.failurePolicy);
-      if (opening && this.foreground?.eligible && !this.queue.state.paused) this.timeline.begin(this.foreground.text, this.foreground.at, this.foreground.mono);
+      if (opening && this.manualStarting && !this.queue.state.paused) this.startingChain = this.timeline.state?.id;
+      if (opening && this.foreground?.eligible && !this.queue.state.paused) this.timeline.begin(this.foreground.text, this.foreground.at, this.foreground.mono, undefined, this.foreground.summaryEligible);
     }
     if (change.op === 'clear') this.timeline.skip(before, 'cleared');
     else if (change.op === 'remove') this.timeline.skip(before - this.queue.size, this.queue.size ? undefined : 'cleared');
@@ -95,6 +100,7 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
 
   /** Claim a manual submission synchronously, before an asynchronous shell exec marker can arrive. */
   onSubmission(): void {
+    if (this.atPrompt && !this.ran && !this.sent) this.manualStarting = true;
     this.atPrompt = false;
     this.queue.invalidateReviews();
   }
@@ -103,14 +109,17 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   onOwnershipChanged(): void { this.queue.invalidateReviews(); }
 
   /** The shell started a command; returns the queued entry it is, when it is the one just submitted. */
-  onExec(command: string, at = this.clock.now()): QueueEntry | undefined {
+  onExec(command: string, at = this.clock.now(), historyAllowed?: number): QueueEntry | undefined {
     this.atPrompt = false;
     this.ran = true;
     this.lastCommand = command;
     const entry = this.sent;
     this.sent = undefined;
-    this.foreground = {text: command, at, mono: this.clock.monotonic(), eligible: !this.queue.state.paused};
-    if (entry) this.timeline.begin(entry.text, at, this.foreground.mono, entry.id);
+    const summaryEligible = historyAllowed === 1 && !isPrivateCommand(entry?.text ?? command, ignorePatternFromEnv());
+    this.foreground = {text: command, at, mono: this.clock.monotonic(), eligible: !this.queue.state.paused, summaryEligible};
+    if (entry) this.timeline.begin(entry.text, at, this.foreground.mono, entry.id, summaryEligible);
+    else if (this.manualStarting && this.startingChain !== undefined && this.startingChain === this.timeline.state?.id) this.timeline.begin(command, at, this.foreground.mono, undefined, summaryEligible);
+    this.manualStarting = false; this.startingChain = undefined;
     this.queue.invalidateReviews();
     return entry;
   }
@@ -120,7 +129,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   }
 
   onPrompt(exitCode: number, at = this.clock.now(), waits?: {inputWaitMs?: number}): void {
-    if (this.sent && !this.ran) this.timeline.unobserved();
+    if (!this.ran && (this.sent || (this.manualStarting && this.startingChain !== undefined && this.startingChain === this.timeline.state?.id))) this.timeline.unobserved();
+    this.manualStarting = false; this.startingChain = undefined;
     const belongs = this.timeline.running;
     if (this.ran && belongs) this.timeline.complete(exitCode, this.interrupted || exitCode === 130, at, waits?.inputWaitMs);
     this.foreground = undefined;
@@ -129,10 +139,10 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     const finished = this.ran;
     this.ran = false;
     this.atPrompt = true;
-    if (finished && belongs && this.queue.size && !this.queue.state.paused) {
+    if (finished && this.queue.size && !this.queue.state.paused) {
       if (this.interrupted || exitCode === 130) this.queue.hold({reason: 'interrupted', at, command: this.lastCommand});
       // An entry that is to run regardless of the result before it is not held back by a plain failure.
-      else if (exitCode !== 0 && this.queue.next?.condition !== 'always' && this.timeline.policy !== 'continue') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
+      else if (belongs && exitCode !== 0 && this.queue.next?.condition !== 'always' && this.timeline.policy !== 'continue') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
     }
     this.interrupted = false;
     this.settleTimeline();
@@ -147,11 +157,13 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.ran = false;
     this.sent = undefined;
     this.foreground = undefined;
+    this.manualStarting = false; this.startingChain = undefined;
     this.queue.hold({reason: 'shell-switched', at: this.clock.now()});
   }
 
   /** The shell ended: what is left is reported and never runs. */
   onShellExit(): void {
+    this.manualStarting = false; this.startingChain = undefined;
     this.atPrompt = false;
     this.taking = true;
     let dropped: QueueEntry[];

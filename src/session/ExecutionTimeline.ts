@@ -5,6 +5,8 @@ export interface QueueExecution {
   text: string;
   source: 'manual' | 'queue';
   entryId?: number;
+  /** Affirmative owner observation; absent older metadata is ineligible for automatic identity persistence. */
+  summaryEligible?: boolean;
   startedAt: number;
   endedAt?: number;
   durationMs?: number;
@@ -94,11 +96,11 @@ export class ExecutionTimeline {
       executions: [], counts: {succeeded: 0, failed: 0, interrupted: 0, skipped: 0, unobserved: 0}};
     this.startedMono = undefined; this.terminalCause = undefined; this.dropped = 0;
   }
-  begin(text: string, at: number, mono: number, entryId?: number): void {
+  begin(text: string, at: number, mono: number, entryId?: number, summaryEligible = false): void {
     if (!this.value || !this.active || this.running) return;
     if (this.startedMono === undefined) { this.startedMono = mono; this.value.startedAt = at; }
     this.activeMono = mono;
-    this.value.executions.push({id: this.nextExecution++, text: text.slice(0, TIMELINE_TEXT_LIMIT), source: entryId === undefined ? 'manual' : 'queue',
+    this.value.executions.push({id: this.nextExecution++, text: text.slice(0, TIMELINE_TEXT_LIMIT), source: entryId === undefined ? 'manual' : 'queue', summaryEligible,
       ...(entryId === undefined ? {} : {entryId}), startedAt: at, status: 'running'});
     if (this.value.executions.length > this.limits.results) { this.value.executions.shift(); this.dropped += 1; }
     this.observe();
@@ -167,6 +169,7 @@ export function queueTimelineFrom(raw: unknown): QueueTimeline | undefined {
     if (!entry || !id(entry.id) || ids.has(entry.id) || typeof entry.text !== 'string' || entry.text.length > TIMELINE_TEXT_LIMIT
       || !['manual', 'queue'].includes(entry.source) || !nonnegative(entry.startedAt)
       || !['running', 'succeeded', 'failed', 'interrupted'].includes(entry.status)
+      || (entry.summaryEligible !== undefined && typeof entry.summaryEligible !== 'boolean')
       || (entry.entryId !== undefined && !id(entry.entryId)) || (entry.endedAt !== undefined && !nonnegative(entry.endedAt))
       || (entry.durationMs !== undefined && !nonnegative(entry.durationMs)) || (entry.runningMs !== undefined && !nonnegative(entry.runningMs)) || (entry.inputWaitMs !== undefined && !nonnegative(entry.inputWaitMs))
       || (entry.exitCode !== undefined && !Number.isSafeInteger(entry.exitCode))) return undefined;

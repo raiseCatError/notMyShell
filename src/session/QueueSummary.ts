@@ -2,7 +2,7 @@ import {scanSensitive} from '../clipboard/report.js';
 import {BundledCatalog} from '../shell/BundledCatalog.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SHELL_IDS, type ShellId} from '../shell/adapters/ShellAdapter.js';
-import {isPrivateCommand} from '../suggestions/types.js';
+import {ignorePatternFromEnv, isPrivateCommand} from '../suggestions/types.js';
 import {TIMELINE_RESULTS_LIMIT, TIMELINE_TEXT_LIMIT, type QueueFailurePolicy, type QueueTimeline} from './ExecutionTimeline.js';
 
 /**
@@ -76,7 +76,7 @@ const EXECUTABLE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
  * private (leading space, ignore patterns), multi-line, unrecognized, or carrying a sensitive shape.
  */
 export function summaryLabel(command: string, names: RecognizedExecutables): string | undefined {
-  if (isPrivateCommand(command) || /[\r\n]/u.test(command)) return undefined;
+  if (isPrivateCommand(command, ignorePatternFromEnv()) || /[\r\n]/u.test(command)) return undefined;
   const [word] = command.split(/\s/u);
   if (!word || word.length > SUMMARY_LABEL_LIMIT || !EXECUTABLE.test(word) || scanSensitive(word).length) return undefined;
   return recognized(names, word) ? word : undefined;
@@ -106,7 +106,7 @@ export function buildQueueSummary(chain: QueueTimeline, options: QueueSummaryOpt
     if (execution.status === 'running') return;
     const text = options.reviewed?.[index] ?? undefined;
     const safe = text && reviewedTextSafe(text) ? text : undefined;
-    const label = summaryLabel(execution.text, options.names) ?? (safe ? summaryLabel(safe, options.names) : undefined) ?? `command ${index + omitted + 1}`;
+    const label = (execution.summaryEligible === true ? summaryLabel(execution.text, options.names) : undefined) ?? (safe ? summaryLabel(safe, options.names) : undefined) ?? `command ${index + omitted + 1}`;
     entries.push({outcome: execution.status, label,
       ...(execution.durationMs === undefined ? {} : {durationMs: execution.durationMs}),
       ...(execution.exitCode === undefined ? {} : {exitCode: execution.exitCode}),

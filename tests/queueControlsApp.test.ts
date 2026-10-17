@@ -90,3 +90,65 @@ test('live queue individual timing cannot jump with the presentation epoch clock
     assert.doesNotMatch(text, /1h|60m/u);
   } finally { dispose(app); }
 });
+
+
+test('declining approval waits for the owner pause acknowledgement before routing a draft directly', () => {
+  const app = fixture();
+  try {
+    const ownerQueue = app['session'].queue.bind(app['session']);
+    ownerQueue({op: 'condition', id: 1, condition: 'approve'});
+    ownerQueue({op: 'resume'});
+    app['openQueueReview']('approve');
+    const requests: Parameters<typeof ownerQueue>[0][] = [];
+    app['session'].queue = change => { requests.push(change); };
+    const submissions: string[] = [];
+    app['submit'] = async () => { submissions.push(app['editor'].text); app['editor'].clear(); };
+    app['queueReviewKey']({kind: 'text', value: 'n'});
+    assert.equal(app['queueState'].paused, undefined, 'frontend never invents a pause');
+    assert.doesNotMatch(app['output'].transcript().lines.map(row => row.map(cell => cell.text).join('')).join('\n'), /Not approved; the queue is paused/u);
+    app['editor'].replaceText('echo DIRECT');
+    app['routeComposer']('enter');
+    assert.equal(app['editor'].text, 'echo DIRECT', 'draft survives an Enter before the acknowledgement');
+    assert.equal(requests.length, 1, 'the draft is not enqueued behind the declined entry');
+    assert.deepEqual(submissions, []);
+    assert.equal(requests[0]?.expectedRevision, app['queueState'].revision, 'pause is bound to the reviewed revision');
+    ownerQueue(requests[0]!);
+    assert.equal(app['queueState'].paused?.reason, 'user');
+    assert.match(app['output'].transcript().lines.map(row => row.map(cell => cell.text).join('')).join('\n'), /Not approved; the queue is paused/u);
+    assert.deepEqual(submissions, [], 'acknowledgement never submits the draft');
+    app['routeComposer']('enter');
+    assert.deepEqual(submissions, ['echo DIRECT']);
+    assert.deepEqual(app['queueState'].entries.map(entry => entry.text), ['echo REVIEWED']);
+  } finally { dispose(app); }
+});
+
+test('a changed owner revision refuses a declined approval pause without submitting or losing the draft', () => {
+  const app = fixture();
+  try {
+    const ownerQueue = app['session'].queue.bind(app['session']);
+    ownerQueue({op: 'condition', id: 1, condition: 'approve'});
+    ownerQueue({op: 'resume'});
+    app['openQueueReview']('approve');
+    let pending: Parameters<typeof ownerQueue>[0] | undefined;
+    app['session'].queue = change => { pending = change; };
+    app['queueReviewKey']({kind: 'text', value: 'n'});
+    app['editor'].replaceText('echo KEEP');
+    ownerQueue({op: 'add', text: 'echo LATER'});
+    ownerQueue(pending!);
+    assert.equal(app['queueState'].paused, undefined, 'stale reviewed pause is refused by the owner');
+    assert.equal(app['editor'].text, 'echo KEEP');
+    assert.doesNotMatch(app['output'].transcript().lines.map(row => row.map(cell => cell.text).join('')).join('\n'), /Not approved; the queue is paused/u);
+  } finally { dispose(app); }
+});
+
+
+test('late queue snapshots cannot restart presentation expiry after the frontend stops', () => {
+  const app = fixture();
+  try {
+    app['stop'](0);
+    const owner = new QueueDispatcher({isReady: true, adapter: {id: 'zsh'}, submit() {}});
+    owner.onPrompt(0); owner.request({op: 'add', text: 'echo FINISHED'}); owner.onExec('echo FINISHED'); owner.onPrompt(0);
+    app['onQueueState'](owner.state, {});
+    assert.equal(app['queueExpiry'], undefined, 'no new presentation clock subscription after teardown');
+  } finally { dispose(app); }
+});

@@ -268,3 +268,25 @@ test('invalidation on composer edit: typing while pastePreview is active invalid
     dispose(instance);
   }
 });
+
+
+test('removal and reordering in paste review change the confirmed block and edit payload', async () => {
+  const instance = app();
+  try {
+    const review = createBatchReview('echo OMIT\necho SECOND\necho THIRD', 'zsh', 10)!;
+    instance['batchReview'] = review;
+    instance['handleKey']({kind: 'delete'});
+    instance['handleKey'](text('j'));
+    instance['handleKey'](text('1'));
+    let submitted = '';
+    instance['submit'] = async () => { submitted = instance['editor'].text; };
+    instance['handleKey']({kind: 'enter'});
+    await new Promise(done => setImmediate(done));
+    assert.equal(submitted, 'echo THIRD\necho SECOND', 'only the reviewed survivors, in the reviewed order');
+    instance['editor'].clear();
+    instance['batchReview'] = review;
+    instance['handleKey'](text('3'));
+    instance['handleKey']({kind: 'enter'});
+    assert.equal(instance['editor'].text, 'echo THIRD\necho SECOND');
+  } finally { dispose(instance); }
+});

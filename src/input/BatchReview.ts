@@ -24,6 +24,8 @@ export interface BatchReviewState {
   /** The paste exactly as it arrived. */
   source: string;
   entries: BatchEntry[];
+  /** The reviewed list has been removed from or reordered. Original source remains available via t. */
+  modified?: boolean;
   cursor: number;
   /** First visible list row. */
   top: number;
@@ -177,6 +179,7 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
     const [entry] = state.entries.splice(state.cursor, 1);
     state.entries.splice(to, 0, entry!);
     state.cursor = to;
+    state.modified = true;
   };
 
   const choices = batchAvailableChoices(state);
@@ -202,7 +205,7 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
       if (state.refusal) return undefined;
       return state.entries.length && state.entries.length <= state.capacity ? {kind: 'queue'} : undefined;
     }
-    if (currentChoice === 'block') return {kind: 'block'};
+    if (currentChoice === 'block') return batchBlockText(state).trim() ? {kind: 'block'} : undefined;
     if (currentChoice === 'edit') return {kind: 'edit'};
     if (currentChoice === 'cancel') return {kind: 'cancel'};
     return undefined;
@@ -242,7 +245,13 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
 function remove(state: BatchReviewState): void {
   if (!state.entries.length) return;
   state.entries.splice(state.cursor, 1);
+  state.modified = true;
   state.cursor = Math.max(0, Math.min(state.cursor, state.entries.length - 1));
+}
+
+/** Exact original block until the list is changed; afterwards only the reviewed survivors, in their shown order. */
+export function batchBlockText(state: BatchReviewState): string {
+  return state.modified ? batchTexts(state).join('\n') : state.source;
 }
 
 /** The commands as they will be queued (the reviewed list, one entry per command). */
@@ -342,7 +351,7 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
 
   if (activeChoice === 'block' && state.entries.length <= 1) {
     out.push('', `  ${subtle}Entire block, exactly as it will run as 1 outer execution${reset}`);
-    const wrapped = state.source.split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
+    const wrapped = batchBlockText(state).split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
     const room = Math.max(2, height - out.length - notes - controls.length - 1);
     const shown = wrapped.length > room ? room - 1 : room;
     for (const row of wrapped.slice(0, shown)) out.push(`    ${secondary}${row}${reset}`);

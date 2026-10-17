@@ -1,6 +1,7 @@
 import {statSync} from 'node:fs';
 import {isAbsolute} from 'node:path';
 import {spawn as spawnPty, type IPty} from 'node-pty';
+import {TaskGroup} from './taskGroup.js';
 import {TaskOutput, type OutputLimits} from './output.js';
 
 /**
@@ -75,17 +76,15 @@ interface LiveTask {
   record: TaskRecord;
   output: TaskOutput;
   pty?: IPty;
-  /** The process group the PTY made: the leader's pid. Forgotten once the group is observed empty. */
-  group?: number;
+  /** The live guard owns signalling from inside its group; no numeric group id is retained. */
+  group?: TaskGroup;
+  leaderExited?: boolean;
   pending?: ReturnType<typeof setTimeout>;
-  /** Watches a finished task's leftover group until it is gone. */
+  /** Observes the command leader separately from the guard's eventual exit. */
   watch?: ReturnType<typeof setInterval>;
 }
 
-const SIGNALS: Record<StopLevel, NodeJS.Signals> = {interrupt: 'SIGINT', terminate: 'SIGTERM', kill: 'SIGKILL'};
 const ORDER: readonly StopLevel[] = ['interrupt', 'terminate', 'kill'];
-/** How often a finished task's leftover group is probed: also the longest a dead group's id is remembered. */
-const LEFTOVER_PROBE_MS = 250;
 
 export class BackgroundTaskSupervisor {
   private readonly tasks = new Map<string, LiveTask>();
@@ -116,15 +115,34 @@ export class BackgroundTaskSupervisor {
     let pty: IPty;
     try {
       // One argv element for the command: the shell parses it exactly as typed.
-      pty = this.spawn(request.shell, ['-c', request.command], {cwd: request.cwd, env: request.env, cols: Math.max(20, request.columns ?? 120), rows: Math.max(5, request.rows ?? 40), name: request.env.TERM || 'xterm-256color'});
+      task.group = new TaskGroup(this.spawn, request.shell, request.command, {cwd: request.cwd, env: request.env, cols: Math.max(20, request.columns ?? 120), rows: Math.max(5, request.rows ?? 40), name: request.env.TERM || 'xterm-256color'});
+      pty = task.group.pty;
     } catch (error) {
       return {ok: false, reason: `could not start: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200)};
     }
     task.pty = pty;
-    task.group = pty.pid;
     this.tasks.set(id, task);
     pty.onData(data => { task.output.append(data); this.changed(task); });
-    pty.onExit(({exitCode, signal}) => this.exited(task, exitCode, signal));
+    const observeLeader = () => {
+      if (task.leaderExited) return;
+      const exit = task.group?.leaderExit();
+      if (exit) {
+        clearInterval(task.watch); task.watch = undefined;
+        task.leaderExited = true; this.exited(task, exit.exitCode, exit.signal);
+      }
+    };
+    task.watch = setInterval(observeLeader, 25);
+    task.watch.unref?.();
+    pty.onExit(({exitCode, signal}) => {
+      observeLeader();
+      task.group?.close();
+      task.group = undefined;
+      clearInterval(task.watch);
+      task.watch = undefined;
+      if (!task.leaderExited) this.exited(task, exitCode, signal);
+      else if (task.record.state === 'stopping') this.finish(task);
+      else { task.record.leftovers = false; this.changed(task, true); }
+    });
     this.changed(task, true);
     return {ok: true, task: {...record}};
   }
@@ -141,10 +159,10 @@ export class BackgroundTaskSupervisor {
       return task.record.leftovers && level === 'kill' ? this.killLeftovers(task) : {ok: false, reason: 'the task is not running'};
     }
     if (!task.group) return {ok: false, reason: 'the task has no process group'};
-    try { process.kill(-task.group, SIGNALS[level]); }
-    catch (error) { return {ok: false, reason: (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'the task already ended' : 'the signal could not be delivered'}; }
     const previous = task.record.stopRequested;
-    task.record.stopRequested = previous && ORDER.indexOf(previous) > ORDER.indexOf(level) ? previous : level;
+    const strongest = previous && ORDER.indexOf(previous) > ORDER.indexOf(level) ? previous : level;
+    if (!task.group.signal(strongest)) return {ok: false, reason: 'the stop request could not be delivered'};
+    task.record.stopRequested = strongest;
     task.record.stopRequestedAt = this.now();
     task.record.state = 'stopping';
     this.changed(task, true);
@@ -201,6 +219,9 @@ export class BackgroundTaskSupervisor {
       if (!live().length) break;
     }
     for (const task of [...this.tasks.values()].filter(item => item.record.leftovers)) this.killLeftovers(task);
+    const deadline = Date.now() + graceMs;
+    while ([...this.tasks.values()].some(task => task.group?.alive) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+    if ([...this.tasks.values()].some(task => task.group?.alive)) throw new Error('background task groups did not exit');
   }
 
   private exited(task: LiveTask, exitCode: number, signal?: number): void {
@@ -210,15 +231,9 @@ export class BackgroundTaskSupervisor {
     // After a stop request the task is the whole group, not just its leader: a shell that does not exec its command
     // (dash) dies of SIGINT while a program that ignores SIGINT keeps running. Until the group is gone the task is
     // still stopping, and escalation still reaches it.
-    if (record.stopRequested && groupAlive(task.group)) {
+    if (record.stopRequested && task.group?.alive === true) {
       record.leftovers = true;
       this.changed(task, true);
-      const poll = setInterval(() => {
-        if (groupAlive(task.group)) return;
-        clearInterval(poll);
-        this.finish(task);
-      }, 50);
-      poll.unref?.();
       return;
     }
     this.finish(task);
@@ -230,38 +245,20 @@ export class BackgroundTaskSupervisor {
     record.endedAt = this.now();
     // Stopped: it ended after the person asked. Otherwise its own exit status decides.
     record.state = record.stopRequested ? 'stopped' : record.signal || record.exitCode !== 0 ? 'failed' : 'exited';
-    record.leftovers = groupAlive(task.group);
+    record.leftovers = task.group?.alive === true;
     this.changed(task, true);
-    if (record.leftovers) this.watchLeftovers(task); else task.group = undefined;
-  }
-
-  /**
-   * The kernel hangs up the group when its leader exits; members that obey it are gone a moment later, others may run
-   * for hours. The group is probed until it is empty, then forgotten: its id is free for reuse once its last member
-   * exits, so a later kill request must find nothing to signal rather than a recycled group.
-   */
-  private watchLeftovers(task: LiveTask): void {
-    clearInterval(task.watch);
-    task.watch = setInterval(() => {
-      if (groupAlive(task.group)) return;
-      clearInterval(task.watch);
-      task.watch = undefined;
-      task.group = undefined;
-      task.record.leftovers = false;
-      this.changed(task, true);
-    }, LEFTOVER_PROBE_MS);
-    task.watch.unref?.();
+    if (!record.leftovers) task.group = undefined;
   }
 
   private killLeftovers(task: LiveTask): {ok: true} | {ok: false; reason: string} {
-    if (!task.group || !groupAlive(task.group)) {
+    if (!task.group || task.group?.alive !== true) {
       clearInterval(task.watch);
       task.group = undefined;
       task.record.leftovers = false;
       this.changed(task, true);
       return {ok: false, reason: 'nothing is left running'};
     }
-    try { process.kill(-task.group, 'SIGKILL'); } catch { /* raced with their exit */ }
+    if (!task.group.signal('kill')) return {ok: false, reason: 'the stop request could not be delivered'};
     task.record.stopRequested = 'kill';
     task.record.stopRequestedAt = this.now();
     this.changed(task, true);

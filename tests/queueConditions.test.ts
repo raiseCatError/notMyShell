@@ -133,3 +133,30 @@ test('the status line says the queue waits for the person', () => {
   assert.doesNotMatch(stripAnsi(queueRow({entries: [{...state.entries[0]!, approved: true}]}, 100)!), /approval/u);
   assert.deepEqual(ids(state), [2]);
 });
+
+
+test('queueing before the predecessor exec marker still adopts its failure and never dispatches the next command', () => {
+  const {target, dispatcher} = harness();
+  dispatcher.onPrompt(0);
+  dispatcher.onSubmission();
+  dispatcher.request({op: 'add', text: 'echo NEXT'});
+  dispatcher.onExec('false');
+  dispatcher.onPrompt(1);
+  assert.deepEqual(target.submitted, [], 'default Pause applies even when queue add preceded exec');
+  assert.equal(dispatcher.state.paused?.reason, 'failed');
+  assert.equal(dispatcher.state.timeline?.executions[0]?.text, 'false');
+  assert.equal(dispatcher.state.timeline?.counts.failed, 1);
+});
+
+test('an interrupt holds pending work after explicit resume during an independent foreground command', () => {
+  const {target, dispatcher} = harness();
+  dispatcher.request({op: 'pause'});
+  dispatcher.request({op: 'add', text: 'echo NEXT', condition: 'always'});
+  dispatcher.onExec('sleep 30');
+  dispatcher.request({op: 'resume'});
+  dispatcher.onInterrupt();
+  dispatcher.onPrompt(130);
+  assert.deepEqual(target.submitted, [], 'Ctrl+C always stops automatic queue dispatch');
+  assert.equal(dispatcher.state.paused?.reason, 'interrupted');
+  assert.equal(dispatcher.state.timeline?.executions.length, 0, 'independent work is not falsely adopted');
+});

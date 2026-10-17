@@ -19,7 +19,7 @@ function harness(policy: 'pause' | 'continue' = 'pause') {
 function step(d: QueueDispatcher, tick: (ms: number) => void, command: string, exitCode: number, durationMs = 100): void {
   d.request({op: 'add', text: command});
   tick(1);
-  d.onExec(command);
+  d.onExec(command, undefined, 1);
   tick(durationMs);
   d.onPrompt(exitCode);
 }
@@ -247,7 +247,7 @@ test('raw arguments, output and unrecognized names never reach an automatic arti
   d.onPrompt(0);
   d.request({op: 'add', text: 'curl -H "Authorization: Bearer sk-live-abcdefghijklmnopqrst" https://example.test'});
   tick(1);
-  d.onExec('curl -H "Authorization: Bearer sk-live-abcdefghijklmnopqrst" https://example.test');
+  d.onExec('curl -H "Authorization: Bearer sk-live-abcdefghijklmnopqrst" https://example.test', undefined, 1);
   // Queued while the chain runs, so both commands are one observed chain.
   d.request({op: 'add', text: 'my-private-not-in-any-catalog --token=abc'});
   tick(100);
@@ -312,4 +312,24 @@ test('history and summaries never restore pending work or dispatch anything', ()
   d.request({op: 'summaries-auto', enabled: true});
   assert.equal(submitted.length, before);
   assert.deepEqual(d.state.entries, []);
+});
+
+
+test('automatic summary identities require affirmative history eligibility and respect ignored commands', () => {
+  const before = process.env.HISTORY_IGNORE;
+  try {
+    for (const [allowed, ignore, label] of [[1, undefined, 'echo'], [0, undefined, 'command 1'], [undefined, undefined, 'command 1'], [1, 'echo *', 'command 1']] as const) {
+      if (ignore === undefined) delete process.env.HISTORY_IGNORE; else process.env.HISTORY_IGNORE = ignore;
+      const {dispatcher: d} = harness();
+      d.onPrompt(0);
+      d.request({op: 'add', text: 'echo PRIVATE'});
+      d.onExec('echo PRIVATE', undefined, allowed);
+      d.onPrompt(0);
+      d.request({op: 'save-summary', chainId: 1});
+      assert.equal(d.state.summaries?.[0]?.entries[0]?.label, label, `historyAllowed=${allowed}, ignore=${ignore}`);
+      assert.equal(d.state.summaries?.[0]?.entries[0]?.text, undefined);
+    }
+  } finally {
+    if (before === undefined) delete process.env.HISTORY_IGNORE; else process.env.HISTORY_IGNORE = before;
+  }
 });

@@ -8,7 +8,7 @@ import type {QueueOp} from '../src/session/CommandQueue.js';
 
 interface Harness {
   app: TerminalApp;
-  dispatcher: {onExec(command: string): void; onPrompt(exitCode: number): void; request(op: QueueOp): void};
+  dispatcher: {onExec(command: string, at?: number, historyAllowed?: number): void; onPrompt(exitCode: number): void; request(op: QueueOp): void};
   sent: QueueOp[];
   dims: {columns: number; rows: number};
   /** Paint one real frame and return its rows, so composition is asserted on what the renderer shows. */
@@ -38,11 +38,11 @@ const dispose = (app: TerminalApp) => { app['stop'](0); app['session'].kill(); }
 /** One settled chain: the first command is the foreground one the queue joined; every step's code is observed. */
 function chain(dispatcher: Harness['dispatcher'], steps: Array<{text: string; code: number}>): void {
   dispatcher.request({op: 'resume'});
-  dispatcher.onExec(steps[0]!.text);
+  dispatcher.onExec(steps[0]!.text, undefined, 1);
   for (const [index, step] of steps.slice(1).entries()) {
     dispatcher.request({op: 'add', text: step.text});
     dispatcher.onPrompt(steps[index]!.code);
-    dispatcher.onExec(step.text);
+    dispatcher.onExec(step.text, undefined, 1);
   }
   dispatcher.onPrompt(steps.at(-1)!.code);
 }
@@ -312,5 +312,26 @@ test('the history panel stays bounded and legible at 80x30 and 32x18', () => {
     app['queueTransientUntil'] = 0;
     for (const row of blockRows(app, 32, 4)) assert.ok(displayWidth(row) <= 32, `32 wide: ${row}`);
     for (const row of app['queueBlockRows'](80, 8) ?? []) assert.ok(displayWidth(stripAnsi(row)) <= 80);
+  } finally { dispose(app); }
+});
+
+
+test('summary saving exposes every complete command for review even with compact settings and a narrow frame', () => {
+  const {app, dispatcher, dims, paint} = fixture();
+  try {
+    dims.columns = 32; dims.rows = 18;
+    app['promptConfiguration'].queue.summaryDetail = 'compact';
+    chain(dispatcher, Array.from({length: 12}, (_, index) => ({text: index === 11 ? 'echo FINAL_PRIVATE_ARGUMENT' : `echo ${'x'.repeat(120)} PRIVATE_TAIL_${index}`, code: 0})));
+    app['handleQueueCommand']('/queue save-summary', 'save-summary');
+    let shown = '';
+    for (let page = 0; page < 150; page++) {
+      shown += paint().map(row => row.trim()).join('');
+      app['handleKey']({kind: 'pageDown'});
+    }
+    assert.match(shown, /FINAL_PRIVATE_ARGUMENT/u, 'the last result is reachable before saving');
+    assert.match(shown, /PRIVATE_TAIL_0/u, 'long command arguments wrap without truncation');
+    assert.equal(app['queueState'].summaries, undefined, 'navigation saves nothing');
+    app['summaryReviewKey']({kind: 'enter'});
+    assert.equal(app['queueState'].summaries?.[0]?.entries.at(-1)?.text, 'echo FINAL_PRIVATE_ARGUMENT');
   } finally { dispose(app); }
 });

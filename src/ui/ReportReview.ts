@@ -25,6 +25,9 @@ export interface ReportReviewState {
   scroll: number;
   /** An editor can be offered (VISUAL/EDITOR is set). */
   canEdit: boolean;
+  /** Immutable exact text supplied by another reviewed action (for example saving a summary). */
+  fixed?: boolean;
+  confirmLabel?: 'save';
   /** A document builder over the chosen data: redaction precedes formatting on every rebuild. */
   source?: {title: string; build: (options: ReportOptions) => ReportResult};
 }
@@ -79,7 +82,7 @@ export function reportReviewKey(state: ReportReviewState, key: Key, height: numb
       }),
     };
     if (key.value === 'e' && state.canEdit) return {kind: 'edit'};
-    const toggle = toggles[key.value];
+    const toggle = state.fixed ? undefined : toggles[key.value];
     if (toggle) { toggle(); rebuild(state); }
   }
   // The render clamps to the wrapped rows it shows; here only the lower bound is known.
@@ -127,7 +130,7 @@ export function renderReportReview(state: ReportReviewState, columns: number, he
   const count = state.records.length;
   const format = state.options.format === 'markdown' ? 'Markdown' : 'plain text';
   const title = state.source?.title ?? 'Copy as report';
-  const detail = state.source ? `Markdown${state.edited ? ' · edited' : ''}` : `${count} command${count === 1 ? '' : 's'} · ${format}${state.edited ? ' · edited' : ''}`;
+  const detail = state.fixed ? 'Review before saving' : state.source ? `Markdown${state.edited ? ' · edited' : ''}` : `${count} command${count === 1 ? '' : 's'} · ${format}${state.edited ? ' · edited' : ''}`;
   const out = [`  ${primary}${title}${reset}  ${subtle}${truncateText(detail, Math.max(4, width - displayWidth(title) - 4))}${reset}`];
   if (state.sensitive.length) {
     const what = describeFindings(state.sensitive);
@@ -136,9 +139,12 @@ export function renderReportReview(state: ReportReviewState, columns: number, he
   } else out.push(`  ${subtle}${truncateText('No common secret shapes found. Redaction is a pattern match, not a guarantee: read before sharing.', width)}${reset}`);
   const marked = redactedLines(state.text);
   if (marked.length) out.push(`  ${subtle}${truncateText(`Changed lines (▸): ${marked.slice(0, 12).join(', ')}${marked.length > 12 ? ` and ${marked.length - 12} more` : ''}`, width)}${reset}`);
-  out.push(`  ${subtle}${truncateText(state.source ? `Redact ${state.options.redact ? 'on' : 'off'} (r)` : `Redact ${state.options.redact ? 'on' : 'off'} (r) · Directory ${state.options.directory ? 'on' : 'off'} (d) · Times ${state.options.timestamps ? 'on' : 'off'} (t) · Format (f)`, width)}${reset}`, '');
-  const controls = height < 10
-    ? [truncateText('  Esc cancel · Enter copy · ↑↓ scroll', width + 2)]
+  if (!state.fixed) out.push(`  ${subtle}${truncateText(state.source ? `Redact ${state.options.redact ? 'on' : 'off'} (r)` : `Redact ${state.options.redact ? 'on' : 'off'} (r) · Directory ${state.options.directory ? 'on' : 'off'} (d) · Times ${state.options.timestamps ? 'on' : 'off'} (t) · Format (f)`, width)}${reset}`, '');
+  const confirm = state.confirmLabel ?? 'copy';
+  const controls = state.fixed
+    ? renderControlRows([['↑↓/PgUp/PgDn', 'scroll'], ['Enter', 'saves this summary'], ['Esc', 'cancels']], width)
+    : height < 10
+    ? [truncateText(`  Esc cancel · Enter ${confirm} · ↑↓ scroll`, width + 2)]
     : renderControlRows([['↑↓', 'scroll'], ['Enter', 'copy'], ...(state.canEdit ? [['e', 'edit'] as const] : []), ['Esc', 'cancel']], width);
   // Keep a document row even when optional headings do not fit.
   out.splice(Math.max(1, height - controls.length - 2));

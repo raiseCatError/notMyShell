@@ -53,7 +53,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     });
     shell.on('exec', (command, historyAllowed) => {
       this.running = true;
-      const queued = this.dispatcher.onExec(command)?.text;
+      const queued = this.dispatcher.onExec(command, undefined, historyAllowed)?.text;
       this.emit('exec', command, historyAllowed === undefined && queued === undefined ? NO_STAMP
         : {...(historyAllowed === undefined ? {} : {historyAllowed}), ...(queued === undefined ? {} : {queued})});
     });

@@ -205,3 +205,40 @@ test('a wrapper shell that dies of SIGINT does not end the task while its progra
     assert.equal(supervisor.get(task.id)!.leftovers, false);
   });
 });
+
+
+test('an immediate stop is accepted before PTY group readiness, and never signals a numeric group id', async () => {
+  await withSupervisor(async (supervisor, cwd) => {
+    const started = supervisor.start({command: 'sleep 30', cwd, shell: SHELL, env: env()});
+    assert.ok(started.ok);
+    const original = process.kill;
+    const targets: number[] = [];
+    process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal !== 0) { targets.push(pid); throw Object.assign(new Error('group not established yet'), {code: 'ESRCH'}); }
+      return original(pid, signal);
+    }) as typeof process.kill;
+    try {
+      assert.deepEqual(supervisor.stop(started.task.id), {ok: true}, 'stop intent is retained until the task can receive it');
+      assert.deepEqual(targets, [], 'the supervisor never guesses or later reuses a numeric process group');
+    } finally { process.kill = original; }
+    await waitFor(() => supervisor.get(started.task.id)!.state === 'stopped', 'immediate stop completion');
+    assert.equal(supervisor.get(started.task.id)!.leftovers, false);
+  });
+});
+
+
+test('Node startup hooks cannot block the task guard, and the command retains its original Node environment', async () => {
+  await withSupervisor(async (supervisor, cwd) => {
+    // A bounded blocking import exits by itself on the broken implementation, so RED never leaks a paused debugger.
+    const options = '--import=data:text/javascript,await%20new%20Promise(r=>setTimeout(r,300));process.exit(88)';
+    const started = supervisor.start({command: `printf '%s\\n' "$NODE_OPTIONS"; sleep 30`, cwd, shell: SHELL, env: {...env(), NODE_OPTIONS: options}});
+    assert.ok(started.ok);
+    await waitFor(() => text(supervisor, started.task.id).includes(options), 'the original environment reaches the command', 2000);
+    assert.deepEqual(supervisor.stop(started.task.id, 'kill'), {ok: true});
+    await waitFor(() => supervisor.get(started.task.id)!.state === 'stopped', 'guard cancellation');
+    const pending = supervisor.start({command: 'sleep 30', cwd, shell: SHELL, env: {...env(), NODE_OPTIONS: options}});
+    assert.ok(pending.ok);
+    assert.deepEqual(supervisor.stop(pending.task.id, 'kill'), {ok: true});
+    await waitFor(() => supervisor.get(pending.task.id)!.state === 'stopped', 'kill before guard readiness');
+  });
+});
