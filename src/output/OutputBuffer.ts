@@ -7,6 +7,7 @@ import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {TranscriptCut} from '../session/TerminalModes.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
+import {normalizeFirstRunSnapshot, type FirstRunSnapshot} from './FirstRunWelcome.js';
 import {foldHighlights, foldWindow, shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
@@ -76,6 +77,8 @@ export interface CompletedCommand {
 
 export interface OutputTranscript {
   welcome?: WelcomeSnapshot;
+  /** The first-run welcome, when a genuine first run applied NMSh Recommended (version 1). */
+  firstRun?: FirstRunSnapshot;
   records: CompletedCommand[];
   lines: SerializedLine[];
   visualGaps: number[];
@@ -144,6 +147,7 @@ export class OutputBuffer {
   private generation = 0;
   get presentationGeneration(): number { return this.generation; }
   private welcome?: WelcomeSnapshot;
+  private firstRun?: FirstRunSnapshot;
   private welcomeVisible = true;
 
   /** Presentation preference only: archives retain their original welcome snapshot. */
@@ -207,6 +211,7 @@ export class OutputBuffer {
   transcript(): OutputTranscript {
     return {
       ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
+      ...(this.firstRun ? {firstRun: {...this.firstRun}} : {}),
       records: this.completed.map(record => ({
         ...record,
         historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
@@ -233,6 +238,8 @@ export class OutputBuffer {
   restoreTranscript(transcript: OutputTranscript): void {
     this.generation++;
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
+    // An unknown version is refused, never guessed at.
+    this.firstRun = normalizeFirstRunSnapshot(transcript.firstRun);
     this.parser.restore(transcript.lines);
     const lines = Array.from({length: this.parser.completedCount()}, (_, index) => this.parser.plainLineAt(index) ?? '');
     this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, lines, new Map(transcript.lineTypes)).map(record => ({
@@ -261,6 +268,7 @@ export class OutputBuffer {
   clearPresentation(): void {
     this.generation++;
     this.welcome = undefined;
+    this.firstRun = undefined;
     this.parser.restore([]);
     this.completed.length = 0;
     this.visualGaps.clear();
@@ -287,6 +295,15 @@ export class OutputBuffer {
 
   setWelcomeFrame(frame: WelcomeCatFrame): void {
     this.presenter.setWelcomeFrame(frame);
+  }
+
+  /** The first-run welcome joins the transcript once; it is never replaced or added again. */
+  setFirstRunWelcome(snapshot: FirstRunSnapshot): void {
+    this.firstRun ??= {...snapshot};
+  }
+
+  get hasFirstRunWelcome(): boolean {
+    return Boolean(this.firstRun);
   }
 
   setWelcome(snapshot: WelcomeSnapshot): void {
@@ -587,6 +604,7 @@ export class OutputBuffer {
       lineTypes: this.lineTypes,
       historicalContexts: this.historicalContexts,
       welcome: this.welcomeVisible ? this.welcome : undefined,
+      firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
     };

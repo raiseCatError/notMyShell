@@ -147,15 +147,18 @@ and painted after the ordinary transitions:
 | ms | What happens |
 | --- | --- |
 | 0–180 | The selector's ground rows recede (drawn faint over the real frame, then gone). |
-| 0–520 | The sky folds upward (`h(t)` eases from `skyH` to 0) on the real engine; the horizon line rides its bottom edge. |
-| 520–760 | The horizon has become one luminous rule at the top; it fades out. |
+| 0–520 | The sky folds upward (`h(t)` eases from `skyH` to 0) on the real engine; the horizon line rides its bottom edge, Vespyr standing on it, up and out of view. |
+| 520–760 | The horizon has become one luminous rule at the top; it fades out. It sits behind the real row: it fills only the cells after the row's own text, never over or between it, and never a row that paints its own background. |
 | 240–880 | The real composer rises from below the bottom edge into its own position (`bottom` a short rise, `flow`/`top` a long one), new configuration and all. |
-| 480 → | On a genuine first run with Recommended, the welcome's lines appear one every 70 ms, one light sweep crosses its headline, Vespyr blinks. |
+| 480 → | On a genuine first run with Recommended, Vespyr's block appears, then the welcome's lines one every 70 ms (a wrapped paragraph is one line and a spacer arrives with the line after it, so all of it lands within 600 ms); one light sweep crosses its headline, Vespyr blinks. |
 
 The caret is hidden until the composer lands, then shown in the real composer.
 Any key or resize finishes the transition at once and the key is then handled
-normally. Reduced Motion, Effects Off or no color: the completed state appears
-immediately. Rows outside the transition's own drawing are the real frame's
+normally. Reduced Motion or Effects Off in the configuration the selector ran
+under (its sky did not move either), or no color: the completed state appears
+immediately. The ending belongs to the selector, so applying Minimal from a
+moving selector still folds it away; reopening `/startup` afterwards, with
+Minimal's effects off, does not. Rows outside the transition's own drawing are the real frame's
 rows, so nothing is cleared and nothing is left behind.
 
 Transcript content on Apply (no command echo, no fake prompt):

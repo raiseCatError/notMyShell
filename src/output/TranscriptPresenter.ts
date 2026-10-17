@@ -15,6 +15,7 @@ import {homedir} from 'node:os';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizePromptStyle, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {normalizeStyleProfiles} from '../prompt/styles.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
+import {renderFirstRunWelcome, type FirstRunSnapshot} from './FirstRunWelcome.js';
 import {foldWindow} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
@@ -70,6 +71,8 @@ export interface TranscriptView {
   lineTypes: ReadonlyMap<number, 'command' | 'metadata'>;
   historicalContexts: ReadonlyMap<number, HistoricalContextSnapshot>;
   welcome?: WelcomeSnapshot;
+  /** The first-run welcome, drawn right after Vespyr's welcome block. */
+  firstRun?: FirstRunSnapshot;
   /** Structural block ownership from command records (never from text). */
   ownerOf: (lineIndex: number) => number | undefined;
   /** Line ids worth keeping in view inside a collapsed block's hidden middle (failures, diagnostics). */
@@ -135,7 +138,7 @@ export class TranscriptPresenter {
   }
 
   rows(view: TranscriptView, width: number): WrappedRow[] {
-    const {lines, completed, active, visualGaps, historicalContexts, welcome, ownerOf} = view;
+    const {lines, completed, active, visualGaps, historicalContexts, welcome, firstRun, ownerOf} = view;
     const column = this.layout === 'chat' ? chatColumn(width) : undefined;
     // A chat command block is right-aligned as a whole: its widest wrapped row sets the left edge.
     const blockWidths = new Map<number, number>();
@@ -150,7 +153,9 @@ export class TranscriptPresenter {
       blockWidths.set(start, widest);
       return widest;
     };
-        const result: WrappedRow[] = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
+    const welcomeRows = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
+    // The first-run welcome follows Vespyr's block (line 0); its rows carry line numbers so it can arrive line by line.
+    const result: WrappedRow[] = firstRun ? [...welcomeRows.map(row => ({...row, firstRunLine: 0})), ...renderFirstRunWelcome(width)] : welcomeRows;
     let skipUntil = -1;
     const activitiesByStart = new Map<number, SecondaryActivity>();
     for (const activity of [

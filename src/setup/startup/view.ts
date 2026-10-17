@@ -57,6 +57,11 @@ export function startupLayout(columns: number, height: number): StartupLayout {
   return {skyHeight, twoColumn, tier: twoColumn ? 'full' : 'accordion', margin};
 }
 
+/** Where Vespyr stands on the horizon (its left column), or undefined where the sky is too small or there is no color. */
+export function startupCatX(columns: number, layout: StartupLayout, level: ColorLevel = colorLevel()): number | undefined {
+  return columns >= 56 && layout.skyHeight >= 5 && level !== 'none' ? layout.margin : undefined;
+}
+
 // ---- tokens --------------------------------------------------------------------------------
 
 const BRAND: Rgb = {red: 166, green: 124, blue: 243};
@@ -591,7 +596,8 @@ export function renderStartup(state: SetupState, columns: number, height: number
   const mood = STARTING_POINT_MOODS[startingPointAt(quick.choice)], previousMood = STARTING_POINT_MOODS[startingPointAt(quick.previousChoice)];
   const timing = {now, started: quick.sky.started, mood, previousMood, changedAt: quick.changedAt, from: quick.sky.from, timeAt: quick.sky.timeAt,
     activeAt: quick.sky.activeAt, reduced: context.reduced};
-  const cat = width >= 56 && layout.skyHeight >= 5 && level !== 'none' ? {x: layout.margin, pose: skyCatPose(timing)} : undefined;
+  const catX = startupCatX(width, layout, level);
+  const cat = catX === undefined ? undefined : {x: catX, pose: skyCatPose(timing)};
   const sky = layout.skyHeight
     ? renderSkyBand(context.sky, {...timing, width, height: layout.skyHeight, backdrop: quick.backdrop, config: state.saved, level, nerd: paint.nerd, ...(cat ? {cat} : {})})
     : {rows: [], horizon: ''};

@@ -97,8 +97,8 @@
 
 **Interfaces — Produces:** `StartupEnding = {start; skyHeight; mood; palette; groundRows: string[]; composerFrom: number; welcome: boolean}`; `ENDING_MS = 880`; `paintStartupEnding(rows, plan, columns, now, ending, sky): {rows; caretVisible; done}`; `FirstRunSnapshot = {version: 1}`; `OutputBuffer.setFirstRunWelcome(snapshot)`; presenter rows carry `firstRunLine?: number`.
 
-- [ ] Tests: frames at 0, 120, 300, 520, 700, 880 ms show ground fading then gone, sky height non-increasing then a single rule then nothing, composer rows offset non-increasing to 0, caret hidden until done; a key at 300 ms finishes the ending and types into the composer once; resize finishes it; Reduced Motion produces the final frame on Apply; first run + Recommended adds the welcome once and `/startup` → Recommended adds only a receipt; Minimal and Keep Existing add one receipt and no welcome; no clock remains after 880 ms.
-- [ ] Run → FAIL; implement; run → PASS; commit `feat: Apply folds the sky and raises the real composer into the transcript`.
+- [x] Tests: frames at 0, 120, 300, 520, 700, 880 ms show ground fading then gone, sky height non-increasing then a single rule then nothing, composer rows offset non-increasing to 0, caret hidden until done; a key at 300 ms finishes the ending and types into the composer once; resize finishes it; Reduced Motion produces the final frame on Apply; first run + Recommended adds the welcome once and `/startup` → Recommended adds only a receipt; Minimal and Keep Existing add one receipt and no welcome; no clock remains after 880 ms.
+- [x] Run → FAIL; implement; run → PASS; commit `feat: Apply folds the sky and raises the real composer into the transcript`. (As built, `StartupEnding` also carries the size it was planned for, the sky timing, `catX` and `welcomeLines`; no clock remains once the ending, including a first-run welcome, has finished.)
 
 ### Task 8b: One-time window maximization (macOS and Linux)
 

@@ -36,7 +36,10 @@ import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKe
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, GUIDED_STEPS, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {detectEnvironment, type EnvironmentEvidence} from '../setup/environment/detect.js';
-import {createStartupContext, defaultStartupPreview} from '../setup/startup/view.js';
+import {createStartupContext, defaultStartupPreview, startupCatX, startupLayout} from '../setup/startup/view.js';
+import {paintStartupEnding, WELCOME_START_MS, type StartupEnding} from '../setup/startup/ending.js';
+import {STARTING_POINT_MOODS, startingPointAt} from '../setup/startup/startingPoints.js';
+import {renderFirstRunWelcome} from '../output/FirstRunWelcome.js';
 import {skyFrameMs} from '../setup/startup/sky.js';
 import {keepExistingPlan} from '../setup/environment/keepExisting.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
@@ -143,7 +146,7 @@ import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, t
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
-import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
+import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId, type StartingPointId} from '../prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
@@ -1438,6 +1441,7 @@ export class TerminalApp {
   }
 
   private readonly onResize = (): void => {
+    this.stopStartupEnding();
     this.effects.cancel();
     if (this.idle) this.dismissIdle(false);
     this.noteActivity();
@@ -1500,6 +1504,8 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    // Any real input finishes the ending at once (focus changes and pointer movement are not input); the key is then handled normally.
+    if (this.startupEnding && key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.finishStartupEnding();
     const navigating = Boolean(this.outputNavigation);
     const validNavigation = this.reconcileOutputNavigation();
     if (navigating && !validNavigation && this.outputNavigationAvailable()
@@ -6721,12 +6727,19 @@ export class TerminalApp {
       return;
     }
     if (result.kind === 'cancel') {
+      const firstRun = Boolean(state.onboarding && state.quick);
       this.setupState = undefined; this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      // Leaving the first run applies nothing; one quiet line says so and how to come back.
+      if (firstRun) this.output.addHistoryLine(`${SUBTLE}Setup closed. Nothing was applied · /startup reopens it${RESET}`);
       this.returnFromPanel(); return;
     }
     const previous = this.promptConfiguration;
     const configured = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
     const next = state.onboarding ? {...configured, onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true} : configured;
+    const fromSelector = Boolean(state.quick);
+    const startingPoint: StartingPointId = result.startingPoint ?? 'customize';
+    // A genuine first run with NMSh Recommended is welcomed once; every other Apply gets one receipt line.
+    const welcome = fromSelector && Boolean(state.onboarding) && startingPoint === 'recommended';
     if ((result.changed || state.onboarding) && !setupIsIdempotent({...state, draft: next})) {
       if (!this.applySettingsConfiguration(next)) { state.message = 'Could not save. Your draft is kept; retry Apply or Esc to cancel.'; return; }
       this.armIdle();
@@ -6734,26 +6747,122 @@ export class TerminalApp {
       if (previous.history !== next.history) void this.loadHistory();
       if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
       if (previous.provider !== next.provider) void this.refreshProviderPrompt().then(() => this.render());
-      if (state.quick) this.noteClipboard(state.quick.choice === 1 ? `Minimal terminal ready · ${next.composerLayout === 'oneLine' ? 'One-line' : 'Two-line'}. Customize anytime with /setup.` : 'Ready. Customize anytime with /setup.', 'success');
+      if (fromSelector) this.addStartingPointContent(state, startingPoint, next, welcome);
       else this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Customize anytime with /setup.', SUCCESS);
       if (this.cursorReload && JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor)) this.output.addFrontendInteraction('/setup', this.cursorReload, INFO);
-      if (!next.presentation.effectsOff) this.startSweep('prompt', 'vivid');
-    } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
+      // From the selector the ending is the presentation; elsewhere the prompt gets its sweep.
+      if (!fromSelector && !next.presentation.effectsOff) this.startSweep('prompt', 'vivid');
+    } else if (fromSelector) this.output.addHistoryLine(this.startingPointReceipt(state, startingPoint, next, true));
+    else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
     this.setupState = undefined;
     this.stopSetupPlayback();
-    if (state.onboarding) this.output.setWelcomeVisible(false);
+    if (state.onboarding && !welcome) this.output.setWelcomeVisible(false);
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.panelOrigin = undefined;
+    const understanding = next.localUnderstanding;
+    const understandingFollows = understanding.mode !== 'off' && (understanding.ask || understanding.folding)
+      && JSON.stringify(previous.localUnderstanding) !== JSON.stringify(understanding);
+    const tools = result.tools;
+    const toolsFollow = tools === 'recommended' || tools === 'enhanced' || tools === 'individual';
+    // The selector folds away into the real transcript and composer, unless another panel opens next.
+    if (fromSelector && !result.then && !understandingFollows && !toolsFollow) this.beginStartupEnding(state, welcome);
     // A route row: the Setup draft is applied, then the real editor opens.
     if (result.then) { this.openDestinationPanel(result.then); return; }
     // Auto or Always with a use enabled: continue straight into model setup (the same /llm controller), detecting first.
-    const understanding = next.localUnderstanding;
-    if (understanding.mode !== 'off' && (understanding.ask || understanding.folding)
-      && JSON.stringify(previous.localUnderstanding) !== JSON.stringify(understanding)) { this.openUnderstandingPanel(true); return; }
-    if (result.tools === 'recommended' || result.tools === 'enhanced' || result.tools === 'individual') {
+    if (understandingFollows) { this.openUnderstandingPanel(true); return; }
+    if (tools === 'recommended' || tools === 'enhanced' || tools === 'individual') {
       this.startTools();
-      if (this.toolsPanel) this.toolsPanel.tier = result.tools === 'individual' ? undefined : result.tools;
+      if (this.toolsPanel) this.toolsPanel.tier = tools === 'individual' ? undefined : tools;
     }
+  }
+
+  /**
+   * What Apply adds to the real transcript (no command echo, no fake prompt): on a genuine first run with NMSh
+   * Recommended, Vespyr's welcome and the first-run welcome, once; otherwise one receipt line.
+   */
+  private addStartingPointContent(state: SetupState, startingPoint: StartingPointId, next: PromptConfiguration, welcome: boolean): void {
+    if (welcome) {
+      // Vespyr's block as configured (startWelcome honors the welcome setting), then the first-run welcome.
+      this.startWelcome(this.context.cwd || this.initialCwd);
+      this.output.setFirstRunWelcome({version: 1});
+      return;
+    }
+    this.output.addHistoryLine(this.startingPointReceipt(state, startingPoint, next, false));
+  }
+
+  private startingPointReceipt(state: SetupState, startingPoint: StartingPointId, next: PromptConfiguration, unchanged: boolean): string {
+    const tail = '/startup changes it anytime';
+    let text: string;
+    switch (startingPoint) {
+      case 'recommended': text = `NMSh Recommended is ready · ${tail}`; break;
+      case 'minimal': text = `Minimal Terminal is ready · ${next.composerLayout === 'oneLine' ? 'One-line' : 'Two-line'} · ${tail}`; break;
+      case 'customize': text = `${unchanged ? 'Nothing changed' : 'Your settings are applied'} · /setup changes them anytime`; break;
+      case 'existing': {
+        const prompt = next.provider === 'starship' ? 'Starship' : next.provider === 'powerlevel10k' ? 'Powerlevel10k' : next.provider === 'ohMyPosh' ? 'Oh My Posh' : undefined;
+        const shell = state.quick?.evidence?.shell.id ?? next.shellBackend;
+        text = `Keeping your setup · ${[prompt, shell, unchanged ? 'nothing changed' : undefined].filter(Boolean).join(' · ')} · ${tail}`;
+        break;
+      }
+    }
+    const mark = getCurrentGlyphMode() === 'nerd' ? '✓' : '+';
+    return `${foreground(UI_COLORS.success)}${mark}${RESET} ${SECONDARY}${text}${RESET}`;
+  }
+
+  /** The ending after Apply (see ending.ts): one presentation-only transition over the real frame, on its own clock. */
+  private startupEnding?: StartupEnding;
+  private startupEndingClock?: () => void;
+  private readonly endingSky = new CellGrid();
+  private endingBlink = false;
+  /** Frame rows of the first-run welcome and their line numbers, recorded by the last full render. */
+  private welcomeFrameRows = new Map<number, number>();
+
+  /**
+   * The ending is the selector's own exit, so it moves only where the selector's sky could: never under Reduced
+   * Motion or Effects Off in the configuration the selector ran under, or without color. Then the completed state
+   * simply appears.
+   */
+  private beginStartupEnding(state: SetupState, welcome: boolean): void {
+    const quick = state.quick;
+    const ran = state.saved.presentation;
+    if (!quick || isReducedMotion() || ran.reducedMotion || ran.effectsOff || this.promptConfiguration.presentation.reducedMotion || colorLevel() === 'none') return;
+    const {columns, rows} = this.dimensions();
+    const layout = startupLayout(columns, rows);
+    const skyHeight = quick.manual || layout.tier === 'tiny' ? 0 : layout.skyHeight;
+    // Vespyr stood on the horizon where the selector drew it.
+    const catX = skyHeight ? startupCatX(columns, layout) : undefined;
+    const shown = this.presentationFrame?.frame.rows ?? [];
+    this.startupEnding = {start: Date.now(), columns, rows, skyHeight, backdrop: quick.backdrop, config: structuredClone(state.saved),
+      sky: {started: quick.sky.started, mood: STARTING_POINT_MOODS[startingPointAt(quick.choice)], previousMood: STARTING_POINT_MOODS[startingPointAt(quick.previousChoice)],
+        changedAt: quick.changedAt, from: quick.sky.from, timeAt: quick.sky.timeAt, activeAt: quick.sky.activeAt},
+      ground: shown.slice(skyHeight), ...(catX === undefined ? {} : {catX}), welcome, welcomeLines: welcome ? Math.max(0, ...renderFirstRunWelcome(columns).map(row => row.firstRunLine ?? 0)) : 0, sweep: sweepStyleFor(this.promptConfiguration)};
+    this.startupEndingClock?.();
+    this.startupEndingClock = presentationClock.subscribe(now => this.tickStartupEnding(now), 40, 16);
+  }
+
+  private tickStartupEnding(now: number): void {
+    const ending = this.startupEnding;
+    if (!ending || this.stopped) { this.stopStartupEnding(); return; }
+    // Vespyr blinks once while the welcome arrives (the welcome rows are the transcript's own, so this is a full render).
+    if (ending.welcome) {
+      const t = now - ending.start;
+      const blink = t >= WELCOME_START_MS + 600 && t < WELCOME_START_MS + 750;
+      if (blink !== this.endingBlink) { this.endingBlink = blink; this.output.setWelcomeFrame(blink ? 'blink' : 'open'); this.render(); return; }
+    }
+    this.paintPresentation(now);
+  }
+
+  /** Ends the transition where it is: the next paint is the real frame alone. */
+  private stopStartupEnding(): void {
+    this.startupEnding = undefined;
+    this.startupEndingClock?.(); this.startupEndingClock = undefined;
+    if (this.endingBlink) { this.endingBlink = false; this.output.setWelcomeFrame('open'); }
+  }
+
+  /** A key or a resize finishes the ending at once; the key is then handled normally. */
+  private finishStartupEnding(): void {
+    if (!this.startupEnding) return;
+    this.stopStartupEnding();
+    this.render();
   }
 
   /**
@@ -10096,6 +10205,9 @@ export class TerminalApp {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
     this.visibleBlocks = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.blockStartId);
+    const transcriptTop = plan.regions.find(region => region.kind === 'transcript')?.top ?? 0;
+    this.welcomeFrameRows = new Map();
+    wrapped.slice(viewStart, viewStart + outputHeight).forEach((row, offset) => { if (row.firstRunLine !== undefined) this.welcomeFrameRows.set(transcriptTop + offset, row.firstRunLine); });
     const sticky = this.stickyHeader(wrapped, viewStart);
     // While the block's header is scrolled away, its controls ride on the sticky row instead: never both.
     const stickyControls = sticky ? this.stickyControls(sticky.startId, columns) : undefined;
@@ -10423,6 +10535,7 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.startupSkyClock?.(); this.startupSkyClock = undefined; this.startupSkyInterval = 0;
+    this.stopStartupEnding();
     this.transitions.cancel();
     this.transitionClock?.(); this.transitionClock = undefined;
     this.effects.cancel();
@@ -10475,11 +10588,22 @@ export class TerminalApp {
     if (active && !region) this.effects.cancel();
     const columns = frame.columns ?? 80;
     this.paintTransitions(rows, plan, columns, now);
+    let endingHidesCaret = false;
+    if (this.startupEnding) {
+      const ending = this.startupEnding;
+      if (ending.columns !== columns || ending.rows !== this.dimensions().rows) this.stopStartupEnding();
+      else {
+        const painted = paintStartupEnding(rows, plan, columns, now, ending, this.endingSky, this.welcomeFrameRows);
+        rows.splice(0, rows.length, ...painted.rows);
+        endingHidesCaret = !painted.caretVisible;
+        if (painted.done) this.stopStartupEnding();
+      }
+    }
     // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
     const input = plan.regions.find(item => item.kind === 'input');
     // The agent composer's caret gets the same caret effects, bounded to its own row.
     const agentRow = this.presentationFrame?.agentCaretRow;
-    const caretShown = frame.cursorVisible !== false && (agentRow !== undefined || (Boolean(input) && !plan.panelActive));
+    const caretShown = !endingHidesCaret && frame.cursorVisible !== false && (agentRow !== undefined || (Boolean(input) && !plan.panelActive));
     const bounds = agentRow !== undefined ? {top: agentRow, bottom: agentRow, columns}
       : {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns};
     const cursor = this.cursorPresenter.apply(rows, caretShown ? {row: frame.cursorRow - 1, column: frame.cursorColumn - 1} : undefined,
@@ -10487,7 +10611,7 @@ export class TerminalApp {
       !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
     const painted = cursor.rows;
     try {
-      this.renderer.render(this.composeWorkspaceFrame({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
+      this.renderer.render(this.composeWorkspaceFrame({...frame, ...(cursor.hideCaret || endingHidesCaret ? {cursorVisible: false} : {}), rows: active && region
         ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted}, plan));
     } catch (error) { this.onTerminate(); throw error; }
   }

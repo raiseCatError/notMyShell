@@ -18,6 +18,8 @@ export interface WrappedRow {
   indent?: number;
   /** The synthetic "filter active" row; presentation only, never transcript data. */
   isFilterHint?: boolean;
+  /** A row of the first-run welcome (0 is Vespyr's block above it), so the ending can reveal it line by line. */
+  firstRunLine?: number;
 }
 
 export interface StickyHeader {
