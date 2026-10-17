@@ -54,7 +54,7 @@ export class LiveSandbox {
       TMPDIR: this.temp, TMP: this.temp, TEMP: this.temp,
       TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '',
       // A host NMSh cannot open windows in, so tests never launch real terminal windows.
-      TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', ...this.extraEnv};
+      TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', HYPRLAND_INSTANCE_SIGNATURE: '', ...this.extraEnv};
   }
 
   sessions() { return listLiveSessions({runtimeDir: this.runtime}); }

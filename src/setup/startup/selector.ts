@@ -37,6 +37,11 @@ export interface StartupSelectorState {
   keep: KeepState;
   /** The read-only detection result, filled asynchronously; absent while it loads. */
   evidence?: EnvironmentEvidence;
+  /**
+   * A genuine first run's one-time offer to maximize the window for setup, shown only once the host said it can
+   * (the app decides; nothing here knows about windows). M or K answers it once.
+   */
+  windowOffer?: boolean;
 }
 
 const BACKDROP_CYCLE: readonly OnboardingBackdrop[] = ['aurora', 'subtle', 'off'];

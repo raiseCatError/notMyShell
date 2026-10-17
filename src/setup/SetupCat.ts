@@ -640,6 +640,7 @@ function applyStartingPoint(state: SetupState, draft: PromptConfiguration, start
 /**
  * Choices: ↑↓ move, 1–4 jump, ←→/Tab Minimal's layout, Enter review (Customize: the guided setup), Esc Leave setup?, A backdrop.
  * Review: Enter Apply, Esc/← back, A backdrop. Leave setup?: ←→/Tab choose, Enter confirm, Esc Stay (focused first).
+ * While the one-time window offer shows: M maximize for setup, K keep the current size.
  */
 function quickKey(state: SetupState, key: Key, now: number): SetupResult | undefined {
   const quick = state.quick!;
@@ -657,6 +658,11 @@ function quickKey(state: SetupState, key: Key, now: number): SetupResult | undef
   if (key.kind === 'text' && key.value.toLowerCase() === 'a') {
     quick.backdrop = nextBackdrop(quick.backdrop);
     return {kind: 'backdrop', backdrop: quick.backdrop};
+  }
+  // The one-time window offer: M maximizes for setup, K keeps the size; either answers it.
+  if (quick.windowOffer && key.kind === 'text' && /^[mk]$/iu.test(key.value)) {
+    quick.windowOffer = false;
+    return {kind: key.value.toLowerCase() === 'm' ? 'maximize' : 'keepSize'};
   }
   if (quick.review) {
     const keeping = startingPointAt(quick.choice) === 'existing';
@@ -749,6 +755,9 @@ export type SetupResult =
   | {kind: 'backdrop'; backdrop: OnboardingBackdrop}
   /** Keep Existing on a configured install: read the environment again (R). */
   | {kind: 'redetect'}
+  /** The one-time window offer was answered (M or K). */
+  | {kind: 'maximize'}
+  | {kind: 'keepSize'}
   /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
   | {kind: 'browseTools'; toolId?: string}
   /** Open the shared /cursor panel inside Setup Cat, over the draft. */

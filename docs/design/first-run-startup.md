@@ -171,6 +171,45 @@ Transcript content on Apply (no command echo, no fake prompt):
 - Every other Apply: one receipt line, for example *✓ Minimal Terminal is ready
   · Two-line · /startup changes it anytime*.
 
+## One-time window maximization
+
+Added 2026-10-18 at the maintainer's request (with Linux and Omarchy/Hyprland
+addenda). The larger window exists only to make the first run better; NMSh never
+takes ongoing ownership of the window's size. Portable onboarding comes first:
+the selector, sky, Vespyr, keys, compact layouts and the ending never depend on
+it, and no platform code enters shared onboarding or rendering code.
+
+- **When.** Only the genuine first-ever onboarding (`introSeen` false), never
+  `/startup` or a later launch, and only after a read-only probe in the
+  background proved the window is NMSh's own and in its normal state. Then one
+  quiet row above the footer: *Use more screen space for setup?* **M** Maximize
+  for setup · **K** Keep current size (shorter wordings when narrow; one line in
+  the tiny list). It answers once; nothing is maximized without **M**.
+- **What.** macOS zoom (title bar, desktop and Space kept) or Hyprland's native
+  maximized state (bar, gaps, workspace, tiling or floating kept). Never native
+  fullscreen, never a blind toggle: the prior state is read first and re-checked
+  right before acting.
+- **Back.** After the ending finishes (one resize, never during the transition),
+  at once on Leave, and synchronously on exit; only what NMSh changed, and only
+  while the window is still exactly as NMSh left it, so manual moves, resizes,
+  un-maximizing and fullscreen are respected.
+- **Never.** Saved anywhere (process memory only); configuration of Ghostty,
+  kitty, Terminal.app, Hyprland or Omarchy written; Accessibility, xdotool,
+  wmctrl, ydotool, keyboard injection, focus or pointer moves; shell text. Every
+  command is an absolute executable with argv and a timeout.
+- **Hosts.** Terminal.app (AppleScript on the window whose tab is this tty),
+  kitty on macOS (remote control over `KITTY_LISTEN_ON` only, ownership proven by
+  ancestry, `ls --match`, the window's tty and CoreGraphics), Hyprland 0.55+ with
+  a Lua configuration (`hl.dsp.window.fullscreen` naming the window's address,
+  `set`/`unset`). Everything else — Ghostty on macOS, other Linux desktops, X11,
+  older or hyprlang-configured Hyprland, SSH, multiplexers, editors' terminals,
+  Windows and WSL — is unsupported, silently, with an explicit reason for logs
+  and tests (`unsupported`, `permissionDenied`, `uncertainIdentity`,
+  `alreadyMaximized`, `fullscreen`, `failed`).
+
+Support matrix and the physical checklists:
+[first-run window maximization](../testing/first-run-window-maximization.md).
+
 ## Keep Existing
 
 NMSh runs the person's real shell and sources their own startup files, so
@@ -264,6 +303,7 @@ measures 100×30, 130×38 and 200×55.
 | AC-13 | Reduced Motion, Effects Off, NO_COLOR, 16 colors and Safe glyphs degrade as specified; 16 × 6 still offers all choices, Apply and Leave. |
 | AC-14 | No timer, subscription or grid outlives the selector or the ending; frames stay within budget at 100×30–200×55. |
 | AC-15 | Starship's trailing prompt character is dropped from a flattened multi-line prompt; single-line prompts are unchanged. |
+| AC-16 | The window offer appears only on the genuine first run and only for a proven, normal window; M maximizes once, K never does; the window is put back after the ending, on Leave and on exit, never over a user's change; nothing is saved; unsupported hosts see no offer. |
 
 ## Traceability
 
@@ -280,6 +320,7 @@ measures 100×30, 130×38 and 200×55.
 | AC-13 | `startupRender.test.ts` (tiers, NO_COLOR, safe, 16 colors, 16×6) |
 | AC-14 | `startupApp.test.ts` (disposal), `scripts/startup-benchmarks.ts` |
 | AC-15 | `starshipPrompt` assertions in `environmentDetection.test.ts` |
+| AC-16 | `hostWindow.test.ts` (routing, Terminal.app, kitty, Hyprland, the one-time session, a real Linux pty), `startupWindow.test.ts` (offer, keys, restore points); physical checklists in the testing document |
 
 ## Verification
 

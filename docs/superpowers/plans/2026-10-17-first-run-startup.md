@@ -131,11 +131,15 @@ session); Modify `src/setup/startup/view.ts` (the offer line), `src/setup/SetupC
   VS Code: unsupported, silently. No xdotool, wmctrl, ydotool or keyboard injection.
 - Restore after the ending finishes (one resize, never during the Aurora transitions), at once on Leave, best effort
   on exit; never when the user moved, resized, unmaximized or fullscreened the window in the meantime.
-- [ ] Tests with fake runners: first run vs later runs and `/startup`; accept and decline; already maximized and
+- [x] Tests with fake runners: first run vs later runs and `/startup`; accept and decline; already maximized and
   fullscreen; restore; Leave and exit; permission failures; several windows and monitors; manual changes; unsupported
   hosts; Kitty restrictions; Hyprland versions, tiled/floating, focus moved, IPC missing; no configuration writes.
-- [ ] Physical QA checklist for Ghostty, Kitty and Terminal.app on macOS and Foot, Ghostty, Kitty and Alacritty on
-  Omarchy; mocked tests are not claimed as real window behavior.
+  (`tests/hostWindow.test.ts`, `tests/startupWindow.test.ts`; a real `/proc` pty test runs on Linux CI.)
+- [x] Physical QA checklist for Ghostty, Kitty and Terminal.app on macOS and Foot, Ghostty, Kitty and Alacritty on
+  Omarchy; mocked tests are not claimed as real window behavior (`docs/testing/first-run-window-maximization.md`).
+- As built: Hyprland is used only on 0.55+ with a Lua configuration, whose `hl.dsp.window.fullscreen` names the
+  window; 0.52–0.54 and hyprlang configurations maximize only the focused window (and `focuswindow` warps the
+  pointer), so they are unsupported. Omarchy's current configuration is Lua.
 
 ### Task 9: The guided setup in the Horizon language
 

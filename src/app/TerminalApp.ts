@@ -40,6 +40,8 @@ import {createStartupContext, defaultStartupPreview, startupCatX, startupLayout}
 import {paintStartupEnding, WELCOME_START_MS, type StartupEnding} from '../setup/startup/ending.js';
 import {STARTING_POINT_MOODS, startingPointAt} from '../setup/startup/startingPoints.js';
 import {renderFirstRunWelcome} from '../output/FirstRunWelcome.js';
+import {FirstRunWindow} from '../host/window/firstRun.js';
+import {systemWindowContext, windowHost} from '../host/window/route.js';
 import {skyFrameMs} from '../setup/startup/sky.js';
 import {keepExistingPlan} from '../setup/environment/keepExisting.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
@@ -6628,6 +6630,7 @@ export class TerminalApp {
       this.startSetup('quick');
       this.setupState!.onboarding = true;
       this.output.setWelcomeVisible(false);
+      this.offerFirstRunWindow(this.setupState!);
       const next = {...this.promptConfiguration, introSeen: true};
       try {
         savePromptConfiguration(next, undefined, this.promptConfiguration);
@@ -6635,6 +6638,42 @@ export class TerminalApp {
         this.setupState!.saved.introSeen = true; this.setupState!.draft.introSeen = true;
       } catch (error) { this.setupState!.message = `Setup state could not be saved: ${error instanceof Error ? error.message : String(error)}`; }
     } else if (this.promptConfiguration.onboardingComplete && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
+  }
+
+  /**
+   * The one-time window offer of the genuine first run (never /startup, never a later launch): a read-only probe in
+   * the background, and the offer row only once the host has proven the window is NMSh's own and unmaximized.
+   * Process memory only; nothing about it is saved. Tests substitute the factory; nothing is probed outside a
+   * real terminal window.
+   */
+  private createFirstRunWindow: () => FirstRunWindow | undefined = () => new FirstRunWindow(() => windowHost(systemWindowContext()));
+  private firstRunWindow?: FirstRunWindow;
+  /** Apply started the ending: the window is put back only once it has finished. */
+  private restoreWindowAfterEnding = false;
+
+  private offerFirstRunWindow(state: SetupState): void {
+    const window = this.firstRunWindow = this.createFirstRunWindow();
+    if (!window) return;
+    void window.probe().then(offer => {
+      if (!offer || this.stopped || this.setupState !== state || !state.quick || !window.offered) return;
+      state.quick.windowOffer = true;
+      this.render();
+    });
+  }
+
+  /** M: maximize once; a host that refuses is said once, quietly, and setup goes on at the current size. */
+  private acceptFirstRunWindow(state: SetupState): void {
+    void this.firstRunWindow?.accept().then(outcome => {
+      if (outcome === undefined || outcome === 'maximized' || this.stopped || this.setupState !== state) return;
+      state.message = 'This window could not be maximized, so setup continues at its current size.';
+      this.render();
+    });
+  }
+
+  /** Onboarding is over: put back only what NMSh changed, only if it is still as NMSh left it (a no-op otherwise). */
+  private restoreFirstRunWindow(): void {
+    this.restoreWindowAfterEnding = false;
+    void this.firstRunWindow?.restore();
   }
 
   private startSetup(entry?: string): void {
@@ -6719,6 +6758,8 @@ export class TerminalApp {
     if (!result) return;
     if (result.kind === 'manual') { void this.loadSetupContext(state); return; }
     if (result.kind === 'backdrop') { this.saveOnboardingBackdrop(state, result.backdrop); return; }
+    if (result.kind === 'maximize') { this.acceptFirstRunWindow(state); return; }
+    if (result.kind === 'keepSize') { this.firstRunWindow?.decline(); return; }
     if (result.kind === 'redetect') { void this.loadStartupEvidence(state); return; }
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     if (result.kind === 'cursorEditor') {
@@ -6731,6 +6772,7 @@ export class TerminalApp {
       this.setupState = undefined; this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
       // Leaving the first run applies nothing; one quiet line says so and how to come back.
       if (firstRun) this.output.addHistoryLine(`${SUBTLE}Setup closed. Nothing was applied · /startup reopens it${RESET}`);
+      if (state.onboarding) this.restoreFirstRunWindow();
       this.returnFromPanel(); return;
     }
     const previous = this.promptConfiguration;
@@ -6766,6 +6808,11 @@ export class TerminalApp {
     const toolsFollow = tools === 'recommended' || tools === 'enhanced' || tools === 'individual';
     // The selector folds away into the real transcript and composer, unless another panel opens next.
     if (fromSelector && !result.then && !understandingFollows && !toolsFollow) this.beginStartupEnding(state, welcome);
+    // A window maximized for setup goes back once the ending has finished (never mid-transition), or now.
+    if (state.onboarding) {
+      if (this.startupEnding) this.restoreWindowAfterEnding = true;
+      else this.restoreFirstRunWindow();
+    }
     // A route row: the Setup draft is applied, then the real editor opens.
     if (result.then) { this.openDestinationPanel(result.then); return; }
     // Auto or Always with a use enabled: continue straight into model setup (the same /llm controller), detecting first.
@@ -6856,6 +6903,7 @@ export class TerminalApp {
     this.startupEnding = undefined;
     this.startupEndingClock?.(); this.startupEndingClock = undefined;
     if (this.endingBlink) { this.endingBlink = false; this.output.setWelcomeFrame('open'); }
+    if (this.restoreWindowAfterEnding) this.restoreFirstRunWindow();
   }
 
   /** A key or a resize finishes the ending at once; the key is then handled normally. */
@@ -11766,6 +11814,9 @@ export class TerminalApp {
     this.pendingQueuePause = undefined;
     this.queueExpiry?.(); this.queueExpiry = undefined;
     if (this.stopped) return;
+    // A window maximized for setup is put back before the frontend ends (bounded, synchronous, best effort).
+    this.restoreWindowAfterEnding = false;
+    this.firstRunWindow?.restoreNow();
     this.hostTitle.end();
     this.stopped = true;
     this.endOutputNavigation(false);

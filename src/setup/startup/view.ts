@@ -469,6 +469,27 @@ function footer(g: Ground, y: number): void {
   if (width >= 60) keycap(canvas, paint, right, y, 'A', label);
 }
 
+/**
+ * A genuine first run's one-time window offer: one quiet row just above the footer, shortened to fit; the footer
+ * keeps its own keys. The app decides when it shows (only once the host said it can maximize this window).
+ */
+function windowOffer(g: Ground, y: number): void {
+  const {canvas, paint, layout} = g;
+  const room = canvas.width - layout.margin * 2;
+  const variants: Array<[string, KeySpec[]]> = [
+    ['Use more screen space for setup?', [['M', 'Maximize for setup'], ['K', 'Keep current size']]],
+    ['More space for setup?', [['M', 'Maximize'], ['K', 'Keep size']]],
+    ['', [['M', 'Maximize'], ['K', 'Keep size']]],
+  ];
+  for (const [question, keys] of variants) {
+    const lead = question ? displayWidth(question) + 3 : 0;
+    if (lead + keys.reduce((sum, [key, action]) => sum + keycapWidth(paint, key, action) + 3, -3) > room) continue;
+    if (question) canvas.text(layout.margin, y, question, fg(paint, paint.t.secondary));
+    keycaps(canvas, paint, layout.margin + lead, y, keys, canvas.width - layout.margin);
+    return;
+  }
+}
+
 /** Leave setup?: a sheet rising from the bottom, Stay focused first; the ground behind it recedes (never the sky). */
 function confirmSheet(g: Ground): void {
   const {canvas, paint, state, layout} = g;
@@ -500,7 +521,9 @@ function drawGround(g: Ground): void {
   const width = canvas.width, margin = layout.margin;
   // Row 0 is the horizon's (or a blank top margin when there is no sky).
   const y = header(g, margin, 1, Math.min(width - margin * 2, 90)) + 1;
-  const maxY = canvas.height - 2;
+  // The window offer takes the row above the footer while it shows.
+  const offering = Boolean(quick.windowOffer && !quick.confirm);
+  const maxY = canvas.height - (offering ? 3 : 2);
   const reviewing = quick.review;
   if (layout.twoColumn) {
     const listWidth = Math.max(34, Math.min(46, Math.round(width * 0.34)));
@@ -541,7 +564,10 @@ function drawGround(g: Ground): void {
     }, textMax);
   }
   if (quick.confirm) confirmSheet(g);
-  else footer(g, canvas.height - 1);
+  else {
+    if (offering) windowOffer(g, canvas.height - 2);
+    footer(g, canvas.height - 1);
+  }
 }
 
 /** Below 40 × 14: a plain four-line list and the keys; every choice, Apply and Leave stay reachable down to 16 × 6. */
@@ -574,6 +600,8 @@ function tinyRows(state: SetupState, width: number, height: number, paint: Paint
     if (rows.length > height) rows = rows.filter(row => !/-line/u.test(row) || row.includes(mark));
   }
   if (state.message) rows = [state.message, ...rows];
+  // The window offer sits just above the keys, and is the first thing a short list gives up.
+  if (quick.windowOffer && !quick.confirm && rows.length < height) rows = [...rows.slice(0, -1), `${keyLabel(paint, 'M')} maximize · ${keyLabel(paint, 'K')} keep size`, rows.at(-1)!];
   if (rows.length > height) rows = [...rows.slice(0, Math.max(0, height - 1)), rows.at(-1)!];
   // The selector owns the whole screen at every size.
   const shown = rows.slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
@@ -603,7 +631,7 @@ export function renderStartup(state: SetupState, columns: number, height: number
     : {rows: [], horizon: ''};
   const groundHeight = rows - layout.skyHeight;
   const key = JSON.stringify([width, groundHeight, layout.skyHeight > 0, quick.choice, quick.review, quick.confirm ?? false, quick.confirmIndex ?? 0, quick.layout,
-    quick.backdrop, quick.keep, quick.evidence ?? null, state.message ?? '', state.saved.startingPoint ?? '', state.saved.onboardingComplete, context.reopened,
+    quick.backdrop, quick.keep, quick.evidence ?? null, state.message ?? '', quick.windowOffer ?? false, state.saved.startingPoint ?? '', state.saved.onboardingComplete, context.reopened,
     context.sample ?? '', level, paint.nerd, themeSignature()]);
   if (context.ground?.key !== key) {
     const canvas = new StartupCanvas(width, groundHeight);

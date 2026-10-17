@@ -68,6 +68,8 @@ export function executionFrameFixture(columns = 80, rows = 30, mode: CaptureMode
   Object.defineProperty(app, 'refreshContext', {value: async () => {}});
   // Keep Existing's detection would run tools' --version; frames use fixed, neutral evidence instead.
   app['detectStartupEnvironment'] = async () => ({shell: {id: 'zsh', label: 'zsh 5.9'}, files: ['~/.zshrc'], prompts: [], custom: [], tools: [], notes: []});
+  // The first run's window offer: no host window is ever probed from frames (tests that need it substitute a fake).
+  app['createFirstRunWindow'] = () => undefined;
   let frame: TerminalFrame | undefined;
   app['renderer'].render = value => { frame = structuredClone(value); };
   const owner = new QueueDispatcher({isReady: true, adapter: {id: 'fish'}, submit() {}}, new CommandQueue(() => now), {now: () => now, monotonic: () => now});
