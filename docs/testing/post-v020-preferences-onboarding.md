@@ -46,12 +46,42 @@ draft and displays the error. Customize Everything opens the guided setup (in
 the selector's visual language) over the saved configuration; leaving it without
 changes returns to the choices. Keep Existing reads the environment read-only.
 Apply folds the sky into the real transcript and composer; a genuine first run
-with Recommended adds the first-run welcome once, every other Apply one receipt
-line. `/startup`, `/setup quick` and Settings → Starting point reopen the
+adds Vespyr's block and the first-run welcome once, whichever starting point it
+chose (Minimal keeps no welcome on later launches); every later Apply adds one
+receipt line. `/startup`, `/setup quick` and Settings → Starting point reopen the
 selector; `/setup` opens the guided setup directly. Custom fire gradients and
-explicit Reduced Motion survive. Optional tools are not detected or installed on
-these paths. The one-time window offer and its checklists:
+explicit Reduced Motion survive. The one-time window offer and its checklists:
 [first-run window maximization](first-run-window-maximization.md).
+
+Setup Cat keeps one fixed frame: the header and step navigation stay put, rows
+start on the same line on every step and scroll with the selection visible, the
+keys sit on the last row, and the composer position never moves it. Editors it
+cannot embed open over it; Esc comes back to the same step, row and unapplied
+draft. Color editors opened from Setup write into its draft, nothing is saved
+until Apply.
+
+Tools: one panel and installer everywhere (`/tools`, Settings → Tools, the
+guided setup, and the review's Tools line in `/startup`, changed with T).
+Discover → select (Space, R for the missing recommended tools, C to clear) →
+Enter reviews the exact commands → one confirmation → per-tool results.
+Recommended defaults to Review and install recommended tools: the missing ones
+are ticked once detection has verified them, after the ending; Minimal and Keep
+Existing default to Skip. Chosen rows carry ✔ (`[x]` in Safe glyphs); the band is
+the cursor only. A check that fails or does not finish is *Unable to verify*,
+never Missing, and is never selected or installed.
+
+Custom colors: choosing Custom opens its editor at once (Setup and Settings).
+The shared gradient editor offers Lavender, Purple, Blue, Cyan, Teal, Green,
+Amber, Orange, Rose and White with P, a live preview bar, each stop's hex
+(Enter edits it), S to apply and Esc to cancel. The cursor idle effect has its
+own color: Follow cursor effect (the default, exactly as before), Follow theme,
+a preset or Custom.
+
+Updates: with Notify, a newer stable release shows one amber notice in the
+transcript, once per version: both versions, two lines of notes, and the way to
+update this installation (brew commands for Homebrew, `/update` for a verified
+checkout, the release page otherwise; no install scripts). Automatic shows the
+same notice when it cannot update this installation itself. Off checks nothing.
 
 Fire presets are gradients over existing particles, not a new engine. Purple,
 Blue, Green and Classic have hot-to-cool stops. Follow theme derives several
