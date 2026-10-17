@@ -19,28 +19,28 @@ checked-in public-release/source snapshots, no CLI runtime dependency.
 - Canonical Markdown relative links: resolve against the pinned source, not website paths.
 
 ## Task 1 — source and content foundation
-- [ ] Write failing Node tests for stable-release selection, source links and media.
-- [ ] Run them and confirm failure, then implement small data helpers.
-- [ ] Add isolated package/config, upstream sync and reviewed provenance snapshots.
-- [ ] Author concise guides and generate canonical technical references.
-- [ ] Verify tests and commit source/content foundation.
+- [x] Write failing Node tests for stable-release selection, source links and media.
+- [x] Run them and confirm failure, then implement small data helpers.
+- [x] Add isolated package/config, upstream sync and reviewed provenance snapshots.
+- [x] Author concise guides and generate canonical technical references.
+- [x] Verify tests and commit source/content foundation (`d97e878f`).
 
 Interfaces: release.json supplies latest/history/tap/sourceCommit; upstream.json
 maps canonical paths to site reference slugs and sha256; media.ts supplies typed slots.
 
 ## Task 2 — product and documentation experience
-- [ ] Write browser assertions for navigation, themes, search, copy and missing media.
-- [ ] Implement shared layout, visual tokens, product pages and Markdown docs routes.
-- [ ] Add native mobile navigation, TOC, anchors, metadata, sitemap, robots and 404.
-- [ ] Build Pagefind index and progressively enhanced search; no hydration framework.
-- [ ] Verify typecheck/build/link crawl and browser behavior, then commit.
+- [x] Write browser assertions for navigation, themes, search, copy and missing media.
+- [x] Implement shared layout, visual tokens, product pages and Markdown docs routes.
+- [x] Add native mobile navigation, TOC, anchors, metadata, sitemap, robots and 404.
+- [x] Build Pagefind index and progressively enhanced search; no hydration framework.
+- [x] Verify typecheck/build/link crawl and browser behavior, then commit (`365cbf89`).
 
 Interfaces: Base supplies header/footer/theme/copy/search; Docs supplies sidebar,
 TOC and previous/next; Media reads semantic slot IDs. CSS tokens serve both themes.
 
 ## Task 3 — integration and delivery
-- [ ] Add inexpensive website-only CI and narrowly exclude website from CLI jobs.
-- [ ] Document maintenance, refresh, media inventory and Cloudflare Git settings.
-- [ ] Run full website verification and independent final review; fix regressions.
-- [ ] Commit and push only feature/nmsh-website. No merge or deployment.
-- [ ] Record exact evidence and human review items in REVIEW.md.
+- [x] Add inexpensive website-only CI and narrowly exclude website from CLI jobs.
+- [x] Document maintenance, refresh, media inventory and Cloudflare Git settings.
+- [x] Run full website verification and independent final review; fix regressions.
+- Delivery gate: commit and push only feature/nmsh-website after verification. No merge or deployment; confirm the remote checkpoint in the final handoff.
+- [x] Record evidence and human review items in REVIEW.md.

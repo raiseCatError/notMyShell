@@ -17,7 +17,6 @@ if (!slot) throw new Error(`Unknown media slot: ${id}`);
       <img src={slot.src} width={slot.width} height={slot.height} alt={slot.alt} loading="lazy" decoding="async" />
     ) : (
       <div class="media-pending" role="img" aria-label={`${slot.title}. ${id === 'learn-concept' ? 'Future concept' : 'Product media'} pending; no capture or functional demonstration is shown.`}>
-        <span class="registration" aria-hidden="true"></span>
         <div class="media-center"><span class="media-symbol" aria-hidden="true">↗</span><span class="eyebrow">{id === 'learn-concept' ? 'Future concept' : 'Reserved for the real product'}</span><span class="media-title">{slot.title}</span></div>
         <span class="media-status">Media pending <span aria-hidden="true">·</span> {id}</span>
       </div>
