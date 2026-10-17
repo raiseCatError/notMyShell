@@ -6812,8 +6812,8 @@ export class TerminalApp {
     const next = state.onboarding ? {...configured, onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true} : configured;
     const fromSelector = Boolean(state.quick);
     const startingPoint: StartingPointId = result.startingPoint ?? 'customize';
-    // A genuine first run with NMSh Recommended is welcomed once; every other Apply gets one receipt line.
-    const welcome = fromSelector && Boolean(state.onboarding) && startingPoint === 'recommended';
+    // A genuine first run is welcomed once, whichever starting point it chose; every later Apply gets one receipt line.
+    const welcome = fromSelector && Boolean(state.onboarding);
     if ((result.changed || state.onboarding) && !setupIsIdempotent({...state, draft: next})) {
       if (!this.applySettingsConfiguration(next)) { state.message = 'Could not save. Your draft is kept; retry Apply or Esc to cancel.'; return; }
       this.armIdle();
@@ -6854,13 +6854,13 @@ export class TerminalApp {
   }
 
   /**
-   * What Apply adds to the real transcript (no command echo, no fake prompt): on a genuine first run with NMSh
-   * Recommended, Vespyr's welcome and the first-run welcome, once; otherwise one receipt line.
+   * What Apply adds to the real transcript (no command echo, no fake prompt): on a genuine first run, Vespyr's block
+   * and the first-run welcome, once, for any starting point; otherwise one receipt line.
    */
   private addStartingPointContent(state: SetupState, startingPoint: StartingPointId, next: PromptConfiguration, welcome: boolean): void {
     if (welcome) {
-      // Vespyr's block as configured (startWelcome honors the welcome setting), then the first-run welcome.
-      this.startWelcome(this.context.cwd || this.initialCwd);
+      // Vespyr's block this once, whatever the welcome preference (later launches follow it), then the first-run welcome.
+      this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.context.cwd || this.initialCwd, this.shellId, this.welcomeUnderstanding()));
       this.output.setFirstRunWelcome({version: 1});
       return;
     }

@@ -603,7 +603,8 @@ export class OutputBuffer {
       visualGaps: this.visualGaps,
       lineTypes: this.lineTypes,
       historicalContexts: this.historicalContexts,
-      welcome: this.welcomeVisible ? this.welcome : undefined,
+      // The first-run welcome keeps Vespyr's block with it, whatever the recurring welcome preference.
+      welcome: this.welcomeVisible || this.firstRun ? this.welcome : undefined,
       firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),

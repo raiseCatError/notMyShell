@@ -7,7 +7,7 @@ import type {WrappedRow} from './viewport.js';
 
 /**
  * The first-run welcome: added to the transcript once, when a genuine first
- * run applies NMSh Recommended, right after Vespyr's welcome block. It is
+ * run applies any starting point, right after Vespyr's welcome block. It is
  * stored with the transcript (version 1), so a restored session shows it as
  * part of its history; nothing ever adds it again.
  */
@@ -22,7 +22,7 @@ const RIM: Rgb = {red: 0x3e, green: 0xe8, blue: 0xb5};
 const GLOW: Rgb = {red: 0x45, green: 0xb8, blue: 0xf0};
 
 export const FIRST_RUN_TIPS: ReadonlyArray<readonly [string, string]> = [['/guide', 'take the tour: everything NMSh can do'], ['/btw', 'ask NMSh anything, in plain English'],
-  ['F1', 'open the command palette'], ['/startup', 'change your starting point anytime']];
+  ['F1', 'open the command palette'], ['/startup', 'change your starting point'], ['/setup', 'change any setting']];
 
 function wrap(text: string, width: number): string[] {
   const lines: string[] = [];

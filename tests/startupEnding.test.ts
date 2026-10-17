@@ -101,7 +101,7 @@ test('the first-run welcome: the luminous rule, the headline, the lead, the four
   assert.match(text, /You're all set\. Welcome to notMyShell!/u);
   // The lead wraps to a reading measure, as in the reference.
   assert.match(text.replace(/\s+/gu, ' '), /We're so glad you're here\. Your shell is still yours; NMSh just makes it a nicer place to live\./u);
-  for (const tip of ['/guide', '/btw', 'F1', '/startup']) assert.ok(text.includes(tip), tip);
+  for (const tip of ['/guide', '/btw', 'F1', '/startup', '/setup']) assert.ok(text.includes(tip), tip);
   assert.match(text, /The aurora lives on in \/screensaver\./u);
   assert.ok(rows.some(row => /[▁_]{20,}/u.test(row.plain)), 'the horizon, kept as a short luminous rule');
   assert.ok(rows.every(row => row.plain.length <= 80));
@@ -160,20 +160,31 @@ test('Apply on a genuine first run with Recommended: the welcome, once, in the r
   } finally { f.dispose(); }
 });
 
-test('Minimal and Keep Existing add one receipt line and no welcome; no command echo, no fake prompt', async () => {
-  for (const [choice, receipt] of [['2', /✓ Minimal Terminal is ready · Two-line · \/startup changes it anytime/u], ['4', /✓ Keeping your setup · zsh · \/startup changes it anytime/u]] as const) {
+test('Minimal and Keep Existing: the first run is welcomed once like Recommended; later applies add one receipt line', async () => {
+  for (const [choice, receipt] of [['2', /✓ Minimal Terminal is ready · Two-line · \/startup changes it anytime/u], ['4', /✓ Keeping your setup · zsh · (?:nothing changed · )?\/startup changes it anytime/u]] as const) {
     const f = executionFrameFixture(100, 32, 'rich');
     try {
       startQuick(f, true);
       await new Promise(resolve => setImmediate(resolve));
       f.app['handleKey']({kind: 'text', value: choice}); f.app['handleKey']({kind: 'enter'}); f.app['handleKey']({kind: 'enter'});
       assert.equal(f.app['setupState'], undefined, `choice ${choice} applied`);
-      const text = transcriptText(f);
+      f.app['finishStartupEnding']();
+      let text = transcriptText(f);
+      assert.match(text, /You're all set\. Welcome to notMyShell!/u, `choice ${choice}: welcomed`);
+      for (const tip of ['/guide', '/btw', 'F1', '/startup', '/setup']) assert.ok(text.includes(tip), `${choice}: ${tip}`);
+      assert.ok(f.app['output'].view().welcome, `choice ${choice}: with Vespyr's block, whatever the welcome preference`);
+      assert.doesNotMatch(text, /✓/u, 'no receipt on the first run');
+      assert.doesNotMatch(text, /❯ \/(?:setup|startup)/u, 'no command echo');
+      if (choice === '2') assert.equal(f.app['promptConfiguration'].welcome, 'none', 'Minimal keeps no welcome on later launches');
+      // Reopening /startup and applying again: one receipt line, never a second welcome.
+      f.app['startSetup']('quick'); f.capture();
+      await new Promise(resolve => setImmediate(resolve));
+      f.app['handleKey']({kind: 'text', value: choice}); f.app['handleKey']({kind: 'enter'}); f.app['handleKey']({kind: 'enter'});
+      f.app['finishStartupEnding']();
+      text = transcriptText(f);
       assert.match(text, receipt);
       assert.equal(text.match(/✓/gu)?.length, 1, 'one receipt line');
-      assert.doesNotMatch(text, /You're all set/u, 'no welcome');
-      assert.equal(f.app['output'].transcript().firstRun, undefined);
-      assert.doesNotMatch(text, /❯ \/(?:setup|startup)/u, 'no command echo');
+      assert.equal(text.match(/You're all set/gu)?.length, 1, 'one welcome only');
     } finally { f.dispose(); }
   }
 });

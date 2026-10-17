@@ -6,7 +6,7 @@ import {displayPath, type EnvironmentEvidence, type ProviderEvidence} from './de
  * draft that keeps what the person has. NMSh never runs startup files,
  * installs, downloads, edits rc/terminal/theme files or enables two prompts.
  */
-export type KeepAnswer = 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none' | 'minimal';
+export type KeepAnswer = 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none' | 'native' | 'minimal';
 export interface KeepOption {answer: KeepAnswer; label: string; detail: string}
 export interface KeepFinding {mark: 'ok' | 'warn'; what: string; why: string}
 export interface KeepQuestion {kind: 'several' | 'none'; title: string; options: readonly KeepOption[]; note: string}
@@ -75,14 +75,18 @@ export function keepExistingPlan(evidence: EnvironmentEvidence | undefined, save
       options: active.map(prompt => ({answer: prompt.id, label: prompt.label, detail: `started by your ${prompt.startedBy ?? mainFile(evidence)}`})),
       note: 'One prompt runs at a time. Your files stay exactly as they are either way.'}};
   }
-  const offered = evidence.prompts.filter(prompt => prompt.state === 'configured' && prompt.runnable);
+  // Prompts NMSh can draw that your shell does not start: configured ones, and Starship or Oh My Posh with their
+  // own defaults (Powerlevel10k needs its configuration first).
+  const offered = evidence.prompts.filter(prompt => prompt.runnable && (prompt.state === 'configured' || (prompt.state === 'installed' && prompt.id !== 'powerlevel10k')));
   const broken = evidence.prompts.find(prompt => prompt.state === 'broken');
   const title = evidence.custom.length ? 'NMSh can\'t draw custom prompts yet. What should it show?'
     : broken ? `${broken.label} is started but not installed. What should NMSh show?`
     : 'No prompt tool is started. What should NMSh show?';
   const options: KeepOption[] = [{answer: 'none', label: 'Composer only', detail: 'no prompt row; nothing imitates yours'},
-    ...offered.map(prompt => ({answer: prompt.id, label: prompt.label, detail: `configured${prompt.configPath ? ` in ${shown(prompt.configPath, evidence)}` : ''}, not started`})),
-    {answer: 'minimal', label: 'NMSh Minimal', detail: 'NMSh\'s quiet prompt instead'}];
+    ...offered.map(prompt => ({answer: prompt.id, label: prompt.label, detail: prompt.state === 'configured'
+      ? `your config${prompt.configPath ? ` in ${shown(prompt.configPath, evidence)}` : ''}; not started by your shell` : 'installed with its own defaults; not started by your shell'})),
+    {answer: 'native', label: 'NMSh Native', detail: 'NMSh\'s full prompt: folder, Git and status'},
+    {answer: 'minimal', label: 'NMSh Minimal', detail: 'NMSh\'s quiet prompt'}];
   return {found, noop, question: {kind: 'none', title, options, note: `Outside NMSh your prompt is unchanged. Nothing is written to ${mainFile(evidence)}.`}};
 }
 
@@ -105,6 +109,7 @@ function detectedSettings(saved: PromptConfiguration, evidence: EnvironmentEvide
       powerlevel10k: {themePath: prompt?.themePath ?? null, configPath: prompt?.configExists ? prompt.configPath ?? null : null}};
     case 'ohMyPosh': return {...providers, provider: 'ohMyPosh', ohMyPosh: {configPath: prompt?.configPath ?? null}};
     case 'none': return {...providers, provider: 'none'};
+    case 'native': return {...providers, provider: 'nmsh'};
     case 'minimal': {
       const quiet = minimalPromptConfiguration('twoLine');
       return {...providers, provider: 'nmsh', nmsh: {...saved.nmsh, style: quiet.nmsh.style, styleProfiles: quiet.nmsh.styleProfiles},

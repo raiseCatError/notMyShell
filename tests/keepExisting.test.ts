@@ -51,7 +51,7 @@ test('several active prompts ask which one; only one ever runs', () => {
   assert.equal(keepExistingDraft(fresh(), found, 99, false).provider, 'starship', 'an out-of-range answer falls back to the first');
 });
 
-test('no active prompt asks Composer only (first, the default) or NMSh Minimal; configured providers are offered by name', () => {
+test('no active prompt asks Composer only (first, the default), NMSh Native or NMSh Minimal; providers it can run are offered by name', () => {
   const custom = evidence({custom: [{kind: 'assignment', label: 'A custom zsh PROMPT', where: '~/.zshrc'}]});
   const plan = keepExistingPlan(custom, fresh());
   assert.equal(plan.question?.kind, 'none');
@@ -67,9 +67,18 @@ test('no active prompt asks Composer only (first, the default) or NMSh Minimal; 
   // A configured-but-not-started provider that can run is offered by name; one that cannot is only reported.
   const configuredStarship = evidence({prompts: [provider('starship', 'configured', {runnable: true}), provider('ohMyPosh', 'configured', {runnable: false})]});
   const offered = keepExistingPlan(configuredStarship, fresh());
-  assert.deepEqual(offered.question?.options.map(option => option.answer), ['none', 'starship', 'minimal']);
+  assert.deepEqual(offered.question?.options.map(option => option.answer), ['none', 'starship', 'native', 'minimal']);
   assert.match(offered.question?.options[1]?.detail ?? '', /not started/u);
   assert.equal(keepExistingDraft(fresh(), configuredStarship, 1, false).provider, 'starship');
+  const native = keepExistingDraft(fresh(), configuredStarship, 2, false);
+  assert.equal(native.provider, 'nmsh');
+  assert.notEqual(native.nmsh.style, 'minimal', 'Native is the full NMSh prompt');
+  // Installed with its own defaults (no config) is offered too; Powerlevel10k without its config is not.
+  const installed = evidence({prompts: [provider('starship', 'installed', {runnable: true}), provider('powerlevel10k', 'installed', {runnable: true})]});
+  const installedPlan = keepExistingPlan(installed, fresh());
+  assert.deepEqual(installedPlan.question?.options.map(option => option.answer), ['none', 'starship', 'native', 'minimal']);
+  assert.match(installedPlan.question?.options[1]?.detail ?? '', /own defaults/u);
+  for (const option of installedPlan.question!.options) assert.ok(option.detail.length <= 60 && !option.detail.includes('—'), `short: ${option.detail}`);
 });
 
 test('a started prompt that cannot run is reported as broken and never offered', () => {
@@ -143,10 +152,14 @@ test('selector: Keep Existing waits for evidence, answers its question with ↑�
   assert.equal(state.draft.provider, 'none', 'Composer only is the default answer');
   press(state, 'down');
   assert.equal(state.quick?.keep?.answer, 1);
-  assert.equal(state.draft.provider, 'nmsh', 'NMSh Minimal');
+  assert.equal(state.draft.provider, 'nmsh', 'NMSh Native');
+  assert.notEqual(state.draft.nmsh.style, 'minimal');
   press(state, 'down');
-  assert.equal(state.quick?.keep?.answer, 1, 'the answer stays within the options');
-  press(state, 'up');
+  assert.equal(state.quick?.keep?.answer, 2);
+  assert.equal(state.draft.nmsh.style, 'minimal', 'NMSh Minimal');
+  press(state, 'down');
+  assert.equal(state.quick?.keep?.answer, 2, 'the answer stays within the options');
+  press(state, 'up'); press(state, 'up');
   assert.equal(state.quick?.keep?.answer, 0);
   const applied = press(state, 'enter');
   assert.equal(applied?.kind, 'apply');

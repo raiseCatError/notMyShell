@@ -24,12 +24,12 @@ import {easeOut, renderSkyBand, skyCatPose} from './sky.js';
  *   520–760   the horizon, now one luminous rule at the top, fades out (behind the real
  *             row: it fills only what the row's own text leaves blank, to the right of it)
  *   240–880   the real composer rises from below the bottom edge into its own place
- *   480 →     a genuine first run's welcome arrives one line every 70 ms (all of it
+ *   480 →     a genuine first run's welcome arrives one line every 60 ms (all of it
  *             within 600 ms), a light sweep crosses its headline and Vespyr blinks
  */
 export const ENDING_MS = 880;
 const GROUND_MS = 180, FOLD_MS = 520, RULE_END_MS = 760, RISE_START_MS = 240;
-export const WELCOME_START_MS = 480, WELCOME_STEP_MS = 70;
+export const WELCOME_START_MS = 480, WELCOME_STEP_MS = 60;
 const SWEEP_MS = 900;
 
 export interface StartupEnding {
