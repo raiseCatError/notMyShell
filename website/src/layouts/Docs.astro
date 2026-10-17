@@ -1,0 +1,35 @@
+---
+import Base from './Base.astro';
+import { documents, docGroups } from '../lib/docs';
+import { release, sourceUrl } from '../lib/site';
+interface Props { title: string; description: string; slug: string; headings: { depth: number; slug: string; text: string }[]; source?: string; sources?: string[] }
+const { title, description, slug, headings, source, sources = [] } = Astro.props;
+const entries = await documents();
+const currentIndex = entries.findIndex(entry => entry.slug === slug);
+const previous = entries[currentIndex - 1];
+const next = entries[currentIndex + 1];
+const toc = headings.filter(heading => heading.depth === 2 || heading.depth === 3);
+const sourcePaths = source ? [source] : sources;
+---
+<Base title={title} description={description} docs>
+  <div class="docs-grid">
+    <aside class="docs-sidebar" aria-label="Documentation navigation" data-pagefind-ignore>
+      <a href="/docs/" class="sidebar-title">Documentation <span>↗</span></a>
+      <span class="version-label">Stable {release.latest.tag}</span>
+      <nav aria-label="Documentation sections">{docGroups.map(group => <div class="nav-group"><h2>{group}</h2>{entries.filter(entry => entry.data.group === group).map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}</div>)}</nav>
+    </aside>
+    <div class="docs-main">
+      <details class="docs-mobile" data-pagefind-ignore><summary>Documentation menu</summary><nav aria-label="Mobile documentation">{entries.map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}</nav></details>
+      <nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore><a href="/docs/">Docs</a><span aria-hidden="true">/</span>{source && <><a href="/docs/#technical-reference">Reference</a><span aria-hidden="true">/</span></>}<span aria-current="page">{title}</span></nav>
+      {toc.length > 1 && <details class="toc-mobile" data-pagefind-ignore><summary>On this page</summary><nav aria-label="On this page (compact)">{toc.map(heading => <a href={`#${heading.slug}`}>{heading.text}</a>)}</nav></details>}
+      <article class="prose" data-pagefind-body>
+        <header class="doc-heading"><span class="eyebrow">{source ? 'Canonical release reference' : 'The NMSh handbook'}</span><h1 data-pagefind-meta="title">{title}</h1><p class="lead">{description}</p></header>
+        {source && <aside class="note"><strong>Source snapshot · {release.latest.tag}</strong><p>This is a version-pinned repository document, not a promise that every historical proposal in it shipped. Original caveats and development notes are preserved. <a href={sourceUrl(source)}>Read the canonical source ↗</a></p></aside>}
+        <slot />
+      </article>
+      <div class="doc-provenance" data-pagefind-ignore><span>Reviewed against {release.latest.tag} · snapshot verified {release.verifiedAt}</span>{sourcePaths.length > 0 && <div>Sources: {sourcePaths.map((path, index) => <>{index > 0 && ' · '}<a href={sourceUrl(path)}>{path.split('/').pop()}</a></>)}</div>}<a href={`https://github.com/raiseCatError/notMyShell/issues/new?title=${encodeURIComponent(`Documentation: ${title}`)}`}>Suggest a correction ↗</a></div>
+      <nav class="doc-pagination" aria-label="Previous and next pages" data-pagefind-ignore>{previous ? <a href={`/docs/${previous.slug}/`}><small>← Previous</small><span>{previous.data.title}</span></a> : <span></span>}{next && <a href={`/docs/${next.slug}/`}><small>Next →</small><span>{next.data.title}</span></a>}</nav>
+    </div>
+    <aside class="docs-toc" data-pagefind-ignore>{toc.length > 1 && <nav aria-label="On this page"><h2>On this page</h2>{toc.map(heading => <a class:list={{ nested: heading.depth === 3 }} href={`#${heading.slug}`}>{heading.text}</a>)}</nav>}<a class="toc-source" href={release.latest.url}>Release notes ↗</a></aside>
+  </div>
+</Base>

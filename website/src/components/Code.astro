@@ -1,0 +1,9 @@
+---
+import { Code } from 'astro:components';
+interface Props { code: string; lang?: 'sh' | 'text'; label?: string }
+const { code, lang = 'sh', label = 'Command' } = Astro.props;
+---
+<div class="command-block">
+  <div class="command-label">{label}</div>
+  <Code code={code} lang={lang} themes={{ light: 'github-light', dark: 'github-dark' }} defaultColor={false} />
+</div>

@@ -1,0 +1,24 @@
+import { readFile, access, readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { validateMedia } from './content.mjs';
+
+const root = new URL('../', import.meta.url);
+const read = async path => JSON.parse(await readFile(new URL(path, root), 'utf8'));
+const release = await read('src/data/release.json');
+const manifest = await read('src/data/upstream.json');
+if (!/^v\d+\.\d+\.\d+$/.test(release.latest.tag) || release.latest.tag !== manifest.tag || release.sourceCommit !== manifest.commit) throw new Error('Release and canonical source snapshots disagree.');
+for (const file of manifest.files) {
+  const markdown = await readFile(new URL(`src/content/reference/${file.slug}.md`, root));
+  const hash = createHash('sha256').update(markdown).digest('hex');
+  if (hash !== file.generatedSha256) throw new Error(`Generated reference changed: ${file.slug}. Edit upstream, not the snapshot.`);
+}
+const slots = await read('src/data/media.json');
+if (new Set(slots.map(slot => slot.id)).size !== slots.length) throw new Error('Duplicate media IDs.');
+for (const slot of slots) {
+  validateMedia(slot);
+  if (slot.src) await access(new URL(`public${slot.src}`, root));
+  if (slot.poster) await access(new URL(`public${slot.poster}`, root));
+}
+const guides = await readdir(new URL('src/content/guides/', root));
+if (guides.filter(file => file.endsWith('.md')).length < 18) throw new Error('The complete curated guide set is missing.');
+console.log(`Content valid: ${manifest.files.length} pinned sources, ${guides.length} guides, ${slots.length} media slots; stable ${release.latest.tag}.`);

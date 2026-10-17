@@ -1,0 +1,70 @@
+---
+import '../styles/global.css';
+import Search from '../components/Search.astro';
+import { site, release } from '../lib/site';
+interface Props { title: string; description?: string; docs?: boolean; noindex?: boolean }
+const { title, description = site.description, docs = false, noindex = false } = Astro.props;
+const canonical = new URL(noindex ? '/404.html' : Astro.url.pathname, site.url).href;
+const navigation = [
+  { href: '/features/', title: 'Features' }, { href: '/docs/', title: 'Docs' },
+  { href: '/learn/', title: 'Learn', planned: true }, { href: '/roadmap/', title: 'Roadmap' },
+];
+const isActive = (href: string) => Astro.url.pathname.startsWith(href);
+---
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title === 'notMyShell' ? 'notMyShell — A frontend for your real shell' : `${title} — notMyShell`}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <meta name="theme-color" content="#101114" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="notMyShell" />
+    <meta property="og:title" content={title === 'notMyShell' ? 'notMyShell — A frontend for your real shell' : `${title} — notMyShell`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={`${site.url}/brand/nmsh-logo.png`} />
+    <meta property="og:image:alt" content="The genuine NMSh / notMyShell wordmark" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={`${title} — notMyShell`} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={`${site.url}/brand/nmsh-logo.png`} />
+    <link rel="icon" href="/brand/nmsh-logo.png" type="image/png" />
+    <link rel="sitemap" href="/sitemap.xml" />
+    <script is:inline>
+      try { document.documentElement.dataset.theme = localStorage.getItem('nmsh-theme') === 'light' ? 'light' : 'dark'; } catch {}
+    </script>
+    <script type="application/ld+json" set:html={JSON.stringify({ '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: site.name, applicationCategory: 'DeveloperApplication', operatingSystem: 'macOS, Linux, WSL 2', softwareVersion: release.latest.version, url: site.url, codeRepository: site.repo, license: `${site.repo}/blob/${release.sourceCommit}/LICENSE`, author: { '@type': 'Person', name: site.creator, url: 'https://github.com/raiseCatError' }, description: site.description })} />
+  </head>
+  <body class:list={{ 'docs-page': docs }}>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" data-pagefind-ignore>
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="notMyShell home"><img src="/brand/nmsh-logo.png" width="48" height="24" alt="" /><span>not<span class="brand-my">My</span>Shell</span></a>
+        <nav class="desktop-nav" aria-label="Main navigation">
+          {navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <span class="planned-dot" aria-label=" (planned)"></span>}</a>)}
+        </nav>
+        <div class="header-actions">
+          <button id="search-open" class="icon-button search-trigger" aria-label="Search documentation" hidden><span aria-hidden="true">⌕</span><kbd>⌘ K</kbd></button>
+          <button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" hidden><span aria-hidden="true" id="theme-icon">◐</span></button>
+          <a class="header-github" href={site.repo}>GitHub <span aria-hidden="true">↗</span></a>
+          <a class="button small header-start" href="/install/">Get started</a>
+          <details class="mobile-menu"><summary>Menu</summary><nav aria-label="Mobile navigation">{navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <small>Planned</small>}</a>)}<a href="/install/">Get started</a><a href={site.repo}>GitHub ↗</a></nav></details>
+        </div>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"><slot /></main>
+    <footer class="site-footer" data-pagefind-ignore>
+      <div class="footer-top"><a class="footer-name" href="/">notMyShell<span>A frontend. Not a replacement.</span></a><nav aria-label="Footer"><a href="/architecture/">Architecture</a><a href="/releases/">Releases</a><a href="/docs/reference/privacy/">Privacy</a><a href="/docs/reference/contributing/">Contribute</a></nav></div>
+      <div class="footer-bottom"><span>Independent, open-source software by <a href="https://github.com/raiseCatError">raiseCatError</a>.</span><span><a href={`${site.repo}/blob/${release.sourceCommit}/LICENSE`}>GPL-3.0-only</a><span aria-hidden="true"> · </span><a href={release.latest.url}>{release.latest.tag}</a></span></div>
+    </footer>
+    <Search />
+    <div id="feedback" role="status" aria-live="polite"></div>
+    <script>
+      import '../scripts/client';
+    </script>
+  </body>
+</html>
