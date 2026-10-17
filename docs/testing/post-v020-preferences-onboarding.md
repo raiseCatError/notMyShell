@@ -114,6 +114,32 @@ load, breaking exact-byte copy comparisons in bash variants; it is classified
 environmental and deliberately not filtered, because filtering it would weaken
 the exact-output assertions.
 
+## Composer history while commands run
+
+Physical QA on this branch found that ↑/↓ stopped recalling command history while
+any command executed. The recall path had used the run state itself as the gate,
+but execution is not input ownership: a command that reads nothing leaves the
+composer — and its history — untouched. Recall is now decided by one predicate,
+`composerHistoryEligible`: an explicit queued-entry edit, a passthrough program or
+an external passthrough keeps the keys entirely; explicit Ctrl+Q queue-compose and
+an idle composer always recall; a running command recalls exactly when no direct
+reader (hidden line or single key) and no line-waiting state owns input. The
+direct-reader and line-waiting checks are defense in depth — those keys are routed
+to the program earlier in key handling. A shell switch (`/shell bash`) resets the
+navigation so an arrow afterwards steps the new shell's history, never the old
+shell's snapshot; the editor draft is untouched. Anything recalled reaches the
+queue only through an explicit Enter. Evidence: 18 app-level key-routing cases
+(`composerHistoryRunning`) plus real zsh/Bash/Fish PTY regressions in
+`commandQueueLive`.
+
+The live sandbox now isolates `XDG_DATA_HOME` like `HOME`. An ambient value (this
+machine's environment sets one) pointed every Fish sandbox at one shared
+`fish_history`; imported entries from earlier runs made the new Fish regression
+order-dependent — a stale `echo QUEUED-NEXT` entry satisfied the "recorded by the
+provider" filter for a freshly enqueued submission, so the first ↑ recalled the
+queue entry instead of the executed command. With the sandbox value pinned to its
+own home, the import is hermetic.
+
 ## Selected surface root cause
 
 The old shared band only reopened its background after exact SGR 0 resets.
@@ -220,6 +246,19 @@ t7run bash -c 'fixture=$(mktemp -d "$T7_STORAGE_ROOT/t/prefs-human-XXXXXX"); \
 7. If Test B fails, record host/shell versions, active config path, effective
    Queued output row, FOLLOW/DETACHED, active selection and exact key sequence.
    Do not assume the on-disk preference was active in the original session.
+8. Composer history while a command runs (the queued-execution regression).
+   Run `echo RECALL-ONE` then `echo RECALL-TWO`. Start `sleep 30`; while it
+   runs, type `echo QUEUED-NEXT` and Enter — it queues (the queue row counts
+   it). Type `echo DRAFT-KEEP`, then ↑: the composer shows `echo RECALL-TWO`,
+   ↑ again `echo RECALL-ONE`; ↓ walks back and finally restores
+   `echo DRAFT-KEEP` exactly at its original caret. Navigation alone never
+   runs or queues anything. Ctrl+U then ↑ recalls freshly; Enter queues it.
+   `/queue` still owns ↑/↓ for its list, and editing a queued entry keeps
+   ↑/↓ in that entry's draft. With a program waiting for a line (`read`,
+   `sudo`) or a full-screen app (`vim`, `less`), arrows belong to the program;
+   Ctrl+Q while it waits composes a queue entry whose ↑/↓ recall history.
+   `/shell bash` and then ↑ starts navigation fresh in the new shell while the
+   typed draft survives.
 
 Linux Fish 3.7 input safety and physical GUI/shader interaction are separate
 acceptance evidence. Local real-PTY tests use installed macOS shell versions;

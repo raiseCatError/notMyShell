@@ -87,6 +87,88 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
   });
 }
 
+for (const shell of ['zsh', 'bash', 'fish'] as const) {
+  const available = supported && (shell === 'zsh' || (shell === 'bash' ? bash : fish));
+  test(`live ${shell}: while a command runs, Up/Down recall executed commands in the composer; only Enter changes the queue`, {skip: available ? false : `${shell} not installed`, timeout: 120_000}, async () => {
+    const {sandbox, frontend} = await start(shell);
+    const release = join(sandbox.home, 'history-release');
+    try {
+      await frontend.run('echo RECALL-ONE', /RECALL-ONE/u);
+      await frontend.run('echo RECALL-TWO', /RECALL-TWO/u);
+      // Push the executed commands' echo lines out of the pane: from here on these words can only come from the composer.
+      await frontend.run(`seq 1 50 | sed 's/^/FILLER-/'`, /FILLER-50/u);
+      const mark = frontend.mark;
+      // A bounded gate: even a failed test releases the shell's hold loop within a couple of minutes.
+      const holding = `sh -c 'printf "HOLD-%s\\n" READY; n=0; until test -f "$1" || [ "$n" -ge 2400 ]; do sleep 0.05; n=$((n+1)); done' nmsh-fixture "${release}"`;
+      frontend.pty.write(`${holding}\r`);
+      await frontend.waitFor(/HOLD-READY/u, mark);
+      // Enter while a command runs still queues, exactly as before: the queue row appears.
+      frontend.pty.write('echo QUEUED-NEXT\r');
+      await frontend.waitFor(/› echo QUEUED-NEXT/u, mark);
+      // While the command runs, Up/Down browse executed commands in the composer; nothing is enqueued by navigating.
+      frontend.pty.write('echo DRAFT-KEEP');
+      await frontend.waitFor(/❯ echo DRAFT-KEEP/u, mark);
+      // Newest first: the filler (it ran last), then the two recalled commands; Down walks back and restores the draft.
+      let step = frontend.mark;
+      frontend.pty.write('\u001b[A');
+      await frontend.waitFor(/❯ seq 1 50 \| sed/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[A');
+      await frontend.waitFor(/❯ echo RECALL-TWO/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[A');
+      await frontend.waitFor(/❯ echo RECALL-ONE/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[B');
+      await frontend.waitFor(/❯ echo RECALL-TWO/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[B');
+      await frontend.waitFor(/❯ seq 1 50 \| sed/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[B');
+      await frontend.waitFor(/❯ echo DRAFT-KEEP/u, step, 8_000);
+      assert.doesNotMatch(drawn(frontend, mark), /› echo RECALL-/u, 'navigation alone never queued a recalled command');
+      assert.match(drawn(frontend, mark), /› echo QUEUED-NEXT/u, 'the queue row is still the one explicit entry');
+      // Ctrl+U clears the draft; a fresh Up and an explicit Enter queue the recalled command.
+      frontend.pty.write('\u0015');
+      await pause(300);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[A');
+      await frontend.waitFor(/❯ seq 1 50 \| sed/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\u001b[A');
+      await frontend.waitFor(/❯ echo RECALL-TWO/u, step);
+      step = frontend.mark;
+      frontend.pty.write('\r');
+      await pause(500);
+      // /queue keeps the keyboard for its own list: both entries are queued, Up/Down select, and the composer never recalls.
+      step = frontend.mark;
+      frontend.pty.write('/queue\r');
+      await frontend.waitFor(/Command queue[\s\S]*echo QUEUED-NEXT[\s\S]*echo RECALL-TWO/u, step);
+      frontend.pty.write('\u001b[A');
+      await pause(200);
+      assert.doesNotMatch(drawn(frontend, step), /❯ echo RECALL-/u, 'panel navigation never recalls into the composer');
+      frontend.pty.write('\u001b[B');
+      await pause(200);
+      frontend.pty.write('\u001b');
+      await pause(300);
+      // The gate opens: both entries run in order in the same shell, exactly as queued.
+      writeFileSync(release, '');
+      const queued = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records)
+        .filter(record => record.command === 'echo QUEUED-NEXT' || record.command === 'echo RECALL-TWO')
+        .filter(record => /from queue/u.test(record.lifecycleText ?? ''));
+      await until(async () => (await queued()).length >= 2, 30_000, 'both queued commands ran');
+      const records = (await queued()).reverse();
+      assert.deepEqual(records.map(record => record.command), ['echo QUEUED-NEXT', 'echo RECALL-TWO'], 'in queue order, each once');
+      assert.deepEqual(records.map(record => /from queue/u.test(record.lifecycleText ?? '')), [true, true]);
+    } finally {
+      // Always open the gate: a failed test must never leave the shell's hold loop running.
+      try { writeFileSync(release, ''); } catch { /* the sandbox is gone */ }
+      await sandbox.dispose();
+    }
+  });
+}
+
 test('live: a failed command pauses the queue with its reason; nothing after it runs until resumed or cleared', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {

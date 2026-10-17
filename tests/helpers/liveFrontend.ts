@@ -48,7 +48,9 @@ export class LiveSandbox {
   }
 
   get env(): NodeJS.ProcessEnv {
-    return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, NMSH_RUNTIME_DIR: this.runtime,
+    // XDG_DATA_HOME is hermetic like HOME: an ambient value (a developer's or CI machine's) must never point the
+    // sandbox's shells — Fish reads its history file there — at shared state outside the sandbox.
+    return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, XDG_DATA_HOME: join(this.home, '.local', 'share'), NMSH_RUNTIME_DIR: this.runtime,
       TMPDIR: this.temp, TMP: this.temp, TEMP: this.temp,
       TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '',
       // A host NMSh cannot open windows in, so tests never launch real terminal windows.

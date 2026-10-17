@@ -24,7 +24,7 @@ const suites = {
 const runtimeWeights = {
   "bundledCatalog.test.ts": 5,
   "compatibilityHarness.test.ts": 28,
-  "commandQueueLive.test.ts": 68,
+  "commandQueueLive.test.ts": 93,
   "copySelectionLive.test.ts": 13,
   "configuredCompletion.test.ts": 6,
   "ctrlZJobControl.test.ts": 12,

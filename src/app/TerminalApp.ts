@@ -2415,7 +2415,7 @@ export class TerminalApp {
     } else if (key.kind === 'up' && isSlash && !searchSurface && suggestions.length > 0 && this.leaveSlashMenu()) {
       // Left the slash menu; fall through to history recall below.
       const {columns} = this.dimensions();
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
+      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
     } else if (key.kind === 'complete') {
       const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
       if (action === 'shell-suggestion') {
@@ -2521,7 +2521,7 @@ export class TerminalApp {
       if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
       // Then the background task bar (only from an idle composer, only when tasks are shown), then history.
       if (this.enterBackgroundBar(key)) return;
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
+      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       if (this.enterBackgroundBar(key)) return;
@@ -2530,7 +2530,7 @@ export class TerminalApp {
       const {columns} = this.dimensions();
       // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (↑ then focuses it).
       if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
-      if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('next');
+      if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
       this.editor.selectDown(this.inputColumns(columns), this.railInputPrefix(columns));
@@ -2590,6 +2590,20 @@ export class TerminalApp {
       else usage.set(name, {count: 1, last: entry.at ?? 0});
     }
     this.completionService.setCommandUsage(usage);
+  }
+
+  /**
+   * Whether Up/Down may browse command history right now. NMSh owns the composer unless a foreground program
+   * actually reads input: ordinary execution (queued entries included) never takes the keys, while a program
+   * waiting for a line — or a direct hidden/single-key reader — keeps them, and an explicit queued-entry edit
+   * keeps its own draft. The direct-reader and line-waiting checks are defense in depth: those keys are routed
+   * to the program earlier in handleKey, and this predicate must never disagree with that.
+   */
+  private composerHistoryEligible(): boolean {
+    if (this.queueEdit || this.passthrough || this.externalPassthrough) return false;
+    if (this.queueCompose) return true;
+    if (!this.running) return true;
+    return !this.directInputRequest() && !this.answersByDefault();
   }
 
   /**
@@ -9776,6 +9790,9 @@ export class TerminalApp {
     } finally { this.shellSwitching = false; }
     this.shellId = target;
     this.shellJobs = 0;
+    // A history navigation belongs to the shell it browsed: an arrow after the switch must never step the old
+    // shell's snapshot, and the new shell's history starts its own session. The draft in the editor is untouched.
+    this.composerHistory.reset();
     // The old shell's zone ends here; the new shell's first prompt opens the next one.
     this.hostSemantics.end();
     this.switchedShellStarting = true;
