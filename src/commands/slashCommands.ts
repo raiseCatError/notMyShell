@@ -60,6 +60,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/settings queue', insertion: '/settings queue', description: 'Queue: queued-command behavior, execution timeline, results and motion'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
+  {name: '/setup quick', insertion: '/setup quick', description: 'Preview Recommended, Minimal or Manual; review before replacing preferences'},
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
   {name: '/setup look', insertion: '/setup look', description: 'Setup Cat: theme, UI chrome and Chroma (the Look step)'},
   {name: '/setup appearance', insertion: '/setup appearance', description: 'Same as /setup look'},
@@ -294,7 +295,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     }
     return {kind: 'keepAwake', op: 'panel', invalid: word};
   }
-  const setup = /^\/setup(?:\s+(prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
+  const setup = /^\/setup(?:\s+(quick|manual|prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s+queue\s*$/u.test(input)) return {kind: 'settings', view: 'config', destination: 'queue'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};

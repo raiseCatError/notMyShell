@@ -153,8 +153,7 @@ test('Setup stays draft-based while its embedded cursor editor runs: nothing sav
     app['handleKey']({kind: 'right'}); // Speed
     app['handleKey']({kind: 'text', value: 'a'});
     assert.equal(state.cursorPanel!.advanced, true, 'A reaches the physics');
-    app['handleKey']({kind: 'down'});
-    app['handleKey']({kind: 'down'});
+    state.cursorPanel!.selected = 4; // A numeric physics row, independent of contextual palette rows.
     app['handleKey']({kind: 'right'});
     assert.notEqual(JSON.stringify(state.draft.cursor), saved, 'the change landed in the Setup draft');
     assert.equal(JSON.stringify(app['promptConfiguration'].cursor), saved, 'the live configuration is untouched');

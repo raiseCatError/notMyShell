@@ -1,3 +1,4 @@
+import {FIRE_COLORS, FIRE_COLOR_LABELS, fireColorChoice, applyFireColor} from '../cursor/palette.js';
 import {SHELL_IDS} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
@@ -89,7 +90,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
+  | 'setup' | 'setupQuick' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
 
 interface SettingsRowBase {
   id: string;
@@ -285,6 +286,10 @@ const CURSOR_ROWS: readonly SettingsRow[] = [
     feature: 'motion', values: CURSOR_MOTIONS, get: c => c.motion, set: (c, motion) => ({...c, motion: motion as CursorSettings['motion']})}),
   cursorFeatureRow({id: 'cursorEffect', label: 'Cursor effect', description: 'What movement sheds: Fire, Sparks, Ripple and more (off by default)', category: 'Cursor',
     feature: 'effect', values: CURSOR_EFFECTS, get: c => c.effect, set: (c, effect) => ({...c, effect: effect as CursorSettings['effect']})}),
+  {...enumRow({id: 'cursorFireColor', parent: 'cursorEffect', label: 'Fire / effect color', description: 'Hot-to-cool particle gradients; Custom is edited in /cursor', category: 'Cursor',
+    values: FIRE_COLORS, labels: FIRE_COLORS.map(value => FIRE_COLOR_LABELS[value]), get: c => fireColorChoice(c.cursor),
+    set: (c, value) => withCursor(c, applyFireColor(c.cursor, value))}), when: c => c.cursor.effect === 'fire'},
+  {id: 'cursorFireCustom', parent: 'cursorEffect', when: c => c.cursor.effect === 'fire', label: 'Custom Fire gradient', description: 'Edit particle colors in the shared /cursor gradient editor', category: 'Cursor', control: 'action', actionLabel: 'Edit ›', destination: 'cursor'},
   cursorFeatureRow({id: 'cursorIdle', label: 'Cursor idle effect', description: 'A slow effect while the caret rests (off by default)', category: 'Cursor',
     feature: 'idleEffect', values: CURSOR_IDLE_EFFECTS, get: c => c.idleEffect, set: (c, idleEffect) => ({...c, idleEffect: idleEffect as CursorSettings['idleEffect']})}),
   enumRow({id: 'cursorColor', label: 'Cursor color', description: 'Follow the prompt\'s theme, choose a theme for the cursor alone, use NMSh\'s accent, keep the host\'s color, or pick your own', category: 'Cursor',
@@ -627,6 +632,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
   {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
+  {id: 'setupQuick', label: 'Choose a preset', description: 'Recommended, Minimal or Manual · /setup quick · review before applying', category: 'General', control: 'child', destination: 'setupQuick'},
   {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
 

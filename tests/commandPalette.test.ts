@@ -68,8 +68,8 @@ test('the palette opens, runs only the chosen action, and never executes shell t
     app['handleKey']({kind: 'enter'});
     await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(app['paletteState'], undefined);
-    assert.equal(app['promptConfiguration'].transcriptPresentation, 'chat');
-    assert.equal(app['output'].presenter.transcriptLayout, 'chat');
+    assert.equal(app['promptConfiguration'].transcriptPresentation, 'normal');
+    assert.equal(app['output'].presenter.transcriptLayout, 'normal');
     assert.equal(app['editor'].text, '', 'palette typing never reaches the editor');
     assert.deepEqual(written, [], 'nothing was sent to the shell');
     assert.equal(app['paletteRecent'][0], 'layout:presentation');

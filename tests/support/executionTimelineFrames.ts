@@ -33,12 +33,12 @@ export type CaptureMode = 'normal' | 'reduced' | 'effects-off' | 'safe' | 'no-co
 export function executionFrameFixture(columns = 80, rows = 30, mode: CaptureMode = 'normal') {
   const root = mkdtempSync(join(tmpdir(), 'nmsh-queue-frame-'));
   const cwd = join(root, 'project'); mkdirSync(cwd);
-  const envKeys = ['HOME', 'XDG_CONFIG_HOME', 'TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'NMSH_COLOR', 'NMSH_ICONS', 'NMSH_RETURN_SESSION', 'NMSH_HANDOFF_SHELL', 'NMSH_DETERMINISTIC', 'NMSH_REDUCED_MOTION'];
+  const envKeys = ['HOME', 'XDG_CONFIG_HOME', 'TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'NMSH_COLOR', 'NMSH_ICONS', 'NMSH_RETURN_SESSION', 'NMSH_HANDOFF_SHELL', 'NMSH_DETERMINISTIC', 'NMSH_REDUCED_MOTION', 'NMSH_TITLE'];
   const savedEnv = new Map(envKeys.map(key => [key, process.env[key]]));
   const oldCwd = process.cwd(), oldNow = Date.now, oldPerformance = Object.getOwnPropertyDescriptor(performance, 'now'), oldIcons = getIconStyle();
   process.chdir(cwd);
   for (const key of envKeys) delete process.env[key];
-  Object.assign(process.env, {HOME: root, XDG_CONFIG_HOME: join(root, 'config'), TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'nmsh-capture', NMSH_ICONS: mode.startsWith('safe') ? 'safe' : 'nerd'});
+  Object.assign(process.env, {HOME: root, XDG_CONFIG_HOME: join(root, 'config'), TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'nmsh-capture', NMSH_TITLE: '0', NMSH_ICONS: mode.startsWith('safe') ? 'safe' : 'nerd'});
   if (mode.includes('no-color')) process.env.NO_COLOR = '1';
   if (mode === 'low-color') process.env.NMSH_COLOR = '16';
   let now = Date.UTC(2026, 9, 16, 12, 0, 0);
@@ -53,13 +53,14 @@ export function executionFrameFixture(columns = 80, rows = 30, mode: CaptureMode
   clearTimeout(app['startupTimer']); app['startupTimer'] = undefined;
   app['presetShellReady'] = true;
   app['promptConfiguration'] = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
-  Object.assign(app['promptConfiguration'], {provider: 'none', onboardingComplete: true, outputFolding: 'never'});
+  Object.assign(app['promptConfiguration'], {provider: 'none', onboardingComplete: true, outputFolding: 'never', transcriptPresentation: 'normal'});
   app['effectivePromptProvider'] = 'none';
   app['promptConfiguration'].transcript.historicalPrompt = false;
   app['promptConfiguration'].motion = {...structuredClone(DEFAULT_MOTION), contextTransitions: 'off', rendering: mode === 'rich' ? 'rich' : 'clean'};
   Object.assign(app['promptConfiguration'].presentation, {reducedMotion: mode === 'reduced', effectsOff: mode === 'effects-off', motion: 'static'});
   app['output'].setTranscriptAppearance(app['promptConfiguration'].transcript);
   app['output'].setOutputFolding('never');
+  app['output'].presenter.setLayout('normal');
   app['output'].presenter.setTreatment(app['promptConfiguration'].presentation);
   Object.defineProperty(app, 'dimensions', {value: () => ({columns, rows}), configurable: true});
   Object.defineProperty(app, 'terminalDimensions', {value: () => ({columns, rows}), configurable: true});

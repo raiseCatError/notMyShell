@@ -30,6 +30,10 @@ function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; cl
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['configuration'] = normalizePromptConfiguration({...DEFAULT_PROMPT_CONFIGURATION, ...config});
+  // Fresh-install cursor effects paint transient trail glyphs onto the blank cells inside
+  // freshly typed text (the space in `echo hello`), so literal composer rows are only
+  // deterministic with the pointer artwork off; the prompt marker is the subject here.
+  app['configuration'].cursor.effect = 'none';
   return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); isolation.restore(); }};
 }
 

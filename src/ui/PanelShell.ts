@@ -4,6 +4,9 @@ import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
 import {renderSurface} from './surface.js';
 import {colorLevel} from '../presentation/capabilities.js';
+import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
+import {graphemes} from '../input/inputLayout.js';
+import {stripAnsi} from '../util/text.js';
 import type {RgbColor} from './palette.js';
 
 const RESET = '\u001B[0m';
@@ -79,7 +82,25 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
 export function selectedRowBand(row: string, columns: number, chosenColor?: RgbColor): string {
   const none = colorLevel() === 'none';
   const band = none ? '\u001B[7m' : `${background(chosenColor ?? UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
-  return fullWidthRowBand(row, columns, band);
+  if (none) {
+    // Reverse remains active through empty/compound resets and an embedded inverse-off.
+    const body = truncateAnsi(row, columns).replace(/\u001B\[([\d;]*)m/gu, (escape, codes: string) =>
+      codes.split(';').some(code => code === '' || code === '0' || code === '27') ? `${escape}\u001B[7m` : escape);
+    return fullWidthRowBand(body, columns, band);
+  }
+  const fill = chosenColor ?? UI_COLORS.projectBackground;
+  const body = truncateAnsi(row, columns);
+  const padded = `${body}${RESET}${' '.repeat(Math.max(0, columns - displayWidth(body)))}`;
+  // Paint each terminal cell after its own SGR, so 49, 0, compound resets and
+  // explicit prompt backgrounds cannot punch through the selected surface.
+  const paints = new Map<number, CellPaint>();
+  let column = 0;
+  for (const glyph of graphemes(stripAnsi(padded))) {
+    const connector = /^[\ue0b0-\ue0d7]$/u.test(glyph);
+    paints.set(column, connector ? {normalVideo: true, fill, tint: {color: fill, amount: 1}} : {normalVideo: true, fill, contrast: 4.5});
+    column += Math.max(1, displayWidth(glyph));
+  }
+  return `${band}${overlayRow(padded, paints, columns)}${RESET}`;
 }
 
 /** Keep a full-width surface active across embedded style resets and trailing padding. */

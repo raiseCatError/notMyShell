@@ -18,8 +18,8 @@ const set = (motion: MotionSettings, id: string, value: string) => [...MOTION_IT
 const rich = lookFor(withRendering('rich'));
 const BASE = {red: 18, green: 18, blue: 22};
 
-test('Motion rendering: fresh installs and existing configs are Clean; explicit settings are kept', () => {
-  assert.equal(DEFAULT_PROMPT_CONFIGURATION.motion.rendering, 'clean');
+test('Motion rendering: fresh installs use Rich and existing configs retain Clean; explicit settings are kept', () => {
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.motion.rendering, 'rich');
   assert.equal(normalizePromptConfiguration({}).motion.rendering, 'clean');
   // A config saved before rendering existed (the five effect choices only) stays on today's Clean look.
   const old = normalizeMotion({contextTransitions: 'expressive', commandLaunch: 'pulse', completionHighlight: 'vivid', completionEffect: 'seal', eventFeedback: 'expressive'});
@@ -103,7 +103,7 @@ test('tuning matters: intensity changes strength, speed changes duration, both w
   };
   assert.equal(duration('normal'), DURATIONS.launch, 'Normal is each renderer\'s baseline');
   assert.ok(duration('fast') < duration('normal') && duration('normal') < duration('slow'));
-  assert.deepEqual(lookFor({...DEFAULT_MOTION, tuning: undefined as never}), {...CLEAN_LOOK, speed: 1}, 'old in-memory settings still resolve');
+  assert.deepEqual(lookFor({...DEFAULT_MOTION, rendering: undefined as never, tuning: undefined as never}), {...CLEAN_LOOK, speed: 1}, 'old in-memory settings still resolve');
 });
 
 test('Reduced Motion, Decorative Effects Off and NO_COLOR gate both renderers', () => {
@@ -179,8 +179,10 @@ test('the Motion screen: Rendering first, Advanced edits the selected rendering 
 test('Settings and Setup expose Motion rendering and its tuning from the same definitions', () => {
   const row = (id: string) => SETTINGS_ROWS.find(item => item.id === id)!;
   const base = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
-  assert.equal(settingsRowValue(row('motion_rendering'), base), 'Clean');
-  const rich = adjustSettingsRow(row('motion_rendering'), base, 1)!;
+  assert.equal(settingsRowValue(row('motion_rendering'), base), 'Rich');
+  const clean = adjustSettingsRow(row('motion_rendering'), base, 1)!;
+  assert.equal(clean.motion.rendering, 'clean');
+  const rich = adjustSettingsRow(row('motion_rendering'), clean, 1)!;
   assert.equal(rich.motion.rendering, 'rich');
   const tuned = adjustSettingsRow(row('motion_intensity'), rich, 1)!;
   assert.equal(tuned.motion.tuning.rich.intensity, 'high');

@@ -153,13 +153,17 @@ Do not set `nmsh` as your system/login shell with `chsh`. Keep zsh, Bash or Fish
 
 **Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); for source installations, `nmsh uninstall` removes only NMSh's own launcher links (use `brew uninstall nmsh` for Homebrew packages); `nmsh doctor` prints a diagnostic for bug reports.
 
+On a fresh installation, a short skippable introduction leads to **NMSh Recommended**, **Minimal Terminal** (One-line or Two-line), or **Manual Setup**. Highlight a choice to see a replayable demonstration; press R to replay. Minimal uses the native minimal prompt in Flow, with ordinary transcript layout, no historical prompt display, no decorative effects and no session welcome. Existing saved preferences retain their previous behavior.
+
+`/setup` opens the full wizard. `/setup quick` previews presets and asks for review before applying them. Everything can be changed later with `/setup`. `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors; Auto uses the portable effect until a supported native integration is configured. The terminal still controls its physical caret color.
+
 ## Core commands
 
 Type `/` in the composer for the full list, or `/help` for everything grouped by area. The ones you will reach for most:
 
 | Area | Commands |
 | --- | --- |
-| Settings and setup | `/settings` (`/config`), `/setup`, `/palette` (F1), `/help`, `/status` |
+| Settings and setup | `/settings` (`/config`), `/setup`, `/setup quick`, `/palette` (F1), `/help`, `/status` |
 | Composer and prompt | `/prompt`, `/modules`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |

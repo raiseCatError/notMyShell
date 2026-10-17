@@ -239,6 +239,7 @@ export interface TranscriptAppearance {
   dividerColors: DividerColorMode;
 }
 
+/** Conservative component/legacy fallback; the Recommended root supplies its presentation choices explicitly. */
 export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
   divider: true,
   historicalPrompt: true,
@@ -366,9 +367,9 @@ export const MOTION_SPEEDS = ['slow', 'normal', 'fast'] as const;
 /** Intensity scales how strong the paint is; speed scales how long it lasts. Medium/Normal is each renderer's own baseline. */
 export interface MotionTuning {intensity: typeof MOTION_INTENSITIES[number]; speed: typeof MOTION_SPEEDS[number]}
 export const DEFAULT_MOTION_TUNING = (): Record<MotionRendering, MotionTuning> => ({clean: {intensity: 'medium', speed: 'normal'}, rich: {intensity: 'medium', speed: 'normal'}});
-/** Fresh installs: restrained motion, Clean rendering. */
-export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle', cursorTravel: 'on',
-  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
+/** NMSh Recommended: finite expressive motion; accessibility gates still take precedence. */
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'expressive', commandLaunch: 'sweep', completionHighlight: 'vivid', completionEffect: 'seal', eventFeedback: 'expressive', cursorTravel: 'on',
+  rendering: 'rich', tuning: DEFAULT_MOTION_TUNING()};
 /** Existing configs without a motion group: nothing new moves until the person turns it on. */
 export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off', cursorTravel: 'off',
   rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
@@ -415,7 +416,7 @@ export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
 export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom', 'chosen'] as const;
 export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
 export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
-export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient'] as const;
+export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient', 'theme'] as const;
 export const CURSOR_LEVELS = ['low', 'medium', 'high'] as const;
 export type CursorLevel = typeof CURSOR_LEVELS[number];
 export const CURSOR_EASINGS = ['out-cubic', 'out-expo', 'linear', 'spring'] as const;
@@ -574,6 +575,8 @@ export interface PromptConfiguration {
   pastePreview: 'smart' | 'always' | 'off';
   provider: PromptProviderId;
   onboardingComplete: boolean;
+  /** Installation introduction only; saved legacy objects without it have already seen onboarding. */
+  introSeen: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
   toolsSetupComplete: boolean;
   /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
@@ -824,6 +827,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   pastePreview: 'smart',
   provider: 'nmsh',
   onboardingComplete: false,
+  introSeen: false,
   toolsSetupComplete: false,
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
@@ -844,7 +848,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   installSuggestions: true,
   ignoredInstallSuggestions: [],
   promptSymbol: 'chevron',
-  cursor: {...DEFAULT_CURSOR},
+  cursor: {...structuredClone(DEFAULT_CURSOR), effect: 'fire', color: {source: 'theme'}, particles: {source: 'theme', colors: []}},
   statusStrip: {...DEFAULT_STATUS_STRIP},
   keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
@@ -858,12 +862,12 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   queueFailurePolicy: 'pause',
   queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
     outputDisplay: 'inline',
-    autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
+    autoSaveSummary: true, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
     summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false},
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',
-  terminalTitle: 'off',
+  terminalTitle: 'session',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -875,14 +879,14 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   ohMyPosh: {configPath: null},
-  transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
+  transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE, historyColors: 'grayscale', dividerColors: 'history'},
   syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
   panelPosition: 'bottom',
   composerDividers: true,
-  transcriptPresentation: 'normal',
+  transcriptPresentation: 'chat',
   contextRail: {...DEFAULT_CONTEXT_RAIL},
   modules: [
     {id: 'shell', visible: true, condition: 'shellDiffers'},
@@ -901,6 +905,19 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   gap: 1,
   spacing: 1,
 };
+
+/** Explicit quiet preset, built from the same canonical configuration and normalized schema. */
+export function minimalPromptConfiguration(layout: ComposerLayout = 'oneLine'): PromptConfiguration {
+  const c = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  return normalizePromptConfiguration({...c, welcome: 'none', composerPosition: 'flow', composerLayout: layout,
+    placement: 'composer', composerDividers: false, transcriptPresentation: 'normal', spacing: 0, gap: 0,
+    nmsh: {...c.nmsh, style: 'minimal', styleProfiles: {...c.nmsh.styleProfiles,
+      minimal: {...c.nmsh.styleProfiles.minimal, spacing: 1}}},
+    transcript: {...c.transcript, historicalPrompt: false, divider: false},
+    presentation: {...c.presentation, preset: 'off', effectsOff: true, shimmer: 'off', autoEffects: false},
+    motion: structuredClone(MIGRATED_MOTION), cursor: structuredClone(DEFAULT_CURSOR),
+    liveActivity: {...c.liveActivity, style: 'classic'}, terminalTitle: 'off'});
+}
 
 const MODULE_IDS = new Set<ContextModuleId>(Object.keys(CONTEXT_MODULE_REGISTRY) as ContextModuleId[]);
 /** Built-in ids, and syntactically valid pack module ids whether or not that pack is installed right now (kept, shown as missing). */
@@ -955,7 +972,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+  const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
     sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',

@@ -1,3 +1,4 @@
+import {terminalFrameCells} from '../scripts/dev/terminal-frame-cells.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TOOLS, suggestibleToolFor, toolInstall} from '../src/tools/catalog.js';
@@ -429,11 +430,9 @@ test('Space-chosen rows use the semantic selection surface continuously without 
     const assertContinuous = (row: string, band: string) => {
       assert.ok(row.startsWith(band), 'band starts at the first column');
       assert.equal(displayWidth(row), 100, 'band fills the entire row including padding');
-      const resets = [...row.matchAll(/\u001b\[0m/gu)];
-      assert.ok(resets.length > 1, 'row contains internal style resets');
-      for (const reset of resets.slice(0, -1)) {
-        assert.ok(row.slice(reset.index! + reset[0].length).startsWith(band), 'every internal reset immediately reopens the band');
-      }
+      const cells = terminalFrameCells(row);
+      if (band === '\u001b[7m') assert.ok(cells.every(cell => cell.inverse), 'reverse remains on every visible cell');
+      else assert.equal(new Set(cells.map(cell => JSON.stringify(cell.background))).size, 1, 'every visible cell shares the selected background');
       assert.ok(row.endsWith('\u001b[0m'), 'final reset closes the band');
     };
     const state = createToolsPanel();

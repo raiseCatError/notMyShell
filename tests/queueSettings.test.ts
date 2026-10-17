@@ -26,16 +26,16 @@ const timeline: QueueTimeline = {id: 1, createdAt: 1000, startedAt: 1000, observ
 const running: QueueState = {timeline, revision: 4, entries: [{id: 4, text: 'git status', addedAt: 3000}, {id: 5, text: 'echo done', addedAt: 3000}]};
 const plain = (state: QueueState, options: Record<string, unknown> = {}) => queueBlock(state, 80, 7, {now: 3000, animate: false, ...options})!.map(stripAnsi).join('\n');
 
-test('queue presentation defaults match the approved spec: timeline on, two results, two upcoming, eight-second completed view, summaries off', () => {
+test('queue presentation defaults match the approved spec: timeline on, two results, two upcoming, eight-second completed view, summaries on for fresh configurations', () => {
   assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.queue, {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
     outputDisplay: 'inline',
-    autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
+    autoSaveSummary: true, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
     summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false});
-  assert.deepEqual(normalizePromptConfiguration({}).queue, DEFAULT_PROMPT_CONFIGURATION.queue, 'an existing configuration keeps the defaults');
+  assert.deepEqual(normalizePromptConfiguration({}).queue, {...DEFAULT_PROMPT_CONFIGURATION.queue, autoSaveSummary: false}, 'an existing configuration keeps the defaults');
 });
 
 test('queue presentation normalization bounds every value and keeps a hand-set in-range retention', () => {
-  const defaults = DEFAULT_PROMPT_CONFIGURATION.queue;
+  const defaults = {...DEFAULT_PROMPT_CONFIGURATION.queue, autoSaveSummary: false};
   assert.deepEqual(normalizePromptConfiguration({queue: {recentResults: -4, upcoming: 0, transientSeconds: 2}}).queue,
     {...defaults, recentResults: 0, upcoming: 1, transientSeconds: 6});
   assert.deepEqual(normalizePromptConfiguration({queue: {recentResults: 9, upcoming: 9, transientSeconds: 300}}).queue,
@@ -47,9 +47,9 @@ test('queue presentation normalization bounds every value and keeps a hand-set i
   assert.equal(normalizePromptConfiguration({queue: null}).queue.transientSeconds, 8);
 });
 
-test('the summary settings normalize conservatively: saves off, detailed, centered, left-aligned, waits hidden', () => {
+test('the summary settings retain private typed summaries: new saves on, detailed, centered, left-aligned, waits hidden', () => {
   const defaults = DEFAULT_PROMPT_CONFIGURATION.queue;
-  assert.equal(defaults.autoSaveSummary, false, 'automatic saving is Off by default');
+  assert.equal(defaults.autoSaveSummary, true, 'automatic typed saving is On for Recommended');
   assert.equal(defaults.summaryDetail, 'detailed');
   assert.equal(defaults.summaryPlacement, 'center');
   assert.equal(defaults.summaryAlign, 'left');

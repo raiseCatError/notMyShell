@@ -3,7 +3,7 @@ import {isReducedMotion} from '../presentation/environment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {Key} from '../terminal/keys.js';
 import {
-  DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
+  DEFAULT_PROMPT_CONFIGURATION, minimalPromptConfiguration, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
   type PromptConfiguration, type PromptProviderId,
 } from '../prompt/configuration.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
@@ -19,6 +19,10 @@ import type {CompletionFacts} from '../shell/SemanticService.js';
 import {
   adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsDestination, type SettingsRow,
 } from '../ui/SettingsPanel.js';
+import {Transitions, transitionPaint, progress} from '../motion/transitions.js';
+import {overlayRow} from '../presentation/cellOverlay.js';
+import {buildContextLine, themePreviewContext} from '../prompt/prompt.js';
+import {vespyrSprite} from '../output/Welcome.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderTools, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {TOOLS} from '../tools/catalog.js';
@@ -98,7 +102,7 @@ export interface SetupSection {
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', look: 'appearance', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', syntax: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask', cursor: 'cursor', motion: 'motion', sessions: 'sessions',
+  quick: 'welcome', manual: 'welcome', prompt: 'prompt', look: 'appearance', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', syntax: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask', cursor: 'cursor', motion: 'motion', sessions: 'sessions',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -249,6 +253,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     NATIVE_FIRST_DETAIL,
     'Your current choices are already selected. Nothing changes until you apply on the last step.',
   ], rows: [
+    routeRow('setupPresets', 'Choose a preset', 'Recommended, Minimal or Manual · /setup quick', 'setupQuick', 'General'),
     {row: configRow('panelPosition'), note: draft => draft.panelPosition === 'top' ? 'Panels like this one sit at the top of the screen' : 'Panels like this one sit at the bottom of the screen'},
   ]},
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
@@ -307,12 +312,14 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('autoEffects')},
     {row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
   // The same cursor rows as Settings; rich editing (the color picker, trail and particle colors, physics) is /cursor, opened over this draft.
-  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects, Off by default. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
+  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects. Recommended uses theme-colored Fire. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
     {row: configRow('cursorShape'), note: draft => draft.cursor.shape === 'host' ? 'Host default: your terminal keeps its own cursor' : 'Applied while NMSh owns the composer; full-screen programs get your normal cursor'},
     {row: configRow('cursorBlink')},
     {row: configRow('cursorRenderer'), note: draft => chooseBackend(draft.cursor, currentCursorHost()).reason},
     {row: configRow('cursorMotion')},
     {row: configRow('cursorEffect')},
+    {row: configRow('cursorFireColor')},
+    {row: configRow('cursorFireCustom')},
     {row: configRow('cursorIdle')},
     {row: configRow('cursorColor'), note: draft => caretColorNote(currentCursorHost(), draft.cursor.color.source)},
     {row: configRow('cursorColorFamily')},
@@ -490,7 +497,7 @@ export const SETUP_ENTRY_COVERAGE: Readonly<Record<string, string>> = {
   appearance: 'setupHostWindow', glyph: 'glyphStyle', prompt: 'setupPromptModules', transcript: 'transcriptPresentation', syntax: 'syntaxHighlighting', keyboard: 'setupKeyboard',
   welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', picker: 'setupPicker', navigation: 'setupNavigation', layout: 'composerPosition', toolConfig: 'setupToolConfig', tools: 'setupBrowseTools', screensaver: 'idleTimeout', setup: 'setupToolChoice',
   cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
-  queue: 'queueTimeline',
+  queue: 'queueTimeline', setupQuick: 'setupPresets',
 };
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {
@@ -504,6 +511,10 @@ function completionFacts(facts: CompletionFacts | undefined): string[] {
 }
 
 export interface SetupState {
+  intro?: {started: number};
+  message?: string;
+  /** Quick onboarding shares the full wizard draft and persistence path. */
+  quick?: {choice: number; review: boolean; layout: 'oneLine' | 'twoLine'};
   /** Initial discovery uses the same draft and marks completion only on Apply. */
   onboarding?: boolean;
   section: number;
@@ -559,6 +570,112 @@ export function createSetup(configuration: PromptConfiguration, entry?: string):
   return state;
 }
 
+export const QUICK_SETUP_LABELS = ['NMSh Recommended', 'Minimal Terminal', 'Manual Setup'] as const;
+
+/** Apply only the preset's presentation preferences; retain shell, tools, integrations and accessibility choices. */
+function quickDraft(state: SetupState): PromptConfiguration {
+  if (state.quick?.choice === 2) return structuredClone(state.saved);
+  const preset = state.quick?.choice === 1 ? minimalPromptConfiguration(state.quick.layout) : structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  const saved = state.saved;
+  return normalizePromptConfiguration({...saved, provider: 'nmsh', welcome: preset.welcome,
+    motion: preset.motion, transcript: preset.transcript, transcriptPresentation: preset.transcriptPresentation,
+    outputFolding: preset.outputFolding, composerPosition: preset.composerPosition, composerLayout: preset.composerLayout, placement: preset.placement,
+    composerDividers: preset.composerDividers, spacing: preset.spacing, gap: preset.gap,
+    nmsh: {...saved.nmsh, ...preset.nmsh}, uiChrome: preset.uiChrome,
+    presentation: {...saved.presentation, ...preset.presentation, reducedMotion: saved.presentation.reducedMotion},
+    cursor: {...preset.cursor, shape: saved.cursor.shape, blink: saved.cursor.blink,
+      ...(state.quick?.choice === 0 && saved.cursor.particles.colors.length ? {particles: saved.cursor.particles} : {})},
+    idleVisuals: {...saved.idleVisuals, timeout: 0}, statusStrip: {...saved.statusStrip, enabled: false},
+    liveActivity: {...saved.liveActivity, style: preset.liveActivity.style}, terminalTitle: preset.terminalTitle,
+    queue: {...saved.queue, ...preset.queue, outputDisplay: saved.queue.outputDisplay}, queueFailurePolicy: 'pause'});
+}
+
+export function createQuickSetup(configuration: PromptConfiguration): SetupState {
+  const state = createSetup(configuration);
+  state.quick = {choice: 0, review: false, layout: 'oneLine'};
+  state.draft = quickDraft(state);
+  return state;
+}
+
+export const SETUP_LINKS = [
+  {key: 'd', label: 'Docs', url: 'https://github.com/raiseCatError/notMyShell#readme'},
+  {key: 'b', label: 'Report a bug', url: 'https://github.com/raiseCatError/notMyShell/issues/new?template=bug_report.yml'},
+  {key: 'f', label: 'Request a feature', url: 'https://github.com/raiseCatError/notMyShell/issues/new?template=feature_request.yml'},
+] as const;
+
+/** One finite installation scene over existing wordmark, Powerline tabs and Vespyr assets. */
+export function renderSetupIntro(columns: number, height: number, elapsed: number, still: boolean): {rows: string[]; busy: boolean} {
+  const t = still ? 2600 : Math.max(0, elapsed);
+  const rows: string[] = [];
+  const config = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  config.modules = [{id: 'project', visible: true, condition: 'always'}];
+  const context = themePreviewContext('/demo'); context.project = 'notMyShell';
+  let wordmark = columns < 24 ? 'notMyShell' : buildContextLine(context, columns, config, 'composer');
+  if (!still) {
+    const motion = new Transitions(() => config.motion, () => ({reducedMotion: false, effectsOff: false, color: colorLevel() !== 'none'}));
+    motion.launch(0);
+    for (const event of motion.live(t)) if (event.kind === 'launch') wordmark = overlayRow(wordmark, transitionPaint.launch(event.style, columns, progress(event, t), false, event.look), columns);
+  }
+  rows.push(wordmark);
+  if (t > 450) rows.push('Welcome to notMyShell.');
+  if (t > 900 && height >= 14) rows.push(...vespyrSprite(t >= 1200 && t < 1450 ? 'blink' : 'open'));
+  if (t > 1550) rows.push("We're glad you're here.", 'Your shell is still yours.', 'This is just a nicer place to use it.');
+  const footer = ['Any key: choose your setup', ...wrapWords('Docs · Report a bug · Request a feature', columns), '/setup · customize anytime'];
+  const content = rows.flatMap(row => row.includes('\u001b') ? [row] : wrapWords(row, columns));
+  return {rows: [...content.slice(0, Math.max(1, height - footer.length)), ...footer].slice(0, height).map(row => truncateAnsi(row, columns)), busy: !still && t < 2600};
+}
+
+function quickKey(state: SetupState, key: Key): SetupResult | undefined {
+  const quick = state.quick!;
+  if (key.kind === 'text') { const link = SETUP_LINKS.find(link => link.key === key.value.toLowerCase()); if (link) return {kind: 'link', url: link.url}; }
+  if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'cancel'};
+  if (key.kind === 'text' && key.value.toLowerCase() === 'r') { state.previewStart = undefined; return undefined; }
+  if (key.kind === 'enter') {
+    if (quick.choice === 2) { state.quick = undefined; state.draft = structuredClone(state.saved); return {kind: 'manual'}; }
+    if (!quick.review) { quick.review = true; return undefined; }
+    return {kind: 'apply', configuration: normalizePromptConfiguration({...state.draft, onboardingComplete: true,
+      glyphChoiceComplete: true, toolsSetupComplete: true}), tools: 'keep', changed: true};
+  }
+  if (quick.review) return undefined;
+  let changed = false;
+  if (key.kind === 'down' || key.kind === 'up') {
+    quick.choice = (quick.choice + (key.kind === 'up' ? 2 : 1)) % 3; changed = true;
+  } else if (key.kind === 'text' && /^[123]$/u.test(key.value)) { quick.choice = Number(key.value) - 1; changed = true; }
+  else if (quick.choice === 1 && ['left', 'right', 'complete'].includes(key.kind)) {
+    quick.layout = quick.layout === 'oneLine' ? 'twoLine' : 'oneLine'; changed = true;
+  }
+  if (changed) { state.draft = quickDraft(state); state.previewStart = undefined; state.previewKey = undefined; }
+  return undefined;
+}
+
+/** Compact controls remain visible before the preview, even in a short terminal. */
+function renderQuickSetup(state: SetupState, columns: number, height: number): string[] {
+  const quick = state.quick!;
+  if (columns < 24 || height < 8) {
+    const compact = quick.review
+      ? [`${quick.choice + 1}. ${['Recommended', 'Minimal', 'Manual'][quick.choice]}`, 'Replace prefs?',
+        ...(quick.choice === 1 ? [quick.layout === 'oneLine' ? 'One-line' : 'Two-line'] : []), 'Enter Apply', 'Esc Cancel', '/setup']
+      : QUICK_SETUP_LABELS.map((_label, index) => `${quick.choice === index ? '>' : ' '} ${index + 1} ${['Recommended', 'Minimal', 'Manual'][index]}`)
+        .concat(quick.choice === 1 ? [`${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} ←→/Tab`] : ['R Replay'], 'Enter Continue', 'Esc /setup');
+    return compact.slice(0, height).map(row => truncateAnsi(row, columns));
+  }
+  const rows = ['Setup · Choose your terminal', ...QUICK_SETUP_LABELS.map((label, index) => `${quick.choice === index ? '>' : ' '} ${index + 1}. ${columns < 24 ? ['Recommended', 'Minimal', 'Manual'][index] : label}`)];
+  if (quick.choice === 1) rows.push(`Prompt layout: ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} ←→/Tab`);
+  if (quick.review) {
+    rows.push(state.saved.onboardingComplete ? 'Review: replace presentation preferences' : 'Ready to apply this preview?',
+      'Enter Apply · Esc Cancel');
+  } else rows.push('↑↓ / 1–3 Choose · Enter Continue', 'R Replay · Esc Cancel');
+  rows.push(columns < 48 ? 'Change later: /setup' : 'Everything can be changed later with /setup.');
+  if (height >= 12) rows.push(columns < 40 ? 'D Docs · B Bug · F Feature' : 'D Docs · B Report a bug · F Request a feature');
+  if (state.message) rows.push(state.message);
+  if (height < 10) rows.shift();
+  if (height < 8) rows.splice(0, 3, `${quick.choice + 1}. ${['Recommended', 'Minimal', 'Manual'][quick.choice]} · ↑↓ / 1–3`);
+  const budget = Math.max(0, height - rows.length - 2);
+  const preview = state.context.preview?.slice(0, budget) ?? [];
+  return [...rows, ...(preview.length ? ['Demo · R Replay', ...preview] : [])].slice(0, Math.max(1, height))
+    .map(row => truncateAnsi(row, columns));
+}
+
 export function parseSetupEntry(argument: string | undefined): string | undefined | false {
   if (!argument) return undefined;
   return SETUP_ENTRIES[argument] ? argument : false;
@@ -599,6 +716,8 @@ function applyToolChoice(draft: PromptConfiguration, choice: ToolChoice): Prompt
 
 export type SetupResult =
   | {kind: 'cancel'}
+  | {kind: 'manual'}
+  | {kind: 'link'; url: string}
   /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
   | {kind: 'browseTools'; toolId?: string}
   /** Open the shared /cursor panel inside Setup Cat, over the draft. */
@@ -666,6 +785,8 @@ function toolChoiceNote(choice: ToolChoice): string {
  * the last step) · Esc cancel (asks when there are unapplied edits).
  */
 export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
+  if (state.intro) { state.intro = undefined; state.previewStart = undefined; return undefined; }
+  if (state.quick) return quickKey(state, key);
   const changes = () => setupChanges(state).length > 0;
   if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {
@@ -707,7 +828,7 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
       state.row = Math.max(0, currentRows(state).findIndex(item => item.row.id === 'treatmentPreset'));
       return undefined;
     }
-    if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : 'colorCustom'};
+    if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : row.id === 'cursorFireCustom' ? 'fireEdit' : 'colorCustom'};
     // An in-draft action (reset a list), or a route: apply this Setup, then open the real editor.
     if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
     if (row.control === 'action' && row.destination !== 'tools') return {kind: 'apply', configuration: normalizePromptConfiguration(state.draft), tools: state.tools, changed: changes(), then: row.destination};
@@ -768,6 +889,7 @@ export function installableTool(item: SetupRow, state: SetupState): string | und
 export const SETUP_MIN_SIZE = {columns: 44, rows: 12} as const;
 
 export function renderSetup(state: SetupState, columns: number, height: number): string[] {
+  if (state.quick) return renderQuickSetup(state, columns, height);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -778,7 +900,8 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   const section = SETUP_SECTIONS[state.section]!;
   const nerd = getCurrentGlyphMode() === 'nerd';
   const title = `  ${bold}${state.context.title ?? `${primary}Setup Cat`}${reset}  ${subtle}${nerd ? '·' : '-'} ${state.section + 1}/${SETUP_SECTIONS.length} ${section.title}${reset}`;
-  const head = [title, renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns)];
+  const head = [title, '  Customize anytime with /setup · presets: /setup quick', renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns),
+    ...(state.message ? wrapWords(state.message, Math.max(10, columns - 4)).map(line => `  ${primary}${line}${reset}`) : [])];
   if (state.toolBrowser) {
     // The shared /tools browser, inside Setup Cat: the draft and step are kept underneath.
     const note = wrapWords(`${INSTALL_DRAFT_NOTE} Esc returns to Setup Cat.`, Math.max(10, columns - 4)).map(line => `  ${subtle}${line}${reset}`);

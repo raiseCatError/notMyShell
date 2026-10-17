@@ -16,6 +16,8 @@ import {contrastOn, readableForeground} from '../chroma/color.js';
  * (`background` with `caret`). Rows themselves are never stored with overlays.
  */
 export interface CellPaint {
+  /** Selection surfaces must not inherit terminal inverse-video swaps from stored text. */
+  normalVideo?: boolean;
   /** The caret's own fill, honored only together with `caret`. Tints must not use it: it would hide a transparent terminal. */
   background?: RgbColor;
   /** Shift the cell's own foreground toward a color; the glyph never changes. A cell with no explicit foreground takes the color itself. */
@@ -155,7 +157,7 @@ export function overlayRow(row: string, paints: ReadonlyMap<number, CellPaint>, 
         // Only the caret may fill a cell: everything else keeps the host's own background.
         const bg = paint.caret && paint.background ? rgb(48, paint.background) : paint.fill ? rgb(48, paint.fill) : '';
         const text = !drawsGlyph && !blank ? textTreatment(paint, style) : drawsGlyph && paint.dim ? '\u001B[2m' : '';
-        out += `${bg}${fg}${text}${drawn}\u001B[0m${style}`;
+        out += `${paint.normalVideo ? '\u001B[27m' : ''}${bg}${fg}${text}${drawn}\u001B[0m${style}`;
       } else out += glyph;
       column += cells;
     }

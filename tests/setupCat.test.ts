@@ -291,6 +291,9 @@ test('first launch opens Setup Cat and Apply completes onboarding even without a
   app['startOnboarding']();
   const state = app['setupState']!;
   assert.ok(state, 'first run opens the shared Setup Cat');
+  if (state.intro) app['handleKey']({kind: 'enter'});
+  app['handleKey']({kind: 'text', value: '3'}); // Manual retains the complete wizard.
+  app['handleKey']({kind: 'enter'});
   state.section = sectionIndex('review');
   assert.match(renderSetup(state, 120, 40).map(stripAnsi).join('\n'), /completes setup/u);
   app['handleKey']({kind: 'enter'});

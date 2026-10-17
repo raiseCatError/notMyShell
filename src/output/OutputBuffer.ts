@@ -144,6 +144,10 @@ export class OutputBuffer {
   private generation = 0;
   get presentationGeneration(): number { return this.generation; }
   private welcome?: WelcomeSnapshot;
+  private welcomeVisible = true;
+
+  /** Presentation preference only: archives retain their original welcome snapshot. */
+  setWelcomeVisible(visible: boolean): void { this.welcomeVisible = visible; }
   /** How rows look; presentation state here is never serialized into transcripts. */
   readonly presenter = new TranscriptPresenter();
   private outputFolding: OutputFoldingMode = 'smart';
@@ -582,7 +586,7 @@ export class OutputBuffer {
       visualGaps: this.visualGaps,
       lineTypes: this.lineTypes,
       historicalContexts: this.historicalContexts,
-      welcome: this.welcome,
+      welcome: this.welcomeVisible ? this.welcome : undefined,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
     };

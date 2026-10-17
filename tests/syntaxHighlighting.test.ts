@@ -41,6 +41,8 @@ async function withApp(run: (app: TerminalApp, path: string) => void | Promise<v
   process.env.XDG_CONFIG_HOME = directory;
   const app = new TerminalApp();
   app['promptConfiguration'] = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  app['promptConfiguration'].cursor.effect = 'none';
+  app['promptConfiguration'].motion.contextTransitions = 'off';
   app['session'].submit = () => {};
   // Semantic lookups never spawn a shell here; the cache is primed per test.
   app['semanticService'].classifyCommand = async (command: string) => app['semanticService'].cache.get(command) ?? 'unknown';
@@ -369,7 +371,8 @@ test('the syntax panel edits, previews, and persists its rows', () => withApp(as
   assert.deepEqual(renderSyntaxPanel(app['syntaxPanelState']!, 120, 'lavender').map(stripAnsi).filter(row => /‹/u.test(row)).length, 1,
     'Off hides the Colors and Theme controls');
   app['handleKey']({kind: 'enter'});
-  assert.equal(app['promptConfiguration'].syntax.highlighting, false);
+  assert.equal(app['promptConfiguration'].syntax.highlighting, false,
+    app['syntaxPanelState']?.message ?? 'the saved syntax draft applies to the live configuration');
 }));
 
 test('Colors cycles Follow prompt theme → Choose theme → Grayscale', () => {

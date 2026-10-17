@@ -22,6 +22,7 @@ export const PORTABLE_CATEGORIES = {
   theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'nmsh.themeId', 'themes', 'customTheme'],
   themeBridge: ['themeBridge'],
   chroma: ['presentation'],
+  motion: ['motion'],
   chrome: ['uiChrome', 'glyphStyle', 'cursor'],
   syntax: ['syntax'],
   transcript: ['transcript', 'outputFolding'],
@@ -47,7 +48,7 @@ export const CATEGORY_IDS = Object.keys(PORTABLE_CATEGORIES) as PortableCategory
  * provider config files (Starship, Powerlevel10k), which rarely exist at the
  * same place elsewhere and can reveal a home directory layout.
  */
-export const NEVER_EXPORTED = ['onboardingComplete', 'toolsSetupComplete', 'glyphChoiceComplete', 'starship', 'powerlevel10k', 'ohMyPosh'] as const;
+export const NEVER_EXPORTED = ['introSeen', 'onboardingComplete', 'toolsSetupComplete', 'glyphChoiceComplete', 'starship', 'powerlevel10k', 'ohMyPosh'] as const;
 
 export interface PortableDocument {
   format: typeof PORTABLE_FORMAT;

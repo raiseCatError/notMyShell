@@ -34,7 +34,7 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, renderSetupIntro, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
@@ -87,6 +87,7 @@ import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
 import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
+import {renderQuickPreview} from '../setup/SetupPreview.js';
 import {framePanel, renderTabStrip, selectedRowBand, tabCycleDelta} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
@@ -915,6 +916,7 @@ export class TerminalApp {
     this.workspace.loadKeymap();
     // The backend this frontend manages, known before the first welcome is drawn.
     this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
+    this.output.setWelcomeVisible(this.promptConfiguration.welcome !== 'none');
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
@@ -4851,7 +4853,7 @@ export class TerminalApp {
 
   /** Complex panels declare the smallest size that shows their essential controls. */
   private panelMinimum(): MinimumSize | undefined {
-    if (this.setupState) return SETUP_MIN_SIZE;
+    if (this.setupState) return this.setupState.quick || this.setupState.intro ? {columns: 16, rows: 6} : SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
     if (this.themeBridgePanel) return {columns: 56, rows: 14};
     if (this.tmuxPanel || this.configureList || this.rowPanel || this.dotfiles) return {columns: 50, rows: 12};
@@ -4863,7 +4865,10 @@ export class TerminalApp {
   private settingsPanelRows(columns: number): string[] {
     const minimum = this.panelMinimum();
     const {rows} = this.dimensions();
-    if (minimum && !fits(minimum, columns, rows)) return renderTooSmall(minimum, columns, rows);
+    if (minimum && !fits(minimum, columns, rows)) {
+      this.stopSetupPlayback();
+      return renderTooSmall(minimum, columns, rows);
+    }
     return this.panelContentRows(columns);
   }
 
@@ -4895,6 +4900,13 @@ export class TerminalApp {
     if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
     if (this.setupState) {
       const state = this.setupState;
+      if (state.intro) {
+        const still = state.draft.presentation.reducedMotion || isReducedMotion() || colorLevel() === 'none' || getCurrentGlyphMode() === 'safe' || !process.stdin.isTTY;
+        const intro = renderSetupIntro(columns, this.dimensions().rows, Date.now() - state.intro.started, still);
+        this.setupPlayback(state, intro.busy);
+        if (intro.busy || still) return intro.rows;
+        state.intro = undefined; state.previewStart = undefined;
+      }
       if (state.cursorPanel) return this.withDraftTheme(state.draft, () => framePanel(this.cursorPanelRows(state.cursorPanel!, columns, this.cursorEnv(state.cursorPanel!.draft, state.draft)), columns));
       if (!state.toolBrowser) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
       state.context.title = this.setupTitle(state);
@@ -5176,6 +5188,7 @@ export class TerminalApp {
   private openDestinationPanel(destination: SettingsDestination): void {
     if (destination === 'tools') this.startTools();
     else if (destination === 'setup') this.startSetup();
+    else if (destination === 'setupQuick') this.startSetup('quick');
     else if (destination === 'screensaver') this.openScreensaverGallery();
     else if (destination === 'chromeColors') {
       const config = this.promptConfiguration;
@@ -6085,7 +6098,25 @@ export class TerminalApp {
    * draft (never the saved config). Animated steps get one repaint timer while
    * shown; nothing ever changes the real terminal cursor.
    */
+  private stopSetupPlayback(): void { this.setupCursorClock?.(); this.setupCursorClock = undefined; }
+
+  private setupPlayback(state: SetupState, busy: boolean): void {
+    if (busy && !this.setupCursorClock) this.setupCursorClock = presentationClock.subscribe(() => {
+      if (this.setupState === state && !this.stopped) this.render();
+      else { this.stopSetupPlayback(); }
+    }, 80);
+    else if (!busy) { this.stopSetupPlayback(); }
+  }
+
   private setupPreview(state: SetupState, columns: number): string[] {
+    if (state.quick) {
+      state.previewStart ??= Date.now();
+      const height = Math.max(0, this.dimensions().rows - (state.quick.choice === 1 ? 11 : 10));
+      const still = state.draft.presentation.reducedMotion || isReducedMotion() || colorLevel() === 'none';
+      const preview = renderQuickPreview(state, columns, height, Date.now() - state.previewStart, still);
+      this.setupPlayback(state, preview.busy && height > 0);
+      return preview.rows;
+    }
     const section0 = SETUP_SECTIONS[state.section]?.id;
     // Look and Prompt previews show the draft's Chroma as soon as it is on; P compares with the base theme.
     const chromaStep = section0 === 'appearance' || section0 === 'prompt';
@@ -6564,17 +6595,28 @@ export class TerminalApp {
 
   /** Presets deliberately bypass discovery; completed and legacy onboarding stay completed. */
   private startOnboarding(): void {
-    if (this.presetStartup) return;
+    if (this.presetStartup || this.attachedSession) return;
     if (!this.promptConfiguration.onboardingComplete) {
-      this.startSetup();
+      this.startSetup('quick');
       this.setupState!.onboarding = true;
+      this.output.setWelcomeVisible(false);
+      if (!this.promptConfiguration.introSeen) {
+        const next = {...this.promptConfiguration, introSeen: true};
+        try {
+          savePromptConfiguration(next, undefined, this.promptConfiguration);
+          this.promptConfiguration = next;
+          this.setupState!.saved.introSeen = true; this.setupState!.draft.introSeen = true;
+          this.setupState!.intro = {started: Date.now()};
+        } catch (error) { this.setupState!.message = `Introduction state could not be saved: ${error instanceof Error ? error.message : String(error)}`; }
+      }
     } else if (!this.promptConfiguration.toolsSetupComplete) this.startTools(true);
   }
 
   private startSetup(entry?: string): void {
     this.setupExternalPrompt = undefined;
-    const state = this.setupState = createSetup(this.promptConfiguration, entry);
-    void this.loadSetupContext(state);
+    this.stopSetupPlayback();
+    const state = this.setupState = entry === 'quick' ? createQuickSetup(this.promptConfiguration) : createSetup(this.promptConfiguration, entry);
+    if (!state.quick) void this.loadSetupContext(state);
   }
 
   /** Provider install state and completion facts, detected once per Setup Cat open; never on render. */
@@ -6604,32 +6646,46 @@ export class TerminalApp {
   private handleSetupKey(key: Key, state: SetupState): void {
     if (state.toolBrowser) { void this.handleSetupToolsKey(key, state, state.toolBrowser); return; }
     if (state.cursorPanel) { this.handleSetupCursorKey(key, state, state.cursorPanel); return; }
+    this.stopSetupPlayback();
     const result = setupKey(state, key);
     if (!result) return;
+    if (result.kind === 'manual') { void this.loadSetupContext(state); return; }
+    if (result.kind === 'link') {
+      const opener = selectOpener();
+      if (!opener) { state.message = result.url; return; }
+      try { const child = spawn(opener, [result.url], {detached: true, stdio: 'ignore'}); child.once('error', () => { state.message = result.url; if (this.setupState === state) this.render(); }); child.unref(); }
+      catch { state.message = result.url; }
+      return;
+    }
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     if (result.kind === 'cursorEditor') {
       // The shared /cursor panel over the draft's cursor settings: changes land in the draft, nothing is saved until Apply.
       state.cursorPanel = createCursorPanel(state.draft.cursor, Date.now(), {embedded: true, advanced: result.advanced, ...(result.row ? {row: result.row} : {})});
       return;
     }
-    this.setupState = undefined;
-    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
-
-    if (result.kind === 'cancel') { this.returnFromPanel(); return; }
+    if (result.kind === 'cancel') {
+      this.setupState = undefined; this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.returnFromPanel(); return;
+    }
     const previous = this.promptConfiguration;
     const configured = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
     const next = state.onboarding ? {...configured, onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true} : configured;
     if ((result.changed || state.onboarding) && !setupIsIdempotent({...state, draft: next})) {
-      if (!this.applySettingsConfiguration(next)) return;
+      if (!this.applySettingsConfiguration(next)) { state.message = 'Could not save. Your draft is kept; retry Apply or Esc to cancel.'; return; }
       this.armIdle();
       if (previous.suggestions !== next.suggestions) this.applySuggestionProvider();
       if (previous.history !== next.history) void this.loadHistory();
       if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
       if (previous.provider !== next.provider) void this.refreshProviderPrompt().then(() => this.render());
-      this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Rerun /setup anytime; it starts from your current settings.', SUCCESS);
+      if (state.quick) this.noteClipboard(state.quick.choice === 1 ? `Minimal terminal ready · ${next.composerLayout === 'oneLine' ? 'One-line' : 'Two-line'}. Customize anytime with /setup.` : 'Ready. Customize anytime with /setup.', 'success');
+      else this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Customize anytime with /setup.', SUCCESS);
       if (this.cursorReload && JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor)) this.output.addFrontendInteraction('/setup', this.cursorReload, INFO);
-      this.startSweep('prompt', 'vivid');
+      if (!next.presentation.effectsOff) this.startSweep('prompt', 'vivid');
     } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
+    this.setupState = undefined;
+    this.stopSetupPlayback();
+    if (state.onboarding) this.output.setWelcomeVisible(false);
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.panelOrigin = undefined;
     // A route row: the Setup draft is applied, then the real editor opens.
     if (result.then) { this.openDestinationPanel(result.then); return; }
@@ -6849,6 +6905,8 @@ export class TerminalApp {
     this.syncQueuePolicy();
     setIconStyle(next.glyphStyle);
     if (next.idleVisuals.timeout !== this.idleArmedFor) { this.idleArmedFor = next.idleVisuals.timeout; this.armIdle(); }
+    this.output.setWelcomeVisible(next.welcome !== 'none');
+    if (next.welcome === 'none') this.welcomeGeneration++;
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
@@ -6864,6 +6922,7 @@ export class TerminalApp {
   private startWelcome(cwd: string): void {
     const generation = ++this.welcomeGeneration;
     const provider = this.promptConfiguration.welcome;
+    this.output.setWelcomeVisible(provider !== 'none');
     const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId, this.welcomeUnderstanding()));
     if (provider === 'none') return;
     if (provider === 'vespyr') { vespyr(); return; }
@@ -7053,6 +7112,7 @@ export class TerminalApp {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
+      if (state.family === 'welcome') this.output.setWelcomeVisible(next.welcome !== 'none');
       if (state.family === 'suggestions') this.applySuggestionProvider();
       if (state.family === 'history') void this.loadHistory();
       if (state.family === 'navigation') { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
@@ -7089,6 +7149,8 @@ export class TerminalApp {
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
+      this.output.setWelcomeVisible(next.welcome !== 'none');
+      if (next.welcome === 'none') this.welcomeGeneration++;
       this.output.setTranscriptAppearance(next.transcript);
       this.output.setOutputFolding(next.outputFolding);
       this.output.presenter.setTreatment(next.presentation);
@@ -11503,7 +11565,7 @@ export class TerminalApp {
     if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
     setCursorHostProvider(undefined);
-    this.setupCursorClock?.(); this.setupCursorClock = undefined;
+    this.stopSetupPlayback();
     this.understanding.dispose();
     this.agentDiscoveryTimer?.();
     this.agentsSubscription();

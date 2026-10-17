@@ -109,6 +109,16 @@ Config offers optional zoxide ranking and optional fzf/Television pickers. zoxid
 
 After an unambiguous simple command-not-found typo in zsh, Bash or Fish, NMSh may show a local executable correction (from the commands on your shell's PATH) below the composer. Tab places it in the editor; review and press Enter separately. Esc dismisses it. Complex expressions, ambiguous matches and destructive targets are suppressed. The suggestion is frontend UI and stays out of command output, copy and history.
 
+## Setup and community
+
+/setup opens the full Setup Cat wizard. /setup quick previews Recommended, Minimal
+(One-line or Two-line) and Manual, with a review before changing preferences.
+Everything can be changed later with /setup.
+
+[Docs](https://github.com/raiseCatError/notMyShell#readme) ·
+[Report a bug](https://github.com/raiseCatError/notMyShell/issues/new?template=bug_report.yml) ·
+[Request a feature](https://github.com/raiseCatError/notMyShell/issues/new?template=feature_request.yml)
+
 ## Tips
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.

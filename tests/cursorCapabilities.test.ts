@@ -31,10 +31,12 @@ const withFacts = <T>(facts: HostCursorFacts, run: () => T): T => { setCursorHos
 const config = (cursor: Partial<CursorSettings>): PromptConfiguration => ({...structuredClone(DEFAULT_PROMPT_CONFIGURATION), cursor: {...structuredClone(DEFAULT_CURSOR), ...cursor}});
 const row = (id: string) => SETTINGS_ROWS.find(item => item.id === id)!;
 
-test('fresh cursor defaults stay Off: no motion, no effect, no idle effect, Auto renderer', () => {
+test('legacy cursor defaults stay Off; Recommended chooses theme Fire with Auto renderer', () => {
   const fresh = normalizePromptConfiguration({}).cursor;
   assert.deepEqual([fresh.motion, fresh.effect, fresh.idleEffect, fresh.renderer], ['off', 'none', 'off', 'auto']);
-  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.cursor, DEFAULT_CURSOR);
+  assert.deepEqual(fresh, DEFAULT_CURSOR);
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.cursor.effect, 'fire');
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.cursor.color.source, 'theme');
 });
 
 test('capability matrix: names what each backend really draws, not broad flags', () => {

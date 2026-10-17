@@ -55,6 +55,7 @@ test('/transcript, /layout and Settings share live presentation with draft/save/
   const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = root;
   const app = new TerminalApp();
   app['render'] = () => {};
+  app['applySettingsConfiguration']({...app['promptConfiguration'], transcriptPresentation: 'normal'});
   try {
     app['startTranscriptSettings']();
     const state = app['transcriptPanelState']!;
@@ -263,6 +264,7 @@ test('/transcript failed save keeps the draft and leaves live presentation uncha
   const previous = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = root;
   const app = new TerminalApp(); app['render'] = () => {};
+  app['applySettingsConfiguration']({...app['promptConfiguration'], transcriptPresentation: 'normal'});
   try {
     app['startTranscriptSettings']();
     const state = app['transcriptPanelState']!;

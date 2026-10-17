@@ -152,6 +152,7 @@ test('Space and Enter toggle a real boolean; values stay shared with Status', ()
   assert.equal(app['promptConfiguration'].transcript.divider, true);
   for (let step = 0; step < 4; step++) app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
+  app['handleKey']({kind: 'right'}); // Recommended starts at Grayscale; cycle through Follow prompt to Theme.
   assert.equal(app['promptConfiguration'].transcript.historyColors, 'theme');
   assert.ok(app['statusSections']().flat().some(item => item.label === 'History colors' && item.value === 'Theme'));
 }));

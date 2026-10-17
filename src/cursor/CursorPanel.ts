@@ -14,7 +14,7 @@ import {colorEscape} from '../chroma/escape.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {availabilityOf, availableValues, caretColorNote, unavailableReason, type BackendChoice, type CursorFeature, type HostCursorFacts} from './backends.js';
 import {describeCursorColor, resolveCursorSettings, type CursorColorContext} from './colors.js';
-import {effectPalette} from './palette.js';
+import {effectPalette, FIRE_COLORS, FIRE_COLOR_LABELS, fireColorChoice, applyFireColor, type FireColor} from './palette.js';
 import {renderCursorPreview, type PreviewScene} from './CursorPreview.js';
 
 /**
@@ -133,6 +133,12 @@ const NORMAL: Row[] = [
     detail: (_d, env) => env.multiplexed ? `${env.choice.reason} · ${TMUX_NATIVE_TRAIL_NOTE}` : env.choice.reason},
   featureRow('motion', 'Motion', 'motion', 'jump', d => d.motion, (d, v) => { d.motion = v as CursorSettings['motion']; }),
   featureRow('effect', 'Effect', 'effect', 'jump', d => d.effect, (d, v) => { d.effect = v as CursorSettings['effect']; }),
+  {key: 'fireColor', label: 'Fire / effect color', scene: 'jump', when: d => d.effect === 'fire',
+    options: () => FIRE_COLORS.map(value => ({value, label: FIRE_COLOR_LABELS[value]})), get: d => fireColorChoice(d),
+    set: (d, value) => { Object.assign(d, applyFireColor(d, value as FireColor)); },
+    detail: () => 'Hot-to-cool particle gradients. Follow theme uses the current cursor theme; Custom opens the existing gradient editor below.'},
+  {key: 'fireEdit', label: 'Edit effect gradient', scene: 'jump', when: d => d.effect === 'fire',
+    action: 'particleColors', display: d => `${d.particles.colors.length} stops ›`},
   featureRow('idle', 'Idle effect', 'idleEffect', 'idle', d => d.idleEffect, (d, v) => { d.idleEffect = v as CursorSettings['idleEffect']; }),
   {key: 'color', label: 'Color', scene: 'jump', options: () => plain(COLOR_SOURCE_ORDER, value => COLOR_SOURCE_LABELS[value]!), get: d => d.color.source,
     set: (d, v, env) => {
@@ -176,7 +182,7 @@ const ADVANCED: Row[] = [
     detail: () => 'Follow cursor uses the cursor color; Custom is one color; Gradient fades along the trail.'},
   {key: 'trailEdit', label: 'Edit trail color', scene: 'jump', when: d => d.trail.source !== 'cursor', action: 'trailColors',
     display: d => d.trail.source === 'custom' ? (d.trail.colors[0] ?? 'choose a color').toUpperCase() : `${d.trail.colors.length || 2} stops ›`},
-  {key: 'particleColor', label: 'Particle color', scene: 'jump', options: () => plain(['trail', 'custom', 'gradient']), get: d => d.particles.source,
+  {key: 'particleColor', label: 'Particle color', scene: 'jump', options: () => plain(['trail', 'custom', 'gradient', 'theme']), get: d => d.particles.source,
     set: (d, v) => { d.particles = {...d.particles, source: v as CursorSettings['particles']['source']}; },
     detail: () => 'Follow trail shares the trail color; Custom is one color; Gradient runs from young to old particles.'},
   {key: 'particleEdit', label: 'Edit particle colors', scene: 'jump', when: d => d.particles.source !== 'trail', action: 'particleColors',
@@ -320,6 +326,7 @@ export function cursorPanelKey(state: CursorPanelState, key: Key, env: CursorPan
       // A stale value (no longer offered) moves to the first value that is.
       const next = index < 0 ? options[0]! : options[(index + (back ? -1 : 1) + options.length) % options.length]!;
       row.set(state.draft, next.value, env);
+      if (row.key === 'fireColor' && next.value === 'custom') { gradientStart(state, 'particles', env); return undefined; }
     } else row.set(state.draft, back ? '-' : '+', env);
     // Changes preview at once and apply at once (the composer follows); nothing is ever hidden behind Save.
     state.started = now;
