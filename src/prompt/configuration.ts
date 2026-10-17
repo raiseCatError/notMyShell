@@ -854,7 +854,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   installSuggestions: true,
   ignoredInstallSuggestions: [],
   promptSymbol: 'chevron',
-  cursor: {...structuredClone(DEFAULT_CURSOR), effect: 'fire', color: {source: 'theme'}, particles: {source: 'theme', colors: []}},
+  // Cursor effects start Off; choosing Fire starts on the Classic flame (the default particle model).
+  cursor: {...structuredClone(DEFAULT_CURSOR), color: {source: 'theme'}},
   statusStrip: {...DEFAULT_STATUS_STRIP},
   keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
@@ -913,7 +914,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
 };
 
 /** Explicit quiet preset, built from the same canonical configuration and normalized schema. */
-export function minimalPromptConfiguration(layout: ComposerLayout = 'oneLine'): PromptConfiguration {
+export function minimalPromptConfiguration(layout: ComposerLayout = 'twoLine'): PromptConfiguration {
   const c = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   return normalizePromptConfiguration({...c, welcome: 'none', composerPosition: 'flow', composerLayout: layout,
     placement: 'composer', composerDividers: false, transcriptPresentation: 'normal', spacing: 0, gap: 0,

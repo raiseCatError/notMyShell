@@ -90,22 +90,22 @@ test('choices: Up/Down and 1–3 move the selection', () => {
   setupKey(state, {kind: 'text', value: '3'}); assert.equal(state.quick?.choice, 2);
 });
 
-test('minimal: Left/Right/Tab toggle One-line and Two-line on the real draft and apply persists it', () => {
+test('minimal: Two-line first; Left/Right/Tab toggle One-line and Two-line on the real draft and apply persists it', () => {
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'text', value: '2'});
   assert.equal(state.quick?.choice, 1);
-  assert.equal(state.draft.composerLayout, 'oneLine');
+  assert.equal(state.draft.composerLayout, 'twoLine');
   setupKey(state, {kind: 'right'});
-  assert.equal(state.draft.composerLayout, 'twoLine');
-  setupKey(state, {kind: 'complete'});
   assert.equal(state.draft.composerLayout, 'oneLine');
-  setupKey(state, {kind: 'left'});
+  setupKey(state, {kind: 'complete'});
   assert.equal(state.draft.composerLayout, 'twoLine');
-  assert.match(text(state), /Two-line/u);
+  setupKey(state, {kind: 'left'});
+  assert.equal(state.draft.composerLayout, 'oneLine');
+  assert.match(text(state), /One-line/u);
   setupKey(state, {kind: 'enter'});
   const applied = setupKey(state, {kind: 'enter'});
   assert.equal(applied?.kind, 'apply');
-  if (applied?.kind === 'apply') assert.equal(applied.configuration.composerLayout, 'twoLine');
+  if (applied?.kind === 'apply') assert.equal(applied.configuration.composerLayout, 'oneLine');
 });
 
 test('review: Enter applies the preset and a customized installation is told it replaces preferences', () => {
@@ -215,11 +215,11 @@ test('compact quick controls show layout, apply and leave at 16x6 (unframed TINY
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'text', value: '2'});
   let shown = text(state, 16, 6);
-  for (const word of ['One-line', 'Enter', 'Esc']) assert.ok(shown.includes(word), word + ': ' + shown);
+  for (const word of ['Two-line', 'Enter', 'Esc']) assert.ok(shown.includes(word), word + ': ' + shown);
   assert.ok(!/[╭╰│┌└|]/u.test(shown), 'TINY is unframed');
   setupKey(state, {kind: 'right'});
   shown = text(state, 16, 6);
-  assert.match(shown, /Two-line/u);
+  assert.match(shown, /One-line/u);
   setupKey(state, {kind: 'enter'});
   shown = text(state, 16, 6);
   assert.match(shown, /Apply/u);
@@ -387,7 +387,7 @@ for (const choice of [0, 1]) test(`quick preset ${choice} saves only after revie
     if (choice === 1) {
       assert.equal(f.app['promptConfiguration'].welcome, 'none');
       assert.equal(f.app['output'].view().welcome, undefined);
-      assert.equal(f.app['promptConfiguration'].composerLayout, 'oneLine');
+      assert.equal(f.app['promptConfiguration'].composerLayout, 'twoLine');
     }
     f.app['startOnboarding'](); assert.equal(f.app['setupState'], undefined);
     assert.equal(f.app['setupCursorClock'], undefined);

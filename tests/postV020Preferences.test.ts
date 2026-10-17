@@ -45,8 +45,25 @@ test('Recommended is the canonical fresh configuration, with every requested pre
   assert.equal(c.queue.summaryExitCodes, true); assert.equal(c.queue.summaryInputWaits, false);
   assert.equal(c.queue.outputDisplay, 'inline'); assert.equal(c.queueFailurePolicy, 'pause');
   assert.equal(c.terminalTitle, 'session'); assert.equal(c.cursor.color.source, 'theme');
-  assert.equal(c.cursor.effect, 'fire'); assert.equal(c.cursor.renderer, 'auto');
+  assert.equal(c.cursor.effect, 'none'); assert.equal(c.cursor.renderer, 'auto');
   assert.equal(c.cursor.shape, 'host'); assert.equal(c.cursor.blink, 'host'); assert.equal(c.cursor.idleEffect, 'off');
+});
+
+test('requested defaults: Minimal starts Two-line, cursor effects start Off, Fire starts Classic', () => {
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.cursor.effect, 'none');
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.cursor.color.source, 'theme');
+  assert.equal(palette.fireColorChoice({...DEFAULT_PROMPT_CONFIGURATION.cursor, effect: 'fire'}), 'classic');
+  assert.equal(configuration.minimalPromptConfiguration().composerLayout, 'twoLine');
+  assert.equal(setup.createQuickSetup(normalizePromptConfiguration(undefined)).quick?.layout, 'twoLine');
+  // Recommended's draft keeps the cursor effects Off on a configured install too.
+  assert.equal(setup.createQuickSetup(normalizePromptConfiguration({onboardingComplete: true, cursor: {effect: 'sparks'}})).draft.cursor.effect, 'none');
+  // Explicit saved preferences keep their values; only missing fields take defaults.
+  const saved = normalizePromptConfiguration({cursor: {effect: 'fire', particles: {source: 'theme'}}});
+  assert.equal(saved.cursor.effect, 'fire');
+  assert.equal(saved.cursor.particles.source, 'theme');
+  assert.equal(palette.fireColorChoice(saved.cursor), 'theme');
+  assert.deepEqual(normalizePromptConfiguration(JSON.parse(JSON.stringify(saved))), saved);
+  assert.equal(normalizePromptConfiguration({composerLayout: 'oneLine'}).composerLayout, 'oneLine');
 });
 
 test('legacy partial configurations retain historical defaults and custom values roundtrip', () => {
@@ -162,11 +179,11 @@ for (const layout of ['oneLine', 'twoLine'] as const) test(`Minimal ${layout} ha
 test('quick Minimal layout toggles the real composerLayout without saving', () => {
   const state = setup.createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'text', value: '2'});
-  assert.equal(state.draft.composerLayout, 'oneLine');
-  setupKey(state, {kind: 'right'});
   assert.equal(state.draft.composerLayout, 'twoLine');
-  setupKey(state, {kind: 'complete'});
+  setupKey(state, {kind: 'right'});
   assert.equal(state.draft.composerLayout, 'oneLine');
+  setupKey(state, {kind: 'complete'});
+  assert.equal(state.draft.composerLayout, 'twoLine');
   setupKey(state, {kind: 'text', value: '3'});
   assert.deepEqual(state.draft, state.saved);
   setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'right'});
@@ -177,7 +194,11 @@ test('Settings discovers presets and contextual flame colors without a second st
   const {SETTINGS_ROWS, SETTINGS_ENTRIES} = await import('../src/ui/SettingsPanel.js');
   assert.ok(SETTINGS_ENTRIES.some(row => row.id === 'setupQuick' && row.destination === 'setupQuick'));
   const color = SETTINGS_ROWS.find(row => row.id === 'cursorFireColor');
-  assert.ok(color); assert.equal(color.when?.(DEFAULT_PROMPT_CONFIGURATION), true);
+  assert.ok(color); assert.equal(color.when?.(DEFAULT_PROMPT_CONFIGURATION), false, 'effects start Off');
+  const fire = {...DEFAULT_PROMPT_CONFIGURATION, cursor: {...DEFAULT_PROMPT_CONFIGURATION.cursor, effect: 'fire' as const}};
+  assert.equal(color.when?.(fire), true);
+  const {settingsRowValue} = await import('../src/ui/SettingsPanel.js');
+  assert.equal(settingsRowValue(color, fire), 'Classic flame', 'choosing Fire starts on Classic');
 });
 
 test('project and session title falls back cleanly for absent identities', async () => {
@@ -216,7 +237,7 @@ test('Custom flame opens the shared gradient editor even when starting from a na
   const {createCursorPanel, cursorPanelKey, cursorPanelRowKeys} = await import('../src/cursor/CursorPanel.js');
   const {chooseBackend} = await import('../src/cursor/backends.js');
   const {contextFor} = await import('../src/cursor/colors.js');
-  const settings = palette.applyFireColor(DEFAULT_PROMPT_CONFIGURATION.cursor, 'purple');
+  const settings = palette.applyFireColor({...DEFAULT_PROMPT_CONFIGURATION.cursor, effect: 'fire'}, 'purple');
   const state = createCursorPanel(settings);
   state.selected = cursorPanelRowKeys(false, settings).indexOf('fireColor');
   const facts = {host: 'other' as const, caretColor: 'host-controlled' as const, integrated: false};

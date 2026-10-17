@@ -313,7 +313,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('autoEffects')},
     {row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
   // The same cursor rows as Settings; rich editing (the color picker, trail and particle colors, physics) is /cursor, opened over this draft.
-  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects. Recommended uses theme-colored Fire. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
+  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects, Off by default; Fire starts on the Classic flame. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
     {row: configRow('cursorShape'), note: draft => draft.cursor.shape === 'host' ? 'Host default: your terminal keeps its own cursor' : 'Applied while NMSh owns the composer; full-screen programs get your normal cursor'},
     {row: configRow('cursorBlink')},
     {row: configRow('cursorRenderer'), note: draft => chooseBackend(draft.cursor, currentCursorHost()).reason},
@@ -602,7 +602,7 @@ function quickDraft(state: SetupState): PromptConfiguration {
 
 export function createQuickSetup(configuration: PromptConfiguration): SetupState {
   const state = createSetup(configuration);
-  state.quick = {choice: 0, review: false, layout: 'oneLine', backdrop: configuration.onboardingBackdrop};
+  state.quick = {choice: 0, review: false, layout: 'twoLine', backdrop: configuration.onboardingBackdrop};
   state.draft = quickDraft(state);
   return state;
 }
