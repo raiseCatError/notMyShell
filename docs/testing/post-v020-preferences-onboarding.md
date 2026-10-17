@@ -33,20 +33,25 @@ Chroma/effects Off, no welcome or greeting, restrained spacing; One-line is
 Shell, queue, clipboard and safety behavior are preserved. An archived greeting
 is hidden under Minimal without deleting it from the saved transcript.
 
-Fresh onboarding opens one static centered modal — no animation, playback or
-timer — over a static aurora field (`onboardingBackdrop`: off/subtle/aurora).
-`introSeen` is separate from completion: fresh False, legacy missing True,
-persisted before the modal displays. Leaving setup does not replay it next
-launch. Attach and explicit setup routes bypass installation onboarding. Esc
-opens a `Leave setup?` confirmation (Continue default; Exit for now cancels
-without applying); a failed save keeps the draft and displays the error. Manual
-retains the full wizard, nested editors and direct routes; Customize Everything
-opens it over the picker and leaving the wizard without changes returns to the
-picker. `/setup` opens the wizard directly; `/setup quick` and Settings →
-Choose a preset reopen the picker. Quick apply explicitly reviews replacement;
-custom fire gradients and explicit Reduced Motion survive. Optional tools are
-not detected or installed on quick paths. D/B/F open only the chosen official
-community link; /help lists URLs.
+Fresh onboarding opens the Reactive Horizon starting point (specified in
+[first-run startup](../design/first-run-startup.md); the static centered modal
+it replaces is archived): four choices under the real Aurora engine, whose mood
+follows the highlight with a 700 ms cross-fade, Vespyr composited pixel by pixel
+on the horizon, review before Apply and *Leave setup?* with Stay first.
+`onboardingBackdrop` (aurora/subtle/off) is saved at once with `A`. `introSeen`
+is separate from completion: fresh False, legacy missing True, persisted before
+the selector displays, so leaving does not replay it next launch. Attach and
+explicit setup routes bypass installation onboarding. A failed save keeps the
+draft and displays the error. Customize Everything opens the guided setup (in
+the selector's visual language) over the saved configuration; leaving it without
+changes returns to the choices. Keep Existing reads the environment read-only.
+Apply folds the sky into the real transcript and composer; a genuine first run
+with Recommended adds the first-run welcome once, every other Apply one receipt
+line. `/startup`, `/setup quick` and Settings → Starting point reopen the
+selector; `/setup` opens the guided setup directly. Custom fire gradients and
+explicit Reduced Motion survive. Optional tools are not detected or installed on
+these paths. The one-time window offer and its checklists:
+[first-run window maximization](first-run-window-maximization.md).
 
 Fire presets are gradients over existing particles, not a new engine. Purple,
 Blue, Green and Classic have hot-to-cool stops. Follow theme derives several
@@ -232,24 +237,34 @@ t7run bash -c 'fixture=$(mktemp -d "$T7_STORAGE_ROOT/t/prefs-human-XXXXXX"); \
   node dist/index.js'
 ```
 
-1. Fresh: one static centered modal appears immediately. Press keys and wait;
-   the rows never animate or change without input. Esc opens Leave setup?
-   (Continue returns; Exit for now closes without applying). Resize to 32
-   columns, short heights and below 16×6: roomy sizes keep the framed block
-   inside its bounds (centered, aurora field behind it, off/subtle via
-   `onboardingBackdrop`); narrow or short terminals cleanly fall back to the
-   unframed TINY essentials with no cropped modal, background CPU loop or
-   executed demo.
-2. Minimal: 2, Left/Right/Tab to choose One-line/Two-line; Enter reviews,
-   Enter applies. Expect immediate Flow composer, Normal output, no Vespyr or
-   extra greeting. Restart using the same fixture paths: no modal/welcome.
-   Attach/restore a session with a stored greeting: still no greeting.
-3. `/setup` opens full Setup; `/setup prompt`, `/setup look`, `/setup motion`
-   and `/setup cursor` remain direct. `/setup quick` opens the same static
-   picker. Review a preset, Esc → Exit for now: saved preferences remain
-   unchanged. Customize Everything opens the wizard; Esc there returns to the
-   picker without closing setup. Manual errors must be visible and retain the
-   draft. Docs/bug/feature actions need an explicit key.
+1. Fresh: the starting point appears with the aurora moving above the horizon
+   and Vespyr standing on it (no rectangle behind the cat). ↑↓ and 1–4 move
+   the highlight; the sky's mood follows it (aurora, calm, spectrum, out) in a
+   short cross-fade with no flash, however fast you press. A cycles Aurora on,
+   Subtle and Off, and a restart keeps it; after a minute without keys the sky
+   holds still and the next key resumes it. Esc opens *Leave setup?* with Stay
+   focused; Leave applies nothing and says so in one line. Resize through 125,
+   96, 61 and 40 columns and down to 16×6: two columns, the accordion, the plain
+   list, with every choice, Apply and Leave reachable. With Reduced Motion,
+   Effects Off, NO_COLOR and 16 colors the sky is still or absent.
+2. Recommended, Enter, Enter: the sky folds up into one fading rule, the real
+   composer rises into place (the caret appears once it lands), and the
+   first-run welcome arrives line by line under Vespyr's block. A key during
+   the ending finishes it and types once. Restart with the same fixture: no
+   selector, no second welcome. Minimal: Two-line by default, ←→ One-line, one
+   receipt line, Flow composer, no greeting. Keep Existing on a machine with
+   Starship started by `~/.zshrc`: it is kept, the receipt names it, and no file
+   outside NMSh's configuration changes (compare timestamps before and after).
+3. `/startup`, `/setup quick` and Settings → Starting point reopen the selector
+   at the current starting point; applying it again adds only a receipt.
+   Customize Everything opens the guided setup in the selector's language
+   (route of steps, *Step N of M*, the selected row as a segment, keycaps; the
+   live preview beside the rows from 96 columns); Esc there returns to the
+   choices without closing setup. `/setup` opens the guided setup directly;
+   `/setup prompt`, `/setup look`, `/setup motion` and `/setup cursor` remain
+   direct. Manual errors stay visible and keep the draft. On Terminal.app and
+   kitty the first run may also offer to maximize the window: follow
+   [its checklist](first-run-window-maximization.md).
 4. Recommended: inspect requested defaults in `/settings`, `/theme`, `/motion`,
    `/transcript`, `/cursor` and `/queue settings`. Try colored flames and Custom;
    change theme, preserve custom stops. Ghostty native needs reviewed setup and

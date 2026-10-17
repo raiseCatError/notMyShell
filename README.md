@@ -153,9 +153,11 @@ Do not set `nmsh` as your system/login shell with `chsh`. Keep zsh, Bash or Fish
 
 **Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); for source installations, `nmsh uninstall` removes only NMSh's own launcher links (use `brew uninstall nmsh` for Homebrew packages); `nmsh doctor` prints a diagnostic for bug reports.
 
-On a fresh installation, a short skippable introduction leads to **NMSh Recommended**, **Minimal Terminal** (One-line or Two-line), or **Manual Setup**. Highlight a choice to see a replayable demonstration; press R to replay. Minimal uses the native minimal prompt in Flow, with ordinary transcript layout, no historical prompt display, no decorative effects and no session welcome. Existing saved preferences retain their previous behavior.
+On a fresh installation NMSh opens its starting point: four choices under a live aurora, with Vespyr on the horizon. **NMSh Recommended** is the full look; **Minimal Terminal** is NMSh's quiet one (Two-line or One-line); **Customize Everything** is a guided tour of every setting; **Keep Existing** keeps your own prompt (Starship, Powerlevel10k or Oh My Posh), colors and tools, after reading your setup without changing anything. Highlighting a choice changes the sky; nothing applies until you review it and press Enter, and Esc asks before leaving. `A` switches the backdrop between Aurora, Subtle and Off. Reduced Motion, Effects Off, NO_COLOR and 16-color terminals get a still or plain version, and every choice stays reachable down to 16 × 6.
 
-`/setup` opens the full wizard. `/setup quick` previews presets and asks for review before applying them. Everything can be changed later with `/setup`. `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors; Auto uses the portable effect until a supported native integration is configured. The terminal still controls its physical caret color.
+On that first run only, where NMSh can prove the window is its own (Terminal.app; kitty on macOS with a remote-control socket; Hyprland 0.55+ with a Lua configuration, as on Omarchy), it offers to maximize the window for setup and puts it back afterwards. Nothing about it is saved; elsewhere the offer simply never appears. See [first-run window maximization](docs/testing/first-run-window-maximization.md).
+
+`/startup` reopens the starting point anytime (so do `/setup quick` and Settings → Starting point). `/setup` opens the guided setup directly. Existing saved preferences keep their previous behavior. `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors; Auto uses the portable effect until a supported native integration is configured. The terminal still controls its physical caret color.
 
 ## Core commands
 
@@ -163,7 +165,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 
 | Area | Commands |
 | --- | --- |
-| Settings and setup | `/settings` (`/config`), `/setup`, `/setup quick`, `/palette` (F1), `/help`, `/status` |
+| Settings and setup | `/settings` (`/config`), `/startup`, `/setup`, `/palette` (F1), `/help`, `/status` |
 | Composer and prompt | `/prompt`, `/modules`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |

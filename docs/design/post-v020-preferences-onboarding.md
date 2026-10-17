@@ -75,6 +75,12 @@ QA instructions in docs/testing/post-v020-preferences-onboarding.md.
 
 ## Accepted refinements
 
+> **Superseded for first launch (2026-10-17):** the Reactive Horizon starting
+> point in [first-run startup](first-run-startup.md) replaces the static modal
+> described in the next two paragraphs. `introSeen`, `onboardingBackdrop`, the
+> bypass rules and *Leave setup?* carry over (Stay is now focused first); the
+> modal's design exploration is archived with that document.
+
 First launch opens one static, centered setup modal in Setup Cat's existing
 state; there is no introduction animation, playback or timer, and `introSeen`
 persists separately from completion. Legacy objects without this marker count

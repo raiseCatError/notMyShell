@@ -284,6 +284,21 @@ panel region, caches the ground, reuses one `CellGrid`, never schedules more
 than one clock, and holds still after 60 s idle. `scripts/startup-benchmarks.ts`
 measures 100×30, 130×38 and 200×55.
 
+Measured 2026-10-18 (Node 26, Apple silicon, 60 frames per case, bytes after
+row diffing):
+
+| Case | 100×30 | 130×38 | 200×55 |
+| --- | --- | --- | --- |
+| Aurora at rest, 200 ms: median ms · KB/s | 0.35 · 88 | 0.69 · 221 | 1.35 · 450 |
+| Calm at rest, 200 ms | 0.28 · 65 | 0.63 · 138 | 1.25 · 251 |
+| Spectrum at rest, 200 ms | 0.29 · 88 | 0.76 · 221 | 1.41 · 449 |
+| Out at rest (still sky) | 0.02 · 0.1 | 0.04 · 0.1 | 0.05 · 0.1 |
+| Cross-fade into Aurora, 40 ms for 700 ms | 0.30 · 478 | 0.66 · 1144 | 1.33 · 2430 |
+| The ending, 40 ms for 880 ms | 0.21 · 107 | 0.17 · 234 | 0.31 · 489 |
+
+p95 stays under 3 ms (one 5.9 ms outlier); after an unsubscribe the clock has no
+subscribers and no pending timer.
+
 ## Acceptance criteria
 
 | # | Criterion |
@@ -325,6 +340,10 @@ measures 100×30, 130×38 and 200×55.
 ## Verification
 
 Focused suites while building; `npm run verify:release` at the end with
-`NMSH_TEST_TMPDIR` on the T7; production captures (ANSI, SVG and VHS PNG/MP4 of
-the real build in a disposable home) compared side by side with the archived
-reference; a Ghostty checklist for the maintainer in the QA document.
+`NMSH_TEST_TMPDIR` on the T7; `scripts/startup-benchmarks.ts` (median and p95
+milliseconds and KB/s per mood and size, the cross-fade and the ending);
+`scripts/dev/startup-captures.ts` (production ANSI, SVG and VHS PNG frames, and
+the built app's real first run recorded by VHS in a disposable T7 home) with a
+side-by-side page against the archived references; the physical checklists for
+the window offer in
+[first-run window maximization](../testing/first-run-window-maximization.md).
