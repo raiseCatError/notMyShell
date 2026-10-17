@@ -33,16 +33,20 @@ Chroma/effects Off, no welcome or greeting, restrained spacing; One-line is
 Shell, queue, clipboard and safety behavior are preserved. An archived greeting
 is hidden under Minimal without deleting it from the saved transcript.
 
-Fresh onboarding has a finite skippable introduction, then the quick choices.
+Fresh onboarding opens one static centered modal — no animation, playback or
+timer — over a static aurora field (`onboardingBackdrop`: off/subtle/aurora).
 `introSeen` is separate from completion: fresh False, legacy missing True,
-persisted before displaying the introduction. Canceling setup does not replay
-it next launch. Attach and explicit setup routes bypass installation onboarding.
-A failed save keeps the draft and displays the error. Manual retains the full
-wizard, nested editors and direct routes. `/setup` opens it directly;
-`/setup quick` and Settings → Choose a preset reopen the quick selector.
-Quick apply explicitly reviews replacement; custom fire gradients and explicit
-Reduced Motion survive. Optional tools are not detected or installed on quick
-paths. D/B/F open only the chosen official community link; /help lists URLs.
+persisted before the modal displays. Leaving setup does not replay it next
+launch. Attach and explicit setup routes bypass installation onboarding. Esc
+opens a `Leave setup?` confirmation (Continue default; Exit for now cancels
+without applying); a failed save keeps the draft and displays the error. Manual
+retains the full wizard, nested editors and direct routes; Customize Everything
+opens it over the picker and leaving the wizard without changes returns to the
+picker. `/setup` opens the wizard directly; `/setup quick` and Settings →
+Choose a preset reopen the picker. Quick apply explicitly reviews replacement;
+custom fire gradients and explicit Reduced Motion survive. Optional tools are
+not detected or installed on quick paths. D/B/F open only the chosen official
+community link; /help lists URLs.
 
 Fire presets are gradients over existing particles, not a new engine. Purple,
 Blue, Green and Classic have hot-to-cool stops. Follow theme derives several
@@ -177,6 +181,18 @@ fix pass. Capture inspection also caught Recommended preserving an old Never
 fold preference; explicit Recommended now selects Smart, with a lifecycle demo
 regression. No review finding was intentionally deferred.
 
+The static-onboarding correction was verified on its own tree: affected setup
+suites 68/68 (`postV020Onboarding`, `postV020Preferences`, `setupQuickPreview`,
+`setupCat`) and the wider eleven-file onboarding/chroma set 147/147, then
+canonical full release verification passed — build, 2912 tests / 2911 pass /
+0 fail (1 skipped), `git diff --check`, benchmark typecheck and timing smoke,
+exit 0 — `20261017-194626-Mr0fg4`. Renderer-level captures for 16×6 TINY
+through 200×50 (mutation states plus backdrop off/subtle at 80×24) are in the
+external QA `onboarding-captures/` directory beside `run-qa.sh`: all frames
+are byte-identical across renders and every capture stays inside its bounds.
+The R-replay/`renderSetupIntro` engine remains tested but unreachable from the
+quick path. Physical Ghostty/Terminal.app validation of the modal is pending.
+
 ## Reproduce without touching real preferences
 
 The reusable external runner defaults to focused tests; expensive release
@@ -194,7 +210,8 @@ t7run bash /Volumes/T7Tmp/ai-dev/qa/post-v020-preferences-onboarding/run-qa.sh \
 ```
 
 Logs/captures print their own external T7 directory. The gallery's R Replay
-replays recorded states; in NMSh, R replays the full deterministic demonstration.
+replays recorded states of the retained selector engine; the quick setup modal
+itself is static and has no replay affordance.
 These captures use TerminalApp and production prompt, presenter, geometry,
 motion and cursor components; the SVG viewer serializes their terminal cells.
 They do not establish physical font/shader/keyboard or mouse correctness.
@@ -215,18 +232,24 @@ t7run bash -c 'fixture=$(mktemp -d "$T7_STORAGE_ROOT/t/prefs-human-XXXXXX"); \
   node dist/index.js'
 ```
 
-1. Fresh: intro lasts about 2.6 seconds. Any key skips only the intro. Select
-   1/2/3 or ↑↓; R restarts typing, running output and completion. Switch focus
-   mid-demo and resize to 32 columns, short heights and below 16×6: no stale
-   animation, missing essential controls, background CPU loop or executed demo.
+1. Fresh: one static centered modal appears immediately. Press keys and wait;
+   the rows never animate or change without input. Esc opens Leave setup?
+   (Continue returns; Exit for now closes without applying). Resize to 32
+   columns, short heights and below 16×6: roomy sizes keep the framed block
+   inside its bounds (centered, aurora field behind it, off/subtle via
+   `onboardingBackdrop`); narrow or short terminals cleanly fall back to the
+   unframed TINY essentials with no cropped modal, background CPU loop or
+   executed demo.
 2. Minimal: 2, Left/Right/Tab to choose One-line/Two-line; Enter reviews,
    Enter applies. Expect immediate Flow composer, Normal output, no Vespyr or
-   extra greeting. Restart using the same fixture paths: no intro/welcome.
+   extra greeting. Restart using the same fixture paths: no modal/welcome.
    Attach/restore a session with a stored greeting: still no greeting.
 3. `/setup` opens full Setup; `/setup prompt`, `/setup look`, `/setup motion`
-   and `/setup cursor` remain direct. `/setup quick` does not play the intro.
-   Review a preset, Esc: saved preferences remain unchanged. Manual errors must
-   be visible and retain the draft. Docs/bug/feature actions need an explicit key.
+   and `/setup cursor` remain direct. `/setup quick` opens the same static
+   picker. Review a preset, Esc → Exit for now: saved preferences remain
+   unchanged. Customize Everything opens the wizard; Esc there returns to the
+   picker without closing setup. Manual errors must be visible and retain the
+   draft. Docs/bug/feature actions need an explicit key.
 4. Recommended: inspect requested defaults in `/settings`, `/theme`, `/motion`,
    `/transcript`, `/cursor` and `/queue settings`. Try colored flames and Custom;
    change theme, preserve custom stops. Ghostty native needs reviewed setup and

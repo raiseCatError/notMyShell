@@ -75,20 +75,34 @@ QA instructions in docs/testing/post-v020-preferences-onboarding.md.
 
 ## Accepted refinements
 
-First launch has one finite 2–3 second skippable introduction in Setup Cat's
-existing state; introSeen persists separately from completion. Legacy objects
-without this marker count as already seen. Any key skips and is consumed. No
-intro on explicit setup routes, attach/restore, session creation or handoff.
-Docs / bug / feature links are explicit actions only and remain in /help.
+First launch opens one static, centered setup modal in Setup Cat's existing
+state; there is no introduction animation, playback or timer, and `introSeen`
+persists separately from completion. Legacy objects without this marker count
+as already seen, and a fresh install (`!onboardingComplete && !introSeen`) sees
+the modal exactly once: keys act immediately, Esc opens a Leave setup?
+confirmation (Continue is the default; Exit for now closes without applying),
+and nothing auto-reopens afterwards. Explicit setup routes, attach/restore,
+session creation and handoff never show it. Docs / bug / feature links are
+explicit actions only and remain in /help.
 
-The selector runs bounded deterministic interactions using production prompt,
-OutputBuffer/TranscriptPresenter, ScreenPlan, input layout, motion and cursor
-primitives. R and focus changes restart the whole script; invisible or completed
-previews schedule nothing. Reduced Motion/NO_COLOR get useful settled states.
-Minimal offers One-line (default) / Two-line via Left/Right/Tab, setting the real
-composerLayout with composer placement, Flow/Normal, no snapshots or greetings.
-Bare /setup opens full Setup Cat; /setup quick opens the selector. Presets need
-review; a concise status confirms application. Settings advertises preset choice.
+The modal is a hand-rolled centered framed block (maximum 56 columns wide) over
+a static deterministic aurora field (`onboardingBackdrop`: off, subtle or
+aurora; default aurora; local presentation state, never exported). Block-fit
+tiers use inner width and available height: narrow or short terminals get an
+unframed TINY essential view instead of a cropped modal. Rendering is pure —
+the same state renders the same rows at any time; nothing schedules a frame or
+clock. The earlier animated introduction and selector engines
+(`renderSetupIntro`, `SetupPreview.ts`) stay intact and tested as retained
+presentation code, but the quick path never invokes them.
+
+The three choices are NMSh Recommended, Minimal Terminal and Customize
+Everything. Minimal offers One-line (default) / Two-line via Left/Right/Tab,
+setting the real composerLayout with composer placement, Flow/Normal, no
+snapshots or greetings; Enter reviews and Apply is explicit, with a replacement
+warning for customized installations. Customize Everything opens the full
+Setup Cat over the picker; cancelling the wizard returns to the picker without
+closing setup. Bare /setup opens full Setup Cat; /setup quick opens the picker.
+A concise status confirms application. Settings advertises preset choice.
 
 The maintainer clarified the folding report was physical QA Test B: QUEUED
 execution, not a paste or foreground command. Trace provenance, queue display
