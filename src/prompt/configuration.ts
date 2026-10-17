@@ -1,6 +1,7 @@
 import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, moduleDefinition, type ContextModuleId} from '../context/modules.js';
 export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
+import {COLOR_PRESET_IDS, COLOR_PRESET_LABELS} from '../chroma/colorPresets.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -415,6 +416,13 @@ export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
  */
 export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom', 'chosen'] as const;
 export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
+/**
+ * The cursor idle effect's colors: Follow cursor effect (the movement effect's, as before; the default),
+ * the theme, a named preset, or its own stops.
+ */
+export const CURSOR_IDLE_COLOR_SOURCES = ['effect', 'theme', ...COLOR_PRESET_IDS, 'custom'] as const;
+export type CursorIdleColorSource = typeof CURSOR_IDLE_COLOR_SOURCES[number];
+export const CURSOR_IDLE_COLOR_LABELS: Readonly<Record<CursorIdleColorSource, string>> = {effect: 'Follow cursor effect', theme: 'Follow theme', ...COLOR_PRESET_LABELS, custom: 'Custom'};
 export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
 export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient', 'theme'] as const;
 export const CURSOR_LEVELS = ['low', 'medium', 'high'] as const;
@@ -440,6 +448,8 @@ export interface CursorSettings {
   color: {source: CursorColorSource; custom?: string; /** Choose theme: the theme and (Catppuccin) accent the cursor uses. */ theme?: NativePaletteId; themeAccent?: CatppuccinAccent};
   trail: {source: typeof CURSOR_TRAIL_COLORS[number]; colors: string[]};
   particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
+  /** The idle effect's own colors; `effect` follows the movement effect's. */
+  idleColors: {source: CursorIdleColorSource; colors: string[]};
   speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
   advanced: CursorAdvanced;
 }
@@ -447,7 +457,7 @@ export const DEFAULT_CURSOR_ADVANCED: CursorAdvanced = {shortMoveMs: 40, longMov
   trailExponent: 1.6, maxTrail: 24, moveThreshold: 1, dwellMs: 600, particleDensity: 1, particleLifetimeMs: 520, spread: 0.6, particleSpeed: 1, drag: 0.9, gravity: 1, fps: 60};
 /** Factory defaults: no motion, no effect, no idle effect. Existing users see no surprise animation. */
 export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host', renderer: 'auto', motion: 'off', effect: 'none', idleEffect: 'off',
-  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []},
+  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []}, idleColors: {source: 'effect', colors: []},
   speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED};
 
 const HEX = /^#[0-9a-f]{6}$/iu;
@@ -459,6 +469,7 @@ export function normalizeCursor(value: unknown): CursorSettings {
   const color = isRecord(v.color) ? v.color : {};
   const trail = isRecord(v.trail) ? v.trail : {};
   const particles = isRecord(v.particles) ? v.particles : {};
+  const idleColors = isRecord(v.idleColors) ? v.idleColors : {};
   const advanced = isRecord(v.advanced) ? v.advanced : {};
   const colors = (list: unknown) => Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && HEX.test(item)).slice(0, 6) : [];
   const a = DEFAULT_CURSOR_ADVANCED;
@@ -470,6 +481,7 @@ export function normalizeCursor(value: unknown): CursorSettings {
       ...(color.themeAccent !== undefined ? {themeAccent: normalizeCatppuccinAccent(color.themeAccent)} : {})},
     trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
     particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
+    idleColors: {source: pick(CURSOR_IDLE_COLOR_SOURCES, idleColors.source, 'effect'), colors: colors(idleColors.colors)},
     speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
     particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'),
     advanced: {shortMoveMs: clampNumber(advanced.shortMoveMs, 0, 200, a.shortMoveMs), longMoveMs: clampNumber(advanced.longMoveMs, 40, 600, a.longMoveMs),

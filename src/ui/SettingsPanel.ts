@@ -13,7 +13,8 @@ import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent} from '../appearance/themeFamilies.js';
 import {availabilityOf, availableValues, currentCursorHost, unavailableReason, type CursorFeature} from '../cursor/backends.js';
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
-import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
 import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
 import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
@@ -292,6 +293,16 @@ const CURSOR_ROWS: readonly SettingsRow[] = [
   {id: 'cursorFireCustom', parent: 'cursorEffect', when: c => c.cursor.effect === 'fire', label: 'Custom Fire gradient', description: 'Edit particle colors in the shared /cursor gradient editor', category: 'Cursor', control: 'action', actionLabel: 'Edit ›', destination: 'cursor'},
   cursorFeatureRow({id: 'cursorIdle', label: 'Cursor idle effect', description: 'A slow effect while the caret rests (off by default)', category: 'Cursor',
     feature: 'idleEffect', values: CURSOR_IDLE_EFFECTS, get: c => c.idleEffect, set: (c, idleEffect) => ({...c, idleEffect: idleEffect as CursorSettings['idleEffect']})}),
+  {...enumRow({id: 'cursorIdleColor', parent: 'cursorIdle', label: 'Idle effect color', description: 'Follow cursor effect uses the movement effect\'s colors; or Follow theme, a preset, or your own gradient', category: 'Cursor',
+    values: CURSOR_IDLE_COLOR_SOURCES, labels: CURSOR_IDLE_COLOR_SOURCES.map(source => CURSOR_IDLE_COLOR_LABELS[source]), get: c => c.cursor.idleColors.source,
+    set: (c, source) => {
+      // Custom starts from the preset shown now (or Lavender), so choosing it never makes the color jump.
+      const from = c.cursor.idleColors.source;
+      const seed = from !== 'effect' && from !== 'theme' && from !== 'custom' ? COLOR_PRESET_STOPS[from] : COLOR_PRESET_STOPS.lavender;
+      return withCursor(c, {...c.cursor, idleColors: {source, colors: source === 'custom' && c.cursor.idleColors.colors.length < 2 ? [...seed] : c.cursor.idleColors.colors}});
+    }}), when: c => c.cursor.idleEffect !== 'off'},
+  {id: 'cursorIdleCustom', parent: 'cursorIdleColor', when: c => c.cursor.idleEffect !== 'off' && c.cursor.idleColors.source === 'custom', label: 'Edit idle effect colors',
+    description: 'Gradient stops in the shared /cursor editor, with presets and a live preview', category: 'Cursor', control: 'action', actionLabel: 'Edit ›', destination: 'cursor'},
   enumRow({id: 'cursorColor', label: 'Cursor color', description: 'Follow the prompt\'s theme, choose a theme for the cursor alone, use NMSh\'s accent, keep the host\'s color, or pick your own', category: 'Cursor',
     values: CURSOR_COLOR_SOURCES_UI, labels: ['Follow current theme', 'Choose theme', 'NMSh accent', 'Host', 'Custom'],
     get: c => c.cursor.color.source, set: (c, source) => withCursor(c, {...c.cursor, color: {...c.cursor.color, source,
@@ -794,6 +805,22 @@ export function resetSettingsRow(row: SettingsRow, config: PromptConfiguration):
 }
 
 /** Enter on a row that opens something. */
+/**
+ * The editor a Custom value opens at once (choosing Custom with Enter), or undefined. The cursor rows name the
+ * /cursor editor to start in.
+ */
+export function customColorEditor(rowId: string, config: PromptConfiguration): {destination: SettingsDestination; cursor?: 'fireEdit' | 'idleEdit' | 'colorCustom'} | undefined {
+  switch (rowId) {
+    case 'idleColor': return config.idleVisuals.colorSource === 'custom' ? {destination: 'idleColors'} : undefined;
+    case 'activityColors': return config.liveActivity.colors === 'custom' ? {destination: 'activityColors'} : undefined;
+    case 'uiChromePreset': return config.uiChrome.preset === 'custom' ? {destination: 'chromeColors'} : undefined;
+    case 'cursorFireColor': return fireColorChoice(config.cursor) === 'custom' ? {destination: 'cursor', cursor: 'fireEdit'} : undefined;
+    case 'cursorIdleColor': return config.cursor.idleColors.source === 'custom' ? {destination: 'cursor', cursor: 'idleEdit'} : undefined;
+    case 'cursorColor': return config.cursor.color.source === 'custom' ? {destination: 'cursor', cursor: 'colorCustom'} : undefined;
+    default: return undefined;
+  }
+}
+
 export function settingsRowDestination(row: SettingsRow): SettingsDestination | undefined {
   return row.control === 'child' || row.control === 'action' ? row.destination : undefined;
 }

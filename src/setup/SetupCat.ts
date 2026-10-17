@@ -25,6 +25,7 @@ import {lifecycleNote, type ProviderDescriptor, type ProviderStatus} from '../pr
 import type {CompletionFacts} from '../shell/SemanticService.js';
 import {
   adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsDestination, type SettingsRow,
+  customColorEditor,
 } from '../ui/SettingsPanel.js';
 import {Transitions, transitionPaint, progress} from '../motion/transitions.js';
 import {overlayRow} from '../presentation/cellOverlay.js';
@@ -328,6 +329,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('cursorFireColor')},
     {row: configRow('cursorFireCustom')},
     {row: configRow('cursorIdle')},
+    {row: configRow('cursorIdleColor')},
+    {row: configRow('cursorIdleCustom')},
     {row: configRow('cursorColor'), note: draft => caretColorNote(currentCursorHost(), draft.cursor.color.source)},
     {row: configRow('cursorColorFamily')},
     {row: configRow('cursorColorVariant')},
@@ -852,7 +855,7 @@ export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupRe
   const applied = (configuration: PromptConfiguration): SetupResult => state.quick?.manual
     ? applyStartingPoint(state, configuration, 'customize', {tools: state.tools, changed: changes()})
     : {kind: 'apply', configuration: normalizePromptConfiguration(configuration), tools: state.tools, changed: changes()};
-  if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
+  if (state.chooser) return chooserKey(state, state.chooser, key);
   if (state.confirmDiscard) {
     if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return leaveQuickManual() ? undefined : {kind: 'cancel'};
     if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) state.confirmDiscard = false;
@@ -892,7 +895,7 @@ export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupRe
       state.row = Math.max(0, currentRows(state).findIndex(item => item.row.id === 'treatmentPreset'));
       return undefined;
     }
-    if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : row.id === 'cursorFireCustom' ? 'fireEdit' : 'colorCustom'};
+    if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : row.id === 'cursorFireCustom' ? 'fireEdit' : row.id === 'cursorIdleCustom' ? 'idleEdit' : 'colorCustom'};
     // An in-draft action (reset a list), or a route: the real editor opens over this Setup, which waits unapplied.
     if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
     if (row.control === 'action' && row.destination !== 'tools' && row.destination) return {kind: 'open', destination: row.destination};
@@ -918,21 +921,30 @@ export function chooserOptions(row: SettingsRow, config: PromptConfiguration): r
   return row.control === 'enum' ? row.optionsFor?.(config) ?? row.options : [];
 }
 
-function chooserKey(state: SetupState, chooser: NonNullable<SetupState['chooser']>, key: Key): void {
+function chooserKey(state: SetupState, chooser: NonNullable<SetupState['chooser']>, key: Key): SetupResult | undefined {
   const row = currentRows(state).find(item => item.row.id === chooser.rowId)?.row;
   const options = row ? chooserOptions(row, chooser.before) : [];
   if (!row || row.control !== 'enum' || !options.length || key.kind === 'escape' || key.kind === 'interrupt') {
     state.draft = chooser.before;
     state.chooser = undefined;
-    return;
+    return undefined;
   }
-  if (key.kind === 'enter' || key.kind === 'complete' || key.kind === 'focusPrevious') { state.chooser = undefined; return; }
+  if (key.kind === 'enter') {
+    state.chooser = undefined;
+    // Choosing Custom opens its editor at once, over this draft; Esc there comes back to this row.
+    const editor = customColorEditor(row.id, state.draft);
+    if (editor?.cursor) return {kind: 'cursorEditor', advanced: false, row: editor.cursor};
+    if (editor) return {kind: 'open', destination: editor.destination};
+    return undefined;
+  }
+  if (key.kind === 'complete' || key.kind === 'focusPrevious') { state.chooser = undefined; return undefined; }
   if (key.kind === 'up' || key.kind === 'down' || key.kind === 'left' || key.kind === 'right') {
     const delta = key.kind === 'up' || key.kind === 'left' ? -1 : 1;
     chooser.index = (chooser.index + delta + options.length) % options.length;
     // Preview the highlighted choice live; Esc puts the earlier value back.
     state.draft = row.select(chooser.before, chooser.index);
   }
+  return undefined;
 }
 
 /**

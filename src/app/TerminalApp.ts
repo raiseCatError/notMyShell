@@ -100,7 +100,7 @@ import {framePanel, renderTabStrip, selectedRowBand, tabCycleDelta} from '../ui/
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
 import {renderControlRows, renderControls} from '../ui/controls.js';
-import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
+import {gradientEditorControls, gradientEditorKey, isApplyKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsRowValue, settingsView, statusLineCount, statusSection, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
@@ -108,6 +108,7 @@ import {
   SETTINGS_ENTRIES,
   SETTINGS_ROWS,
   QUEUE_SETTINGS_ROW_IDS,
+  customColorEditor,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
@@ -286,7 +287,7 @@ import {diffModules, progress, transitionPaint, Transitions, type MotionGate} fr
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
 import {includeLine, installedNativeHost, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
-import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
+import {createCursorPanel, cursorPanelKey, openCursorEditor, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
 import {renderCursorPreview} from '../cursor/CursorPreview.js';
 import {MOTION_ROWS} from '../motion/motionRows.js';
@@ -1690,7 +1691,12 @@ export class TerminalApp {
     if (this.chromeEditor) {
       const result = chromeEditorKey(this.chromeEditor, key, colorLevel());
       if (result?.kind === 'cancel') { this.chromeEditor = undefined; this.returnFromPanel(); }
-      else if (result?.kind === 'save' && this.applySettingsConfiguration({...this.promptConfiguration,
+      else if (result?.kind === 'save' && this.panelOrigin === 'setup' && this.parkedSetup) {
+        // Opened from Setup: the colors join its draft; nothing is saved until Setup's Apply.
+        const draft = this.parkedSetup.state.draft;
+        this.parkedSetup.state.draft = {...draft, uiChrome: {source: 'custom', preset: 'custom', colors: result.colors}};
+        this.chromeEditor = undefined; this.returnFromPanel();
+      } else if (result?.kind === 'save' && this.applySettingsConfiguration({...this.promptConfiguration,
         uiChrome: {source: 'custom', preset: 'custom', colors: result.colors}})) { this.chromeEditor = undefined; this.returnFromPanel(); }
       return;
     }
@@ -2188,7 +2194,7 @@ export class TerminalApp {
         if (action.destination === 'prompt') void this.startPromptSettings(false);
         else if (action.destination === 'theme') this.openThemeStudio();
         else if (action.destination === 'themeBridge') void this.openThemeBridge();
-        else if (action.destination === 'cursor') this.openCursorPanel();
+        else if (action.destination === 'cursor') { this.panelOrigin = undefined; this.openCursorPanel(); }
         else if (action.destination === 'chroma') this.startChromaSettings();
         else this.focusConfigRow('uiChrome');
       }
@@ -2893,7 +2899,7 @@ export class TerminalApp {
       } else this.openScreensaverGallery();
     }
     // The cursor has one configuration: /cursor opens its existing Settings rows.
-    else if (slash.kind === 'cursor') this.openCursorPanel();
+    else if (slash.kind === 'cursor') { this.panelOrigin = undefined; this.openCursorPanel(); }
     else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.openThemeStudio(); }
     else if (slash.kind === 'themeBridge') { this.panelOrigin = undefined; await this.openThemeBridge(); }
@@ -5084,13 +5090,20 @@ export class TerminalApp {
       // Back to the exact step: the draft, row and scroll are as they were; what the editor saved joins them.
       const {state, knew} = this.parkedSetup;
       this.parkedSetup = undefined; this.panelOrigin = undefined;
+      // Only the values the editor changed, at their own depth, so other unapplied edits in the same group survive.
+      const merge = (target: Record<string, unknown>, before: Record<string, unknown>, after: Record<string, unknown>) => {
+        for (const key of Object.keys(after)) {
+          const was = before?.[key], is = after[key];
+          if (JSON.stringify(was) === JSON.stringify(is)) continue;
+          const plain = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+          if (plain(was) && plain(is) && plain(target[key])) merge(target[key] as Record<string, unknown>, was, is);
+          else target[key] = structuredClone(is);
+        }
+      };
       const now = this.promptConfiguration as unknown as Record<string, unknown>;
       const before = knew as unknown as Record<string, unknown>;
-      for (const key of Object.keys(now)) {
-        if (JSON.stringify(now[key]) === JSON.stringify(before[key])) continue;
-        (state.saved as unknown as Record<string, unknown>)[key] = structuredClone(now[key]);
-        (state.draft as unknown as Record<string, unknown>)[key] = structuredClone(now[key]);
-      }
+      merge(state.saved as unknown as Record<string, unknown>, before, now);
+      merge(state.draft as unknown as Record<string, unknown>, before, now);
       this.setupState = state;
       if (!state.quick || state.quick.manual) void this.loadSetupContext(state);
       return;
@@ -5200,8 +5213,15 @@ export class TerminalApp {
       if (key.kind === 'up' && index === 0 && !state.searchFocused) state.focus = 'tabs';
       else if (count > 0) state.contentIndex = Math.max(0, Math.min(count - 1, index + (key.kind === 'up' ? -1 : 1)));
     } else if ((key.kind === 'enter' || (key.kind === 'text' && key.value === ' ')) && row) {
-      if (isInlineEditable(row)) this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
-      else if (key.kind === 'enter') {
+      if (isInlineEditable(row)) {
+        this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
+        // Enter landing on Custom opens its editor at once; Esc there cancels and comes back to this row.
+        const editor = key.kind === 'enter' && row.control === 'enum' ? customColorEditor(row.id, this.promptConfiguration) : undefined;
+        if (editor) {
+          this.openSettingsDestination(editor.destination, view, state.contentIndex ?? 0, state);
+          if (editor.cursor && this.cursorPanel) openCursorEditor(this.cursorPanel, editor.cursor, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration));
+        }
+      } else if (key.kind === 'enter') {
         const destination = settingsRowDestination(row);
         if (destination) this.openSettingsDestination(destination, view, state.contentIndex ?? 0, state);
       }
@@ -5234,7 +5254,7 @@ export class TerminalApp {
     else if (destination === 'setupQuick') this.startSetup('quick');
     else if (destination === 'screensaver') this.openScreensaverGallery();
     else if (destination === 'chromeColors') {
-      const config = this.promptConfiguration;
+      const config = this.editorBase();
       this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
     }
     else if (destination === 'idleColors' || destination === 'activityColors') this.openStopsEditor(destination === 'idleColors' ? 'idle' : 'activity');
@@ -6588,27 +6608,39 @@ export class TerminalApp {
     } else this.startIdle(true);
   }
 
+  /** The configuration a color editor works on: Setup's unapplied draft when opened from it, otherwise the saved one. */
+  private editorBase(): PromptConfiguration {
+    return this.panelOrigin === 'setup' && this.parkedSetup ? this.parkedSetup.state.draft : this.promptConfiguration;
+  }
+
   private openStopsEditor(target: 'idle' | 'activity'): void {
-    const config = this.promptConfiguration;
+    const config = this.editorBase();
     const stops = target === 'idle' ? config.idleVisuals.customStops : config.liveActivity.customStops;
     this.stopsEditor = {target, gradient: {stops: [...(stops.length >= MIN_CUSTOM_STOPS ? stops : PRESET_STOPS.lavender)], index: 0}};
   }
 
   /** The draft stops applied to a copy of the configuration, for live previews. */
   private stopsDraft(editor: NonNullable<TerminalApp['stopsEditor']>): PromptConfiguration {
-    const config = this.promptConfiguration;
+    const config = this.editorBase();
     const customStops = editor.gradient.stops.length >= MIN_CUSTOM_STOPS ? [...editor.gradient.stops] : [...PRESET_STOPS.lavender];
     return editor.target === 'idle'
       ? {...config, idleVisuals: {...config.idleVisuals, colorSource: 'custom', customStops}}
       : {...config, liveActivity: {...config.liveActivity, colors: 'custom', customStops}};
   }
 
-  /** Shared stop editor keys; Esc (when not typing a hex) saves the stops and returns. */
+  /**
+   * Shared stop editor keys. S applies (into Setup's draft when opened from Setup, saved otherwise); Esc cancels and
+   * goes back to the setting that opened it, with nothing changed.
+   */
   private handleStopsEditorKey(key: Key, editor: NonNullable<TerminalApp['stopsEditor']>): void {
-    const saved = editor.target === 'idle' ? this.promptConfiguration.idleVisuals.customStops : this.promptConfiguration.liveActivity.customStops;
-    if (gradientEditorKey(editor.gradient, key, () => saved.length >= MIN_CUSTOM_STOPS ? saved : PRESET_STOPS.lavender)) return;
-    if (key.kind !== 'escape' && key.kind !== 'interrupt') return;
-    if (key.kind === 'escape' && this.applySettingsConfiguration(this.stopsDraft(editor))) this.armIdle();
+    const base = this.editorBase();
+    const saved = editor.target === 'idle' ? base.idleVisuals.customStops : base.liveActivity.customStops;
+    const apply = isApplyKey(editor.gradient, key);
+    if (!apply && gradientEditorKey(editor.gradient, key, () => saved.length >= MIN_CUSTOM_STOPS ? saved : PRESET_STOPS.lavender)) return;
+    if (!apply && key.kind !== 'escape' && key.kind !== 'interrupt') return;
+    if (apply && this.panelOrigin === 'setup' && this.parkedSetup) this.parkedSetup.state.draft = this.stopsDraft(editor);
+    else if (apply && this.applySettingsConfiguration(this.stopsDraft(editor))) this.armIdle();
+    else if (apply) return;
     this.stopsEditor = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.returnFromPanel();
@@ -6626,7 +6658,7 @@ export class TerminalApp {
       rows.push(`  ${sweepCells(cells, Number.POSITIVE_INFINITY, style, colorLevel(), true)}${SECONDARY}3.4s${RESET}`,
         `  ${SUBTLE}Only live work uses these colors; finished commands show their plain success or failure.${RESET}`);
     }
-    rows.push('', renderControls(gradientEditorControls(editor.gradient)));
+    rows.push('', ...renderControlRows(gradientEditorControls(editor.gradient, true), Math.max(10, columns - 4)).map(row => `  ${row}`));
     return framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, this.dimensions().rows));
   }
 
@@ -6637,6 +6669,7 @@ export class TerminalApp {
     if (!action) return;
     if (action.kind === 'close') { state.cursorPanel = undefined; this.cursorPanelClock?.(); this.cursorPanelClock = undefined; return; }
     if (action.kind === 'apply') state.draft = {...state.draft, cursor: action.settings};
+    if (action.kind === 'apply' && action.close) { state.cursorPanel = undefined; this.cursorPanelClock?.(); this.cursorPanelClock = undefined; }
   }
 
   /**
@@ -6806,7 +6839,9 @@ export class TerminalApp {
     }
     if (result.kind === 'cursorEditor') {
       // The shared /cursor panel over the draft's cursor settings: changes land in the draft, nothing is saved until Apply.
-      state.cursorPanel = createCursorPanel(state.draft.cursor, Date.now(), {embedded: true, advanced: result.advanced, ...(result.row ? {row: result.row} : {})});
+      const panel = state.cursorPanel = createCursorPanel(state.draft.cursor, Date.now(), {embedded: true, advanced: result.advanced, ...(result.row ? {row: result.row} : {})});
+      // Custom colors open their editor at once; applying or cancelling it comes straight back to this step.
+      if (result.row === 'fireEdit' || result.row === 'idleEdit' || result.row === 'colorCustom') openCursorEditor(panel, result.row, this.cursorEnv(panel.draft, state.draft));
       return;
     }
     if (result.kind === 'cancel') {
@@ -8538,9 +8573,11 @@ export class TerminalApp {
     return rows;
   }
 
-  /** /cursor: the canonical cursor & effects surface; its preview animates only while it is open (and motion is allowed). */
+  /**
+   * /cursor: the canonical cursor & effects surface; its preview animates only while it is open (and motion is allowed).
+   * Keeps the origin it was opened from (Settings), so Esc goes back there.
+   */
   private openCursorPanel(options: CursorPanelOptions = {}): void {
-    this.panelOrigin = undefined;
     this.cursorPanel = createCursorPanel(this.promptConfiguration.cursor, Date.now(), options);
   }
 
@@ -8558,6 +8595,8 @@ export class TerminalApp {
       // The configuration setter applies shape/blink to the live renderer and refreshes NMSh's managed native files.
       this.updateConfiguration(configuration => { configuration.cursor = action.settings; });
       if (this.cursorReload) state.message = this.cursorReload;
+      // Opened straight into a color editor (choosing Custom in Settings): applying it goes back there.
+      if (action.close) this.closeCursorPanel();
       return;
     }
     const facts = this.cursorFacts();

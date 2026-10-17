@@ -1,5 +1,6 @@
 import type {CursorSettings} from '../prompt/configuration.js';
 import {UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
 import type {EffectPalette} from './CursorEngine.js';
 
 /**
@@ -57,10 +58,16 @@ export function effectPalette(settings: CursorSettings, accent: RgbColor = UI_CO
   const trail = settings.trail.source === 'custom' && settings.trail.colors[0] ? [hexToRgb(settings.trail.colors[0])]
     : settings.trail.source === 'gradient' && settings.trail.colors.length ? settings.trail.colors.map(hexToRgb)
     : effectGradient.length && settings.color.source === 'host' ? effectGradient.slice(0, 3) : [caret];
-  const themeGradient = [1.15, 0.85, 0.5, 0.22].map(scale => ({red: Math.min(255, Math.round(caret.red * scale)), green: Math.min(255, Math.round(caret.green * scale)), blue: Math.min(255, Math.round(caret.blue * scale))}));
+  const scaled = (base: RgbColor) => [1.15, 0.85, 0.5, 0.22].map(scale => ({red: Math.min(255, Math.round(base.red * scale)), green: Math.min(255, Math.round(base.green * scale)), blue: Math.min(255, Math.round(base.blue * scale))}));
+  const themeGradient = scaled(caret);
   const particles = settings.particles.source === 'theme' ? themeGradient
     : settings.particles.source === 'custom' && settings.particles.colors[0] ? [hexToRgb(settings.particles.colors[0])]
     : settings.particles.source === 'gradient' && settings.particles.colors.length ? settings.particles.colors.map(hexToRgb)
     : effectGradient.length ? (settings.trail.source === 'cursor' ? effectGradient : trail) : trail;
-  return {caret, trail, particles};
+  // The idle effect: undefined follows the movement effect (as before); otherwise its own colors.
+  const source = settings.idleColors?.source ?? 'effect';
+  const own = settings.idleColors?.colors ?? [];
+  const idle = source === 'effect' ? undefined : source === 'theme' ? scaled(accent)
+    : source === 'custom' ? (own.length ? own.map(hexToRgb) : undefined) : COLOR_PRESET_STOPS[source].map(hexToRgb);
+  return {caret, trail, particles, ...(idle ? {idle} : {})};
 }

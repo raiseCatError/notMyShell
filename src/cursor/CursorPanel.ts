@@ -1,13 +1,14 @@
 import type {Key} from '../terminal/keys.js';
-import {CURSOR_BLINKS, CURSOR_EASINGS, CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, CURSOR_SHAPES,
-  type CursorAdvanced, type CursorSettings} from '../prompt/configuration.js';
+import {CURSOR_BLINKS, CURSOR_EASINGS, CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, CURSOR_SHAPES,
+  type CursorAdvanced, type CursorIdleColorSource, type CursorSettings} from '../prompt/configuration.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent} from '../appearance/themeFamilies.js';
 import {defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, variantOptions} from '../appearance/themeSelection.js';
 import {hexColor, parseHexColor} from '../chroma/color.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {colorPickerKey, createColorPicker, renderColorPicker, type ColorPickerState} from '../ui/ColorPicker.js';
-import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
-import {renderControls} from '../ui/controls.js';
+import {gradientEditorControls, gradientEditorKey, isApplyKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
+import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
+import {renderControlRows, renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {colorEscape} from '../chroma/escape.js';
@@ -38,8 +39,10 @@ export interface CursorPanelState {
   native?: {host: 'ghostty' | 'kitty'; configPath: string; line?: string; related: string[]; blocked?: string; choice: 'yes' | 'no'};
   /** The shared color picker, while a color is being chosen. Nothing is kept until Enter. */
   picker?: {target: 'cursor' | 'trail' | 'particles'; state: ColorPickerState};
-  /** The shared gradient editor for trail or particle colors. */
-  gradient?: {target: 'trail' | 'particles'; state: GradientEditorState};
+  /** Opened straight into one color editor; closing that editor closes the panel. */
+  direct?: boolean;
+  /** The shared gradient editor for trail, particle or idle effect colors; S applies, Esc cancels. */
+  gradient?: {target: 'trail' | 'particles' | 'idle'; state: GradientEditorState; /** R puts these back. */ initial: string[]};
   /** Setup embeds this panel over its draft: applying changes the draft, and host setup is not offered here. */
   embedded?: boolean;
   /** Opened straight on Advanced (from Setup): Esc leaves the panel instead of returning to the basic rows. */
@@ -80,7 +83,7 @@ interface Row {
   /** A reason, when the row has nothing it can do here: shown as Unavailable, without arrows. */
   unavailable?: (draft: CursorSettings, env: CursorPanelEnv) => string | undefined;
   when?: (draft: CursorSettings) => boolean;
-  action?: 'native' | 'advanced' | 'customColor' | 'trailColors' | 'particleColors';
+  action?: 'native' | 'advanced' | 'customColor' | 'trailColors' | 'particleColors' | 'idleColors';
   /** The text shown for an action row. */
   display?: (draft: CursorSettings, env: CursorPanelEnv) => string;
   /** One line shown under the list while the row is selected. */
@@ -140,6 +143,18 @@ const NORMAL: Row[] = [
   {key: 'fireEdit', label: 'Edit effect gradient', scene: 'jump', when: d => d.effect === 'fire',
     action: 'particleColors', display: d => `${d.particles.colors.length} stops ›`},
   featureRow('idle', 'Idle effect', 'idleEffect', 'idle', d => d.idleEffect, (d, v) => { d.idleEffect = v as CursorSettings['idleEffect']; }),
+  {key: 'idleColor', label: 'Idle effect color', scene: 'idle', when: d => d.idleEffect !== 'off',
+    options: () => CURSOR_IDLE_COLOR_SOURCES.map(value => ({value, label: CURSOR_IDLE_COLOR_LABELS[value]})), get: d => d.idleColors.source,
+    set: (d, v) => {
+      const source = v as CursorIdleColorSource;
+      // Custom starts from the preset or the colors shown now, so choosing it never makes the color jump.
+      const seed = d.idleColors.source !== 'effect' && d.idleColors.source !== 'theme' && d.idleColors.source !== 'custom' ? COLOR_PRESET_STOPS[d.idleColors.source] : COLOR_PRESET_STOPS.lavender;
+      d.idleColors = {source, colors: source === 'custom' && d.idleColors.colors.length < 2 ? [...seed] : d.idleColors.colors};
+    },
+    detail: d => d.idleColors.source === 'effect' ? 'The movement effect\'s colors, as before. Follow theme, a preset or Custom gives the idle effect its own.'
+      : d.idleColors.source === 'custom' ? 'Your own gradient; Edit idle colors changes it.' : undefined},
+  {key: 'idleEdit', label: 'Edit idle colors', scene: 'idle', when: d => d.idleEffect !== 'off' && d.idleColors.source === 'custom',
+    action: 'idleColors', display: d => `${d.idleColors.colors.length} stops ›`},
   {key: 'color', label: 'Color', scene: 'jump', options: () => plain(COLOR_SOURCE_ORDER, value => COLOR_SOURCE_LABELS[value]!), get: d => d.color.source,
     set: (d, v, env) => {
       const source = v as CursorSettings['color']['source'];
@@ -205,7 +220,18 @@ export function createCursorPanel(settings: CursorSettings, now = Date.now(), op
   return state;
 }
 
-export type CursorPanelAction = {kind: 'close'} | {kind: 'apply'; settings: CursorSettings} | {kind: 'native'} | {kind: 'nativeConfirm'};
+/** `close` with apply: the editor was opened directly (choosing Custom) and goes back to its parent setting. */
+export type CursorPanelAction = {kind: 'close'} | {kind: 'apply'; settings: CursorSettings; close?: boolean} | {kind: 'native'} | {kind: 'nativeConfirm'};
+
+/**
+ * Opens one color editor directly (choosing Custom elsewhere): the Fire or idle gradient, or the caret color picker.
+ * Applying or cancelling it then closes the panel, back to the setting that opened it.
+ */
+export function openCursorEditor(state: CursorPanelState, which: 'fireEdit' | 'idleEdit' | 'colorCustom', env: CursorPanelEnv): void {
+  state.direct = true;
+  if (which === 'colorCustom') pickerStart(state, 'cursor', env);
+  else gradientStart(state, which === 'idleEdit' ? 'idle' : 'particles', env);
+}
 
 function visibleRows(state: CursorPanelState): Row[] {
   return (state.advanced ? ADVANCED : NORMAL).filter(row => (!row.when || row.when(state.draft)) && !(state.embedded && row.action === 'native'));
@@ -236,18 +262,18 @@ function pickerStart(state: CursorPanelState, target: 'cursor' | 'trail' | 'part
   state.picker = {target, state: createColorPicker(hex ?? '#a67cf3', env.level)};
 }
 
-function gradientStart(state: CursorPanelState, target: 'trail' | 'particles', env: CursorPanelEnv): void {
-  const existing = target === 'trail' ? state.draft.trail.colors : state.draft.particles.colors;
+export function gradientStart(state: CursorPanelState, target: 'trail' | 'particles' | 'idle', env: CursorPanelEnv): void {
+  const existing = target === 'trail' ? state.draft.trail.colors : target === 'idle' ? state.draft.idleColors.colors : state.draft.particles.colors;
   const palette = effectPalette(resolveCursorSettings(state.draft, env.context));
-  const fallback = (target === 'trail' ? palette.trail : palette.particles).map(color => hexColor(color));
+  const fallback = (target === 'trail' ? palette.trail : target === 'idle' ? palette.idle ?? palette.particles : palette.particles).map(color => hexColor(color));
   const stops = existing.length >= 2 ? [...existing] : fallback.length >= 2 ? fallback : [fallback[0] ?? '#a67cf3', '#4a8cff'];
-  state.gradient = {target, state: {stops, index: 0}};
+  state.gradient = {target, state: {stops, index: 0}, initial: [...stops]};
 }
 
 export function cursorPanelKey(state: CursorPanelState, key: Key, env: CursorPanelEnv, now = Date.now()): CursorPanelAction | undefined {
   if (state.picker) {
     const outcome = colorPickerKey(state.picker.state, key, env.level);
-    if (outcome === 'cancel') { state.picker = undefined; state.started = now; return undefined; }
+    if (outcome === 'cancel') { state.picker = undefined; state.started = now; return state.direct ? {kind: 'close'} : undefined; }
     if (outcome === 'confirm') {
       const hex = hexColor(state.picker.state.color);
       const {target} = state.picker;
@@ -256,21 +282,24 @@ export function cursorPanelKey(state: CursorPanelState, key: Key, env: CursorPan
       else if (target === 'trail') state.draft.trail = {source: 'custom', colors: [hex]};
       else state.draft.particles = {source: 'custom', colors: [hex]};
       state.started = now;
-      return commit(state);
+      return {...commit(state), ...(state.direct ? {close: true} : {})};
     }
     return undefined;
   }
   if (state.gradient) {
     const editor = state.gradient;
-    if (editor.state.editing === undefined && (key.kind === 'escape' || key.kind === 'interrupt')) {
+    // Esc cancels: the colors stay as they were. S applies the stops.
+    if (editor.state.editing === undefined && (key.kind === 'escape' || key.kind === 'interrupt')) { state.gradient = undefined; state.started = now; return state.direct ? {kind: 'close'} : undefined; }
+    if (isApplyKey(editor.state, key)) {
       const stops = editor.state.stops.filter(stop => parseHexColor(stop)).slice(0, 6);
       state.gradient = undefined;
       if (editor.target === 'trail') state.draft.trail = {source: 'gradient', colors: stops};
+      else if (editor.target === 'idle') state.draft.idleColors = {source: 'custom', colors: stops};
       else state.draft.particles = {source: 'gradient', colors: stops};
       state.started = now;
-      return commit(state);
+      return {...commit(state), ...(state.direct ? {close: true} : {})};
     }
-    gradientEditorKey(editor.state, key, () => editor.state.stops);
+    gradientEditorKey(editor.state, key, () => editor.initial);
     return undefined;
   }
   if (state.native) {
@@ -305,6 +334,7 @@ export function cursorPanelKey(state: CursorPanelState, key: Key, env: CursorPan
     if (row.action === 'customColor') { pickerStart(state, 'cursor', env); return undefined; }
     if (row.action === 'trailColors') { if (state.draft.trail.source === 'custom') pickerStart(state, 'trail', env); else gradientStart(state, 'trail', env); return undefined; }
     if (row.action === 'particleColors') { if (state.draft.particles.source === 'custom') pickerStart(state, 'particles', env); else gradientStart(state, 'particles', env); return undefined; }
+    if (row.action === 'idleColors') { gradientStart(state, 'idle', env); return undefined; }
     return {kind: 'native'};
   }
   if ((key.kind === 'left' || key.kind === 'right' || key.kind === 'enter') && row.set) {
@@ -326,7 +356,9 @@ export function cursorPanelKey(state: CursorPanelState, key: Key, env: CursorPan
       // A stale value (no longer offered) moves to the first value that is.
       const next = index < 0 ? options[0]! : options[(index + (back ? -1 : 1) + options.length) % options.length]!;
       row.set(state.draft, next.value, env);
+      // Choosing Custom opens its editor at once; Esc there keeps the colors as they were.
       if (row.key === 'fireColor' && next.value === 'custom') { gradientStart(state, 'particles', env); return undefined; }
+      if (row.key === 'idleColor' && next.value === 'custom') { state.started = now; gradientStart(state, 'idle', env); return commit(state); }
     } else row.set(state.draft, back ? '-' : '+', env);
     // Changes preview at once and apply at once (the composer follows); nothing is ever hidden behind Save.
     state.started = now;
@@ -378,8 +410,9 @@ export function renderCursorPanel(state: CursorPanelState, columns: number, now:
     return [`${primary}  Cursor & effects › ${label}${reset}`, '', ...renderColorPicker(state.picker.state, label, columns, env.level)].map(row => truncateAnsi(row, columns));
   }
   if (state.gradient) {
-    const target = state.gradient.target === 'trail' ? 'Trail gradient' : 'Particle gradient';
-    return [`${primary}  Cursor & effects › ${target}${reset}`, '', ...renderGradientEditorRows(state.gradient.state, target), '', renderControls(gradientEditorControls(state.gradient.state))].map(row => truncateAnsi(row, columns));
+    const target = state.gradient.target === 'trail' ? 'Trail gradient' : state.gradient.target === 'idle' ? 'Idle effect gradient' : 'Particle gradient';
+    return [`${primary}  Cursor & effects › ${target}${reset}`, '', ...renderGradientEditorRows(state.gradient.state, target), '',
+      ...renderControlRows(gradientEditorControls(state.gradient.state, true), Math.max(10, columns - 2))].map(row => truncateAnsi(row, columns));
   }
   if (state.native) {
     const native = state.native;
