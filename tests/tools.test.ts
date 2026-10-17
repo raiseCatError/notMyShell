@@ -208,7 +208,7 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   assert.match(plain.slice(-3).join(' '), /↑↓ move · Space select · R select recommended · Enter details · Tab tabs/u);
   assert.match(plain.at(-1)!, /Esc close/u, 'the keys wrap onto a second row instead of being cut off');
   const lazygit = plain.find(row => row.includes('lazygit'))!;
-  assert.match(lazygit, /Missing/u);
+  assert.match(lazygit, /Missing/u, 'Missing stays Missing; whether NMSh can install it here is a separate label');
 });
 
 test('Tools v2: long lists scroll with a factual "more" cue; narrow widths keep rows within the panel', () => {
@@ -525,6 +525,12 @@ test('R, C and the preselection: verified missing recommended tools only, and ne
   toolsKey(manual, {kind: 'text', value: 'R'});
   assert.deepEqual([...manual.selection!].sort(), ['jq', 'rg']);
   assert.match(manual.message ?? '', /2 selected.*Not selected: fd \(no installer here\)/u);
+  // fd has no APT package: it stays Missing, with Unsupported here beside it, and no choosable mark.
+  const fd = TOOLS.find(tool => tool.id === 'fd')!;
+  assert.ok(toolBadges(manual, fd).includes('Unsupported here'));
+  assert.ok(!choosable(manual, fd));
+  const fdRow = renderTools(manual, 120, 60).map(stripAnsi).find(row => /\bfd\b/u.test(row) && /Missing/u.test(row));
+  assert.ok(fdRow && /Missing\s+.*Unsupported here/u.test(fdRow), `fd row: ${fdRow}`);
   toolsKey(manual, {kind: 'text', value: 'C'});
   assert.equal(manual.selection!.size, 0);
   assert.match(manual.message ?? '', /Selection cleared\. Nothing was installed\./u);

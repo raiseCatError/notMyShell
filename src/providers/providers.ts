@@ -219,9 +219,9 @@ export function detectProvider(descriptor: ProviderDescriptor, pathValue = proce
  */
 export async function verified(detect: () => Promise<ProviderStatus>, timeoutMs = 4000): Promise<ProviderStatus> {
   let timer: NodeJS.Timeout | undefined;
+  // Kept referenced: the timeout must fire to settle a check that never finishes (cleared as soon as one does).
   const late = new Promise<ProviderStatus>(resolve => {
     timer = setTimeout(() => resolve({state: 'unknown', detail: 'the check did not finish'}), timeoutMs);
-    timer.unref?.();
   });
   try {
     return await Promise.race([detect(), late]);

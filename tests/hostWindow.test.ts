@@ -359,10 +359,12 @@ test('Hyprland: maximize and restore name the exact window with set and unset, a
 test('Linux: a real pty master is found through /proc; the process on the other side is not its holder', {skip: process.platform !== 'linux'}, async () => {
   const child = nodePty.spawn('/bin/sh', ['-c', 'sleep 5'], {cols: 80, rows: 24});
   try {
+    // Until the child has attached its terminal, fd 0 can still be node-pty's setup socket: wait for the tty itself.
     let tty = '';
-    for (let i = 0; i < 50 && !tty; i++) {
+    const attached = () => /^\/dev\/pts\/\d+$/u.test(tty);
+    for (let i = 0; i < 100 && !attached(); i++) {
       try { tty = readlinkSync(`/proc/${child.pid}/fd/0`); } catch { /* not yet */ }
-      if (!tty) await new Promise(resolve => setTimeout(resolve, 20));
+      if (!attached()) await new Promise(resolve => setTimeout(resolve, 20));
     }
     const index = Number(/^\/dev\/pts\/(\d+)$/u.exec(tty)?.[1]);
     assert.ok(Number.isInteger(index), `the child's tty: ${tty}`);

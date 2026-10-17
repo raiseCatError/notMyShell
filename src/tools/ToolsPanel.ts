@@ -476,7 +476,6 @@ function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: strin
   if (status.state === 'unknown') return {text: '? Unable to verify', color: WARNING};
   if (status.state === 'installed') return {text: `${nerd ? '●' : '*'} ${state.tab === 'discover' ? 'Already installed' : 'Installed'}`, color: SUCCESS};
   if (status.state === 'missing' && state.errors[tool.id]) return {text: `${GLYPHS.failure} Failed`, color: FAILURE};
-  if (status.state === 'missing' && !tool.installAdapter && tool.detection?.kind !== 'filesystem' && !installable(state, tool)) return {text: `${nerd ? '–' : '-'} Unsupported here`, color: SUBTLE};
   if (status.state === 'missing') return {text: `${nerd ? '○' : 'o'} Missing`, color: SUBTLE};
   return {text: '! Needs attention', color: FAILURE};
 }
@@ -492,7 +491,9 @@ export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
     ...(state.configured.has(tool.id) ? ['Configured in NMSh'] : []),
     ...(toolHasUpdate(state, tool) ? ['Update available'] : []),
     ...(lifecycle === 'legacy' ? ['Legacy'] : lifecycle === 'maintenance' ? ['Maintenance'] : []),
-    ...(state.errors[tool.id] ? ['Error'] : [])];
+    ...(state.errors[tool.id] ? ['Error'] : []),
+    // Missing, and NMSh has no reviewed installer for it on this system (it stays Missing, never guessed).
+    ...(state.statuses[tool.id]?.state === 'missing' && !tool.installAdapter && tool.detection?.kind !== 'filesystem' && !tool.localDetection && !installable(state, tool) ? ['Unsupported here'] : [])];
 }
 
 /**
