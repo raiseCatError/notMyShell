@@ -136,13 +136,14 @@ export function renderSkyBand(grid: CellGrid, input: SkyBandInput): {rows: strin
 }
 
 /**
- * `▔` across the full width (an ASCII rule with Safe glyphs or NO_COLOR),
+ * `▔` across the full width (an ASCII rule with Safe glyphs; a plain rule with NO_COLOR or 16 colors),
  * brightest under the brightest light above it. With no sky it is a
  * separator hairline; as the sky goes out the line fades to exactly that.
  */
 function horizonRow(grid: CellGrid, lit: boolean, mix: MoodMix, level: ColorLevel, nerd: boolean): string {
   const width = grid.width;
-  if (level === 'none') return (nerd ? '─' : '-').repeat(width);
+  // NO_COLOR and 16-color hosts draw no sky; the horizon is a plain rule.
+  if (level === 'none' || level === 'ansi16') return (nerd ? '─' : '-').repeat(width);
   const glyph = nerd ? '▔' : '-';
   const separator = pack(UI_COLORS.separator);
   if (!lit) return `${colorEscape(38, UI_COLORS.separator, level)}${glyph.repeat(width)}\u001B[0m`;

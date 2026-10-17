@@ -1,5 +1,4 @@
 import {TREATMENT_PRESET_LABELS} from '../chroma/treatment.js';
-import {colorEscape} from '../chroma/escape.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {Key} from '../terminal/keys.js';
@@ -7,8 +6,9 @@ import {
   DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
   type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId, type StartingPointId,
 } from '../prompt/configuration.js';
-import {STARTING_POINT_COPY, STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
+import {STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
 import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
+import {createStartupContext, renderStartup, type StartupContext} from './startup/view.js';
 import type {EnvironmentEvidence} from './environment/detect.js';
 import {keepExistingPlan} from './environment/keepExisting.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
@@ -37,7 +37,7 @@ import type {CursorPanelState} from '../cursor/CursorPanel.js';
 import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {MOTION_ROWS} from '../motion/motionRows.js';
-import {displayWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
+import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
 
 /**
  * Setup Cat: one rerunnable configuration wizard over one draft. Opening it
@@ -84,6 +84,8 @@ export interface SetupContext {
   title?: string;
   /** Theme Bridge targets found on this system (local PATH facts), so Setup shows only relevant ones. */
   bridgeTargets?: readonly BridgeTargetId[];
+  /** The starting-point selector's sky grid, cached ground, composer preview and Keep Existing sample. */
+  startup?: StartupContext;
 }
 
 export interface SetupRow {
@@ -578,9 +580,6 @@ export function createSetup(configuration: PromptConfiguration, entry?: string):
   return state;
 }
 
-export const QUICK_SETUP_LABELS = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].title);
-const QUICK_SETUP_SHORT = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].short);
-const QUICK_SETUP_NOTES = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].line);
 
 /** The highlighted starting point's draft; the saved configuration is never touched. */
 function selectorDraft(state: SetupState): PromptConfiguration {
@@ -703,159 +702,6 @@ function quickKey(state: SetupState, key: Key, now: number): SetupResult | undef
     state.draft = selectorDraft(state);
   }
   return undefined;
-}
-
-const QUICK_MODAL_MAX = 56;
-
-const BACKDROP_PALETTES = {
-  subtle: [[34, 28, 60], [24, 46, 66], [32, 62, 54]],
-  aurora: [[96, 72, 168], [54, 132, 174], [74, 178, 132]],
-} as const;
-
-function mixChannel(from: number, to: number, weight: number): number {
-  return Math.round(from + (to - from) * weight);
-}
-
-/** One static aurora cell: a violet-to-sky field with a green glow, deterministic in x and y. */
-function backdropColor(column: number, row: number, columns: number, rows: number, level: 'subtle' | 'aurora'): {red: number; green: number; blue: number} {
-  const [violet, sky, green] = BACKDROP_PALETTES[level];
-  const u = columns <= 1 ? 0 : column / (columns - 1);
-  const v = rows <= 1 ? 0 : row / (rows - 1);
-  const base = violet.map((channel, index) => mixChannel(channel, sky[index]!, u));
-  const glow = Math.max(0, Math.sin((u * 1.8 + v * 2.6) * Math.PI)) * Math.max(0, 1 - Math.abs(v - 0.35) * 2.2) * 0.6;
-  return {red: mixChannel(base[0]!, green[0]!, glow), green: mixChannel(base[1]!, green[1]!, glow), blue: mixChannel(base[2]!, green[2]!, glow)};
-}
-
-/** Painted spaces for columns [from, from + count); plain when the backdrop is off or color is unavailable. */
-function backdropCells(from: number, count: number, row: number, columns: number, rows: number, level: OnboardingBackdrop): string {
-  if (count <= 0) return '';
-  if (level === 'off' || colorLevel() === 'none') return ' '.repeat(count);
-  let painted = '';
-  for (let column = from; column < from + count; column += 4) {
-    const size = Math.min(4, from + count - column);
-    painted += `${colorEscape(48, backdropColor(column, row, columns, rows, level))}${' '.repeat(size)}`;
-  }
-  return `${painted}\u001B[0m`;
-}
-
-/** Control hints packed into as few lines as the modal's inner width allows. */
-function packHints(phrases: readonly string[], width: number): string[] {
-  const lines: string[] = [];
-  let line = '';
-  for (const phrase of phrases) {
-    const next = line ? `${line} · ${phrase}` : phrase;
-    if (!line || displayWidth(next) <= width) { line = next; continue; }
-    lines.push(line);
-    line = phrase;
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-/** The modal's inner content; block-fit drops the optional lines before trimming to the available room. */
-function quickModalContent(state: SetupState, inner: number, room: number): string[] {
-  const quick = state.quick!;
-  const reset = '\u001B[0m', bold = '\u001B[1m';
-  const primary = foreground(UI_COLORS.primary), secondary = foreground(UI_COLORS.secondary);
-  const subtle = foreground(UI_COLORS.subtle), accent = foreground(UI_COLORS.accent);
-  const pointer = `${accent}${GLYPHS.selection}${reset}`;
-  const label = (index: number) => displayWidth(`${GLYPHS.selection} ${index + 1}  ${QUICK_SETUP_LABELS[index]}`) <= inner ? QUICK_SETUP_LABELS[index] : QUICK_SETUP_SHORT[index];
-  const controls = (phrases: readonly string[]) => packHints(phrases, inner).map(line => `${secondary}${line}${reset}`);
-  const messages = () => state.message ? wrapWords(state.message, inner).map(line => `${primary}${line}${reset}`) : [];
-  if (quick.confirm) {
-    const options = ['Stay', 'Leave'];
-    const option = (index: number) => {
-      const selected = (quick.confirmIndex ?? 0) === index;
-      return `${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${options[index]}${reset}`;
-    };
-    const pair = `${option(0)}    ${option(1)}`;
-    return [`${bold}${primary}Leave setup?${reset}`, ...wrapWords('Nothing changes: NMSh keeps its current settings. /startup reopens this anytime.', inner).map(line => `${subtle}${line}${reset}`), '',
-      ...(displayWidth(stripAnsi(pair)) <= inner ? [pair] : [option(0), option(1)]),
-      ...controls(['←→ / Tab choose', 'Enter confirm', 'Esc stay'])].slice(0, Math.max(1, room));
-  }
-  if (quick.review) {
-    const chosen = `${quick.choice + 1}  ${label(quick.choice)}${quick.choice === 1 ? ` · ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'}` : ''}`;
-    const note = state.saved.onboardingComplete
-      ? 'This replaces your current presentation preferences; shell, tools and accessibility stay as they are.'
-      : 'This is your starting point; shell, tools and accessibility stay as they are.';
-    return [`${bold}${primary}Ready to apply${reset}`, `${primary}${chosen}${reset}`,
-      ...wrapWords(note, inner).map(line => `${subtle}${line}${reset}`), ...messages(), '',
-      ...controls(['Enter apply', 'Esc back'])].slice(0, Math.max(1, room));
-  }
-  const heading = (): string[] => {
-    const lines: string[] = [];
-    if (displayWidth('Welcome to notMyShell') <= inner) lines.push(`${bold}${primary}Welcome to notMyShell${reset}`);
-    if (inner >= 48) for (const line of wrapWords('Choose a starting point; everything can be changed later with /setup.', inner)) lines.push(`${subtle}${line}${reset}`);
-    if (lines.length) lines.push('');
-    return lines;
-  };
-  const choices = (notes: boolean): string[] => {
-    const lines: string[] = [];
-    for (let index = 0; index < STARTING_POINTS.length; index++) {
-      const selected = index === quick.choice;
-      lines.push(`${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${index + 1}  ${label(index)}${reset}`);
-      if (notes) for (const part of wrapWords(QUICK_SETUP_NOTES[index], inner - 4)) lines.push(`    ${subtle}${part}${reset}`);
-      if (index === 1 && quick.choice === 1) lines.push(`    ${secondary}Layout: ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} · ←→/Tab${reset}`);
-    }
-    return lines;
-  };
-  const assemble = (rich: boolean): string[] => [...heading(), ...choices(rich), ...(rich ? [''] : []),
-    ...controls(['↑↓ / 1–4 choose', 'Enter continue', 'Esc leave setup'])];
-  const rich = inner >= 48;
-  let lines = assemble(rich);
-  if (lines.length > room && rich) lines = assemble(false);
-  return lines.slice(0, Math.max(1, room));
-}
-
-/** Unframed essentials below the modal's minimum; still the whole picker, never animated. */
-function quickTinyRows(state: SetupState, width: number, height: number): string[] {
-  const quick = state.quick!;
-  const mark = GLYPHS.selection;
-  const layout = quick.layout === 'oneLine' ? 'One-line' : 'Two-line';
-  let rows: string[];
-  if (quick.confirm) {
-    rows = ['Leave setup?', `${(quick.confirmIndex ?? 0) === 0 ? mark : ' '} Stay`, `${(quick.confirmIndex ?? 0) === 1 ? mark : ' '} Leave`,
-      'Enter confirm', 'Esc stay'];
-  } else if (quick.review) {
-    rows = [`${quick.choice + 1} ${QUICK_SETUP_SHORT[quick.choice]}`, ...(quick.choice === 1 ? [layout] : []), 'Enter Apply', 'Esc back'];
-  } else {
-    rows = STARTING_POINTS.map((_, index) => `${quick.choice === index ? mark : ' '} ${index + 1} ${QUICK_SETUP_SHORT[index]}`)
-      .concat(quick.choice === 1 ? [`${layout} ←→/Tab`] : [], ['Enter · Esc leave']);
-  }
-  if (state.message) rows = [state.message, ...rows];
-  return rows.slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
-}
-
-/** The static centered modal: one aurora field, one framed block, block-fit tiers; no timers. */
-function renderQuickSetup(state: SetupState, columns: number, height: number): string[] {
-  const quick = state.quick!;
-  const width = Math.max(1, columns), rows = Math.max(1, height);
-  if (width < 24 || rows < 8) return quickTinyRows(state, width, rows);
-  const chars = getCurrentGlyphMode() === 'nerd'
-    ? {tl: '╭', tr: '╮', bl: '╰', br: '╯', horizontal: '─', vertical: '│'}
-    : {tl: '+', tr: '+', bl: '+', br: '+', horizontal: '-', vertical: '|'};
-  const reset = '\u001B[0m', frame = foreground(UI_COLORS.secondary);
-  const outer = Math.min(QUICK_MODAL_MAX, width - 2);
-  const inner = Math.max(8, outer - 4);
-  const body = (line: string) => {
-    const content = truncateAnsi(line, inner);
-    return `${frame}${chars.vertical}${reset} ${content}${' '.repeat(Math.max(0, inner - displayWidth(content)))} ${frame}${chars.vertical}${reset}`;
-  };
-  const block = [
-    `${frame}${chars.tl}${chars.horizontal.repeat(outer - 2)}${chars.tr}${reset}`,
-    ...quickModalContent(state, inner, rows - 2).map(body),
-    `${frame}${chars.bl}${chars.horizontal.repeat(outer - 2)}${chars.br}${reset}`,
-  ];
-  const left = Math.max(0, Math.floor((width - outer) / 2));
-  const top = Math.max(0, Math.floor((rows - block.length) / 2));
-  const out: string[] = [];
-  for (let row = 0; row < rows; row++) {
-    const index = row - top;
-    if (index >= 0 && index < block.length) {
-      out.push(`${backdropCells(0, left, row, width, rows, quick.backdrop)}${block[index]!}${backdropCells(left + outer, width - left - outer, row, width, rows, quick.backdrop)}`);
-    } else out.push(backdropCells(0, width, row, width, rows, quick.backdrop));
-  }
-  return out;
 }
 
 export function parseSetupEntry(argument: string | undefined): string | undefined | false {
@@ -1083,8 +929,16 @@ export function installableTool(item: SetupRow, state: SetupState): string | und
 /** The smallest size where Setup Cat shows its essential controls. */
 export const SETUP_MIN_SIZE = {columns: 44, rows: 12} as const;
 
-export function renderSetup(state: SetupState, columns: number, height: number): string[] {
-  if (state.quick && !state.quick.manual) return renderQuickSetup(state, columns, height);
+/** The guided setup's steps, as Customize's tiles name them (Start and Review & Apply are not steps of their own). */
+export const GUIDED_STEPS: readonly string[] = SETUP_SECTIONS.slice(1, -1).map(section => section.title.replace(/ &.*$/u, '').replace(/^Optional (\w)/u, (_, first: string) => first.toUpperCase()));
+
+export function renderSetup(state: SetupState, columns: number, height: number, now = Date.now()): string[] {
+  if (state.quick && !state.quick.manual) {
+    // The starting-point selector; the app supplies a themed context (its composer preview, Keep Existing's sample).
+    const startup = state.context.startup ??= createStartupContext({reopened: !state.onboarding, steps: GUIDED_STEPS});
+    startup.reduced = isReducedMotion() || state.saved.presentation.reducedMotion || state.saved.presentation.effectsOff;
+    return renderStartup(state, columns, height, now, startup);
+  }
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);

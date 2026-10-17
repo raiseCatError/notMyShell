@@ -105,7 +105,7 @@ test('quick setup previews choices, reviews replacement, cancels and retains Man
   assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'enter'});
-  assert.match(renderSetup(state, 80, 24).map(stripAnsi).join('\n'), /replace|review/i);
+  assert.match(renderSetup(state, 130, 38).map(stripAnsi).join('\n'), /replaces NMSh's current look and feel/u);
   assert.equal(saved.nmsh.palette, 'brand');
   const applied = setupKey(state, {kind: 'enter'});
   assert.equal(applied?.kind, 'apply');

@@ -158,7 +158,7 @@ test('NO_COLOR and 16 colors draw no sky; the horizon is a plain rule', () => {
   assert.equal(renderSkyBand(new CellGrid(), input({level: 'none', nerd: false})).horizon, '-'.repeat(64));
   const ansi16 = renderSkyBand(new CellGrid(), input({level: 'ansi16'}));
   assert.ok(!hasBackground(ansi16.rows));
-  assert.equal(stripAnsi(ansi16.horizon), '▔'.repeat(64));
+  assert.equal(ansi16.horizon, '─'.repeat(64), 'a plain rule, like NO_COLOR');
   assert.equal(stripAnsi(renderSkyBand(new CellGrid(), input({nerd: false})).horizon), '-'.repeat(64), 'Safe glyphs use an ASCII rule');
   assert.deepEqual(renderSkyBand(new CellGrid(), input({height: 0})), {rows: [], horizon: ''});
 });

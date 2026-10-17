@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadPromptConfiguration, normalizePromptConfiguration} from '../src/prompt/configuration.js';
-import {createQuickSetup, setupKey, renderSetup, QUICK_SETUP_LABELS} from '../src/setup/SetupCat.js';
+import {createQuickSetup, setupKey, renderSetup} from '../src/setup/SetupCat.js';
+import {STARTING_POINT_COPY, STARTING_POINTS} from '../src/setup/startup/startingPoints.js';
+import {startupLayout} from '../src/setup/startup/view.js';
 import * as setup from '../src/setup/SetupCat.js';
 import {NEVER_EXPORTED} from '../src/configuration/portability.js';
 import {executionFrameFixture} from './support/executionTimelineFrames.js';
 import {stripAnsi, displayWidth} from '../src/util/text.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 
-/** The static centered modal: same frames at any time, no playback clock, explicit leave confirmation. */
+/** The starting-point selector: four choices under the Horizon sky, explicit review and Apply, Stay-first leave. */
+const LABELS = STARTING_POINTS.map(id => STARTING_POINT_COPY[id].title);
 const text = (state: Parameters<typeof renderSetup>[0], columns = 80, height = 24) =>
   renderSetup(state, columns, height).map(stripAnsi).join('\n');
 
@@ -59,23 +62,21 @@ test('gate: completed or previously introduced installations never auto-open onb
   } finally { f.dispose(); }
 });
 
-test('the picker shows the four starting points and no replay', () => {
+test('the selector shows the four starting points under the Horizon, with no replay', () => {
   const f = executionFrameFixture(80, 24);
   try {
     f.app['startSetup']('quick');
     const first = f.capture().frame.rows.map(stripAnsi);
     const shown = first.join('\n');
-    for (const label of QUICK_SETUP_LABELS) assert.ok(shown.includes(label), label);
-    assert.deepEqual([...QUICK_SETUP_LABELS], ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything', 'Keep Existing']);
+    for (const label of LABELS) assert.ok(shown.includes(label), label);
+    assert.deepEqual(LABELS, ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything', 'Keep Existing']);
     assert.ok(!shown.includes('Replay'), 'the replay affordance is gone');
-    assert.equal(f.app['setupCursorClock'], undefined, 'no playback timer');
+    assert.equal(f.app['setupCursorClock'], undefined, 'no preview playback timer');
     f.tick(5700); f.capture();
-    assert.equal(f.app['setupCursorClock'], undefined, 'nothing re-schedules over time');
-    const rows = renderSetup(f.app['setupState']!, 80, 24).map(stripAnsi);
-    const top = rows.findIndex(row => /[─-]{4,}/u.test(row));
-    assert.ok(top > 0, 'the modal is vertically centered');
-    assert.match(rows[top]!, /^\s{8,}/u, 'the modal is horizontally centered');
-    assert.deepEqual(renderSetup(f.app['setupState']!, 80, 24), renderSetup(f.app['setupState']!, 80, 24), 'rendering is deterministic');
+    assert.equal(f.app['setupCursorClock'], undefined, 'nothing re-schedules a preview over time');
+    const rows = renderSetup(f.app['setupState']!, 80, 24, 9000).map(stripAnsi);
+    assert.equal(rows[startupLayout(80, 24).skyHeight], '▔'.repeat(80), 'the horizon sits under the sky band');
+    assert.deepEqual(renderSetup(f.app['setupState']!, 80, 24, 9000), renderSetup(f.app['setupState']!, 80, 24, 9000), 'a frame is a pure function of state and time');
   } finally { f.dispose(); }
 });
 
@@ -115,7 +116,7 @@ test('review: Enter applies the preset and a customized installation is told it 
   const state = createQuickSetup(saved);
   setupKey(state, {kind: 'enter'});
   assert.equal(state.quick?.review, true);
-  assert.match(text(state), /replaces your current presentation preferences/u);
+  assert.match(text(state, 130, 38), /replaces NMSh's current look and feel/u);
   const applied = setupKey(state, {kind: 'enter'});
   assert.equal(applied?.kind, 'apply');
   if (applied?.kind === 'apply') {
@@ -127,7 +128,7 @@ test('review: Enter applies the preset and a customized installation is told it 
   }
   const fresh = createQuickSetup(normalizePromptConfiguration({}));
   setupKey(fresh, {kind: 'enter'});
-  assert.match(text(fresh), /starting point/u);
+  assert.match(text(fresh, 130, 38), /sets NMSh's look and feel/u);
   assert.equal(fresh.saved.onboardingComplete, false);
 });
 
@@ -199,51 +200,48 @@ test('backdrop: defaults to aurora, normalizes explicit levels and is never expo
   assert.equal(createQuickSetup(normalizePromptConfiguration({onboardingBackdrop: 'subtle'})).quick?.backdrop, 'subtle');
 });
 
-test('backdrop: off renders plain, subtle and aurora paint the field, all inside the frame', () => {
+test('backdrop: Off leaves the sky band unpainted; Subtle and Aurora paint it; all inside the frame', () => {
   const saved = process.env.NMSH_COLOR;
   process.env.NMSH_COLOR = 'truecolor';
   try {
+    const sky = startupLayout(80, 24).skyHeight;
     for (const level of ['off', 'subtle', 'aurora'] as const) {
       const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: false, onboardingBackdrop: level}));
-      const rows = renderSetup(state, 80, 24);
-      assert.ok(rows.length <= 24);
+      const rows = renderSetup(state, 80, 24, 9000);
+      assert.equal(rows.length, 24);
       assert.ok(rows.every(row => displayWidth(row) <= 80));
-      assert.equal(rows.some(row => /\u001B\[48;2;/u.test(row)), level !== 'off', `background paint for ${level}`);
+      assert.equal(rows.slice(0, sky - 4).some(row => /\u001B\[48;2;/u.test(row)), level !== 'off', `sky paint for ${level}`);
     }
   } finally {
     if (saved === undefined) delete process.env.NMSH_COLOR; else process.env.NMSH_COLOR = saved;
   }
 });
 
-test('compact quick controls show layout, apply and leave at 16x6 (unframed TINY)', () => {
+test('the plain list at 16x6 still shows the layout, Apply and Leave', () => {
   const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'text', value: '2'});
   let shown = text(state, 16, 6);
-  for (const word of ['Two-line', 'Enter', 'Esc']) assert.ok(shown.includes(word), word + ': ' + shown);
-  assert.ok(!/[╭╰│┌└|]/u.test(shown), 'TINY is unframed');
+  for (const word of [/Two-line/u, /⏎|Enter/u, /esc/iu, /Keep Existing/u]) assert.match(shown, word);
+  assert.ok(!/[╭╰│┌└|]/u.test(shown), 'unframed');
   setupKey(state, {kind: 'right'});
   shown = text(state, 16, 6);
   assert.match(shown, /One-line/u);
   setupKey(state, {kind: 'enter'});
   shown = text(state, 16, 6);
-  assert.match(shown, /Apply/u);
+  assert.match(shown, /apply/iu);
   const rows = renderSetup(state, 16, 6);
   assert.ok(rows.length <= 6); assert.ok(rows.every(row => displayWidth(row) <= 16));
 });
 
 for (const [columns, height] of [[32, 12], [50, 16], [80, 24], [120, 40], [200, 50]] as const) {
-  test(`block-fit: the modal stays complete and inside ${columns}x${height}`, () => {
+  test(`fits: every starting point, the keys and Leave stay visible inside ${columns}x${height}`, () => {
     const state = createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
-    const rows = renderSetup(state, columns, height);
-    assert.ok(rows.length <= height);
+    const rows = renderSetup(state, columns, height, 9000);
+    assert.equal(rows.length, height);
     assert.ok(rows.every(row => displayWidth(row) <= columns));
     const shown = rows.map(stripAnsi).join('\n');
-    assert.match(shown, /Recommended/u);
-    assert.match(shown, /Minimal/u);
-    assert.match(shown, /Customize/u);
-    assert.match(shown, /Enter/u);
-    assert.match(shown, /Esc/u);
-    if (columns >= 24 && height >= 8) assert.match(shown, /[─-]{4,}/u, 'framed at roomy sizes');
+    for (const word of [/Recommended/u, /Minimal/u, /Customize/u, /Keep Existing/u, /⏎|Enter/u, /esc/iu]) assert.match(shown, word);
+    if (startupLayout(columns, height).skyHeight) assert.match(shown, /▔{8,}|-{8,}/u, 'the horizon where there is a sky');
   });
 }
 
