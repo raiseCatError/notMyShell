@@ -567,6 +567,9 @@ export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
   return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops, style};
 }
 
+/** First-run static setup backdrop; local presentation state, never exported. */
+export type OnboardingBackdrop = 'off' | 'subtle' | 'aurora';
+
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
   /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
@@ -582,6 +585,8 @@ export interface PromptConfiguration {
   /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
   glyphStyle: GlyphStyle;
   glyphChoiceComplete: boolean;
+  /** Backdrop behind the static first-run setup modal; never exported. */
+  onboardingBackdrop: OnboardingBackdrop;
   /** Maximum unpinned presentation sessions; null disables rotation. */
   sessionRetention: SessionRetention;
   /** Automatic updates: Automatic prepares verified releases, Notify only announces them, Off never checks. `/update` always works on request. */
@@ -831,6 +836,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   toolsSetupComplete: false,
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
+  onboardingBackdrop: 'aurora',
   sessionRetention: 1000,
   updateMode: 'automatic',
   updateFrequency: 'daily',
@@ -947,6 +953,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // Existing configured installations keep their v0.3 appearance without a new wizard.
   const glyphChoiceComplete = value.glyphChoiceComplete === true || value.onboardingComplete === true;
   const toolsSetupComplete = typeof value.toolsSetupComplete === 'boolean' ? value.toolsSetupComplete : value.onboardingComplete === true;
+  const onboardingBackdrop: OnboardingBackdrop = value.onboardingBackdrop === 'off' || value.onboardingBackdrop === 'subtle' ? value.onboardingBackdrop : 'aurora';
   const sessionRetention: SessionRetention = value.sessionRetention === null
     ? null : [100, 500, 1000, 5000].includes(value.sessionRetention as number)
       ? value.sessionRetention as SessionRetention : 1000;
@@ -1039,7 +1046,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -1099,7 +1106,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

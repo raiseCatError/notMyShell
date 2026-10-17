@@ -34,7 +34,7 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, renderSetupIntro, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
@@ -87,7 +87,6 @@ import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
 import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
-import {renderQuickPreview} from '../setup/SetupPreview.js';
 import {framePanel, renderTabStrip, selectedRowBand, tabCycleDelta} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
@@ -4867,7 +4866,7 @@ export class TerminalApp {
 
   /** Complex panels declare the smallest size that shows their essential controls. */
   private panelMinimum(): MinimumSize | undefined {
-    if (this.setupState) return this.setupState.quick || this.setupState.intro ? {columns: 16, rows: 6} : SETUP_MIN_SIZE;
+    if (this.setupState) return this.setupState.quick ? {columns: 16, rows: 6} : SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
     if (this.themeBridgePanel) return {columns: 56, rows: 14};
     if (this.tmuxPanel || this.configureList || this.rowPanel || this.dotfiles) return {columns: 50, rows: 12};
@@ -4914,15 +4913,8 @@ export class TerminalApp {
     if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
     if (this.setupState) {
       const state = this.setupState;
-      if (state.intro) {
-        const still = state.draft.presentation.reducedMotion || isReducedMotion() || colorLevel() === 'none' || getCurrentGlyphMode() === 'safe' || !process.stdin.isTTY;
-        const intro = renderSetupIntro(columns, this.dimensions().rows, Date.now() - state.intro.started, still);
-        this.setupPlayback(state, intro.busy);
-        if (intro.busy || still) return intro.rows;
-        state.intro = undefined; state.previewStart = undefined;
-      }
       if (state.cursorPanel) return this.withDraftTheme(state.draft, () => framePanel(this.cursorPanelRows(state.cursorPanel!, columns, this.cursorEnv(state.cursorPanel!.draft, state.draft)), columns));
-      if (!state.toolBrowser) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
+      if (!state.toolBrowser && !(state.quick && !state.quick.manual)) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
       state.context.title = this.setupTitle(state);
       return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
     }
@@ -6123,14 +6115,6 @@ export class TerminalApp {
   }
 
   private setupPreview(state: SetupState, columns: number): string[] {
-    if (state.quick) {
-      state.previewStart ??= Date.now();
-      const height = Math.max(0, this.dimensions().rows - (state.quick.choice === 1 ? 11 : 10));
-      const still = state.draft.presentation.reducedMotion || isReducedMotion() || colorLevel() === 'none';
-      const preview = renderQuickPreview(state, columns, height, Date.now() - state.previewStart, still);
-      this.setupPlayback(state, preview.busy && height > 0);
-      return preview.rows;
-    }
     const section0 = SETUP_SECTIONS[state.section]?.id;
     // Look and Prompt previews show the draft's Chroma as soon as it is on; P compares with the base theme.
     const chromaStep = section0 === 'appearance' || section0 === 'prompt';
@@ -6607,23 +6591,20 @@ export class TerminalApp {
     if (action.kind === 'apply') state.draft = {...state.draft, cursor: action.settings};
   }
 
-  /** Presets deliberately bypass discovery; completed and legacy onboarding stay completed. */
+  /** Presets deliberately bypass discovery; completed or already-introduced installs never reopen setup. */
   private startOnboarding(): void {
     if (this.presetStartup || this.attachedSession) return;
-    if (!this.promptConfiguration.onboardingComplete) {
+    if (!this.promptConfiguration.onboardingComplete && !this.promptConfiguration.introSeen) {
       this.startSetup('quick');
       this.setupState!.onboarding = true;
       this.output.setWelcomeVisible(false);
-      if (!this.promptConfiguration.introSeen) {
-        const next = {...this.promptConfiguration, introSeen: true};
-        try {
-          savePromptConfiguration(next, undefined, this.promptConfiguration);
-          this.promptConfiguration = next;
-          this.setupState!.saved.introSeen = true; this.setupState!.draft.introSeen = true;
-          this.setupState!.intro = {started: Date.now()};
-        } catch (error) { this.setupState!.message = `Introduction state could not be saved: ${error instanceof Error ? error.message : String(error)}`; }
-      }
-    } else if (!this.promptConfiguration.toolsSetupComplete) this.startTools(true);
+      const next = {...this.promptConfiguration, introSeen: true};
+      try {
+        savePromptConfiguration(next, undefined, this.promptConfiguration);
+        this.promptConfiguration = next;
+        this.setupState!.saved.introSeen = true; this.setupState!.draft.introSeen = true;
+      } catch (error) { this.setupState!.message = `Setup state could not be saved: ${error instanceof Error ? error.message : String(error)}`; }
+    } else if (this.promptConfiguration.onboardingComplete && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
   }
 
   private startSetup(entry?: string): void {

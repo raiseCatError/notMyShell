@@ -28,13 +28,3 @@ for (const choice of [0, 1, 2]) test(`quick preview ${choice} is finite, determi
     assert.equal(still.busy, false); assert.ok(still.rows.length > 1);
   } finally { f.dispose(); }
 });
-
-test('actual TerminalApp Recommended preview reaches the folded-output state', () => {
-  const f = executionFrameFixture(80, 30);
-  try {
-    f.app['startSetup']('quick'); f.capture(); f.tick(5700);
-    const text = f.capture().frame.rows.map(stripAnsi).join('\n');
-    assert.match(text, /442 lines hidden/);
-    assert.doesNotMatch(text, /^438\s*$/mu);
-  } finally { f.dispose(); }
-});

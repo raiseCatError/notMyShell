@@ -82,7 +82,10 @@ test('quick setup previews choices, reviews replacement, cancels and retains Man
     assert.ok(rows.every(row => displayWidth(row) <= width));
     assert.match(rows.map(stripAnsi).join('\n'), /Recommended/);
   }
-  assert.equal(setupKey(state, {kind: 'escape'})?.kind, 'cancel');
+  assert.equal(setupKey(state, {kind: 'escape'}), undefined);
+  assert.equal(state.quick?.confirm, true);
+  setupKey(state, {kind: 'right'});
+  assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'enter'});
   assert.match(renderSetup(state, 80, 24).map(stripAnsi).join('\n'), /replace|review/i);
@@ -93,7 +96,8 @@ test('quick setup previews choices, reviews replacement, cancels and retains Man
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'down'}); setupKey(state, {kind: 'enter'});
   assert.equal(state.draft.composerPosition, 'flow');
-  assert.equal(setupKey(state, {kind: 'escape'})?.kind, 'cancel');
+  setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'right'});
+  assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
   state = setup.createQuickSetup(saved);
   setupKey(state, {kind: 'down'}); setupKey(state, {kind: 'down'});
   assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'manual');
@@ -155,19 +159,18 @@ for (const layout of ['oneLine', 'twoLine'] as const) test(`Minimal ${layout} ha
   assert.equal(c.welcome, 'none'); assert.equal(c.composerDividers, false);
 });
 
-test('quick Minimal layout and replay restart the complete demo without saving', () => {
+test('quick Minimal layout toggles the real composerLayout without saving', () => {
   const state = setup.createQuickSetup(normalizePromptConfiguration({onboardingComplete: true}));
   setupKey(state, {kind: 'text', value: '2'});
   assert.equal(state.draft.composerLayout, 'oneLine');
-  state.previewStart = 123;
   setupKey(state, {kind: 'right'});
-  assert.equal(state.draft.composerLayout, 'twoLine'); assert.equal(state.previewStart, undefined);
-  state.previewStart = 456;
-  for (let i = 0; i < 12; i++) setupKey(state, {kind: 'text', value: 'r'});
-  assert.equal(state.previewStart, undefined);
+  assert.equal(state.draft.composerLayout, 'twoLine');
+  setupKey(state, {kind: 'complete'});
+  assert.equal(state.draft.composerLayout, 'oneLine');
   setupKey(state, {kind: 'text', value: '3'});
   assert.deepEqual(state.draft, state.saved);
-  assert.equal(setupKey(state, {kind: 'escape'})?.kind, 'cancel');
+  setupKey(state, {kind: 'escape'}); setupKey(state, {kind: 'right'});
+  assert.equal(setupKey(state, {kind: 'enter'})?.kind, 'cancel');
 });
 
 test('Settings discovers presets and contextual flame colors without a second storage model', async () => {

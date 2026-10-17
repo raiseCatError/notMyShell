@@ -1,10 +1,11 @@
 import {TREATMENT_PRESET_LABELS} from '../chroma/treatment.js';
+import {colorEscape} from '../chroma/escape.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {Key} from '../terminal/keys.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION, minimalPromptConfiguration, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
-  type PromptConfiguration, type PromptProviderId,
+  type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId,
 } from '../prompt/configuration.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
 import {separatorLabel} from '../prompt/glyphChoices.js';
@@ -32,7 +33,7 @@ import type {CursorPanelState} from '../cursor/CursorPanel.js';
 import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {MOTION_ROWS} from '../motion/motionRows.js';
-import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
+import {displayWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 
 /**
  * Setup Cat: one rerunnable configuration wizard over one draft. Opening it
@@ -511,10 +512,13 @@ function completionFacts(facts: CompletionFacts | undefined): string[] {
 }
 
 export interface SetupState {
-  intro?: {started: number};
   message?: string;
-  /** Quick onboarding shares the full wizard draft and persistence path. */
-  quick?: {choice: number; review: boolean; layout: 'oneLine' | 'twoLine'};
+  /**
+   * The static first-run picker (also `/setup quick`): one centered modal over the saved
+   * configuration, with no animation or timers. `confirm` is the leave confirmation and
+   * `manual` is the full wizard opened over the picker.
+   */
+  quick?: {choice: number; review: boolean; confirm?: boolean; confirmIndex?: number; manual?: boolean; layout: 'oneLine' | 'twoLine'; backdrop: OnboardingBackdrop};
   /** Initial discovery uses the same draft and marks completion only on Apply. */
   onboarding?: boolean;
   section: number;
@@ -570,7 +574,13 @@ export function createSetup(configuration: PromptConfiguration, entry?: string):
   return state;
 }
 
-export const QUICK_SETUP_LABELS = ['NMSh Recommended', 'Minimal Terminal', 'Manual Setup'] as const;
+export const QUICK_SETUP_LABELS = ['NMSh Recommended', 'Minimal Terminal', 'Customize Everything'] as const;
+const QUICK_SETUP_SHORT = ['Recommended', 'Minimal', 'Customize'] as const;
+const QUICK_SETUP_NOTES = [
+  'Lavender Native, rich motion, smart output folding',
+  'Plain and quiet: no greetings, snapshots or effects',
+  'Open the full Setup Cat and choose every detail',
+] as const;
 
 /** Apply only the preset's presentation preferences; retain shell, tools, integrations and accessibility choices. */
 function quickDraft(state: SetupState): PromptConfiguration {
@@ -592,7 +602,7 @@ function quickDraft(state: SetupState): PromptConfiguration {
 
 export function createQuickSetup(configuration: PromptConfiguration): SetupState {
   const state = createSetup(configuration);
-  state.quick = {choice: 0, review: false, layout: 'oneLine'};
+  state.quick = {choice: 0, review: false, layout: 'oneLine', backdrop: configuration.onboardingBackdrop};
   state.draft = quickDraft(state);
   return state;
 }
@@ -627,11 +637,28 @@ export function renderSetupIntro(columns: number, height: number, elapsed: numbe
 
 function quickKey(state: SetupState, key: Key): SetupResult | undefined {
   const quick = state.quick!;
+  if (quick.confirm) {
+    if (key.kind === 'left' || key.kind === 'right' || key.kind === 'complete' || key.kind === 'focusPrevious') {
+      quick.confirmIndex = quick.confirmIndex === 1 ? 0 : 1;
+      return undefined;
+    }
+    if (key.kind === 'enter') {
+      if (quick.confirmIndex === 1) return {kind: 'cancel'};
+      quick.confirm = false; quick.confirmIndex = 0;
+      return undefined;
+    }
+    if (key.kind === 'escape' || key.kind === 'interrupt') { quick.confirm = false; quick.confirmIndex = 0; }
+    return undefined;
+  }
+  if (key.kind === 'escape' || key.kind === 'interrupt') { quick.confirm = true; quick.confirmIndex = 0; return undefined; }
   if (key.kind === 'text') { const link = SETUP_LINKS.find(link => link.key === key.value.toLowerCase()); if (link) return {kind: 'link', url: link.url}; }
-  if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'cancel'};
-  if (key.kind === 'text' && key.value.toLowerCase() === 'r') { state.previewStart = undefined; return undefined; }
   if (key.kind === 'enter') {
-    if (quick.choice === 2) { state.quick = undefined; state.draft = structuredClone(state.saved); return {kind: 'manual'}; }
+    if (quick.choice === 2) {
+      quick.manual = true; quick.review = false;
+      state.section = 0; state.row = 0; state.chooser = undefined; state.confirmDiscard = undefined;
+      state.draft = structuredClone(state.saved);
+      return {kind: 'manual'};
+    }
     if (!quick.review) { quick.review = true; return undefined; }
     return {kind: 'apply', configuration: normalizePromptConfiguration({...state.draft, onboardingComplete: true,
       glyphChoiceComplete: true, toolsSetupComplete: true}), tools: 'keep', changed: true};
@@ -644,36 +671,162 @@ function quickKey(state: SetupState, key: Key): SetupResult | undefined {
   else if (quick.choice === 1 && ['left', 'right', 'complete'].includes(key.kind)) {
     quick.layout = quick.layout === 'oneLine' ? 'twoLine' : 'oneLine'; changed = true;
   }
-  if (changed) { state.draft = quickDraft(state); state.previewStart = undefined; state.previewKey = undefined; }
+  if (changed) state.draft = quickDraft(state);
   return undefined;
 }
 
-/** Compact controls remain visible before the preview, even in a short terminal. */
+const QUICK_MODAL_MAX = 56;
+
+const BACKDROP_PALETTES = {
+  subtle: [[34, 28, 60], [24, 46, 66], [32, 62, 54]],
+  aurora: [[96, 72, 168], [54, 132, 174], [74, 178, 132]],
+} as const;
+
+function mixChannel(from: number, to: number, weight: number): number {
+  return Math.round(from + (to - from) * weight);
+}
+
+/** One static aurora cell: a violet-to-sky field with a green glow, deterministic in x and y. */
+function backdropColor(column: number, row: number, columns: number, rows: number, level: 'subtle' | 'aurora'): {red: number; green: number; blue: number} {
+  const [violet, sky, green] = BACKDROP_PALETTES[level];
+  const u = columns <= 1 ? 0 : column / (columns - 1);
+  const v = rows <= 1 ? 0 : row / (rows - 1);
+  const base = violet.map((channel, index) => mixChannel(channel, sky[index]!, u));
+  const glow = Math.max(0, Math.sin((u * 1.8 + v * 2.6) * Math.PI)) * Math.max(0, 1 - Math.abs(v - 0.35) * 2.2) * 0.6;
+  return {red: mixChannel(base[0]!, green[0]!, glow), green: mixChannel(base[1]!, green[1]!, glow), blue: mixChannel(base[2]!, green[2]!, glow)};
+}
+
+/** Painted spaces for columns [from, from + count); plain when the backdrop is off or color is unavailable. */
+function backdropCells(from: number, count: number, row: number, columns: number, rows: number, level: OnboardingBackdrop): string {
+  if (count <= 0) return '';
+  if (level === 'off' || colorLevel() === 'none') return ' '.repeat(count);
+  let painted = '';
+  for (let column = from; column < from + count; column += 4) {
+    const size = Math.min(4, from + count - column);
+    painted += `${colorEscape(48, backdropColor(column, row, columns, rows, level))}${' '.repeat(size)}`;
+  }
+  return `${painted}\u001B[0m`;
+}
+
+/** Control hints packed into as few lines as the modal's inner width allows. */
+function packHints(phrases: readonly string[], width: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const phrase of phrases) {
+    const next = line ? `${line} · ${phrase}` : phrase;
+    if (!line || displayWidth(next) <= width) { line = next; continue; }
+    lines.push(line);
+    line = phrase;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** The modal's inner content; block-fit drops the optional lines before trimming to the available room. */
+function quickModalContent(state: SetupState, inner: number, room: number): string[] {
+  const quick = state.quick!;
+  const reset = '\u001B[0m', bold = '\u001B[1m';
+  const primary = foreground(UI_COLORS.primary), secondary = foreground(UI_COLORS.secondary);
+  const subtle = foreground(UI_COLORS.subtle), accent = foreground(UI_COLORS.accent);
+  const pointer = `${accent}${GLYPHS.selection}${reset}`;
+  const label = (index: number) => displayWidth(`${GLYPHS.selection} ${index + 1}  ${QUICK_SETUP_LABELS[index]}`) <= inner ? QUICK_SETUP_LABELS[index] : QUICK_SETUP_SHORT[index];
+  const controls = (phrases: readonly string[]) => packHints(phrases, inner).map(line => `${secondary}${line}${reset}`);
+  const messages = () => state.message ? wrapWords(state.message, inner).map(line => `${primary}${line}${reset}`) : [];
+  if (quick.confirm) {
+    const options = ['Continue', 'Exit for now'];
+    const option = (index: number) => {
+      const selected = (quick.confirmIndex ?? 0) === index;
+      return `${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${options[index]}${reset}`;
+    };
+    const pair = `${option(0)}    ${option(1)}`;
+    return [`${bold}${primary}Leave setup?${reset}`, ...wrapWords('Your settings stay exactly as they are.', inner).map(line => `${subtle}${line}${reset}`), '',
+      ...(displayWidth(stripAnsi(pair)) <= inner ? [pair] : [option(0), option(1)]),
+      ...controls(['←→ / Tab choose', 'Enter confirm', 'Esc keep editing'])].slice(0, Math.max(1, room));
+  }
+  if (quick.review) {
+    const chosen = `${quick.choice + 1}  ${label(quick.choice)}${quick.choice === 1 ? ` · ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'}` : ''}`;
+    const note = state.saved.onboardingComplete
+      ? 'This replaces your current presentation preferences; shell, tools and accessibility stay as they are.'
+      : 'This is your starting point; shell, tools and accessibility stay as they are.';
+    return [`${bold}${primary}Ready to apply${reset}`, `${primary}${chosen}${reset}`,
+      ...wrapWords(note, inner).map(line => `${subtle}${line}${reset}`), ...messages(), '',
+      ...controls(['Enter apply', 'Esc leave setup'])].slice(0, Math.max(1, room));
+  }
+  const heading = (): string[] => {
+    const lines: string[] = [];
+    if (displayWidth('Welcome to notMyShell') <= inner) lines.push(`${bold}${primary}Welcome to notMyShell${reset}`);
+    if (inner >= 48) for (const line of wrapWords('Choose a starting point; everything can be changed later with /setup.', inner)) lines.push(`${subtle}${line}${reset}`);
+    if (lines.length) lines.push('');
+    return lines;
+  };
+  const choices = (notes: boolean): string[] => {
+    const lines: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const selected = index === quick.choice;
+      lines.push(`${selected ? pointer : ' '} ${selected ? `${bold}${primary}` : secondary}${index + 1}  ${label(index)}${reset}`);
+      if (notes) for (const part of wrapWords(QUICK_SETUP_NOTES[index], inner - 4)) lines.push(`    ${subtle}${part}${reset}`);
+      if (index === 1 && quick.choice === 1) lines.push(`    ${secondary}Layout: ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} · ←→/Tab${reset}`);
+    }
+    return lines;
+  };
+  const assemble = (rich: boolean): string[] => [...heading(), ...choices(rich), ...(rich ? [''] : []),
+    ...controls(['↑↓ / 1–3 choose', 'Enter continue', 'Esc leave setup']),
+    ...(rich ? [`${subtle}D Docs · B Report a bug · F Request a feature${reset}`] : [])];
+  const rich = inner >= 48;
+  let lines = assemble(rich);
+  if (lines.length > room && rich) lines = assemble(false);
+  return lines.slice(0, Math.max(1, room));
+}
+
+/** Unframed essentials below the modal's minimum; still the whole picker, never animated. */
+function quickTinyRows(state: SetupState, width: number, height: number): string[] {
+  const quick = state.quick!;
+  const mark = GLYPHS.selection;
+  const layout = quick.layout === 'oneLine' ? 'One-line' : 'Two-line';
+  let rows: string[];
+  if (quick.confirm) {
+    rows = ['Leave setup?', `${(quick.confirmIndex ?? 0) === 0 ? mark : ' '} Continue`, `${(quick.confirmIndex ?? 0) === 1 ? mark : ' '} Exit for now`,
+      'Enter confirm', 'Esc keep editing'];
+  } else if (quick.review) {
+    rows = [`${quick.choice + 1} ${QUICK_SETUP_SHORT[quick.choice]}`, ...(quick.choice === 1 ? [layout] : []), 'Enter Apply', 'Esc Leave setup'];
+  } else {
+    rows = [0, 1, 2].map(index => `${quick.choice === index ? mark : ' '} ${index + 1} ${QUICK_SETUP_SHORT[index]}`)
+      .concat(quick.choice === 1 ? [`${layout} ←→/Tab`] : [], ['Enter Continue', 'Esc Leave setup']);
+  }
+  if (state.message) rows = [state.message, ...rows];
+  return rows.slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
+}
+
+/** The static centered modal: one aurora field, one framed block, block-fit tiers; no timers. */
 function renderQuickSetup(state: SetupState, columns: number, height: number): string[] {
   const quick = state.quick!;
-  if (columns < 24 || height < 8) {
-    const compact = quick.review
-      ? [`${quick.choice + 1}. ${['Recommended', 'Minimal', 'Manual'][quick.choice]}`, 'Replace prefs?',
-        ...(quick.choice === 1 ? [quick.layout === 'oneLine' ? 'One-line' : 'Two-line'] : []), 'Enter Apply', 'Esc Cancel', '/setup']
-      : QUICK_SETUP_LABELS.map((_label, index) => `${quick.choice === index ? '>' : ' '} ${index + 1} ${['Recommended', 'Minimal', 'Manual'][index]}`)
-        .concat(quick.choice === 1 ? [`${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} ←→/Tab`] : ['R Replay'], 'Enter Continue', 'Esc /setup');
-    return compact.slice(0, height).map(row => truncateAnsi(row, columns));
+  const width = Math.max(1, columns), rows = Math.max(1, height);
+  if (width < 24 || rows < 8) return quickTinyRows(state, width, rows);
+  const chars = getCurrentGlyphMode() === 'nerd'
+    ? {tl: '╭', tr: '╮', bl: '╰', br: '╯', horizontal: '─', vertical: '│'}
+    : {tl: '+', tr: '+', bl: '+', br: '+', horizontal: '-', vertical: '|'};
+  const reset = '\u001B[0m', frame = foreground(UI_COLORS.secondary);
+  const outer = Math.min(QUICK_MODAL_MAX, width - 2);
+  const inner = Math.max(8, outer - 4);
+  const body = (line: string) => {
+    const content = truncateAnsi(line, inner);
+    return `${frame}${chars.vertical}${reset} ${content}${' '.repeat(Math.max(0, inner - displayWidth(content)))} ${frame}${chars.vertical}${reset}`;
+  };
+  const block = [
+    `${frame}${chars.tl}${chars.horizontal.repeat(outer - 2)}${chars.tr}${reset}`,
+    ...quickModalContent(state, inner, rows - 2).map(body),
+    `${frame}${chars.bl}${chars.horizontal.repeat(outer - 2)}${chars.br}${reset}`,
+  ];
+  const left = Math.max(0, Math.floor((width - outer) / 2));
+  const top = Math.max(0, Math.floor((rows - block.length) / 2));
+  const out: string[] = [];
+  for (let row = 0; row < rows; row++) {
+    const index = row - top;
+    if (index >= 0 && index < block.length) {
+      out.push(`${backdropCells(0, left, row, width, rows, quick.backdrop)}${block[index]!}${backdropCells(left + outer, width - left - outer, row, width, rows, quick.backdrop)}`);
+    } else out.push(backdropCells(0, width, row, width, rows, quick.backdrop));
   }
-  const rows = ['Setup · Choose your terminal', ...QUICK_SETUP_LABELS.map((label, index) => `${quick.choice === index ? '>' : ' '} ${index + 1}. ${columns < 24 ? ['Recommended', 'Minimal', 'Manual'][index] : label}`)];
-  if (quick.choice === 1) rows.push(`Prompt layout: ${quick.layout === 'oneLine' ? 'One-line' : 'Two-line'} ←→/Tab`);
-  if (quick.review) {
-    rows.push(state.saved.onboardingComplete ? 'Review: replace presentation preferences' : 'Ready to apply this preview?',
-      'Enter Apply · Esc Cancel');
-  } else rows.push('↑↓ / 1–3 Choose · Enter Continue', 'R Replay · Esc Cancel');
-  rows.push(columns < 48 ? 'Change later: /setup' : 'Everything can be changed later with /setup.');
-  if (height >= 12) rows.push(columns < 40 ? 'D Docs · B Bug · F Feature' : 'D Docs · B Report a bug · F Request a feature');
-  if (state.message) rows.push(state.message);
-  if (height < 10) rows.shift();
-  if (height < 8) rows.splice(0, 3, `${quick.choice + 1}. ${['Recommended', 'Minimal', 'Manual'][quick.choice]} · ↑↓ / 1–3`);
-  const budget = Math.max(0, height - rows.length - 2);
-  const preview = state.context.preview?.slice(0, budget) ?? [];
-  return [...rows, ...(preview.length ? ['Demo · R Replay', ...preview] : [])].slice(0, Math.max(1, height))
-    .map(row => truncateAnsi(row, columns));
+  return out;
 }
 
 export function parseSetupEntry(argument: string | undefined): string | undefined | false {
@@ -785,18 +938,27 @@ function toolChoiceNote(choice: ToolChoice): string {
  * the last step) · Esc cancel (asks when there are unapplied edits).
  */
 export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
-  if (state.intro) { state.intro = undefined; state.previewStart = undefined; return undefined; }
-  if (state.quick) return quickKey(state, key);
+  if (state.quick && !state.quick.manual) return quickKey(state, key);
   const changes = () => setupChanges(state).length > 0;
+  /** Leaving the full wizard opened from the picker returns to the picker instead of closing setup. */
+  const leaveQuickManual = (): boolean => {
+    if (!state.quick?.manual) return false;
+    state.quick.manual = false;
+    state.confirmDiscard = undefined;
+    state.chooser = undefined;
+    state.tools = 'keep';
+    state.draft = quickDraft(state);
+    return true;
+  };
   if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {
-    if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return {kind: 'cancel'};
+    if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return leaveQuickManual() ? undefined : {kind: 'cancel'};
     if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) state.confirmDiscard = false;
     return undefined;
   }
   if (key.kind === 'escape' || key.kind === 'interrupt') {
     if (changes()) { state.confirmDiscard = true; return undefined; }
-    return {kind: 'cancel'};
+    return leaveQuickManual() ? undefined : {kind: 'cancel'};
   }
   const sectionId = SETUP_SECTIONS[state.section]?.id;
   if (key.kind === 'text' && key.value.toLowerCase() === 'p' && (sectionId === 'appearance' || sectionId === 'prompt')) {
@@ -889,7 +1051,7 @@ export function installableTool(item: SetupRow, state: SetupState): string | und
 export const SETUP_MIN_SIZE = {columns: 44, rows: 12} as const;
 
 export function renderSetup(state: SetupState, columns: number, height: number): string[] {
-  if (state.quick) return renderQuickSetup(state, columns, height);
+  if (state.quick && !state.quick.manual) return renderQuickSetup(state, columns, height);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
