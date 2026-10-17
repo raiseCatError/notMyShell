@@ -141,10 +141,17 @@ if (args.includes('--stills')) {
 }
 
 // ---- The built app's real first run ---------------------------------------------------------
+/**
+ * Processes holding files in the capture home, and processes whose environment points into it (a detached session
+ * service may hold only a Unix socket there, which `lsof +D` does not report).
+ */
 function holders(root: string): number[] {
   const result = spawnSync('lsof', ['-t', '+D', root], {encoding: 'utf8', timeout: 15_000});
   if (result.error || (result.status !== 0 && result.status !== 1)) throw new Error(`cannot check process cleanup: ${result.error?.message ?? result.stderr}`);
-  return result.stdout.split('\n').map(Number).filter(pid => pid > 0 && pid !== process.pid);
+  const open = result.stdout.split('\n').map(Number);
+  const environment = spawnSync('/bin/ps', ['-axE', '-o', 'pid=,command='], {encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024});
+  const inHome = (environment.stdout ?? '').split('\n').filter(line => line.includes(root)).map(line => Number(/^\s*(\d+)/u.exec(line)?.[1]));
+  return [...new Set([...open, ...inHome])].filter(pid => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
 }
 async function stopEverything(root: string): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
