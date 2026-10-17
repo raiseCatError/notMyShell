@@ -71,9 +71,10 @@ Marketing sections use editorial splits, numbered explanations and comparison ro
 not endless cards. A fine ruled media field with an abstract registration mark,
 purpose label and honest pending notice reserves its real aspect ratio. No fake
 commands, output, playback buttons or product UI. Learn is a conceptual introduction,
-not a functional lesson player. Motion is limited to a masked, staggered hero headline
-entry, short native dialog entry/exit and hover feedback. No scroll-triggered reveals
-or JavaScript-gated content. Reduced motion disables it. Focus rings and text labels carry state
+not a functional lesson player. The homepage stays static. Motion is limited to quick
+article-only fades between documentation pages, short native dialog entry/exit and
+hover feedback. No scroll-triggered reveals or JavaScript-gated content. Reduced
+motion disables it. Focus rings and text labels carry state
 independently of color.
 
 ## Responsive and accessible behavior
@@ -132,8 +133,12 @@ results grow downward without moving the input after entry.
 
 Docs keep ordinary full-page links, native Back/Forward and anchor behavior. Only
 the independently scrolling sidebar position and native category disclosures persist
-in session storage, restored before article parsing. The active article's ancestors
-always open; unavailable storage falls back to the server-rendered active path.
+in session storage, restored before article parsing. All categories and nested groups
+start expanded. The active article's ancestors always open; unavailable storage
+falls back to the expanded server-rendered navigation. Native cross-document view
+transitions animate only the article, without a client router or whole-page fade.
+Different article names avoid size/position morphing. Unsupported browsers and
+reduced motion switch immediately; same-article anchors never replay an entrance.
 Clicking the current item does not reload the article. A passive section indicator
 follows reading position without scrolling or rewriting history. Eight-pixel square
 scrollbars use theme-specific graphite and lavender colors with a native forced-color

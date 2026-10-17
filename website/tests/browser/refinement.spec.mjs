@@ -5,7 +5,6 @@ test('docs navigation keeps the sidebar stable and leaves history and anchors na
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/docs/reference/architecture/');
   const sidebar = page.locator('.docs-sidebar');
-  await sidebar.locator('details').evaluateAll(elements => elements.forEach(element => element.open = true));
   const position = await sidebar.evaluate(element => {
     const link = element.querySelector('a[href="/docs/reference/context-modules/"]');
     window.scrollTo(0, 800);
@@ -45,7 +44,6 @@ test('docs remain usable with blocked session storage', async ({ page }) => {
     Storage.prototype.setItem = () => { throw new Error('Storage blocked'); };
   });
   await page.goto('/docs/getting-started/');
-  await page.locator('.docs-sidebar details[data-doc-group="daily-work"] > summary').click();
   await page.locator('.docs-sidebar').getByRole('link', { name: 'Composer and input', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Composer and input');
   await expect(page.locator('.docs-sidebar [aria-current="page"]')).toHaveText('Composer and input');
@@ -83,26 +81,40 @@ test('search keyboard controls and modal geometry stay deliberate as results cha
   await expect(page.getByRole('button', { name: 'Search documentation' })).toBeFocused();
 });
 
-test('motion is progressive, restrained and absent from docs or reduced-motion mode', async ({ page }) => {
+test('home stays static and native article transitions leave chrome and anchors alone', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.addEventListener('pagereveal', event => {
+      if (!event.viewTransition) return;
+      event.viewTransition.ready.then(() => {
+        window.articleTransition = document.getAnimations().filter(animation => animation.effect.pseudoElement?.startsWith('::view-transition')).map(animation => ({ name: animation.animationName, pseudo: animation.effect.pseudoElement }));
+      });
+      event.viewTransition.finished.then(() => window.articleTransitionFinished = true);
+    });
+  });
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/');
-  const text = page.locator('.hero-reveal > span').first();
-  await expect.poll(() => text.evaluate(element => getComputedStyle(element).animationName)).not.toBe('none');
-  const frames = await text.evaluate(element => element.getAnimations()[0]?.effect.getKeyframes());
-  expect(frames[0].opacity).toBe('0');
-  expect(frames.at(-1).opacity).toBe('1');
-  await expect(page.locator('[data-reveal]')).toHaveCount(0);
-  const section = page.locator('.split-copy').last();
-  expect(await section.evaluate(element => getComputedStyle(element).opacity)).toBe('1');
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/');
-  expect(await page.locator('.hero h1').evaluate(element => getComputedStyle(element).animationName)).toBe('none');
-  expect(await page.locator('.hero h1').evaluate(element => getComputedStyle(element).opacity)).toBe('1');
-  expect(await page.locator('.hero-reveal > span').first().evaluate(element => getComputedStyle(element).animationName)).toBe('none');
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  expect(await page.locator('.hero').evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0);
   await page.goto('/docs/getting-started/');
   expect(await page.locator('.doc-heading').evaluate(element => getComputedStyle(element).animationName)).toBe('none');
-  await expect(page.locator('[data-reveal]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.articleTransition)).toBeUndefined();
+  await page.locator('.docs-sidebar a[href="/docs/composer/"]').click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Composer and input');
+  await expect.poll(() => page.evaluate(() => window.articleTransition)).toEqual(expect.arrayContaining([
+    { name: 'docs-article-exit', pseudo: '::view-transition-old(docs-article-getting-started)' },
+    { name: 'docs-article-enter', pseudo: '::view-transition-new(docs-article-composer)' },
+  ]));
+  expect(await page.evaluate(() => window.articleTransition.filter(animation => !animation.pseudo.includes('(docs-article-')))).toEqual([]);
+  await expect.poll(() => page.evaluate(() => window.articleTransitionFinished)).toBe(true);
+  const origin = await page.evaluate(() => performance.timeOrigin);
+  const sectionId = await page.locator('.prose h2').nth(1).getAttribute('id');
+  await page.locator(`.docs-toc a[href="#${sectionId}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`#${sectionId}$`));
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin);
+  expect(await page.evaluate(() => document.getAnimations().filter(animation => animation instanceof CSSAnimation).length)).toBe(0);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('.docs-sidebar a[href="/docs/getting-started/"]').click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Getting started');
+  expect(await page.evaluate(() => window.articleTransition)).toBeUndefined();
 });
 
 test('documentation CTAs keep readable text and icons in both themes and interaction states', async ({ page }) => {
@@ -132,18 +144,23 @@ test('documentation CTAs keep readable text and icons in both themes and interac
 test('docs categories expand natively, preserve choices and track the current section', async ({ page }) => {
   await page.goto('/docs/reference/context-modules/');
   const sidebar = page.locator('.docs-sidebar');
+  await expect(sidebar.locator('details:not([open])')).toHaveCount(0);
   const current = sidebar.locator('[aria-current="page"]');
   expect(await current.evaluate(element => {
     const ancestors = [];
     for (let parent = element.parentElement; parent; parent = parent.parentElement) if (parent.tagName === 'DETAILS') ancestors.push(parent.open);
     return ancestors.length >= 2 && ancestors.every(Boolean);
   })).toBe(true);
-  const daily = sidebar.locator('details[data-doc-group="daily-work"]');
-  await daily.locator(':scope > summary').focus();
+  await expect(current).toBeInViewport();
+  const appearance = sidebar.locator('details[data-doc-group="make-it-yours"]');
+  await appearance.locator(':scope > summary').focus();
   await page.keyboard.press('Enter');
-  await expect(daily).toHaveAttribute('open', '');
+  await expect(appearance).not.toHaveAttribute('open');
+  await sidebar.evaluate(element => element.scrollTop = element.scrollHeight);
   await page.goto('/docs/composer/');
+  await expect(page.locator('.docs-sidebar details[data-doc-group="make-it-yours"]')).not.toHaveAttribute('open');
   await expect(page.locator('.docs-sidebar details[data-doc-group="daily-work"]')).toHaveAttribute('open', '');
+  await expect(sidebar.locator('[aria-current="page"]')).toBeInViewport();
   const heading = page.locator('.prose h2').nth(1);
   const sectionId = await heading.getAttribute('id');
   await page.locator(`.docs-toc a[href="#${sectionId}"]`).click();

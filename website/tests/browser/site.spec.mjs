@@ -37,6 +37,15 @@ test('local docs search returns useful results and closes back to its trigger', 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole('searchbox').fill('Theme Bridge');
+  const result = page.locator('#search-results a').first();
+  await expect(result).toBeVisible();
+  const destination = new URL(await result.getAttribute('href'), page.url()).href;
+  await result.click();
+  await expect(page).toHaveURL(destination);
+  await page.keyboard.press('Control+k');
+  await expect(page.getByRole('searchbox')).toBeFocused();
 });
 
 test('copy succeeds and failure gives honest manual instructions', async ({ page, context }) => {
@@ -59,13 +68,19 @@ test('desktop, tablet and mobile preserve layout, links and accessible navigatio
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     }
   }
+  await page.goto('/docs/reference/context-modules/');
+  await page.locator('.docs-mobile > summary').click();
+  await expect(page.locator('.docs-mobile [aria-current="page"]')).toBeInViewport();
   await page.locator('.mobile-menu summary').click();
   await page.locator('.mobile-menu').getByRole('link', { name: 'Docs', exact: true }).click();
   await expect(page).toHaveURL(/\/docs\//);
   await page.locator('.docs-mobile > summary').click();
-  await page.locator('.docs-mobile details[data-doc-group="daily-work"] > summary').click();
+  await expect(page.locator('.docs-mobile details[data-doc-group]:not([open])')).toHaveCount(0);
+  await page.locator('.docs-mobile details[data-doc-group="make-it-yours"] > summary').click();
   await page.locator('.docs-mobile').getByRole('link', { name: 'Composer and input', exact: true }).click();
   await expect(page).toHaveURL(/\/docs\/composer\//);
+  await page.locator('.docs-mobile > summary').click();
+  await expect(page.locator('.docs-mobile details[data-doc-group="make-it-yours"]')).not.toHaveAttribute('open');
 });
 
 test('planned learning is explicit and documentation works without JavaScript', async ({ browser, page }) => {
@@ -75,7 +90,8 @@ test('planned learning is explicit and documentation works without JavaScript', 
   await expect(page.locator('main')).toContainText('temporary folder');
   const context = await browser.newContext({ javaScriptEnabled: false });
   const plain = await context.newPage();
-  await plain.goto('http://127.0.0.1:4321/docs/');
+  await plain.goto(new URL('/docs/', page.url()).href);
+  await expect(plain.locator('.doc-navigation details:not([open])')).toHaveCount(0);
   await plain.locator('.docs-index').getByRole('link', { name: 'Getting started', exact: true }).click();
   await expect(plain.getByRole('heading', { level: 1 })).toHaveText('Getting started');
   await context.close();

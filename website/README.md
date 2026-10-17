@@ -53,8 +53,9 @@ rtk t7run npm run preview -- --port 4321
 ```
 
 Open **http://127.0.0.1:4321/**. `npm run dev` offers live editing; search needs a
-production build because Pagefind indexes generated HTML. Stop a dev server before
-running browser tests, which own port 4321. Do not delete this worktree after review.
+production build because Pagefind indexes generated HTML. Browser tests own port
+4321 by default. To leave an existing preview running, use a free port instead:
+`rtk t7run env WEBSITE_TEST_PORT=4323 npm run verify`. Do not delete this worktree after review.
 
 Elsewhere, in a supported development environment, enter `website/`, run `npm ci`,
 `npm run build` and `npm run preview`. Local AI-driven dependencies, caches, `.astro`,
@@ -228,11 +229,20 @@ the manual toggle persists it when storage is available and remains functional w
 storage writes are blocked. No JS means readable default-dark HTML. Reduced-motion
 CSS disables transitions; videos never start themselves.
 
-The hero headline has a short CSS-only masked entry with a small stagger. It runs
-once, needs no JavaScript and is disabled by reduced motion. Dialog entry/exit uses
-native discrete CSS transitions with a plain native fallback. Only search has softer
-corners. Docs never reveal on scroll. Their native category disclosures and sidebar
-scroll offset persist per tab in session storage; active ancestors always open.
+The homepage is static. Only documentation article navigation opts into native
+cross-document view transitions in `Docs.astro`: a 100ms exit fade and a 180ms entry
+fade with a four-pixel upward movement. Unique article names prevent geometry
+morphing between differently sized pages. Header, sidebar and root are not animated.
+Direct loads and same-article anchors do not replay the transition. Reduced motion
+and unsupported browsers use immediate native navigation; no router or animation
+dependency is added. Dialog entry/exit uses native discrete CSS transitions with a
+plain native fallback. Only search has softer corners. Docs never reveal on scroll.
+All sidebar categories and nested groups start expanded, including without JavaScript.
+Their choices and desktop scroll offset persist per tab in session storage; active
+ancestors always open. The v2 preference key resets the old implicit collapsed defaults
+once. Before article parsing, restore the desktop offset and adjust it only if the
+active link is outside the visible sidebar. Opening the mobile menu also reveals
+its active link without scrolling the article.
 `src/lib/docs.ts` groups existing references into nested categories and rejects an
 uncategorized new reference. A passive TOC indicator tracks the current section;
 article scrolling, browser Back/Forward and heading hashes remain native. Blocked

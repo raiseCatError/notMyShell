@@ -21,44 +21,62 @@ const currentSubgroup = currentGroup?.children.find(group => group.articles.some
       <a class="version-label" href="/releases/#launch-baseline">{launchLabel}</a>
       <DocNavigation entries={entries} slug={slug} label="Documentation sections" />
     </aside>
+    <div class="docs-main">
+      <details class="docs-mobile" data-pagefind-ignore><summary>Documentation menu</summary><DocNavigation entries={entries} slug={slug} label="Mobile documentation" /></details>
     <script is:inline>
       {
         const sidebar = document.querySelector('.docs-sidebar');
         const storageKey = 'nmsh-docs-sidebar-scroll';
-        const groups = sidebar.querySelectorAll('details[data-doc-group]');
+        const expandedKey = 'nmsh-docs-expanded-v2';
+        const navigations = [...document.querySelectorAll('.doc-navigation')];
+        const groups = document.querySelectorAll('.doc-navigation details[data-doc-group]');
         try {
-          const expanded = JSON.parse(sessionStorage.getItem('nmsh-docs-expanded') || '{}');
+          const expanded = JSON.parse(sessionStorage.getItem(expandedKey) || '{}');
           for (const group of groups) {
-            const value = expanded[group.dataset.docGroup];
+            const value = expanded?.[group.dataset.docGroup];
             if (typeof value === 'boolean') group.open = value;
           }
-          let ancestor = sidebar.querySelector('[aria-current="page"]')?.closest('details');
-          while (ancestor) { ancestor.open = true; ancestor = ancestor.parentElement.closest('details'); }
-          const position = Number(sessionStorage.getItem(storageKey));
-          if (Number.isFinite(position) && position > 0) sidebar.scrollTop = position;
+          const stored = sessionStorage.getItem(storageKey);
+          const position = Number(stored);
+          if (stored !== null && Number.isFinite(position) && position >= 0) sidebar.scrollTop = position;
         } catch {}
+        for (const navigation of navigations) {
+          let ancestor = navigation.querySelector('[aria-current="page"]')?.closest('details[data-doc-group]');
+          while (ancestor) { ancestor.open = true; ancestor = ancestor.parentElement.closest('details[data-doc-group]'); }
+        }
+        function revealCurrent(scroller) {
+          const current = scroller.querySelector('[aria-current="page"]');
+          if (!scroller.offsetParent || !current) return;
+          const top = current.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+          const bottom = top + current.offsetHeight - scroller.clientHeight;
+          if (top < 0) scroller.scrollTop += top;
+          else if (bottom > 0) scroller.scrollTop += bottom;
+        }
+        revealCurrent(sidebar);
+        const mobileMenu = document.querySelector('.docs-mobile');
+        mobileMenu.addEventListener('toggle', () => { if (mobileMenu.open) revealCurrent(mobileMenu.querySelector('.doc-navigation')); });
         function saveSidebarPosition() {
-          if (!sidebar.offsetParent) return;
           try {
-            sessionStorage.setItem(storageKey, String(sidebar.scrollTop));
-            sessionStorage.setItem('nmsh-docs-expanded', JSON.stringify(Object.fromEntries([...groups].map(group => [group.dataset.docGroup, group.open]))));
+            if (sidebar.offsetParent) sessionStorage.setItem(storageKey, String(sidebar.scrollTop));
+            const navigation = navigations.find(element => element.offsetParent);
+            if (navigation) sessionStorage.setItem(expandedKey, JSON.stringify(Object.fromEntries([...navigation.querySelectorAll('details[data-doc-group]')].map(group => [group.dataset.docGroup, group.open]))));
           } catch {}
         }
-        sidebar.addEventListener('click', event => {
-          const link = event.target instanceof Element ? event.target.closest('a') : null;
-          if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-          saveSidebarPosition();
-          if (link.getAttribute('aria-current') === 'page') event.preventDefault();
-        });
+        for (const navigation of navigations) {
+          navigation.addEventListener('click', event => {
+            const link = event.target instanceof Element ? event.target.closest('a') : null;
+            if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            saveSidebarPosition();
+            if (link.getAttribute('aria-current') === 'page') event.preventDefault();
+          });
+          navigation.addEventListener('toggle', saveSidebarPosition, true);
+        }
         window.addEventListener('pagehide', saveSidebarPosition);
-        sidebar.addEventListener('toggle', saveSidebarPosition, true);
       }
     </script>
-    <div class="docs-main">
-      <details class="docs-mobile" data-pagefind-ignore><summary>Documentation menu</summary><DocNavigation entries={entries} slug={slug} label="Mobile documentation" /></details>
       <nav class="breadcrumbs" aria-label="Breadcrumb" data-pagefind-ignore><a href="/docs/">Docs</a><span aria-hidden="true">/</span>{currentGroup && <><a href={`/docs/#${groupId(currentGroup.title)}`}>{currentGroup.title}</a><span aria-hidden="true">/</span></>}{currentSubgroup && <><span>{currentSubgroup.title}</span><span aria-hidden="true">/</span></>}<span aria-current="page">{title}</span></nav>
       {toc.length > 1 && <details class="toc-mobile" data-pagefind-ignore><summary>On this page</summary><nav aria-label="On this page (compact)">{toc.map(heading => <a href={`#${heading.slug}`}>{heading.text}</a>)}</nav></details>}
-      <article class="prose" data-pagefind-body>
+      <article class="prose" data-pagefind-body style={`view-transition-name: docs-article-${slug.replaceAll('/', '-') || 'index'}`}>
         <header class="doc-heading"><span class="eyebrow">{source ? 'Pinned technical reference' : 'The NMSh handbook'}</span><h1 data-pagefind-meta="title">{title}</h1><p class="lead">{description}</p></header>
         {source && <aside class="note"><strong>Source snapshot · {launchLabel}</strong><p>This repository document retains its original design notes and caveats. Historical proposals in it are not all product commitments. <a href={sourceUrl(source)}>Read the canonical source ↗</a></p></aside>}
         <slot />
@@ -69,3 +87,19 @@ const currentSubgroup = currentGroup?.children.find(group => group.articles.some
     <aside class="docs-toc" data-pagefind-ignore>{toc.length > 1 && <nav aria-label="On this page"><h2>On this page</h2>{toc.map(heading => <a class:list={{ nested: heading.depth === 3 }} href={`#${heading.slug}`}>{heading.text}</a>)}</nav>}<a class="toc-source" href="/releases/#launch-baseline">Version and release status →</a></aside>
   </div>
 </Base>
+
+<style is:global>
+  @view-transition { navigation: auto; }
+  html { view-transition-name: none; }
+  ::view-transition { pointer-events: none; }
+  ::view-transition-group(*) { animation: none; }
+  ::view-transition-old(*), ::view-transition-new(*) { mix-blend-mode: normal; }
+  ::view-transition-old(*) { animation: docs-article-exit 100ms ease-out both; }
+  ::view-transition-new(*) { animation: docs-article-enter 180ms ease-out 30ms both; }
+  @keyframes docs-article-exit { to { opacity: 0; } }
+  @keyframes docs-article-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    @view-transition { navigation: none; }
+    ::view-transition-old(*), ::view-transition-new(*) { animation: none; }
+  }
+</style>
