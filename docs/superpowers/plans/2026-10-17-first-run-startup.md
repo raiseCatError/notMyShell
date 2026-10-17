@@ -157,7 +157,7 @@ session); Modify `src/setup/startup/view.ts` (the offer line), `src/setup/SetupC
 
 **Files:** Create `scripts/startup-benchmarks.ts`, `scripts/dev/startup-captures.ts`; Modify `package.json` (`typecheck:bench`)
 
-- [ ] `t7run node --import=tsx scripts/startup-benchmarks.ts` prints median ms and KB/s at 100×30, 130×38, 200×55 for each mood; production captures (ANSI, SVG, VHS PNG/MP4 of the built app in a disposable T7 home) and side-by-side comparisons with the archived references; commit `test: startup benchmarks and production captures`.
+- [x] `t7run node --import=tsx scripts/startup-benchmarks.ts` prints median ms and KB/s at 100×30, 130×38, 200×55 for each mood; production captures (ANSI, SVG, VHS PNG/MP4 of the built app in a disposable T7 home) and side-by-side comparisons with the archived references; commit `test: startup benchmarks and production captures`. (Results in the design's Performance section; captures with `scripts/dev/startup-captures.ts DIR --stills --built`, each built still its own fresh first run, since VHS's frame rate is not uniform.)
 
 ### Task 11: Documentation and verification
 
