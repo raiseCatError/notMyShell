@@ -1,4 +1,4 @@
-import {detectProvider, installUnavailableReason, providerInstall, resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily, type ProviderStatus} from '../providers/providers.js';
+import {detectProvider, installUnavailableReason, providerInstall, resolveCommand, verified, type ProviderDescriptor, type ProviderInstall, type ProviderFamily, type ProviderStatus} from '../providers/providers.js';
 import type {PromptProviderId} from '../prompt/configuration.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {detectBackend as detectKeepAwake} from '../keepAwake/keepAwake.js';
@@ -155,6 +155,11 @@ export function detectTool(tool: Tool, env: NodeJS.ProcessEnv = process.env): Pr
     return Promise.resolve(fact ? {state: 'installed', detail: fact.source ? `${fact.path} · ${fact.source}` : fact.path} : {state: 'missing'});
   }
   return detectProvider(tool, env.PATH ?? '');
+}
+
+/** detectTool that never throws or hangs: a failed or unfinished check is `unknown` (Unable to verify), never `missing`. */
+export function verifyTool(tool: Tool, timeoutMs = 4000, env: NodeJS.ProcessEnv = process.env): Promise<ProviderStatus> {
+  return verified(() => detectTool(tool, env), timeoutMs);
 }
 
 /** Legacy tools and tools without a curated package keep no recipe. */

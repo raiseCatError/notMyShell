@@ -42,6 +42,15 @@ export const GLYPHS = {
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
 };
 
+/**
+ * A choosable row's mark, so chosen never depends on color or on the cursor band: ✔ chosen, · choosable,
+ * blank otherwise; Safe glyphs use [x], [ ] and blanks of the same width.
+ */
+export function checkMark(chosen: boolean, choosable = true): string {
+  if (getCurrentGlyphMode() === 'nerd') return chosen ? '✔' : choosable ? '·' : ' ';
+  return chosen ? '[x]' : choosable ? '[ ]' : '   ';
+}
+
 export const SPINNER_FRAMES = {
   get frames() {
     return getCurrentGlyphMode() === 'nerd' 

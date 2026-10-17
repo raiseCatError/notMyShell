@@ -68,7 +68,8 @@ export function lifecycleNote(descriptor: Pick<ProviderDescriptor, 'legacy' | 'l
   return `${LIFECYCLE_LABELS[lifecycle]}${successor}`;
 }
 
-export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy';
+/** `unknown`: the check failed or did not finish, so neither installed nor missing is claimed (shown as Unable to verify). */
+export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy' | 'unknown';
 
 export interface ProviderStatus {
   state: ProviderState;
@@ -211,6 +212,25 @@ export function detectProvider(descriptor: ProviderDescriptor, pathValue = proce
   return pending;
 }
 
+/**
+ * A detection that never throws or hangs: one that fails or does not finish in time is `unknown`
+ * (Unable to verify), never `missing`, so nothing is selected or installed on a guess.
+ */
+export async function verified(detect: () => Promise<ProviderStatus>, timeoutMs = 4000): Promise<ProviderStatus> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<ProviderStatus>(resolve => {
+    timer = setTimeout(() => resolve({state: 'unknown', detail: 'the check did not finish'}), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([detect(), late]);
+  } catch (error) {
+    return {state: 'unknown', detail: error instanceof Error ? error.message : String(error)};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Forget cached detection, e.g. after an install completes. */
 export function clearProviderDetection(): void {
   detectionCache.clear();
@@ -225,6 +245,7 @@ export function providerStatusLabel(descriptor: ProviderDescriptor, status: Prov
     case 'installed': return `${status.version ?? 'Installed'}${legacy}`;
     case 'missing': return `Not installed${legacy}`;
     case 'unhealthy': return `Unavailable${status.detail ? ` · ${status.detail}` : ''}`;
+    case 'unknown': return 'Unable to verify';
     default: return 'Built in';
   }
 }
@@ -243,7 +264,7 @@ export function resolveProvider<Id extends string>(providers: readonly ProviderD
   if (!descriptor) return {id: fallback};
   if (providerUsable(descriptor, status)) return {id: selected};
   const fallbackLabel = providers.find(provider => provider.id === fallback)?.label ?? fallback;
-  const reason = status?.state === 'unhealthy' ? `unavailable${status.detail ? ` (${status.detail})` : ''}` : 'not installed';
+  const reason = status?.state === 'unhealthy' ? `unavailable${status.detail ? ` (${status.detail})` : ''}` : status?.state === 'unknown' ? 'not verified' : 'not installed';
   return {id: fallback, notice: `${descriptor.label} is ${reason}; using ${fallbackLabel}.`};
 }
 

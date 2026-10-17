@@ -2,7 +2,9 @@ import {terminalFrameCells} from '../scripts/dev/terminal-frame-cells.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TOOLS, suggestibleToolFor, toolInstall} from '../src/tools/catalog.js';
-import {confirmToolInstall, createToolsPanel, renderTools, toolBadges, toolStatusLine, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
+import {choosable, confirmToolInstall, createToolsPanel, maybePreselect, renderTools, toolBadges, toolStatusLine, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
+import {verifyTool} from '../src/tools/catalog.js';
+import {verified} from '../src/providers/providers.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {TaskProgress, taskProgressBar} from '../src/status/TaskProgress.js';
@@ -195,15 +197,16 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   assert.ok(header > 0, 'category header');
   assert.ok(plain.some(row => row.trim() === 'Git & Development'));
   const ripgrep = plain.find(row => row.includes('ripgrep'))!;
-  const fd = plain.find(row => /\bfd\b/u.test(row) && row.includes('Installed'))!;
-  assert.equal(ripgrep.indexOf('Installed'), fd.indexOf('Installed'), 'status column aligned');
-  assert.match(ripgrep, /Installed\s+Recommended/u);
+  const fd = plain.find(row => /\bfd\b/u.test(row) && row.includes('Already installed'))!;
+  assert.equal(ripgrep.indexOf('Already installed'), fd.indexOf('Already installed'), 'status column aligned');
+  assert.match(ripgrep, /Already installed\s+Recommended/u);
   assert.ok(!plain.some(row => / \/ Installed/u.test(row)), 'no slash-separated prose');
   const first = visibleTools(state)[0]!;
   const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
   assert.ok(/\u001b\[48;|\u001b\[7m/u.test(selected), 'selected row has a background band or reverse-video fallback');
   assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
-  assert.match(plain.at(-1)!, /↑↓ select · Tab\/←→ tabs · Space select · Enter details/u);
+  assert.match(plain.slice(-3).join(' '), /↑↓ move · Space select · R select recommended · Enter details · Tab tabs/u);
+  assert.match(plain.at(-1)!, /Esc close/u, 'the keys wrap onto a second row instead of being cut off');
   const lazygit = plain.find(row => row.includes('lazygit'))!;
   assert.match(lazygit, /Missing/u);
 });
@@ -361,7 +364,15 @@ test('bulk install: one failing tool is reported per tool and does not undo the 
   assert.match(state.message ?? '', /Installed 0 of 2|Installed 1 of 2/u);
   assert.match(state.message ?? '', /jq|JQ/u);
   assert.ok(state.errors.jq, 'failure is recorded per tool');
-  assert.deepEqual([...state.selection!].sort(), ['jq', ...(state.errors.rg ? ['rg'] : [])].sort(), 'failed tools stay selected for retry');
+  // A failed tool stays selected for a retry only while it is verified missing.
+  assert.deepEqual([...state.selection!].sort(), ['jq', ...(state.errors.rg && state.statuses.rg?.state === 'missing' ? ['rg'] : [])].sort(), 'failed tools stay selected for retry');
+  assert.equal(state.results, true, 'the results stay on screen');
+  const results = renderTools(state, 100, 40).map(stripAnsi).join('\n');
+  assert.match(results, /Installed [01] of 2/u);
+  assert.match(results, /jq\s+Failed\s+E: unable to locate package jq/u);
+  toolsKey(state, {kind: 'enter'});
+  assert.equal(state.results, undefined, 'Enter goes back to the list');
+  assert.equal(state.progress, undefined);
 });
 
 import {integrationActivation} from '../src/tools/Activation.js';
@@ -422,48 +433,99 @@ test('the selected tool row is an unmistakable band that follows the selection, 
   }
 });
 
-test('Space-chosen rows use the semantic selection surface continuously without markers', () => {
-  const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR};
+test('chosen rows carry a checkmark, never a band: the band is the cursor only, with color, NO_COLOR and Safe glyphs', () => {
+  const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR, NMSH_ICONS: process.env.NMSH_ICONS};
   try {
-    delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor';
-    const selectionBand = background(UI_COLORS.selection);
-    const assertContinuous = (row: string, band: string) => {
-      assert.ok(row.startsWith(band), 'band starts at the first column');
-      assert.equal(displayWidth(row), 100, 'band fills the entire row including padding');
-      const cells = terminalFrameCells(row);
-      if (band === '\u001b[7m') assert.ok(cells.every(cell => cell.inverse), 'reverse remains on every visible cell');
-      else assert.equal(new Set(cells.map(cell => JSON.stringify(cell.background))).size, 1, 'every visible cell shares the selected background');
-      assert.ok(row.endsWith('\u001b[0m'), 'final reset closes the band');
-    };
+    delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor'; delete process.env.NMSH_ICONS;
     const state = createToolsPanel();
+    state.contexts = [];
+    state.packages = env('ID=ubuntu', ['apt-get'], {isRoot: true});
     for (const tool of TOOLS) state.statuses[tool.id] = {state: 'missing'};
-    const first = visibleTools(state)[0]!;
-    const firstBefore = renderTools(state, 100, 40).find(row => stripAnsi(row).includes(first.label))!;
-    assert.ok(!firstBefore.includes('[ ]'), 'ordinary row has no checkbox');
+    const list = visibleTools(state);
+    const first = list.find(tool => choosable(state, tool))!;
+    const other = list.find(tool => tool.id !== first.id && choosable(state, tool))!;
+    state.selected = list.indexOf(first);
+    const row = (rows: string[], label: string) => rows.find(line => new RegExp(`[✔·\\]\\s] ${label}\\b`, 'u').test(stripAnsi(line)))!;
+    assert.match(stripAnsi(row(renderTools(state, 100, 40), first.label)), new RegExp(`^  › · ${first.label}`, 'u'), 'choosable, not chosen: a quiet dot');
     toolsKey(state, {kind: 'text', value: ' '});
-    const focusedChosen = renderTools(state, 100, 40).find(row => stripAnsi(row).includes(first.label))!;
-    assertContinuous(focusedChosen, selectionBand);
-    assert.ok(focusedChosen.includes('\u001b[48;') && stripAnsi(focusedChosen).includes('›'), 'focused chosen row keeps the existing focus treatment');
-    assert.ok(!stripAnsi(focusedChosen).includes('[x]'));
-    toolsKey(state, {kind: 'down'});
+    assert.ok(state.selection?.has(first.id));
+    state.selected = list.indexOf(other);
     const rows = renderTools(state, 100, 40);
-    const chosenAway = rows.find(row => stripAnsi(row).includes(first.label))!;
-    assertContinuous(chosenAway, selectionBand);
-    assert.ok(stripAnsi(chosenAway).startsWith(`    ${first.label}`), 'unfocused queued row has only the ordinary indentation and label');
-    assert.ok(stripAnsi(focusedChosen).startsWith(`  › ${first.label}`), 'focused queued row has only the existing focus pointer');
-    const focusedOther = rows.find(row => stripAnsi(row).includes(visibleTools(state)[1]!.label))!;
-    assert.ok(chosenAway.includes('\u001b[48;'), 'chosen row retains a colored band without focus');
-    assert.ok(focusedOther.includes('\u001b[48;') && stripAnsi(focusedOther).includes('›'), 'ordinary focused row uses the existing focus treatment');
-    assert.notEqual(chosenAway.match(/\u001b\[48;[^m]*m/u)?.[0], focusedOther.match(/\u001b\[48;[^m]*m/u)?.[0], 'chosen tint differs from focus band');
-    assert.ok(!stripAnsi(chosenAway).includes('[x]') && !stripAnsi(chosenAway).includes('[ ]'));
+    const chosen = row(rows, first.label);
+    assert.match(stripAnsi(chosen), new RegExp(`^    ✔ ${first.label}`, 'u'), 'chosen away from the cursor: a checkmark');
+    assert.doesNotMatch(chosen, /\u001b\[48;|\u001b\[7m/u, 'and no band: highlighting is not choosing');
+    const cursor = row(rows, other.label);
+    assert.ok(/\u001b\[48;/u.test(cursor) && stripAnsi(cursor).includes(`› · ${other.label}`), 'the band and pointer mark the cursor alone');
+    assert.match(stripAnsi(rows.join('\n')), /1 selected/u);
     delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
-    toolsKey(state, {kind: 'down'});
-    const noColorRows = renderTools(state, 100, 40);
-    assertContinuous(noColorRows.find(row => stripAnsi(row).includes(first.label))!, '\u001b[7m');
-    assert.ok(noColorRows.find(row => stripAnsi(row).includes(first.label))?.includes('\u001b[7m'), 'NO_COLOR retains chosen distinction with reverse video');
-    assert.ok(!noColorRows.some(row => stripAnsi(row).includes('[x]') || stripAnsi(row).includes('[ ]')));
+    const plainRows = renderTools(state, 100, 40);
+    assert.match(stripAnsi(row(plainRows, first.label)), /✔/u, 'NO_COLOR: the checkmark carries chosen');
+    assert.doesNotMatch(row(plainRows, first.label), /\u001b\[7m/u, 'reverse video is the cursor only');
+    process.env.NMSH_ICONS = 'safe';
+    const safe = renderTools(state, 100, 40).map(stripAnsi);
+    assert.ok(safe.some(line => line.startsWith(`    [x] ${first.label}`)), 'Safe glyphs: [x] for chosen');
+    assert.ok(safe.some(line => line.includes(`> [ ] ${other.label}`)), 'and [ ] for choosable');
   } finally {
-    if (saved.NO_COLOR === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = saved.NO_COLOR;
-    if (saved.NMSH_COLOR === undefined) delete process.env.NMSH_COLOR; else process.env.NMSH_COLOR = saved.NMSH_COLOR;
+    for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
+});
+
+test('Unable to verify: a failed or slow check is never Missing, never selected and never installed', async () => {
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.packages = env('ID=ubuntu', ['apt-get'], {isRoot: true});
+  for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+  state.statuses.rg = {state: 'missing'}; state.statuses.jq = {state: 'unknown', detail: 'the check did not finish'};
+  const plain = renderTools(state, 100, 40).map(stripAnsi);
+  assert.ok(plain.some(row => /jq\s+\? Unable to verify/u.test(row)), 'shown as Unable to verify');
+  assert.ok(!plain.some(row => /jq\s+.*(?:Missing|Not installed)/u.test(row)));
+  state.selected = visibleTools(state).findIndex(tool => tool.id === 'jq');
+  toolsKey(state, {kind: 'text', value: ' '});
+  assert.equal(state.selection?.has('jq') ?? false, false, 'Space refuses it');
+  assert.match(state.message ?? '', /unable to verify/u);
+  toolsKey(state, {kind: 'text', value: 'R'});
+  assert.deepEqual([...state.selection!], ['rg'], 'R selects only verified missing recommended tools');
+  assert.match(state.message ?? '', /Not selected: jq \(unable to verify\)/u);
+  state.selection!.add('jq');
+  const review = reviewBulk(state);
+  assert.deepEqual(review.items.map(item => item.tool.id), ['rg']);
+  assert.deepEqual(review.excluded.map(item => `${item.tool.id}: ${item.reason}`), ['jq: unable to verify']);
+  state.detail = TOOLS.find(tool => tool.id === 'jq')!;
+  toolsKey(state, {kind: 'text', value: 'i'});
+  assert.equal(state.confirm, undefined, 'its details offer no install either');
+  assert.match(renderTools(state, 100, 40).map(stripAnsi).join('\n'), /Status\s+Unable to verify · the check did not finish/u);
+  // The checks themselves: a throwing or hanging detection is unknown, not missing.
+  const fake = {...TOOLS.find(tool => tool.id === 'jq')!, detection: {kind: 'filesystem' as const, detect: () => { throw new Error('EACCES'); }}};
+  assert.deepEqual(await verifyTool(fake), {state: 'unknown', detail: 'EACCES'});
+  assert.deepEqual(await verified(() => new Promise(() => undefined), 20), {state: 'unknown', detail: 'the check did not finish'});
+  assert.equal((await verified(async () => ({state: 'missing'}))).state, 'missing', 'a finished check is kept as it is');
+});
+
+test('R, C and the preselection: verified missing recommended tools only, and never over a hand-made selection', () => {
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.packages = env('ID=ubuntu', ['apt-get'], {isRoot: true});
+  state.preselect = true;
+  maybePreselect(state);
+  assert.equal(state.selection?.size ?? 0, 0, 'still checking: nothing is ticked yet');
+  for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+  state.statuses.rg = {state: 'missing'}; state.statuses.jq = {state: 'missing'}; state.statuses.fd = {state: 'missing'};
+  // Detection finishing applies it once (fd has no APT package, so it is named and left out).
+  maybePreselect(state);
+  assert.deepEqual([...state.selection!].sort(), ['jq', 'rg']);
+  assert.match(state.message ?? '', /2 selected\. Enter reviews the install; nothing runs until you confirm\. Not selected: fd/u);
+  assert.equal(state.preselect, false, 'once');
+  const manual = createToolsPanel();
+  manual.packages = state.packages; manual.contexts = []; manual.statuses = {...state.statuses};
+  manual.selected = visibleTools(manual).findIndex(tool => tool.id === 'jq');
+  toolsKey(manual, {kind: 'text', value: ' '});
+  manual.preselect = true;
+  maybePreselect(manual);
+  assert.deepEqual([...manual.selection!], ['jq'], 'a hand-made selection is never replaced');
+  toolsKey(manual, {kind: 'text', value: 'R'});
+  assert.deepEqual([...manual.selection!].sort(), ['jq', 'rg']);
+  assert.match(manual.message ?? '', /2 selected.*Not selected: fd \(no installer here\)/u);
+  toolsKey(manual, {kind: 'text', value: 'C'});
+  assert.equal(manual.selection!.size, 0);
+  assert.match(manual.message ?? '', /Selection cleared\. Nothing was installed\./u);
 });

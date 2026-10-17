@@ -178,7 +178,7 @@ test('review rows come from the actual draft, and the welcome promise is honest'
   assert.match(text, /Start with Minimal Terminal\?/u);
   assert.match(text, /Prompt\s+Minimal · one line/u);
   assert.match(text, /Motion\s+Off · no effects/u);
-  assert.match(text, /Welcome\s+None/u);
+  assert.match(text, /Welcome\s+A first-run hello, then none/u, 'the first run is welcomed once, then Minimal stays quiet');
   const first = selector();
   press(first, 'enter');
   text = plain(renderSetup(first, 130, 38, 10_000));

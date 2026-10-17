@@ -564,7 +564,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
       customStops: colors === 'custom' && c.liveActivity.customStops.length < 2 ? [...PRESET_STOPS.lavender] : c.liveActivity.customStops}})}),
   {id: 'activityCustomColors', parent: 'activityColors', when: c => c.liveActivity.colors === 'custom', label: 'Edit colors',
     description: 'Gradient stops for the live activity line', category: 'Live activity', control: 'action', actionLabel: 'Edit ›', destination: 'activityColors'},
-  {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
+  {id: 'tools', label: 'Tools', description: 'Discover, select and install optional tools; each install is reviewed and confirmed first', category: 'Tools', control: 'child', destination: 'tools'},
   enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.toolUpdateChecks, set: (config, toolUpdateChecks) => ({...config, toolUpdateChecks})}),

@@ -153,7 +153,7 @@ test('tools step: Native only resets providers in the draft; tiers never install
   assert.equal(state.draft.picker, 'native');
   press(state, {kind: 'right'});
   assert.equal(state.tools, 'recommended');
-  assert.match(plain(renderSetup(state, 120, 30)).replace(/\s+/gu, ' '), /each install asks first/u);
+  assert.match(plain(renderSetup(state, 120, 30)).replace(/\s+/gu, ' '), /nothing installs until you confirm/u);
   state.context = {statuses: {}, completion: {completionSystem: true, zshCompletions: true, fzfTab: true}};
   const text = plain(renderSetup(state, 120, 30));
   assert.match(text, /Configured zsh completion\s+Detected/u);

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
-import {createQuickSetup, sectionIndex, setupKey, type SetupState} from '../src/setup/SetupCat.js';
+import {createQuickSetup, renderSetup, sectionIndex, setupKey, type SetupState} from '../src/setup/SetupCat.js';
+import {stripAnsi} from '../src/util/text.js';
 import {STARTING_POINT_COPY, STARTING_POINT_MOODS, STARTING_POINTS, startingPointDraft} from '../src/setup/startup/startingPoints.js';
 import {skyMix, SKY_HOLD_MS} from '../src/setup/startup/sky.js';
 import {exportSettings, NEVER_EXPORTED, planImport} from '../src/configuration/portability.js';
@@ -197,7 +198,8 @@ test('Apply carries onboardingComplete, startingPoint and the draft', () => {
     assert.deepEqual([startingPoint, onboardingComplete, glyphChoiceComplete, toolsSetupComplete], ['recommended', true, true, true]);
     const {startingPoint: _s, onboardingComplete: _o, glyphChoiceComplete: _g, toolsSetupComplete: _t, ...draft} = fresh.draft;
     assert.deepEqual(rest, draft, 'exactly the reviewed draft');
-    assert.equal(recommended.tools, 'keep');
+    assert.equal(recommended.tools, 'recommended', 'Review and install recommended tools is the default');
+    assert.equal(recommended.preselect, true);
     assert.equal(recommended.changed, true);
   }
   const minimal = createQuickSetup(configured(), 0);
@@ -207,6 +209,7 @@ test('Apply carries onboardingComplete, startingPoint and the draft', () => {
   if (applied?.kind === 'apply') {
     assert.equal(applied.startingPoint, 'minimal');
     assert.equal(applied.configuration.composerLayout, 'oneLine');
+    assert.equal(applied.tools, 'keep', 'Minimal keeps tools as they are by default');
   }
   const saved = configured();
   const keep = createQuickSetup(saved, 0);
@@ -217,6 +220,36 @@ test('Apply carries onboardingComplete, startingPoint and the draft', () => {
     assert.equal(kept.startingPoint, 'existing');
     assert.deepEqual({...kept.configuration, startingPoint: undefined}, {...saved, startingPoint: undefined}, 'a configured install keeps everything');
   }
+});
+
+test('T on the review chooses what happens with tools, per starting point; Skip and Keep open nothing', () => {
+  const expectations = [
+    ['1', ['recommended:true', 'individual:false', 'keep:false']],
+    ['2', ['keep:false', 'recommended:false', 'individual:false']],
+    ['4', ['keep:false', 'individual:false']],
+  ] as const;
+  for (const [choice, cycle] of expectations) {
+    const seen: string[] = [];
+    for (let presses = 0; presses < cycle.length; presses++) {
+      const state = createQuickSetup(configured(), 0);
+      press(state, choice); press(state, 'enter');
+      for (let i = 0; i < presses; i++) press(state, 't');
+      const applied = press(state, 'enter');
+      assert.equal(applied?.kind, 'apply', `${choice} after ${presses} T`);
+      if (applied?.kind === 'apply') seen.push(`${applied.tools}:${applied.preselect}`);
+    }
+    assert.deepEqual(seen, cycle, `starting point ${choice}`);
+  }
+  // The review says what will happen, and T says it changes it.
+  const state = createQuickSetup(configured(), 0);
+  press(state, 'enter');
+  let text = stripAnsi(renderSetup(state, 130, 38, 10_000).join('\n'));
+  assert.match(text, /Tools\s+Review and install recommended tools/u);
+  assert.match(text, /Selects what's missing\. Asks before installing\./u);
+  assert.match(text, /T\s+tools/u, 'the footer names the key');
+  press(state, 't'); press(state, 't');
+  text = stripAnsi(renderSetup(state, 130, 38, 10_000).join('\n'));
+  assert.match(text, /Tools\s+Skip tools/u, 'the ground is redrawn for the new choice');
 });
 
 test('startingPoint is a label: normalized, never exported, never used to recompute settings', () => {

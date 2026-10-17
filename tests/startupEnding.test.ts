@@ -145,9 +145,19 @@ test('Apply on a genuine first run with Recommended: the welcome, once, in the r
     const frame = f.capture().frame;
     assert.equal(frame.cursorVisible, false, 'the caret waits for the composer');
     assert.doesNotMatch(transcriptText(f), /is ready ·/u, 'no receipt on the first run with Recommended');
+    assert.equal(f.app['toolsPanel'], undefined, 'the tools review waits for the ending');
     for (let t = 0; t < 4000 && f.app['startupEnding']; t += 40) f.paint(40);
     assert.equal(f.app['startupEnding'], undefined, 'the ending finished');
     assert.equal(f.app['startupEndingClock'], undefined, 'and its clock with it');
+    // Then the review chose Review and install recommended tools: the shared panel, filtered, nothing installed.
+    const tools = f.app['toolsPanel'];
+    assert.ok(tools, 'the tools panel opens after the ending');
+    assert.equal(tools.tier, 'recommended');
+    assert.ok(tools.preselect || tools.selection, 'missing recommended tools are ticked once verified');
+    assert.equal(tools.confirm, undefined, 'nothing installs without its confirmation');
+    f.app['handleKey']({kind: 'escape'});
+    assert.equal(f.app['toolsPanel'], undefined, 'Esc declines; onboarding is complete anyway');
+    assert.equal(f.app['promptConfiguration'].onboardingComplete, true);
     const final = f.capture().frame;
     assert.equal(final.cursorVisible, true);
     assert.match(final.rows.map(stripAnsi).join('\n'), /You're all set\. Welcome to notMyShell!/u);
@@ -226,6 +236,8 @@ test('Reduced Motion and Effects Off: Apply shows the final state at once, with 
       f.app['handleKey']({kind: 'enter'}); f.app['handleKey']({kind: 'enter'});
       assert.equal(f.app['startupEnding'], undefined, mode);
       assert.equal(f.app['startupEndingClock'], undefined);
+      assert.ok(f.app['toolsPanel'], 'with no ending, the chosen tools review opens at once');
+      f.app['handleKey']({kind: 'escape'});
       assert.equal(f.capture().frame.cursorVisible, true);
     } finally { f.dispose(); }
   }

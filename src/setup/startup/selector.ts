@@ -3,7 +3,8 @@ import type {OnboardingBackdrop, PromptConfiguration} from '../../prompt/configu
 import type {EnvironmentEvidence} from '../environment/detect.js';
 import type {KeepState} from '../environment/keepExisting.js';
 import {AURORA_EPOCH, SKY_HOLD_MS, skyMix, skySceneTime} from './sky.js';
-import {STARTING_POINT_MOODS, startingPointAt, startingPointIndex, type MinimalLayout} from './startingPoints.js';
+import {STARTING_POINT_MOODS, STARTUP_TOOL_OPTIONS, startingPointAt, startingPointIndex, type MinimalLayout, type StartupToolOption} from './startingPoints.js';
+import type {StartingPointId} from '../../prompt/configuration.js';
 
 /** The sky's own clock for one open selector: plain data, kept with the rest of the selector state. */
 export interface StartupSkyClock {
@@ -42,6 +43,24 @@ export interface StartupSelectorState {
    * (the app decides; nothing here knows about windows). M or K answers it once.
    */
   windowOffer?: boolean;
+  /** The tools option per starting point (an index into STARTUP_TOOL_OPTIONS); absent means its default. */
+  tools?: Partial<Record<StartingPointId, number>>;
+}
+
+/** The highlighted starting point's tools option; Customize has its own tools step. */
+export function startupToolOption(quick: StartupSelectorState): StartupToolOption | undefined {
+  const id = startingPointAt(quick.choice);
+  if (id === 'customize') return undefined;
+  const options = STARTUP_TOOL_OPTIONS[id];
+  return options[Math.max(0, Math.min(options.length - 1, quick.tools?.[id] ?? 0))];
+}
+
+/** T on the review: the next tools option for this starting point. */
+export function cycleStartupTools(quick: StartupSelectorState): void {
+  const id = startingPointAt(quick.choice);
+  if (id === 'customize') return;
+  const count = STARTUP_TOOL_OPTIONS[id].length;
+  quick.tools = {...quick.tools, [id]: ((quick.tools?.[id] ?? 0) + 1) % count};
 }
 
 const BACKDROP_CYCLE: readonly OnboardingBackdrop[] = ['aurora', 'subtle', 'off'];

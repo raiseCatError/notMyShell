@@ -13,6 +13,7 @@ import {keepExistingPlan, type KeepPlan} from '../environment/keepExisting.js';
 import {BOLD, FAINT, INVERSE, ITALIC, RESET, StartupCanvas} from './canvas.js';
 import {renderSkyBand, skyAvailable, skyCatPose} from './sky.js';
 import {STARTING_POINT_COPY, STARTING_POINT_MOODS, startingPointAt} from './startingPoints.js';
+import {startupToolOption} from './selector.js';
 
 /**
  * The starting-point selector, Horizon: the real Aurora above a luminous
@@ -185,7 +186,9 @@ function presetReview(state: SetupState, id: 'recommended' | 'minimal', context:
     : `${draft.motion.rendering === 'rich' ? 'Rich' : 'Clean'}${draft.motion.contextTransitions === 'expressive' ? ' · expressive' : ''}${draft.presentation.reducedMotion ? ' · Reduced Motion stays on' : ''}`;
   const folding = draft.outputFolding === 'smart' ? 'smart folding' : draft.outputFolding === 'never' ? 'plain output' : 'always folded';
   const caret = draft.cursor.shape === 'host' ? 'Your terminal\'s caret' : `A ${draft.cursor.shape} caret`;
-  const welcome = draft.welcome === 'none' ? 'None' : id === 'recommended' && firstRun(state, context) ? 'Vespyr, plus a first-run hello' : 'Vespyr greets each new session';
+  // A genuine first run is welcomed once whichever starting point it chose; later launches follow the setting.
+  const hello = firstRun(state, context);
+  const welcome = draft.welcome === 'none' ? (hello ? 'A first-run hello, then none' : 'None') : hello ? 'Vespyr, plus a first-run hello' : 'Vespyr greets each new session';
   return [['Prompt', `${id === 'minimal' ? 'Minimal' : 'Lavender powerline'} · ${lines}`], ['Motion', motion],
     ['Transcript', `${draft.transcriptPresentation === 'chat' ? 'Chat' : 'Normal'} · ${folding}`],
     ['Cursor', `${caret}${draft.cursor.effect === 'none' && id === 'recommended' ? ' · effects Off' : ''}`], ['Welcome', welcome]];
@@ -203,6 +206,7 @@ function keepLedger(state: SetupState, plan: KeepPlan): Array<readonly ['keep' |
     : draft.provider === 'powerlevel10k' ? 'Powerlevel10k from your .p10k.zsh'
     : draft.provider === 'ohMyPosh' ? 'Oh My Posh from your own config'
     : draft.provider === 'none' ? 'no prompt row; yours still works outside NMSh'
+    : draft.nmsh.style !== 'minimal' ? 'NMSh\'s full prompt; yours still works outside NMSh'
     : 'NMSh\'s quiet prompt; yours still works outside NMSh';
   return [['keep', 'Stays exactly', `${shell}; ${host}`], ['adapter', plan.question ? 'Your prompt' : 'Drawn from yours', `${prompt}${toolText}`],
     ['add', 'NMSh adds', 'its composer, history search, queue, Copy, folding and sessions']];
@@ -367,6 +371,19 @@ function keepQuestion(g: Ground, x: number, y: number, width: number, plan: Keep
   return row;
 }
 
+/** The review's Tools line: what happens with optional tools after Apply. T changes it; installs always ask first. */
+function toolsLine(g: Ground, x: number, row: number, width: number, valueX: number, maxY: number): number {
+  const {canvas, paint, state} = g;
+  const option = startupToolOption(state.quick!);
+  // Below it come a blank row and the three-row Apply button, ending at maxY; the detail line goes first when short.
+  if (!option || maxY - row < 4) return row;
+  canvas.text(x, row, 'Tools', fg(paint, paint.t.subtle));
+  canvas.text(x + valueX, row, option.label, fg(paint, paint.t.primary), undefined, x + width);
+  if (maxY - row < 5) return row + 1;
+  canvas.text(x + valueX, row + 1, option.detail, fg(paint, paint.t.subtle), undefined, x + width);
+  return row + 2;
+}
+
 function review(g: Ground, x: number, y: number, width: number, maxY: number): void {
   const {canvas, paint, state} = g;
   const quick = state.quick!;
@@ -383,6 +400,7 @@ function review(g: Ground, x: number, y: number, width: number, maxY: number): v
       canvas.text(x, y + 2, 'Keep your setup as it is?', `${BOLD}${fg(paint, paint.t.primary)}`);
       let row = y + 3;
       for (const line of wrap('Your NMSh settings, prompt, shell and terminal stay exactly as they are. R reads your environment again and shows what would change.', width)) canvas.text(x, row++, line, fg(paint, paint.t.secondary));
+      row = toolsLine(g, x, row + 1, width, 13, maxY);
       row = message(row + 1);
       button(canvas, paint, x, row + 1, `${keyLabel(paint, '⏎')}  Keep my setup`);
       keycap(canvas, paint, x + displayWidth(`${keyLabel(paint, '⏎')}  Keep my setup`) + 11, row + 1, 'esc', 'back');
@@ -399,6 +417,7 @@ function review(g: Ground, x: number, y: number, width: number, maxY: number): v
         canvas.text(x, row, change.label, fg(paint, paint.t.subtle));
         canvas.text(x + 13, row++, `${change.from} ${glyph(paint, '→', '->')} ${change.to}`, fg(paint, paint.t.primary), undefined, x + width);
       }
+      row = toolsLine(g, x, row + 1, width, 13, maxY);
       row = message(row + 1);
       const label = `${keyLabel(paint, '⏎')}  ${changes.length ? 'Use these' : 'Keep my setup'}`;
       button(canvas, paint, x, row + 1, label);
@@ -424,6 +443,7 @@ function review(g: Ground, x: number, y: number, width: number, maxY: number): v
       lines.forEach((line, i) => canvas.text(x + 21, row + i, line, fg(paint, paint.t.primary)));
       row += lines.length + (lines.length > 1 ? 1 : 0);
     }
+    row = toolsLine(g, x, row + 1, width, 21, maxY);
     row = message(row + 1);
     const label = `${keyLabel(paint, '⏎')}  Keep my setup`;
     button(canvas, paint, x, row + 1, label);
@@ -443,6 +463,7 @@ function review(g: Ground, x: number, y: number, width: number, maxY: number): v
     canvas.text(x, row, label, fg(paint, paint.t.subtle));
     canvas.text(x + 13, row++, value, fg(paint, paint.t.primary), undefined, x + width);
   }
+  row = toolsLine(g, x, row, width, 13, maxY);
   row = message(row + 1);
   const label = `${keyLabel(paint, '⏎')}  Apply`;
   button(canvas, paint, x, row + 1, label);
@@ -464,6 +485,7 @@ function footer(g: Ground, y: number): void {
   if (quick.review) {
     const plan = keeping ? keepExistingPlan(quick.evidence, state.saved, quick.keep.redetect) : undefined;
     keys = [...(plan?.question && plan.question.options.length > 1 ? [['↑↓', 'answer'] as const] : []),
+      ...(startupToolOption(quick) ? [['T', 'tools'] as const] : []),
       ...(keeping && state.saved.onboardingComplete ? [['R', 're-detect'] as const] : [])];
   } else keys = [['↑↓', 'choose'], ['1–4', 'jump'], ['⏎', 'continue', true], ['esc', 'leave']];
   const label = auroraLabel(state, paint);
@@ -592,7 +614,9 @@ function tinyRows(state: SetupState, width: number, height: number, paint: Paint
     const id = CHOICE_IDS[quick.choice]!;
     const plan = id === 'existing' ? keepExistingPlan(quick.evidence, state.saved, quick.keep.redetect) : undefined;
     const answers = plan?.question?.options.map((option, i) => `${i === quick.keep.answer ? mark : ' '} ${option.label}`) ?? [];
+    const tools = startupToolOption(quick);
     rows = [choice(quick.choice), ...answers, ...(quick.choice === 1 ? [quick.layout === 'oneLine' ? 'One-line' : 'Two-line'] : []),
+      ...(tools ? [`${keyLabel(paint, 'T')} ${tools.short}`] : []),
       `${keyLabel(paint, '⏎')} ${id === 'existing' ? 'keep' : 'apply'}`, `${keyLabel(paint, 'esc')} back`];
   } else {
     rows = [narrow ? 'notMyShell' : 'notMyShell · start', ...CHOICE_IDS.map((_, index) => choice(index)),
@@ -634,7 +658,7 @@ export function renderStartup(state: SetupState, columns: number, height: number
     : {rows: [], horizon: ''};
   const groundHeight = rows - layout.skyHeight;
   const key = JSON.stringify([width, groundHeight, layout.skyHeight > 0, quick.choice, quick.review, quick.confirm ?? false, quick.confirmIndex ?? 0, quick.layout,
-    quick.backdrop, quick.keep, quick.evidence ?? null, state.message ?? '', quick.windowOffer ?? false, state.saved.startingPoint ?? '', state.saved.onboardingComplete, context.reopened,
+    quick.backdrop, quick.keep, quick.tools ?? null, quick.evidence ?? null, state.message ?? '', quick.windowOffer ?? false, state.saved.startingPoint ?? '', state.saved.onboardingComplete, context.reopened,
     context.sample ?? '', level, paint.nerd, themeSignature()]);
   if (context.ground?.key !== key) {
     const canvas = new StartupCanvas(width, groundHeight);

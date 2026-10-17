@@ -7,7 +7,7 @@ import {
   type OnboardingBackdrop, type PromptConfiguration, type PromptProviderId, type StartingPointId,
 } from '../prompt/configuration.js';
 import {STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
-import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
+import {createSelector, cycleStartupTools, highlightChoice, nextBackdrop, resumeSky, startupToolOption, type StartupSelectorState} from './startup/selector.js';
 import {createStartupContext, renderStartup, type StartupContext} from './startup/view.js';
 import {StartupCanvas} from './startup/canvas.js';
 import {guidedFooter, guidedHairline, guidedMargin, guidedRoute, guidedRow, guidedStepHeader, guidedText, guidedValueColumn, type GuidedKey} from './startup/guided.js';
@@ -633,11 +633,16 @@ export function renderSetupIntro(columns: number, height: number, elapsed: numbe
 const SWITCH_KEYS: ReadonlySet<Key['kind']> = new Set(['left', 'right', 'complete', 'focusPrevious']);
 
 /** Applying a starting point: the reviewed draft, with completion and the starting-point label. */
-function applyStartingPoint(state: SetupState, draft: PromptConfiguration, startingPoint: StartingPointId, tools: ToolChoice = 'keep', changed = true): Extract<SetupResult, {kind: 'apply'}> {
+function applyStartingPoint(state: SetupState, draft: PromptConfiguration, startingPoint: StartingPointId,
+  guided?: {tools: ToolChoice; changed: boolean}): Extract<SetupResult, {kind: 'apply'}> {
   // The backdrop chosen with A is kept even if saving it on its own failed.
   const backdrop = state.quick ? {onboardingBackdrop: state.quick.backdrop} : {};
+  // The review's Tools line: Skip keeps tools as they are; the others open the shared tools panel after Apply.
+  // Customize brings its own tools step's choice instead.
+  const tools = !guided && state.quick ? startupToolOption(state.quick) : undefined;
   return {kind: 'apply', configuration: normalizePromptConfiguration({...draft, ...backdrop, startingPoint, onboardingComplete: true,
-    glyphChoiceComplete: true, toolsSetupComplete: true}), tools, changed, startingPoint};
+    glyphChoiceComplete: true, toolsSetupComplete: true}), tools: guided?.tools ?? tools?.choice ?? 'keep',
+    ...(guided ? {} : {preselect: tools?.preselect ?? false}), changed: guided?.changed ?? true, startingPoint};
 }
 
 /**
@@ -675,6 +680,7 @@ function quickKey(state: SetupState, key: Key, now: number): SetupResult | undef
       return applyStartingPoint(state, state.draft, startingPointAt(quick.choice));
     }
     if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'left') { quick.review = false; return undefined; }
+    if (key.kind === 'text' && key.value.toLowerCase() === 't') { cycleStartupTools(quick); return undefined; }
     if (keeping && (key.kind === 'up' || key.kind === 'down')) {
       const options = keepExistingPlan(quick.evidence, state.saved, quick.keep.redetect).question?.options.length ?? 0;
       if (options > 1) {
@@ -767,8 +773,8 @@ export type SetupResult =
   | {kind: 'cursorEditor'; advanced: boolean; row?: string}
   /** A route row: its editor opens over Setup Cat, which waits with its draft unapplied and returns on Esc. */
   | {kind: 'open'; destination: SettingsDestination}
-  /** `startingPoint`: applied from the starting-point selector. */
-  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; startingPoint?: StartingPointId};
+  /** `startingPoint`: applied from the starting-point selector; `preselect` ticks the missing recommended tools once verified. */
+  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; startingPoint?: StartingPointId; preselect?: boolean};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
 function sectionRows(section: SetupSection, draft: PromptConfiguration, context?: SetupContext): readonly SetupRow[] {
@@ -819,7 +825,7 @@ function toolChoiceNote(choice: ToolChoice): string {
   switch (choice) {
     case 'keep': return 'Installed tools and providers stay as they are';
     case 'native': return 'Every provider uses NMSh Native; nothing is uninstalled';
-    case 'recommended': return 'Opens /tools on ripgrep, fd, fzf, zoxide and jq; each install asks first';
+    case 'recommended': return 'Opens /tools with the missing recommended tools selected; nothing installs until you confirm';
     case 'enhanced': return 'Also lists Enhanced CLI tools (bat, eza, delta, gh, …); not better for everyone';
     case 'individual': return 'Opens /tools on the full catalog; each install asks first';
   }
@@ -844,7 +850,7 @@ export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupRe
   };
   /** The guided setup opened from the selector applies as the Customize starting point. */
   const applied = (configuration: PromptConfiguration): SetupResult => state.quick?.manual
-    ? applyStartingPoint(state, configuration, 'customize', state.tools, changes())
+    ? applyStartingPoint(state, configuration, 'customize', {tools: state.tools, changed: changes()})
     : {kind: 'apply', configuration: normalizePromptConfiguration(configuration), tools: state.tools, changed: changes()};
   if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {

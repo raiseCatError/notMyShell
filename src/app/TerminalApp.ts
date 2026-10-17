@@ -86,7 +86,7 @@ import {parseHexColor} from '../chroma/color.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
 import {commandWord, createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
-import {detectTool, knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, type Tool} from '../tools/catalog.js';
+import {detectTool, knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, verifyTool, type Tool, type ToolTier} from '../tools/catalog.js';
 import {openGuidedInstall, openPrevious} from '../tools/OhMyZshView.js';
 import {planPackageInstall} from '../packages/managers.js';
 import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
@@ -139,7 +139,7 @@ import {HostTitle, composeTitle, sessionTitleName, titleSupport} from '../host/t
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, runExternal, type ProviderStatus} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, runExternal, verified, type ProviderStatus} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -409,6 +409,7 @@ const AGENT_DISCOVERY_MS = 15_000;
 /** The shelf hides after this long when nothing needs attention. */
 const SHELF_IDLE_MS = 6000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
+const WARNING = lazyForeground(UI_COLORS.warning);
 const ERROR = lazyForeground(UI_COLORS.failure);
 /** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
 const STOP_TYPE_AHEAD_MS = 2000;
@@ -5327,9 +5328,14 @@ export class TerminalApp {
     this.shellNamesComplete = /^complete$/mu.test(knowledge);
   }
 
-  private startTools(onboarding = false): void {
+  /** /tools, Settings → Tools and the tools step after Apply: one panel and installer. `preselect` ticks the missing recommended tools once verified. */
+  private startTools(onboarding = false, options: {tier?: ToolTier; preselect?: boolean} = {}): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
+    if (options.tier) state.tier = options.tier;
+    if (options.preselect) state.preselect = true;
+    // Opened from Settings (or another panel): Esc goes back there, and the footer says so.
+    state.back = this.panelOrigin !== undefined;
     state.updates = this.toolUpdates;
     state.activation = toolId => integrationActivation(toolId, this.shellId, this.shellNames, this.shellNamesComplete);
     state.prompt = {selected: config.provider, effective: this.effectivePromptProvider};
@@ -6317,7 +6323,8 @@ export class TerminalApp {
       case 'tools': {
         for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
           const status = state.context.statuses[tool.executable ?? ''] ?? this.toolStatuses.get(tool.id);
-          const installed = status?.state === 'installed' ? `${SUCCESS}installed${RESET}` : status?.state === 'missing' ? `${SUBTLE}not installed${RESET}` : `${SUBTLE}…${RESET}`;
+          const installed = status?.state === 'installed' ? `${SUCCESS}installed${RESET}` : status?.state === 'missing' ? `${SUBTLE}not installed${RESET}`
+            : status?.state === 'unknown' ? `${WARNING}unable to verify${RESET}` : `${SUBTLE}…${RESET}`;
           rows.push(`${label(tool.label)}${installed}  ${SUBTLE}${tool.description}${RESET}`);
         }
         break;
@@ -6673,6 +6680,8 @@ export class TerminalApp {
   private firstRunWindow?: FirstRunWindow;
   /** Apply started the ending: the window is put back only once it has finished. */
   private restoreWindowAfterEnding = false;
+  /** The tools panel the review chose, opened once the ending has landed (never over it). */
+  private toolsAfterEnding?: {tier?: ToolTier; preselect: boolean};
 
   private offerFirstRunWindow(state: SetupState): void {
     const window = this.firstRunWindow = this.createFirstRunWindow();
@@ -6757,11 +6766,12 @@ export class TerminalApp {
     const facts = this.semanticService.completionFacts().then(result => {
       state.context = {...state.context, completion: result ?? {zshCompletions: false, fzfTab: false, completionSystem: false}};
     });
-    await Promise.all(descriptors.map(async descriptor => { statuses[descriptor.executable!] = await detectProvider(descriptor); }));
-    const starship = await detectProvider({id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', description: '', executable: 'starship'});
+    // A failed or slow check is Unable to verify, never Not installed, and never blocks Setup.
+    await Promise.all(descriptors.map(async descriptor => { statuses[descriptor.executable!] = await verified(() => detectProvider(descriptor)); }));
+    const starship = await verified(() => detectProvider({id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', description: '', executable: 'starship'}));
     statuses.starship = starship;
     for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
-      const status = await detectProvider(tool);
+      const status = await verifyTool(tool);
       this.toolStatuses.set(tool.id, status);
       if (tool.executable) statuses[tool.executable] ??= status;
     }
@@ -6837,9 +6847,8 @@ export class TerminalApp {
     const understandingFollows = understanding.mode !== 'off' && (understanding.ask || understanding.folding)
       && JSON.stringify(previous.localUnderstanding) !== JSON.stringify(understanding);
     const tools = result.tools;
-    const toolsFollow = tools === 'recommended' || tools === 'enhanced' || tools === 'individual';
-    // The selector folds away into the real transcript and composer, unless another panel opens next.
-    if (fromSelector && !understandingFollows && !toolsFollow) this.beginStartupEnding(state, welcome);
+    // The selector folds away into the real transcript and composer, unless model setup opens next.
+    if (fromSelector && !understandingFollows) this.beginStartupEnding(state, welcome);
     // A window maximized for setup goes back once the ending has finished (never mid-transition), or now.
     if (state.onboarding) {
       if (this.startupEnding) this.restoreWindowAfterEnding = true;
@@ -6848,8 +6857,11 @@ export class TerminalApp {
     // Auto or Always with a use enabled: continue straight into model setup (the same /llm controller), detecting first.
     if (understandingFollows) { this.openUnderstandingPanel(true); return; }
     if (tools === 'recommended' || tools === 'enhanced' || tools === 'individual') {
-      this.startTools();
-      if (this.toolsPanel) this.toolsPanel.tier = tools === 'individual' ? undefined : tools;
+      // The same tools panel and installer as /tools: Review and install recommended ticks the missing ones once
+      // they are verified; nothing installs until its own confirmation. After the ending, when one runs.
+      const options = {...(tools === 'individual' ? {} : {tier: tools}), preselect: result.preselect ?? (tools !== 'individual')};
+      if (this.startupEnding) this.toolsAfterEnding = options;
+      else this.startTools(false, options);
     }
   }
 
@@ -6934,6 +6946,9 @@ export class TerminalApp {
     this.startupEndingClock?.(); this.startupEndingClock = undefined;
     if (this.endingBlink) { this.endingBlink = false; this.output.setWelcomeFrame('open'); }
     if (this.restoreWindowAfterEnding) this.restoreFirstRunWindow();
+    const tools = this.toolsAfterEnding;
+    this.toolsAfterEnding = undefined;
+    if (tools && !this.stopped) this.startTools(false, tools);
   }
 
   /** A key or a resize finishes the ending at once; the key is then handled normally. */
@@ -6951,6 +6966,7 @@ export class TerminalApp {
     const config = state.draft;
     const browser = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]));
     browser.updates = this.toolUpdates;
+    browser.back = true;
     const tool = toolId ? TOOLS.find(item => item.id === toolId) : undefined;
     if (tool) browser.detail = tool;
     state.toolBrowser = browser;

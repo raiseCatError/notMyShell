@@ -45,6 +45,33 @@ export const STARTING_POINT_COPY: Readonly<Record<StartingPointId, StartingPoint
     features: ['Your own prompt: Starship, Powerlevel10k or Oh My Posh', 'Your terminal colors, font and cursor', 'Your shell, aliases and functions', 'Plus NMSh search, queue, Copy and folding']},
 };
 
+/** What happens with optional tools after a starting point applies (T on the review). Every install still asks first. */
+export interface StartupToolOption {
+  choice: 'keep' | 'recommended' | 'individual';
+  /** Tick the missing recommended tools once they are verified. */
+  preselect: boolean;
+  label: string;
+  short: string;
+  detail: string;
+}
+const CHOOSE: StartupToolOption = {choice: 'individual', preselect: false, label: 'Choose tools individually', short: 'choose tools', detail: 'The full list, nothing selected.'};
+export const STARTUP_TOOL_OPTIONS: Readonly<Record<Exclude<StartingPointId, 'customize'>, readonly StartupToolOption[]>> = {
+  recommended: [
+    {choice: 'recommended', preselect: true, label: 'Review and install recommended tools', short: 'install recommended', detail: 'Selects what\'s missing. Asks before installing.'},
+    CHOOSE,
+    {choice: 'keep', preselect: false, label: 'Skip tools', short: 'skip tools', detail: 'Nothing is installed. /tools anytime.'},
+  ],
+  minimal: [
+    {choice: 'keep', preselect: false, label: 'Skip tools', short: 'skip tools', detail: 'Your tools stay as they are. /tools anytime.'},
+    {choice: 'recommended', preselect: false, label: 'Review recommended tools', short: 'review tools', detail: 'Shows what\'s missing. Nothing is selected.'},
+    CHOOSE,
+  ],
+  existing: [
+    {choice: 'keep', preselect: false, label: 'Skip tools', short: 'skip tools', detail: 'Your tools stay as they are.'},
+    {...CHOOSE, label: 'Browse tools', short: 'browse tools'},
+  ],
+};
+
 export const startingPointAt = (index: number): StartingPointId => STARTING_POINTS[Math.max(0, Math.min(STARTING_POINTS.length - 1, Math.floor(index)))]!;
 export const startingPointIndex = (id: StartingPointId | undefined): number => Math.max(0, id ? STARTING_POINTS.indexOf(id) : 0);
 

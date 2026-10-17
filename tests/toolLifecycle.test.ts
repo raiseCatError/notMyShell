@@ -59,8 +59,8 @@ test('lifecycle metadata is curated, muted and suggests successors without switc
   const state = createToolsPanel();
   for (const item of TOOLS) state.statuses[item.id] = {state: 'installed'};
   const list = plain(renderTools(state, 120, 60));
-  assert.match(list, /Neofetch\s+.*Installed\s+Integrated · Welcome · Fastfetch recommended · Legacy/u);
-  assert.match(list, /Macchina\s+.*Installed\s+Integrated · Welcome · Maintenance/u);
+  assert.match(list, /Neofetch\s+.*Already installed\s+Integrated · Welcome · Fastfetch recommended · Legacy/u);
+  assert.match(list, /Macchina\s+.*Already installed\s+Integrated · Welcome · Maintenance/u);
   state.detail = tool('neofetch');
   assert.match(plain(renderTools(state, 120, 40)), /Lifecycle\s+Legacy \/ archived · Fastfetch/u);
   // Rendering never discovers lifecycle over the network: it is static data.
