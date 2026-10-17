@@ -163,4 +163,7 @@ session); Modify `src/setup/startup/view.ts` (the offer line), `src/setup/SetupC
 
 **Files:** Modify `docs/design/post-v020-preferences-onboarding.md`, `docs/testing/post-v020-preferences-onboarding.md`, `README.md`, `docs/design/first-run-startup.md`
 
-- [ ] Update docs (selected direction vs preserved alternatives, `/startup`, Keep Existing limits, Ghostty checklist); run `npm run verify:release` through `t7run` with T7 temp roots; review the diff; commit `docs: first-run starting points`; push; dispatch exact-head CI.
+- [x] Update docs (selected direction vs preserved alternatives, `/startup`, Keep Existing limits, Ghostty checklist); run `npm run verify:release` through `t7run` with T7 temp roots; review the diff; commit `docs: first-run starting points`; push; dispatch exact-head CI.
+  (2026-10-18: build, 3,028 tests with none failing and 2 skipped, `git diff --check` and `typecheck:bench` passed;
+  `bench:smoke` met every budget, but its existing cleanup hit ENOTEMPTY removing the large-repo fixture once on the
+  T7 and passed on a rerun. Physical window QA remains open: see the window maximization checklist.)
