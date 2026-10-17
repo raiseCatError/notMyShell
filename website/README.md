@@ -116,6 +116,8 @@ proposal inside an old design document is not a release promise.
 2. When authorized to update site content, run `sync:upstream`. It accepts only public,
    non-draft, non-prerelease `vX.Y.Z` releases, resolves the tag's commit, fetches the
    selected canonical docs and actual release notes, and independently reads the tap.
+   Check-only mode compares release titles, notes, dates, URLs and the full historical
+   release set too—not just the latest tag. Notes are hash-validated during builds.
    An optional `GITHUB_TOKEN` increases API limits; never commit credentials.
 3. Review `src/data/release.json`, reference/release diffs, installation requirements,
    platform evidence, curated guides, feature copy, roadmap and known limitations.
@@ -125,6 +127,13 @@ proposal inside an old design document is not a release promise.
    assuming Homebrew offers the latest tag. Update the release-specific QA source in
    `upstream-sources.mjs` when appropriate; do not relabel an old checklist as a new one.
 5. Run website verification, review, commit and push. Publishing still needs approval.
+
+Generated collections must exactly match their provenance manifests. An explicit
+sync prunes a removed/renamed generated page only when its old recorded hash still
+matches; unknown or independently edited orphan files fail closed for review. All
+network reads finish before snapshot writes begin, so an unavailable source does
+not leave a half-fetched refresh. Filesystem write failures still require checking
+the Git diff and rerunning the refresh; normal builds validate the complete result.
 
 The roadmap is a curated editorial view linked to public issues, not an API dump.
 Recheck issue state and product direction during each release review. Issue #398 is

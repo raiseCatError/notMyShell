@@ -1,16 +1,22 @@
 import { readFile, access, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { validateMedia } from './content.mjs';
+import { validateMedia, assertFileMembership } from './content.mjs';
 
 const root = new URL('../', import.meta.url);
 const read = async path => JSON.parse(await readFile(new URL(path, root), 'utf8'));
 const release = await read('src/data/release.json');
 const manifest = await read('src/data/upstream.json');
 if (!/^v\d+\.\d+\.\d+$/.test(release.latest.tag) || release.latest.tag !== manifest.tag || release.sourceCommit !== manifest.commit) throw new Error('Release and canonical source snapshots disagree.');
+assertFileMembership((await readdir(new URL('src/content/reference/', root))).filter(name => name.endsWith('.md')), manifest.files.map(file => `${file.slug}.md`), 'Reference');
+assertFileMembership((await readdir(new URL('src/content/releases/', root))).filter(name => name.endsWith('.md')), release.history.map(item => `${item.tag}.md`), 'Release');
 for (const file of manifest.files) {
   const markdown = await readFile(new URL(`src/content/reference/${file.slug}.md`, root));
   const hash = createHash('sha256').update(markdown).digest('hex');
   if (hash !== file.generatedSha256) throw new Error(`Generated reference changed: ${file.slug}. Edit upstream, not the snapshot.`);
+}
+for (const item of release.history) {
+  const markdown = await readFile(new URL(`src/content/releases/${item.tag}.md`, root));
+  if (createHash('sha256').update(markdown).digest('hex') !== item.generatedSha256) throw new Error(`Generated release notes changed: ${item.tag}. Refresh from the public release, not a hand-edited snapshot.`);
 }
 const slots = await read('src/data/media.json');
 if (new Set(slots.map(slot => slot.id)).size !== slots.length) throw new Error('Duplicate media IDs.');
