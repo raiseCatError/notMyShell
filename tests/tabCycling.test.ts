@@ -18,6 +18,7 @@ test('Tools: Tab and Shift+Tab cycle Discover … Errors with wrap-around, also 
   assert.equal(state.tab, 'errors');
   toolsKey(state, TAB);
   assert.equal(state.tab, 'discover');
+  toolsKey(state, {kind: 'text', value: '/'});
   toolsKey(state, {kind: 'text', value: 'g'});
   toolsKey(state, TAB);
   assert.equal(state.tab, 'installed');

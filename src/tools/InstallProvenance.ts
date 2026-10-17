@@ -88,5 +88,7 @@ export function planToolUninstall(tool: Pick<Tool, 'id' | 'label' | 'package'>, 
     return {kind: 'external-homebrew', command: 'brew', args: ['uninstall', tool.package], label: `brew uninstall ${tool.package}`,
       provenance: `NMSh did not install ${tool.label}. Its executable belongs to a Homebrew formula; it may be a dependency of other software or yours to manage.`};
   }
+  // Installed by NMSh with another package manager (APT, DNF…, usually with administrator rights): say exactly how, run nothing.
+  if (record) return {kind: 'manual', provenance: `NMSh installed ${tool.label} with \`${[record.command, ...record.args].join(' ')}\`. Remove ${record.package} with that package manager yourself; NMSh does not run removals that need administrator rights.`};
   return {kind: 'manual', provenance: `NMSh did not install ${tool.label} and cannot tell how it was installed, so it will not remove it. Use the tool or package manager that installed it.`};
 }

@@ -151,8 +151,10 @@ test('onboarding defaults to Skip; recommendations only browse; legacy config st
 
 test('keyboard browse, configured state, error empty state and language identity survive narrow/plain paths', () => {
   const state = createToolsPanel(new Set(['fzf']));
+  toolsKey(state, {kind: 'text', value: '/'});
   toolsKey(state, {kind: 'text', value: 'fzf'});
-  toolsKey(state, {kind: 'enter'});
+  toolsKey(state, {kind: 'enter'}); // done searching
+  toolsKey(state, {kind: 'enter'}); // details
   state.statuses.fzf = {state: 'installed', version: '\u001b]0;unsafe\u0007v1'};
   assert.match(renderTools(state, 120, 24).map(stripAnsi).join('\n'), /Configured in NMSh/u);
   toolsKey(state, {kind: 'escape'});
@@ -205,7 +207,7 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
   assert.ok(/\u001b\[48;|\u001b\[7m/u.test(selected), 'selected row has a background band or reverse-video fallback');
   assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
-  assert.match(plain.slice(-3).join(' '), /↑↓ move · Space select · R select recommended · Enter details · Tab tabs/u);
+  assert.match(plain.slice(-3).join(' '), /↑↓ move · Space select · R select recommended · Enter details · \/ search · Tab tabs/u);
   assert.match(plain.at(-1)!, /Esc close/u, 'the keys wrap onto a second row instead of being cut off');
   const lazygit = plain.find(row => row.includes('lazygit'))!;
   assert.match(lazygit, /Missing/u, 'Missing stays Missing; whether NMSh can install it here is a separate label');
@@ -433,7 +435,7 @@ test('the selected tool row is an unmistakable band that follows the selection, 
   }
 });
 
-test('chosen rows carry a checkmark, never a band: the band is the cursor only, with color, NO_COLOR and Safe glyphs', () => {
+test('selection is a status of its own, never a band: ✓ Selected, while the band is the cursor only, with color, NO_COLOR and Safe glyphs', () => {
   const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR, NMSH_ICONS: process.env.NMSH_ICONS};
   try {
     delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor'; delete process.env.NMSH_ICONS;
@@ -445,29 +447,127 @@ test('chosen rows carry a checkmark, never a band: the band is the cursor only, 
     const first = list.find(tool => choosable(state, tool))!;
     const other = list.find(tool => tool.id !== first.id && choosable(state, tool))!;
     state.selected = list.indexOf(first);
-    const row = (rows: string[], label: string) => rows.find(line => new RegExp(`[✔·\\]\\s] ${label}\\b`, 'u').test(stripAnsi(line)))!;
-    assert.match(stripAnsi(row(renderTools(state, 100, 40), first.label)), new RegExp(`^  › · ${first.label}`, 'u'), 'choosable, not chosen: a quiet dot');
+    const row = (rows: string[], label: string) => rows.find(line => stripAnsi(line).includes(` ${label} `))!;
+    assert.match(stripAnsi(row(renderTools(state, 100, 40), first.label)), /○ Missing/u);
     toolsKey(state, {kind: 'text', value: ' '});
     assert.ok(state.selection?.has(first.id));
     state.selected = list.indexOf(other);
     const rows = renderTools(state, 100, 40);
     const chosen = row(rows, first.label);
-    assert.match(stripAnsi(chosen), new RegExp(`^    ✔ ${first.label}`, 'u'), 'chosen away from the cursor: a checkmark');
+    assert.match(stripAnsi(chosen), new RegExp(`^ {4}${first.label}\\s+✓ Selected`, 'u'), 'chosen away from the cursor: Selected');
     assert.doesNotMatch(chosen, /\u001b\[48;|\u001b\[7m/u, 'and no band: highlighting is not choosing');
     const cursor = row(rows, other.label);
-    assert.ok(/\u001b\[48;/u.test(cursor) && stripAnsi(cursor).includes(`› · ${other.label}`), 'the band and pointer mark the cursor alone');
-    assert.match(stripAnsi(rows.join('\n')), /1 selected/u);
+    assert.ok(/\u001b\[48;/u.test(cursor) && /› .*○ Missing/u.test(stripAnsi(cursor)), 'the band and pointer mark the cursor alone');
     delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
     const plainRows = renderTools(state, 100, 40);
-    assert.match(stripAnsi(row(plainRows, first.label)), /✔/u, 'NO_COLOR: the checkmark carries chosen');
+    assert.match(stripAnsi(row(plainRows, first.label)), /✓ Selected/u, 'NO_COLOR: the words carry it');
     assert.doesNotMatch(row(plainRows, first.label), /\u001b\[7m/u, 'reverse video is the cursor only');
     process.env.NMSH_ICONS = 'safe';
     const safe = renderTools(state, 100, 40).map(stripAnsi);
-    assert.ok(safe.some(line => line.startsWith(`    [x] ${first.label}`)), 'Safe glyphs: [x] for chosen');
-    assert.ok(safe.some(line => line.includes(`> [ ] ${other.label}`)), 'and [ ] for choosable');
+    assert.ok(safe.some(line => new RegExp(`^ {4}${first.label}\\s+x Selected`, 'u').test(line)), 'Safe glyphs: x Selected');
+    assert.ok(safe.some(line => new RegExp(`> ${other.label}\\s+o Missing`, 'u').test(line)), 'and o Missing');
   } finally {
     for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
+});
+
+test('Recommended always lists every recommended tool: installed ones found on PATH stay listed, with their status, never preselected', () => {
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.packages = env('ID=ubuntu', ['apt-get'], {isRoot: true});
+  // Tealdeer has no verified APT package; Homebrew beside APT installs it.
+  state.packages = env('ID=ubuntu', ['apt-get', 'brew'], {isRoot: true});
+  state.localExecutables = ['rg', 'fd', 'fzf', 'zoxide', 'jq'].map(name => ({id: `executable:${name}`, name, path: `/usr/bin/${name}`, family: 'path' as const, evidence: 'PATH'}));
+  for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+  state.statuses.tealdeer = {state: 'missing'};
+  state.tier = 'recommended';
+  const listed = visibleTools(state);
+  const recommended = TOOLS.filter(tool => tool.tier === 'recommended').map(tool => tool.id).sort();
+  assert.deepEqual(listed.map(tool => tool.id).sort(), recommended, 'the whole recommended catalogue, installed or not');
+  assert.equal(new Set(listed.map(tool => tool.id)).size, listed.length, 'no duplicate for a curated tool and its local executable');
+  state.preselect = true;
+  maybePreselect(state);
+  assert.deepEqual([...state.selection!], ['tealdeer'], 'only the verified missing one is preselected');
+  const plain = renderTools(state, 110, 40).map(stripAnsi);
+  for (const label of ['ripgrep', 'fd', 'fzf', 'zoxide', 'jq']) assert.ok(plain.some(line => new RegExp(`\\b${label}\\b\\s+✔ Already installed`, 'u').test(line)), label);
+  assert.ok(plain.some(line => /tealdeer\)?\s+✓ Selected/u.test(line)));
+  assert.ok(plain.some(line => /\d+ already installed · 1 missing · 1 selected/u.test(line)), 'counts at a glance');
+  // The default view shows them first, under one heading; the Local tab still lists what was found on PATH.
+  state.tier = undefined;
+  assert.ok(visibleTools(state).slice(0, recommended.length).every(tool => tool.tier === 'recommended'));
+  state.tab = 'local';
+  assert.ok(visibleTools(state).some(tool => tool.id === 'rg'));
+  // Installed curated tools keep their management actions: X is offered on details.
+  state.tab = 'discover';
+  state.detail = visibleTools(state).find(tool => tool.id === 'rg')!;
+  const detail = renderTools(state, 110, 40).map(stripAnsi).join('\n');
+  assert.match(detail, /X uninstall/u);
+  assert.match(detail, /Uninstall\s+Manual · not installed by NMSh/u);
+});
+
+test('keys outside search are actions and never edit the query; / focuses search, Enter keeps it, Esc clears it', async () => {
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.packages = env('ID=ubuntu', ['apt-get'], {isRoot: true});
+  for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+  state.statuses.rg = {state: 'missing'}; state.statuses.jq = {state: 'missing'};
+  for (const value of ['r', 'c', 'x', 'g', ' ']) toolsKey(state, {kind: 'text', value});
+  assert.equal(state.query, '', 'no letter became search text');
+  toolsKey(state, {kind: 'text', value: 'r'});
+  assert.deepEqual([...state.selection!].sort(), ['jq', 'rg'], 'lowercase r selects the missing recommended tools');
+  toolsKey(state, {kind: 'text', value: 'c'});
+  assert.equal(state.selection!.size, 0, 'lowercase c clears');
+  assert.equal(toolsKey(state, {kind: 'text', value: 'u'}), 'checkUpdates');
+  state.selected = 3;
+  toolsKey(state, {kind: 'text', value: '/'});
+  assert.equal(state.searchFocused, true);
+  assert.equal(state.selected, 3, 'focusing search keeps the selection');
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /type search · ↑↓ move · Enter done · Esc clear/u);
+  for (const value of ['r', 'c', 'u']) toolsKey(state, {kind: 'text', value});
+  assert.equal(state.query, 'rcu', 'inside search, letters are text');
+  assert.equal(state.selection!.size, 0, 'and not actions');
+  toolsKey(state, {kind: 'backspace'}); toolsKey(state, {kind: 'backspace'}); toolsKey(state, {kind: 'backspace'});
+  for (const value of ['j', 'q']) toolsKey(state, {kind: 'text', value});
+  toolsKey(state, {kind: 'enter'});
+  assert.equal(state.searchFocused, false, 'Enter gives the keys back');
+  assert.equal(state.query, 'jq', 'and keeps the filter');
+  toolsKey(state, {kind: 'text', value: ' '});
+  assert.deepEqual([...state.selection!], ['jq'], 'Space selects again');
+  toolsKey(state, {kind: 'text', value: '/'});
+  toolsKey(state, {kind: 'escape'});
+  assert.equal(state.searchFocused, false);
+  assert.equal(state.query, '', 'Esc in search clears it');
+  assert.equal(visibleTools(state)[state.selected]?.id, 'jq', 'the highlighted tool stays highlighted');
+  assert.equal(toolsKey(state, {kind: 'escape'}), 'close', 'then Esc closes as usual');
+});
+
+test('uninstall: the details say what X does, from provenance; never guessed, never for detected-only tools', async () => {
+  const {InstallProvenance} = await import('../src/tools/InstallProvenance.js');
+  const file = `${process.env.TMPDIR ?? '/tmp'}/nmsh-uninstall-summary-${process.pid}.json`;
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.provenance = new InstallProvenance(file);
+  const rg = TOOLS.find(tool => tool.id === 'rg')!;
+  state.statuses.rg = {state: 'installed', binary: '/nonexistent/rg'};
+  state.detail = rg;
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /Uninstall\s+Manual · not installed by NMSh/u);
+  state.provenance.record(rg, {label: 'brew install ripgrep', command: 'brew', args: ['install', 'ripgrep']});
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /Uninstall\s+X runs brew uninstall ripgrep · installed by NMSh · asks first/u);
+  toolsKey(state, {kind: 'text', value: 'x'});
+  assert.ok(state.confirm && state.uninstall?.kind === 'recorded', 'X previews the verified command and asks');
+  assert.equal(state.confirm.choice, 'no', 'No is the default');
+  state.confirm = undefined; state.uninstall = undefined; state.recipe = undefined;
+  state.provenance.forget('rg');
+  state.provenance.record(rg, {label: 'apt-get install -y ripgrep', command: 'apt-get', args: ['install', '-y', 'ripgrep']});
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /Manual · installed by NMSh with apt-get; remove ripgrep with it yourself/u);
+  toolsKey(state, {kind: 'text', value: 'x'});
+  assert.equal(state.confirm, undefined, 'nothing runs that would need administrator rights');
+  const omz = TOOLS.find(tool => tool.detection?.kind === 'filesystem' && tool.id === 'oh-my-zsh')!;
+  state.statuses[omz.id] = {state: 'installed'};
+  state.detail = omz;
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /Uninstall\s+Detected only; NMSh never removes it/u);
+  toolsKey(state, {kind: 'text', value: 'x'});
+  assert.equal(state.confirm, undefined, 'a detected-only framework is never removed');
 });
 
 test('Unable to verify: a failed or slow check is never Missing, never selected and never installed', async () => {

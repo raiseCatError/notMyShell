@@ -5370,11 +5370,12 @@ export class TerminalApp {
   }
 
   /** /tools, Settings → Tools and the tools step after Apply: one panel and installer. `preselect` ticks the missing recommended tools once verified. */
-  private startTools(onboarding = false, options: {tier?: ToolTier; preselect?: boolean} = {}): void {
+  private startTools(onboarding = false, options: {tier?: ToolTier; preselect?: boolean; fromSetup?: boolean} = {}): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
     if (options.tier) state.tier = options.tier;
     if (options.preselect) state.preselect = true;
+    if (options.fromSetup) state.fromSetup = true;
     // Opened from Settings (or another panel): Esc goes back there, and the footer says so.
     state.back = this.panelOrigin !== undefined;
     state.updates = this.toolUpdates;
@@ -6735,7 +6736,7 @@ export class TerminalApp {
   /** Apply started the ending: the window is put back only once it has finished. */
   private restoreWindowAfterEnding = false;
   /** The tools panel the review chose, opened once the ending has landed (never over it). */
-  private toolsAfterEnding?: {tier?: ToolTier; preselect: boolean};
+  private toolsAfterEnding?: {tier?: ToolTier; preselect: boolean; fromSetup?: boolean};
 
   private offerFirstRunWindow(state: SetupState): void {
     const window = this.firstRunWindow = this.createFirstRunWindow();
@@ -6915,7 +6916,7 @@ export class TerminalApp {
     if (tools === 'recommended' || tools === 'enhanced' || tools === 'individual') {
       // The same tools panel and installer as /tools: Review and install recommended ticks the missing ones once
       // they are verified; nothing installs until its own confirmation. After the ending, when one runs.
-      const options = {...(tools === 'individual' ? {} : {tier: tools}), preselect: result.preselect ?? (tools !== 'individual')};
+      const options = {...(tools === 'individual' ? {} : {tier: tools}), preselect: result.preselect ?? (tools !== 'individual'), fromSetup: true};
       if (this.startupEnding) this.toolsAfterEnding = options;
       else this.startTools(false, options);
     }

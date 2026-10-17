@@ -31,6 +31,8 @@ export type ToolCapability = 'executable utility' | 'shell framework' | 'prompt 
 export interface Tool extends ProviderDescriptor {
   /** Shared bounded discovery evidence, when the matching executable is locally present. */
   localDetection?: LocalExecutable;
+  /** A local executable that is not in the catalog: display only, never in Discover's list, no management. */
+  localOnly?: boolean;
   category: typeof TOOL_CATEGORIES[number];
   /** Kept for existing callers: true exactly for the Recommended tier. */
   recommended?: boolean;
@@ -193,7 +195,7 @@ export function promoteLocalExecutables(local: readonly LocalExecutable[], tools
 /** Build a display-only local row. It intentionally has no management metadata or actions. */
 export function localExecutableTool(item: LocalExecutable): Tool {
   return {id: localExecutableId(item.name), label: item.name, category: 'System capabilities', description: 'Local detected', source: item.evidence,
-    package: '', kind: 'external', family: 'tool', executable: item.name, versionArgs: undefined, localDetection: item,
+    package: '', kind: 'external', family: 'tool', executable: item.name, versionArgs: undefined, localDetection: item, localOnly: true,
     capabilities: ['executable utility']};
 }
 

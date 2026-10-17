@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
-import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, fullWidthRowBand, cycleTab, tabCycleDelta} from '../ui/PanelShell.js';
+import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, cycleTab, tabCycleDelta} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
@@ -14,8 +14,8 @@ import {previousZshrc} from './frameworks.js';
 import {ohMyZshKey, openGuidedInstall, openPrevious, renderOhMyZshView, type OhMyZshView} from './OhMyZshView.js';
 import {lifecycleNote, providerLifecycle} from '../providers/providers.js';
 import {toolOwner, toolUpgrade, UNKNOWN_OWNER_UPDATE, type ToolUpdateState} from './ToolUpdates.js';
-import {background, foreground, UI_COLORS} from '../ui/palette.js';
-import {GLYPHS, checkMark, getCurrentGlyphMode} from '../ui/glyphs.js';
+import {foreground, UI_COLORS} from '../ui/palette.js';
+import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {renderControlRows} from '../ui/controls.js';
 import {InstallProvenance, planToolUninstall, type UninstallPlan} from './InstallProvenance.js';
 import {elevationNote, planPackageInstall, planUnavailableReason, systemPackageEnvironment, type PackageEnvironment, type PackagePlan} from '../packages/managers.js';
@@ -63,6 +63,10 @@ export interface ToolsPanel {
   results?: boolean;
   /** Opened from another panel (Settings, Setup): Esc goes back there. */
   back?: boolean;
+  /** Opened by a setup flow (the starting point's Tools line, the guided setup): Esc skips, and says so. */
+  fromSetup?: boolean;
+  /** `/` put the keys into the search field; outside it every letter key is an action, never typed text. */
+  searchFocused?: boolean;
   /** Whether each missing tool has an installer here; computed once per detection. */
   installable?: Map<string, boolean>;
   /** A combined plan under review; installs nothing until its own confirmation. */
@@ -92,7 +96,7 @@ function installable(state: ToolsPanel, tool: Tool): boolean {
 }
 /** Choosable for one combined install: verified missing, with a reviewed installer here. */
 export function choosable(state: ToolsPanel, tool: Tool): boolean {
-  return state.statuses[tool.id]?.state === 'missing' && !tool.localDetection && tool.detection?.kind !== 'filesystem' && installable(state, tool);
+  return state.statuses[tool.id]?.state === 'missing' && !tool.localOnly && tool.detection?.kind !== 'filesystem' && installable(state, tool);
 }
 
 /**
@@ -169,6 +173,12 @@ export async function refreshTools(state: ToolsPanel, changed: () => void): Prom
     changed();
   }
 }
+/** After an install or removal: local evidence again, so the lists and details show what is there now. */
+async function refreshLocal(state: ToolsPanel): Promise<void> {
+  invalidateLocalDiscovery();
+  state.installable = undefined;
+  try { state.localExecutables = [...(await discoverLocalExecutables()).executables]; } catch { /* keep the last evidence */ }
+}
 /** Missing tools whose declared relevance matches this directory, with the matching fact. */
 export function relevantHere(state: ToolsPanel): Map<string, ToolContext> {
   if (state.tab !== 'discover' || state.query.trim()) return new Map();
@@ -183,7 +193,10 @@ export function visibleTools(state: ToolsPanel): Tool[] {
   const query = state.query.trim().toLowerCase();
   const tier = state.tier ?? (state.recommendedOnly ? 'recommended' : undefined);
   const searching = query.length > 0;
-  return all.filter(tool => (state.tab !== 'discover' || searching || !tool.localDetection && (!tier || tool.tier === 'recommended' || (tier === 'enhanced' && tool.tier === 'enhanced')))
+  // Discover lists the curated catalog whatever is installed (a curated tool found on PATH is still that tool);
+  // only executables outside the catalog are left to the Local tab and searches.
+  const recommendedFirst = state.tab === 'discover' && !searching;
+  return all.filter(tool => (state.tab !== 'discover' || searching || !tool.localOnly && (!tier || tool.tier === 'recommended' || (tier === 'enhanced' && tool.tier === 'enhanced')))
     && (state.tab !== 'local' || searching || Boolean(tool.localDetection))
     && (!query || `${tool.label} ${tool.executable ?? ''} ${tool.description} ${tool.category} ${tool.localDetection?.path ?? ''} ${tool.localDetection?.family ?? ''}`.toLowerCase().includes(query))
     && (state.tab !== 'installed' || state.statuses[tool.id]?.state === 'installed' || Boolean(tool.localDetection))
@@ -191,6 +204,7 @@ export function visibleTools(state: ToolsPanel): Tool[] {
     && (state.tab !== 'errors' || !!state.errors[tool.id] || (state.configured.has(tool.id) && state.statuses[tool.id]?.state === 'missing')))
     .sort((a, b) => Number(relevant.has(b.id)) - Number(relevant.has(a.id))
       || (relevant.has(a.id) ? relevantRank(a) - relevantRank(b) : 0)
+      || (recommendedFirst ? Number(b.tier === 'recommended') - Number(a.tier === 'recommended') : 0)
       || TOOL_CATEGORIES.indexOf(a.category) - TOOL_CATEGORIES.indexOf(b.category)
       || Number(state.statuses[a.id]?.state === 'installed') - Number(state.statuses[b.id]?.state === 'installed') || a.label.localeCompare(b.label));
 }
@@ -208,7 +222,7 @@ export function promptRole(state: ToolsPanel, tool: Tool): string | undefined {
 
 /** Factual one-line status: what it is, and scope when the backend differs. */
 export function toolStatusLine(state: ToolsPanel, tool: Tool): string {
-  if (tool.localDetection) return 'Local detected';
+  if (tool.localOnly) return 'Local detected';
   const status = state.statuses[tool.id];
   const kind = tool.capabilities?.includes('shell framework') ? 'Zsh framework' : tool.promptProvider ? promptRole(state, tool) ?? 'Prompt provider' : undefined;
   const zshOnly = tool.shells?.length === 1 && tool.shells[0] === 'zsh';
@@ -254,9 +268,19 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     else if (result) { state.openPaths = result.open; return 'openFiles'; }
     return undefined;
   }
+  // Search has focus only after `/`: text edits the query, Enter keeps it, Esc clears it; both give the keys back.
+  if (state.searchFocused && !state.detail) {
+    if (key.kind === 'enter') { state.searchFocused = false; return undefined; }
+    if (key.kind === 'escape' || key.kind === 'interrupt') { state.searchFocused = false; clearQuery(state); return undefined; }
+    if (key.kind === 'up' || key.kind === 'down') { state.selected = Math.max(0, Math.min(visibleTools(state).length - 1, state.selected + (key.kind === 'up' ? -1 : 1))); return undefined; }
+    if (tabCycleDelta(key)) { state.tab = cycleTab(TABS, state.tab, tabCycleDelta(key)!); state.selected = 0; return undefined; }
+    const next = editText(state.query, key);
+    if (next !== undefined) { state.query = next; state.selected = 0; }
+    return undefined;
+  }
   if (key.kind === 'escape' || key.kind === 'interrupt') {
     if (state.detail) { state.detail = undefined; state.message = undefined; }
-    else if (state.query) { state.query = ''; state.selected = 0; }
+    else if (state.query) clearQuery(state);
     else return 'close';
   } else if (state.detail) {
     if (key.kind !== 'text') return undefined;
@@ -310,7 +334,8 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     if (state.bulk.items.length) state.confirm = createConfirm();
     else { state.message = 'None of the selected tools can be installed automatically here. Nothing was installed.'; state.bulk = undefined; }
   } else if (key.kind === 'enter') state.detail = visibleTools(state)[state.selected];
-  else if (key.kind === 'text' && key.value === ' ' && !state.query && state.tab === 'discover') {
+  else if (key.kind === 'text' && key.value === '/') state.searchFocused = true;
+  else if (key.kind === 'text' && key.value === ' ' && state.tab === 'discover') {
     const tool = visibleTools(state)[state.selected];
     const selection = state.selection ??= new Set();
     if (!tool) return undefined;
@@ -321,19 +346,24 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     else if (status !== 'missing') state.message = `${tool.label} is ${status === 'installed' ? 'already installed' : 'still being checked'}, so it cannot be selected for install.`;
     else if (!choosable(state, tool)) state.message = `${installUnavailableFor(state, tool)} It cannot be selected.`;
     else { selection.add(tool.id); state.message = undefined; }
-  } else if (key.kind === 'text' && key.value === 'R' && !state.query && state.tab === 'discover') {
+  } else if (key.kind === 'text' && /^r$/iu.test(key.value) && state.tab === 'discover') {
     state.selectionTouched = true;
     state.message = selectionMessage(state, selectRecommended(state));
-  } else if (key.kind === 'text' && key.value === 'C' && !state.query && state.tab === 'discover' && state.selection?.size) {
+  } else if (key.kind === 'text' && /^c$/iu.test(key.value) && state.tab === 'discover') {
     state.selectionTouched = true;
-    state.selection.clear();
-    state.message = 'Selection cleared. Nothing was installed.';
-  } else if (key.kind === 'text' && key.value === 'U' && !state.query) return 'checkUpdates';
-  else {
-    const next = editText(state.query, key);
-    if (next !== undefined) { state.query = next; state.selected = 0; }
-  }
+    state.message = state.selection?.size ? 'Selection cleared. Nothing was installed.' : 'Nothing is selected.';
+    state.selection?.clear();
+  } else if (key.kind === 'text' && /^u$/iu.test(key.value)) return 'checkUpdates';
+  // Any other key outside search is not an action, and never becomes search text.
   return undefined;
+}
+
+/** Clears the search, keeping the highlighted tool highlighted where it is still listed. */
+function clearQuery(state: ToolsPanel): void {
+  const current = visibleTools(state)[state.selected]?.id;
+  state.query = '';
+  const index = current ? visibleTools(state).findIndex(tool => tool.id === current) : -1;
+  state.selected = Math.max(0, index);
 }
 
 export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: () => void,
@@ -358,7 +388,7 @@ export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: (
   if (run) await run(task, recipe);
   else await task.run(recipe.command, [...recipe.args]);
   clearProviderDetection();
-  state.installable = undefined;
+  await refreshLocal(state);
   state.statuses[tool.id] = await verifyTool(tool);
   if (state.statuses[tool.id]?.state === 'unknown') {
     state.message = `${tool.label}: ${task.state.status === 'succeeded' ? 'the package manager finished, but' : 'the command did not succeed and'} NMSh could not verify the result. R checks again.`;
@@ -420,7 +450,7 @@ async function confirmBulk(state: ToolsPanel, key: Key, changed: () => void,
   }
   // Failed tools stay selected for a retry; Unable to verify never does.
   state.selection = new Set(results.filter(result => !result.ok && state.statuses[result.tool.id]?.state === 'missing').map(result => result.tool.id));
-  state.installable = undefined;
+  await refreshLocal(state);
   state.task = undefined;
   state.results = true;
   state.message = [`Installed ${results.filter(result => result.ok).length} of ${results.length}.`,
@@ -436,7 +466,7 @@ async function runUninstall(state: ToolsPanel, changed: () => void, run?: (task:
   if (run) await run(task, recipe);
   else await task.run(recipe.command, [...recipe.args]);
   clearProviderDetection();
-  state.installable = undefined;
+  await refreshLocal(state);
   state.statuses[tool.id] = await verifyTool(tool);
   if (task.state.status === 'succeeded') {
     try { (state.provenance ?? new InstallProvenance()).forget(tool.id); } catch { /* record cleanup is best effort */ }
@@ -467,17 +497,34 @@ function resolveColors(): void {
 }
 const RESET = '\u001b[0m';
 
-/** Status badge: a glyph plus a word, so meaning never depends on color alone. */
+/**
+ * Status badge: a glyph plus a word, so meaning never depends on color alone. Selected (for installation) is a
+ * status of its own; the cursor band only highlights.
+ */
 function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: string} {
-  if (tool.localDetection) return {text: 'Local detected', color: ACCENT};
+  if (tool.localOnly) return {text: 'Local detected', color: ACCENT};
   const status = state.statuses[tool.id];
   const nerd = getCurrentGlyphMode() === 'nerd';
   if (!status) return {text: `${nerd ? '…' : '.'} Checking`, color: SUBTLE};
   if (status.state === 'unknown') return {text: '? Unable to verify', color: WARNING};
-  if (status.state === 'installed') return {text: `${nerd ? '●' : '*'} ${state.tab === 'discover' ? 'Already installed' : 'Installed'}`, color: SUCCESS};
+  if (status.state === 'installed') return {text: `${nerd ? '✔' : '+'} ${state.tab === 'discover' ? 'Already installed' : 'Installed'}`, color: SUCCESS};
+  if (status.state === 'missing' && state.selection?.has(tool.id)) return {text: `${nerd ? '✓' : 'x'} Selected`, color: ACCENT};
   if (status.state === 'missing' && state.errors[tool.id]) return {text: `${GLYPHS.failure} Failed`, color: FAILURE};
   if (status.state === 'missing') return {text: `${nerd ? '○' : 'o'} Missing`, color: SUBTLE};
   return {text: '! Needs attention', color: FAILURE};
+}
+
+/** At a glance, over the tools listed: "5 already installed · 1 missing · 1 selected" (and anything unverified or still checking). */
+export function toolCounts(state: ToolsPanel, tools: readonly Tool[]): string {
+  const curated = tools.filter(tool => !tool.localOnly);
+  const count = (test: (tool: Tool) => boolean) => curated.filter(test).length;
+  const installed = count(tool => state.statuses[tool.id]?.state === 'installed');
+  const missing = count(tool => state.statuses[tool.id]?.state === 'missing');
+  const selected = count(tool => state.statuses[tool.id]?.state === 'missing' && state.selection?.has(tool.id) === true);
+  const unknown = count(tool => state.statuses[tool.id]?.state === 'unknown');
+  const checking = count(tool => !state.statuses[tool.id]);
+  return [`${installed} already installed`, `${missing} missing`, `${selected} selected`, ...(unknown ? [`${unknown} unable to verify`] : []),
+    ...(checking ? [`${checking} checking`] : [])].join(' · ');
 }
 
 export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
@@ -493,7 +540,7 @@ export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
     ...(lifecycle === 'legacy' ? ['Legacy'] : lifecycle === 'maintenance' ? ['Maintenance'] : []),
     ...(state.errors[tool.id] ? ['Error'] : []),
     // Missing, and NMSh has no reviewed installer for it on this system (it stays Missing, never guessed).
-    ...(state.statuses[tool.id]?.state === 'missing' && !tool.installAdapter && tool.detection?.kind !== 'filesystem' && !tool.localDetection && !installable(state, tool) ? ['Unsupported here'] : [])];
+    ...(state.statuses[tool.id]?.state === 'missing' && !tool.installAdapter && tool.detection?.kind !== 'filesystem' && !tool.localOnly && !installable(state, tool) ? ['Unsupported here'] : [])];
 }
 
 /**
@@ -502,21 +549,30 @@ export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
  */
 function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: number): string {
   const badge = statusBadge(state, tool);
-  const discover = state.tab === 'discover';
-  const chosen = discover && state.selection?.has(tool.id) === true;
-  const mark = discover ? `${checkMark(chosen, choosable(state, tool))} ` : '';
-  const labelWidth = columns >= 60 ? 22 : Math.max(8, columns - 20 - mark.length);
+  const chosen = state.selection?.has(tool.id) === true && state.statuses[tool.id]?.state === 'missing';
+  const labelWidth = columns >= 60 ? 22 : Math.max(8, columns - 20);
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
   const statusText = columns >= 34 ? badge.text.padEnd(21) : `${badge.text.slice(0, 1)} `;
   const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
   if (!selected) {
-    return truncateAnsi(`    ${chosen ? `${BOLD}${ACCENT}` : SUBTLE}${mark}${RESET}${chosen ? PRIMARY : SECONDARY}${label}${RESET}${badge.color}${statusText}${RESET}${SUBTLE}${badges}${RESET}`, columns);
+    return truncateAnsi(`    ${chosen ? PRIMARY : SECONDARY}${label}${RESET}${chosen ? BOLD : ''}${badge.color}${statusText}${RESET}${SUBTLE}${badges}${RESET}`, columns);
   }
   // The shared selected band (the active tab's treatment): pointer, bold label, and every quiet part lifted
   // to the band's foreground; Installed and Needs attention keep their meaning colors.
   const quiet = onSelectedBand();
   const statusColor = badge.color === SUBTLE ? quiet : badge.color;
-  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${chosen ? ACCENT : quiet}${mark}${RESET}${BOLD}${ACCENT}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
+  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${ACCENT}${label}${RESET}${chosen ? BOLD : ''}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
+}
+
+/** What X would do for an installed tool, in one line. */
+function uninstallSummary(state: ToolsPanel, tool: Tool): string {
+  if (tool.detection?.kind === 'filesystem') return 'Detected only; NMSh never removes it. Remove it the way you installed it.';
+  const record = (state.provenance ?? new InstallProvenance()).find(tool.id);
+  const plan = planToolUninstall(tool, record, toolOwner(state.statuses[tool.id]?.binary));
+  if (plan.kind === 'recorded') return `X runs ${plan.label} · installed by NMSh · asks first`;
+  if (plan.kind === 'external-homebrew') return `X runs ${plan.label} · Homebrew owns it, NMSh did not install it · asks twice`;
+  return record ? `Manual · installed by NMSh with ${record.command}; remove ${record.package} with it yourself`
+    : 'Manual · not installed by NMSh; remove it the way you installed it';
 }
 
 /** One line of a combined install, while it runs and as its result. */
@@ -531,9 +587,9 @@ function progressRow(item: InstallProgress, columns: number): string {
 const BOLD = '\u001b[1m';
 
 /** Category headers and tool rows in display order; headers are not selectable. */
-function groupedRows(tools: readonly Tool[], relevant: ReadonlyMap<string, ToolContext> = new Map()): Array<{kind: 'header'; category: string} | {kind: 'tool'; tool: Tool; index: number}> {
+function groupedRows(tools: readonly Tool[], relevant: ReadonlyMap<string, ToolContext> = new Map(), recommendedFirst = false): Array<{kind: 'header'; category: string} | {kind: 'tool'; tool: Tool; index: number}> {
   const rows: Array<{kind: 'header'; category: string} | {kind: 'tool'; tool: Tool; index: number}> = [];
-  const group = (tool: Tool) => relevant.has(tool.id) ? RELEVANT_GROUP : tool.category;
+  const group = (tool: Tool) => relevant.has(tool.id) ? RELEVANT_GROUP : recommendedFirst && tool.tier === 'recommended' ? 'Recommended' : tool.category;
   tools.forEach((tool, index) => {
     if (index === 0 || group(tools[index - 1]!) !== group(tool)) rows.push({kind: 'header', category: group(tool)});
     rows.push({kind: 'tool', tool, index});
@@ -546,13 +602,14 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
   const tabsRow = renderTabStrip(['Discover', 'Installed', 'Local', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns);
   const rows: string[] = [`${PRIMARY}  Tools${RESET}  ${SUBTLE}optional · NMSh is complete without them${RESET}`, tabsRow, ''];
   const chosenCount = state.selection?.size ?? 0;
-  const esc: [string, string] = ['Esc', state.query ? 'clear search' : state.back ? 'back' : 'close'];
-  let footer: Array<[string, string]> = state.query
-    ? [['↑↓', 'move'], ['Enter', 'details'], ['type', 'search'], esc]
+  // The keys exactly as toolsKey handles them: letters are actions outside search, text only after `/`.
+  const esc: [string, string] = ['Esc', state.query ? 'clear search' : state.fromSetup ? 'skip' : state.back ? 'back' : 'close'];
+  let footer: Array<[string, string]> = state.searchFocused
+    ? [['type', 'search'], ['↑↓', 'move'], ['Enter', 'done'], ['Esc', 'clear']]
     : state.tab === 'discover'
       ? [['↑↓', 'move'], ['Space', 'select'], ['R', 'select recommended'], ...(chosenCount ? [['C', 'clear'] as [string, string], ['Enter', `review ${chosenCount} install${chosenCount === 1 ? '' : 's'}`] as [string, string]] : [['Enter', 'details'] as [string, string]]),
-        ['Tab', 'tabs'], ['type', 'search'], ['U', 'updates'], esc]
-      : [['↑↓', 'move'], ['Enter', 'details'], ['Tab', 'tabs'], ['type', 'search'], ['U', 'updates'], esc];
+        ['/', 'search'], ['Tab', 'tabs'], ['U', 'updates'], esc]
+      : [['↑↓', 'move'], ['Enter', 'details'], ['/', 'search'], ['Tab', 'tabs'], ['U', 'updates'], esc];
   if (state.progress) {
     // Discover → Select → Review → Confirm → this: each tool's state while the install runs, then the results.
     const done = state.results === true;
@@ -617,10 +674,12 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
       ...(tool.localDetection ? [field('Detected', 'Local detected'), field('Path', tool.localDetection.path), ...(tool.localDetection.family !== 'path' ? [field('Evidence', tool.localDetection.evidence)] : [])] : []),
       ...(tool.capabilities?.length ? [field('Is', tool.capabilities.join(' · '))] : []),
       ...(tool.detection?.kind === 'filesystem' && state.statuses[tool.id]?.detail ? [field('Found', state.statuses[tool.id]!.detail!)] : []),
-      ...(!tool.localDetection ? [field('Install', tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? 'Guided: NMSh keeps your .zshrc and never runs the installer itself (I)'
+      ...(!tool.localOnly ? [field('Install', tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? 'Guided: NMSh keeps your .zshrc and never runs the installer itself (I)'
         : state.statuses[tool.id]?.state === 'missing'
           ? installPlanFor(state, tool)?.label ?? installUnavailableFor(state, tool)
           : tool.package ? `Package ${tool.package}` : tool.detection?.kind === 'filesystem' ? 'Installed outside NMSh · not managed by NMSh' : 'Installed outside NMSh')] : []));
+    // Removal, stated before X is pressed: the verified command, or how to remove it yourself; never a guess.
+    if (state.statuses[tool.id]?.state === 'installed' && !tool.localOnly) rows.push(field('Uninstall', uninstallSummary(state, tool)));
     if (tool.id === 'oh-my-zsh' && previousZshrc()) rows.push(field('Previous', 'Previous zshrc found (.zshrc.pre-oh-my-zsh) · O to compare'));
     const lifecycle = lifecycleNote(tool);
     if (lifecycle) rows.push(field('Lifecycle', lifecycle));
@@ -637,8 +696,8 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     if (activation) rows.push(field('Shell', `${ACTIVATION_LABELS[activation.state]} · ${activation.detail}`));
     rows.push('', `  ${SUBTLE}${activation ? 'Shell state comes from the running session; rc files are never read.' : 'Shell hook state is not inferred; existing hooks stay authoritative.'}${RESET}`);
     footer = [
-      ...(state.statuses[tool.id]?.state === 'missing' && tool.detection?.kind !== 'filesystem' && !tool.localDetection ? [['I', 'install…'] as [string, string]] : []),
-      ...(state.statuses[tool.id]?.state === 'installed' && tool.detection?.kind !== 'filesystem' && !tool.localDetection ? [['X', 'uninstall…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'missing' && tool.detection?.kind !== 'filesystem' && !tool.localOnly ? [['I', 'install'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'installed' && tool.detection?.kind !== 'filesystem' && !tool.localOnly ? [['X', 'uninstall'] as [string, string]] : []),
       ...(toolHasUpdate(state, tool) ? [['U', 'update…'] as [string, string]] : []),
       ...(tool.id === 'mise' ? [['M', 'project awareness'] as [string, string]] : []),
       ...(tool.configuration && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure'] as [string, string]] : []),
@@ -653,12 +712,18 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
   } else {
     const tierLabel = state.tier === 'enhanced' ? 'Recommended + Enhanced' : state.tier === 'recommended' || state.recommendedOnly ? 'Recommended only' : '';
     const checked = state.checking ? `  ${SUBTLE}checking for updates…${RESET}` : state.updates?.error ? `  ${SUBTLE}${state.updates.error}${RESET}` : '';
-    const chosen = chosenCount && state.tab === 'discover' ? `  ${BOLD}${ACCENT}${chosenCount} selected${RESET}` : '';
-    rows.push(`  ${SUBTLE}Search${RESET}  ${state.query ? `${PRIMARY}${state.query}` : `${SUBTLE}type to filter`}${RESET}${tierLabel ? `  ${ACCENT}${tierLabel}${RESET}` : ''}${chosen}${checked}`, '');
+    const caret = state.searchFocused ? (colorLevel() === 'none' ? '_' : '\u001b[7m \u001b[27m') : '';
+    const search = state.searchFocused || state.query
+      ? `${SUBTLE}Search${RESET}  ${PRIMARY}${state.query}${caret}${RESET}`
+      : `${SUBTLE}/ to search${RESET}`;
+    if (state.fromSetup && state.tab === 'discover') rows.push(`  ${SECONDARY}Nothing installs until you review the exact commands and confirm. Esc skips.${RESET}`);
+    rows.push(`  ${search}${tierLabel ? `  ${ACCENT}${tierLabel}${RESET}` : ''}${checked}`);
+    const listed = visibleTools(state);
+    rows.push(state.tab === 'discover' ? `  ${SECONDARY}${toolCounts(state, listed)}${RESET}` : '', '');
     const tools = visibleTools(state);
     state.selected = Math.max(0, Math.min(state.selected, tools.length - 1));
     const relevant = relevantHere(state);
-    const display = groupedRows(tools, relevant);
+    const display = groupedRows(tools, relevant, state.tab === 'discover' && !state.query.trim());
     // Rows left for the list after title, tabs, search, description and footer.
     // Below the list: a "more" cue, the description, an optional message, the footer, and the frame line.
     const footerRows = renderControlRows(footer, Math.max(10, columns - 4)).length;
