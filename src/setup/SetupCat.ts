@@ -10,7 +10,7 @@ import {STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/st
 import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
 import {createStartupContext, renderStartup, type StartupContext} from './startup/view.js';
 import {StartupCanvas} from './startup/canvas.js';
-import {guidedFooter, guidedHairline, guidedMargin, guidedRibbon, guidedRoute, guidedRow, guidedStepHeader, guidedText, guidedValueColumn, RIBBON_MIN_HEIGHT, type GuidedKey} from './startup/guided.js';
+import {guidedFooter, guidedHairline, guidedMargin, guidedRoute, guidedRow, guidedStepHeader, guidedText, guidedValueColumn, type GuidedKey} from './startup/guided.js';
 import type {EnvironmentEvidence} from './environment/detect.js';
 import {keepExistingPlan} from './environment/keepExisting.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
@@ -213,7 +213,7 @@ export const CHROMA_IN_LOOK_ROW: SetupRow = {
 
 function routeRow(id: string, label: string, description: string, destination: SettingsDestination, category: string): SetupRow {
   return {row: {id, label, description, category, control: 'action', actionLabel: 'Open ›', destination},
-    note: () => 'Enter applies this Setup first, then opens it; it keeps the choices you made here'};
+    note: () => 'Opens it here. Esc comes back to this step; your unapplied choices wait'};
 }
 
 const PROMPT_FIELDS_EXCLUDED = new Set(['themeFamily', 'themeVariant', 'themeAccent', 'themeStudio', 'style', 'vibrance', 'promptSymbol', 'promptSymbolCustom', 'modules']);
@@ -555,6 +555,9 @@ export interface SetupState {
   previewChroma?: boolean;
   /** The Chroma choice the override was made for; a new choice returns the preview to following it. */
   previewChromaFor?: string;
+  /** The first visible content line of the guided setup, kept per step so the view never jumps. */
+  scroll?: number;
+  scrollSection?: number;
   /** The cursor preview restarts when the selected row or the draft's cursor settings change. */
   previewKey?: string;
   previewStart?: number;
@@ -762,8 +765,10 @@ export type SetupResult =
   | {kind: 'browseTools'; toolId?: string}
   /** Open the shared /cursor panel inside Setup Cat, over the draft. */
   | {kind: 'cursorEditor'; advanced: boolean; row?: string}
-  /** `then`: an editor to open after Apply (a route row). `startingPoint`: applied from the starting-point selector. */
-  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; then?: SettingsDestination; startingPoint?: StartingPointId};
+  /** A route row: its editor opens over Setup Cat, which waits with its draft unapplied and returns on Esc. */
+  | {kind: 'open'; destination: SettingsDestination}
+  /** `startingPoint`: applied from the starting-point selector. */
+  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; startingPoint?: StartingPointId};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
 function sectionRows(section: SetupSection, draft: PromptConfiguration, context?: SetupContext): readonly SetupRow[] {
@@ -838,9 +843,9 @@ export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupRe
     return true;
   };
   /** The guided setup opened from the selector applies as the Customize starting point. */
-  const applied = (configuration: PromptConfiguration, then?: SettingsDestination): SetupResult => state.quick?.manual
-    ? {...applyStartingPoint(state, configuration, 'customize', state.tools, changes()), ...(then ? {then} : {})}
-    : {kind: 'apply', configuration: normalizePromptConfiguration(configuration), tools: state.tools, changed: changes(), ...(then ? {then} : {})};
+  const applied = (configuration: PromptConfiguration): SetupResult => state.quick?.manual
+    ? applyStartingPoint(state, configuration, 'customize', state.tools, changes())
+    : {kind: 'apply', configuration: normalizePromptConfiguration(configuration), tools: state.tools, changed: changes()};
   if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {
     if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return leaveQuickManual() ? undefined : {kind: 'cancel'};
@@ -882,9 +887,9 @@ export function setupKey(state: SetupState, key: Key, now = Date.now()): SetupRe
       return undefined;
     }
     if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : row.id === 'cursorFireCustom' ? 'fireEdit' : 'colorCustom'};
-    // An in-draft action (reset a list), or a route: apply this Setup, then open the real editor.
+    // An in-draft action (reset a list), or a route: the real editor opens over this Setup, which waits unapplied.
     if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
-    if (row.control === 'action' && row.destination !== 'tools') return applied(state.draft, row.destination);
+    if (row.control === 'action' && row.destination !== 'tools' && row.destination) return {kind: 'open', destination: row.destination};
     return {kind: 'browseTools'};
   } else if (key.kind === 'enter' && rows[state.row] && rows[state.row]!.row.id !== TOOL_CHOICE_ROW.row.id && !rows[state.row]!.row.unavailable?.(state.draft) && chooserOptions(rows[state.row]!.row, state.draft).length) {
     const {row} = rows[state.row]!;
@@ -965,49 +970,49 @@ export function renderSetup(state: SetupState, columns: number, height: number, 
   const section = SETUP_SECTIONS[state.section]!;
   const nerd = getCurrentGlyphMode() === 'nerd';
   const width = Math.max(1, Math.floor(columns));
+  const tall = Math.max(1, Math.floor(height));
   const margin = guidedMargin(width);
-  const split = guidedColumns(state, width);
-  // The selector's sky as a still ribbon when there is room for it as well as the step; otherwise its horizon alone.
-  const chrome = (sky: boolean) => {
-    const ribbon = sky ? guidedRibbon(width, state.draft) : [];
-    return [...(ribbon.length ? [...ribbon, ''] : [guidedHairline(width)]),
-      guidedRoute(GUIDED_ROUTE, state.section, width, margin), '',
-      guidedStepHeader(state.context.title ?? section.title, SECTION_SUMMARIES[section.id] ?? '', state.section, SETUP_SECTIONS.length, width, margin), '',
-      ...(state.message ? wrapWords(state.message, Math.max(10, width - margin * 2)).map(line => guidedText(line, width, margin, 'warning')) : [])];
+  // One fixed frame for every step, whatever the composer or panel position: the head, then the intro, the rows from
+  // the same line every time, the help and the keys pinned to the bottom. Content scrolls; nothing above it moves.
+  const head = [guidedHairline(width), guidedRoute(GUIDED_ROUTE, state.section, width, margin), '',
+    guidedStepHeader(state.context.title ?? section.title, SECTION_SUMMARIES[section.id] ?? '', state.section, SETUP_SECTIONS.length, width, margin), ''];
+  const frame = (body: readonly string[], below: readonly string[]): string[] => {
+    const room = Math.max(0, tall - head.length - below.length);
+    const rows = [...head, ...body.slice(0, room), ...Array<string>(Math.max(0, room - body.length)).fill(''), ...below];
+    return rows.slice(0, tall).map(row => truncateAnsi(row, width));
   };
-  let head = chrome(height >= RIBBON_MIN_HEIGHT && !state.toolBrowser);
   if (state.toolBrowser) {
-    // The shared /tools browser, inside Setup Cat (its rows get the room the sky would take): the draft and step are kept underneath.
+    // The shared /tools browser, inside Setup Cat: the draft and step are kept underneath; Esc returns to them.
     const note = wrapWords(`${INSTALL_DRAFT_NOTE} Esc returns to Setup Cat.`, Math.max(10, width - margin * 2)).map(line => guidedText(line, width, margin));
-    const tools = renderTools(state.toolBrowser, width, Math.max(4, height - head.length - note.length - 1));
-    return [...head, ...note, ...tools].slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
+    const tools = renderTools(state.toolBrowser, width, Math.max(4, tall - head.length - note.length));
+    return frame([...note, ...tools], []);
   }
 
-  // The live preview sits beside the rows when two columns fit (and there is one), below them otherwise; the step's
-  // facts are a table of their own, at full width after it.
-  const facts = (section.facts?.(state.draft, state.context) ?? []).map(line => `${' '.repeat(margin)}${subtle}${line}${reset}`);
+  const introLines = tall >= 24 ? 2 : tall >= 18 ? 1 : 0;
+  const helpLines = tall >= 20 ? 2 : 1;
+  const split = guidedColumns(state, width);
   const preview = state.context.preview ?? [];
   const columnsSplit = split && preview.length ? split : undefined;
-  // The step's intro spans the width; then the rows (the selected one a segment) and the selected row's help.
-  const intro: string[] = [];
-  for (const line of section.intro) {
-    for (const part of wrapWords(line, Math.max(10, width - margin * 2))) intro.push(guidedText(part, width, margin, line === NATIVE_FIRST_MESSAGE ? 'primary' : 'subtle'));
-  }
-  if (section.intro.length) intro.push('');
   const textWidth = Math.max(10, columnsSplit ? columnsSplit.left : width - margin * 2);
   const rowsWidth = columnsSplit ? margin * 2 + columnsSplit.left : width;
-  const top: string[] = [];
+  const facts = (section.facts?.(state.draft, state.context) ?? []).map(line => `${' '.repeat(margin)}${subtle}${line}${reset}`);
+  // The intro's first lines sit in a fixed band; any more follow the rows, so the rows always start on the same line.
+  const introText = section.intro.flatMap(line => wrapWords(line, Math.max(10, width - margin * 2)).map(part => ({part, primary: line === NATIVE_FIRST_MESSAGE})));
+  const intro = introText.slice(0, introLines).map(({part, primary}) => guidedText(part, width, margin, primary ? 'primary' : 'subtle'));
+  const overflow = introText.slice(introLines).flatMap(({part, primary}) => wrapWords(part, textWidth).map(line => guidedText(line, rowsWidth, margin, primary ? 'primary' : 'subtle')));
+
+  const lines: string[] = [];
+  let focus = 0, span = 1;
   if (section.id === 'review') {
     const changes = setupChanges(state);
     if (!changes.length) {
-      for (const line of wrapWords(state.onboarding ? 'Your current choices are ready. Enter completes setup; you can return with /setup anytime.' : 'No changes. Enter closes Setup Cat and keeps everything as it is.', textWidth)) {
-        top.push(guidedText(line, rowsWidth, margin, 'secondary'));
-      }
+      lines.push(...wrapWords(state.onboarding ? 'Your current choices are ready. Enter completes setup; you can return with /setup anytime.' : 'No changes. Enter closes Setup Cat and keeps everything as it is.', textWidth)
+        .map(line => guidedText(line, rowsWidth, margin, 'secondary')));
     } else {
-      top.push(guidedText('Apply these changes?', rowsWidth, margin, 'primary'), '');
+      lines.push(guidedText('Apply these changes?', rowsWidth, margin, 'primary'), '');
       const labelWidth = Math.min(28, Math.max(...changes.map(change => displayWidth(change.label))) + 2);
       for (const change of changes) {
-        top.push(`${' '.repeat(margin)}${foreground(UI_COLORS.secondary)}${padCells(change.label, labelWidth - 2)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
+        lines.push(`${' '.repeat(margin)}${foreground(UI_COLORS.secondary)}${padCells(change.label, labelWidth - 2)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
       }
     }
   } else {
@@ -1020,31 +1025,34 @@ export function renderSetup(state: SetupState, columns: number, height: number, 
       const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && item.row.control !== 'action' && rowValue(item.row, state.saved) !== value;
       // An unavailable row has nothing to cycle: no arrows, and the reason is shown instead of the description.
       const kind = item.row.control === 'action' ? 'action' : item.row.unavailable?.(state.draft) ? 'unavailable' : 'value';
-      top.push(guidedRow({label: item.row.label, child: Boolean(item.row.parent), value, selected, kind, changed}, rowsWidth, margin, labelWidth));
+      if (selected) focus = lines.length;
+      lines.push(guidedRow({label: item.row.label, child: Boolean(item.row.parent), value, selected, kind, changed}, rowsWidth, margin, labelWidth));
       if (selected && state.chooser?.rowId === item.row.id) {
-        // Every choice, visible: the highlighted one is previewed live.
+        // Every choice, visible under the row; the highlighted one is previewed live.
         const options = chooserOptions(item.row, state.chooser.before);
         const savedValue = rowValue(item.row, state.saved);
         options.forEach((option, optionIndex) => {
           const current = optionIndex === state.chooser!.index;
           const mark = current ? (nerd ? '●' : '*') : (nerd ? '○' : 'o');
-          top.push(guidedText(`${mark} ${option}${option === savedValue ? ` ${nerd ? '✓' : '(saved)'}` : ''}`, rowsWidth, margin, current ? 'primary' : 'secondary', valueX));
+          lines.push(guidedText(`${mark} ${option}${option === savedValue ? ` ${nerd ? '✓' : '(saved)'}` : ''}`, rowsWidth, margin, current ? 'primary' : 'secondary', valueX));
         });
+        span = 1 + options.length;
       }
     });
-    const selected = rows[state.row];
-    if (selected) {
-      const note = selected.row.id === TOOL_CHOICE_ROW.row.id ? toolChoiceNote(state.tools) : selected.note?.(state.draft, state.context);
-      const reason = selected.row.unavailable?.(state.draft);
-      top.push('', ...wrapWords(reason ?? selected.row.description, textWidth).map(line => guidedText(line, rowsWidth, margin)));
-      if (note && !reason) top.push(...wrapWords(note, textWidth).map(line => guidedText(line, rowsWidth, margin)));
-    }
   }
-  if (state.confirmDiscard) {
-    top.push('', ...wrapWords('Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.', textWidth).map(line => guidedText(line, rowsWidth, margin, 'primary')));
-  }
+  if (overflow.length) lines.push('', ...overflow);
+  if (!columnsSplit && facts.length) lines.push('', ...facts);
+  if (!columnsSplit && preview.length) lines.push('', guidedText('Live preview', width, margin, 'subtle'), ...preview);
 
+  // The help band: the selected row's help, or what needs an answer now (a discard question, a message).
   const selectedRow = section.id === 'review' ? undefined : currentRows(state)[state.row];
+  const reason = selectedRow?.row.unavailable?.(state.draft);
+  const note = selectedRow ? selectedRow.row.id === TOOL_CHOICE_ROW.row.id ? toolChoiceNote(state.tools) : selectedRow.note?.(state.draft, state.context) : undefined;
+  const helpText = state.confirmDiscard ? {text: 'Discard unapplied Setup Cat changes? Your saved settings stay as they are.', tone: 'primary' as const}
+    : state.message ? {text: state.message, tone: 'warning' as const}
+      : {text: [reason ?? selectedRow?.row.description, !reason ? note : undefined].filter(Boolean).join('. '), tone: 'subtle' as const};
+  const help = wrapWords(helpText.text, Math.max(10, width - margin * 2)).slice(0, helpLines).map(line => guidedText(line, width, margin, helpText.tone));
+
   const browsable = Boolean(selectedRow && selectedRow.row.id !== TOOL_CHOICE_ROW.row.id && !selectedRow.row.unavailable?.(state.draft) && chooserOptions(selectedRow.row, state.draft).length);
   const back = state.quick?.manual ? 'back to start' : state.onboarding ? 'skip for now' : 'cancel';
   const keys: GuidedKey[] = state.confirmDiscard
@@ -1055,51 +1063,46 @@ export function renderSetup(state: SetupState, columns: number, height: number, 
         ...(section.rows.length || section.id === 'tools' ? [{key: '↑↓', action: 'select', short: '', keep: 3}, {key: '←→', action: 'change', short: '', keep: 4}] : []),
         ...(['cursor', 'motion'].includes(section.id) ? [{key: 'R', action: 'replay preview', short: 'replay', keep: 1}] : []),
         {key: 'Tab', action: 'next step', short: 'next', keep: 6}, {key: '⇧Tab', action: 'previous step', short: 'back', keep: 2},
-        {key: '⏎', primary: true, keep: 9, action: browsable ? 'choices' : selectedRow && isRouteRow(selectedRow.row) ? 'apply & open' : selectedRow?.row.control === 'action' ? 'open'
+        {key: '⏎', primary: true, keep: 9, action: browsable ? 'choices' : selectedRow?.row.control === 'action' ? 'open'
           : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length || state.onboarding ? 'apply' : 'close') : 'next',
-        short: browsable ? 'choose' : selectedRow && isRouteRow(selectedRow.row) ? 'open' : undefined},
+        short: browsable ? 'choose' : undefined},
         {key: 'esc', action: back, short: state.quick?.manual ? 'start' : undefined, keep: 8}];
   const footer = guidedFooter(keys, width, margin);
-  // Decoration gives way first: without room for the step and its preview below it, the ribbon goes.
-  const below = [...preview, ...facts];
-  if (!columnsSplit && head.length > chrome(false).length && intro.length + top.length + (below.length ? below.length + 2 : 0) > height - head.length - 2) head = chrome(false);
-  const budget = Math.max(1, height - head.length - 2);
-  const label = (x: number, canvasWidth: number) => guidedText('Live preview', canvasWidth, x, 'subtle', x);
-  let body: string[];
+
+  // The content region between the intro band and the help band; the selected row (and its open choices) stays in view.
+  const introBand = introLines ? [...intro, ...Array<string>(introLines - intro.length).fill(''), ''] : [];
+  const below = [...help, ...Array<string>(helpLines - help.length).fill(''), '', footer];
+  const region = Math.max(1, tall - head.length - introBand.length - 1 - below.length);
+  if (state.scrollSection !== state.section) { state.scroll = 0; state.scrollSection = state.section; }
+  let offset = Math.max(0, Math.min(state.scroll ?? 0, Math.max(0, lines.length - region)));
+  if (focus < offset) offset = focus;
+  if (focus + span > offset + region) offset = Math.min(focus, focus + span - region);
+  state.scroll = offset;
+  const shown = lines.slice(offset, offset + region);
+  let content: string[];
   if (columnsSplit) {
-    // The intro gives way first when the terminal is short, so the rows and their preview keep their place.
-    const shownIntro = intro.slice(0, Math.max(0, Math.min(intro.length, budget - top.length)));
-    const room = budget - shownIntro.length;
-    const left = top.slice(0, room);
-    const right = [label(0, columnsSplit.preview), '', ...preview].slice(0, room);
-    const sideBySide = Array.from({length: Math.max(left.length, right.length)}, (_, index) => besides(left[index] ?? '', right[index] ?? '', columnsSplit.previewX, width));
-    const rest = budget - shownIntro.length - sideBySide.length - 1;
-    body = [...shownIntro, ...sideBySide, ...(rest >= 1 && facts.length ? ['', ...facts].slice(0, rest + 1) : [])];
-  } else {
-    const controls = [...intro, ...top].slice(0, budget);
-    const room = budget - controls.length - 1;
-    body = [...controls, ...(room >= 2 && below.length ? ['', ...(preview.length ? [label(margin, width)] : []), ...below].slice(0, room + 1) : [])];
-  }
-  // The panel is as tall as its content, so the NMSh panel position decides where it sits. The sky belongs at the
-  // top of the screen: a step that fills most of it keeps the ribbon and takes the whole height; a short one has none.
-  const plain = chrome(false).length;
-  const sky = head.length > plain && head.length + body.length + 2 >= Math.ceil(height * 0.8);
-  if (head.length > plain && !sky) head = chrome(false);
-  const gap = sky ? Math.max(0, height - head.length - body.length - 2) : 0;
-  return [...head, ...body, ...Array<string>(gap).fill(''), '', footer].slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
+    const right = [guidedText('Live preview', columnsSplit.preview, 0, 'subtle', 0), '', ...preview, ...(facts.length ? ['', ...facts.map(line => line.replace(/^ +/u, ''))] : [])].slice(0, region);
+    content = Array.from({length: Math.max(shown.length, right.length)}, (_, index) => besides(shown[index] ?? '', right[index] ?? '', columnsSplit.previewX, width));
+  } else content = shown;
+  // What is out of view is counted on the quiet rows around the region, never over a setting.
+  const above = offset, after = Math.max(0, lines.length - offset - region);
+  const more = (count: number, arrow: string) => guidedText(`${arrow} ${count} more`, width, margin, 'subtle', Math.max(margin, width - margin - 12));
+  const top = [...introBand.slice(0, -1), introLines ? (above ? more(above, nerd ? '↑' : '^') : '') : ''];
+  const bodyRows = [...(introLines ? top : []), ...content, ...Array<string>(Math.max(0, region - content.length)).fill(''), after ? more(after, nerd ? '↓' : 'v') : ''];
+  return frame(bodyRows, below);
 }
 
 /**
- * Two columns from 96 columns (as the selector): the rows on the left, as wide as they need (40 to 60 columns),
- * the live preview from `previewX`.
+ * Two columns from 96 columns (as the selector): the rows on the left (44 to 60 columns, fixed per step), the live
+ * preview from `previewX`.
  */
 function guidedColumns(state: SetupState, columns: number): {left: number; previewX: number; preview: number} | undefined {
   if (columns < 96 || SETUP_SECTIONS[state.section]?.id === 'review') return undefined;
   const margin = guidedMargin(columns);
   const rows = currentRows(state);
   const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(`${item.row.parent ? '  ' : ''}${item.row.label}`))) + 1);
-  const values = Math.max(0, ...rows.map(item => displayWidth(item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft))));
-  const left = Math.max(40, Math.min(60, labelWidth + 6 + values + 6));
+  // Labels plus a fixed allowance for values: a value that grows never moves the preview.
+  const left = Math.max(44, Math.min(60, labelWidth + 6 + 28));
   const previewX = margin + left + 4;
   const preview = columns - previewX - margin;
   return preview >= 36 ? {left, previewX, preview} : undefined;

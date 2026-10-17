@@ -124,18 +124,48 @@ test('Setup → Editor syntax preview is the real renderer and follows the draft
   } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });
 
-test('Setup routes: an editor Setup does not embed applies the draft first, then opens; list resets run on the draft', () => {
+test('Setup routes: an editor Setup does not embed opens over it with nothing applied; list resets run on the draft', () => {
   const state = createSetup(clone(), 'appearance');
   goTo(state, 'appearance', 'setupChromeColors');
-  state.draft = {...state.draft, reducedMotion: undefined} as never;
+  const draft = JSON.stringify(state.draft);
   const result = press(state, 'enter');
-  assert.equal(result?.kind, 'apply');
-  assert.equal(result?.kind === 'apply' && result.then, 'chromeColors');
+  assert.deepEqual(result, {kind: 'open', destination: 'chromeColors'});
+  assert.equal(JSON.stringify(state.draft), draft, 'the draft is untouched');
   const tools = createSetup({...clone(), ignoredInstallSuggestions: ['bat', 'eza']}, 'tools');
   goTo(tools, 'tools', 'resetInstallSuggestions');
   assert.equal(press(tools, 'enter'), undefined, 'no editor opens');
   assert.deepEqual(tools.draft.ignoredInstallSuggestions, [], 'reset in the draft');
   assert.deepEqual(tools.saved.ignoredInstallSuggestions, ['bat', 'eza'], 'nothing saved until Apply');
+});
+
+test('an editor opened from Setup returns to the exact step on Esc: same row, same unapplied draft, nothing saved or announced', () => {
+  const isolation = isolateConfig();
+  const app = new TerminalApp();
+  try {
+    app['render'] = () => {};
+    app['startSetup']('appearance');
+    const state = app['setupState']!;
+    goTo(state, 'appearance', 'promptVibrance');
+    app['handleKey']({kind: 'right'});
+    const draft = JSON.stringify(state.draft);
+    const saved = JSON.stringify(app['promptConfiguration']);
+    assert.notEqual(draft, JSON.stringify(state.saved), 'an unapplied change waits in the draft');
+    goTo(state, 'appearance', 'setupChromeColors');
+    const row = state.row;
+    const history = app['output'].transcript().lines.length;
+    app['handleKey']({kind: 'enter'});
+    assert.ok(app['chromeEditor'], 'the editor opens');
+    assert.equal(app['setupState'], undefined);
+    assert.equal(JSON.stringify(app['promptConfiguration']), saved, 'nothing applied on the way in');
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['chromeEditor'], undefined);
+    assert.equal(app['setupState'], state, 'back in the same Setup');
+    assert.equal(SETUP_SECTIONS[state.section]!.id, 'appearance');
+    assert.equal(state.row, row, 'on the same row');
+    assert.equal(JSON.stringify(state.draft), draft, 'with the same unapplied draft');
+    assert.equal(JSON.stringify(app['promptConfiguration']), saved, 'nothing applied on the way out');
+    assert.equal(app['output'].transcript().lines.length, history, 'and nothing announced');
+  } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });
 
 test('Setup stays draft-based while its embedded cursor editor runs: nothing saves behind its back', () => {

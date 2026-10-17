@@ -1,37 +1,17 @@
-import {CellGrid} from '../../idle/CellGrid.js';
-import {pureMix} from '../../idle/auroraMoods.js';
-import type {PromptConfiguration} from '../../prompt/configuration.js';
 import {displayWidth} from '../../util/text.js';
 import {BOLD, StartupCanvas} from './canvas.js';
-import {renderSkyBand, skyAvailable} from './sky.js';
 import {fg, keycap, keycapWidth, plainSelection, segment, startupPaint} from './view.js';
 
 /**
- * The guided setup's chrome in the selector's visual language: a still sky
- * ribbon over the horizon when there is room, the route of steps with the
- * current one as a powerline segment, the step's name and place, the selected
- * row as a segment, and square keycaps. Rows, choosers, previews and embedded
+ * The guided setup's chrome in the selector's visual language: one quiet rule
+ * at the top, the route of steps with the current one as a powerline segment,
+ * the step's name and place, the selected row as a segment, and square
+ * keycaps. Rows, choosers, previews and embedded
  * panels stay the guided setup's own; only the frame around them changes.
  */
 
 /** The selector's margins, so the two read as one place. */
 export const guidedMargin = (columns: number): number => columns >= 120 ? 6 : columns >= 90 ? 4 : columns >= 56 ? 3 : 2;
-
-/** Rows of sky in the ribbon. */
-export const RIBBON_ROWS = 3;
-/** The ribbon is considered only from this many terminal rows up, and kept only when the step fills most of them. */
-export const RIBBON_MIN_HEIGHT = 26;
-
-const RIBBON_TIME = 6400;
-const ribbonGrid = new CellGrid();
-
-/** A still frame of the real Aurora engine in Customize's mood (no clock), or nothing (Off, no color, 16 colors). */
-export function guidedRibbon(width: number, config: PromptConfiguration): string[] {
-  if (!skyAvailable(config.onboardingBackdrop)) return [];
-  const band = renderSkyBand(ribbonGrid, {width, height: RIBBON_ROWS, now: RIBBON_TIME, started: 0, mood: 'spectrum', previousMood: 'spectrum',
-    changedAt: Number.NEGATIVE_INFINITY, from: pureMix('spectrum'), timeAt: 0, activeAt: RIBBON_TIME, backdrop: config.onboardingBackdrop, reduced: true, config});
-  return [...band.rows, band.horizon];
-}
 
 /** The horizon without its sky: one quiet rule at the top (a plain rule without color). */
 export function guidedHairline(width: number): string {

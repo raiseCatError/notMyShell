@@ -27,31 +27,52 @@ function customize(steps = 0): SetupState {
 }
 const accentBackground = () => `48;2;${UI_COLORS.accent.red};${UI_COLORS.accent.green};${UI_COLORS.accent.blue}`;
 
-test('a roomy guided setup: a still sky ribbon, the route with the current step as a segment, Step N of M, keycaps', () => withColor('truecolor', () => {
+test('a fixed frame: the rule, the route with the current step as a segment, Step N of M, keycaps on the last row', () => withColor('truecolor', () => {
   const state = customize(2);
   assert.equal(SETUP_SECTIONS[state.section]!.id, 'appearance');
   const rows = renderSetup(state, 125, 35, 12_000);
   const plain = rows.map(stripAnsi);
-  const horizon = plain.findIndex(row => /^▔+$/u.test(row.trim()));
-  assert.ok(horizon >= 2 && horizon <= 4, `a short ribbon above the horizon (${horizon})`);
-  assert.ok(rows.slice(0, horizon).every(row => /\u001b\[48;2;/u.test(row)), 'the ribbon is the real sky');
-  assert.deepEqual(renderSetup(state, 125, 35, 99_000).slice(0, horizon), rows.slice(0, horizon), 'still: the ribbon never needs a clock');
-  const route = rows.findIndex(row => stripAnsi(row).includes('Terminal') && stripAnsi(row).includes('Prompt'));
-  assert.ok(route > horizon);
-  // The segment's own ends separate it, as in the reference: no › on either side of it.
-  assert.match(plain[route]!, /Start › Terminal \S? ?Look ?\S? Prompt › Motion/u);
-  assert.ok(rows[route]!.includes(`${accentBackground()}m`) && /\u001b\[48;2;[\d;]+m[^\u001b]*Look/u.test(rows[route]!), 'the current step sits on the accent');
-  assert.match(plain[route]!, /\+\d+\s*$/u, 'the steps that do not fit are counted');
-  const header = plain.findIndex(row => /Step 3 of 16/u.test(row));
-  assert.ok(header > route);
-  assert.match(plain[header]!, /Look\s+theme, text and chrome\s+Step 3 of 16/u);
+  assert.equal(rows.length, 35, 'the whole screen, whatever the panel position');
+  assert.match(plain[0]!, /^▔+$/u, 'one quiet rule at the top, no sky');
+  assert.ok(!rows.slice(0, 3).some(row => /\u001b\[48;2;[\d;]+m▀/u.test(row)), 'no ribbon');
+  assert.match(plain[1]!, /Start › Terminal \S? ?Look ?\S? Prompt › Motion/u);
+  assert.ok(/\u001b\[48;2;[\d;]+m[^\u001b]*Look/u.test(rows[1]!), 'the current step sits on the accent');
+  assert.match(plain[3]!, /Look\s+theme, text and chrome\s+Step 3 of 16/u);
   const theme = rows.find(row => /Theme\b/u.test(stripAnsi(row)) && stripAnsi(row).includes('‹'))!;
   assert.match(stripAnsi(theme), /Theme.*‹ NMSh ›/u, 'the selected row: a segment, then ‹ value ›');
-  assert.ok(theme.includes(accentBackground()), 'the selected row is a segment');
+  assert.ok(theme.includes(accentBackground()));
   const footer = plain.at(-1)!;
   for (const action of ['select', 'change', 'next step', 'back to start']) assert.ok(footer.includes(action), `footer: ${action}`);
-  assert.doesNotMatch(plain.join('\n'), /Setup Cat {2}·|presets: \/setup quick/u, 'the old title strip is gone');
-  assert.ok(rows.length <= 35 && rows.every(row => stripAnsi(row).length <= 125));
+  assert.doesNotMatch(plain.join('\n'), /Setup Cat {2}·|presets: \/setup quick/u);
+}));
+
+test('no jumping: rows start on the same line on every step, and nothing above them moves as values change', () => withColor('truecolor', () => {
+  // The selected row (the first one on opening a step) is the segment below the route.
+  const firstRow = (steps: number) => renderSetup(customize(steps), 100, 30, 12_000).findIndex((row, index) => index > 1 && row.includes(accentBackground()));
+  const starts = [0, 1, 2, 5, 6, 8].map(firstRow);
+  assert.ok(starts.every(start => start === starts[0]), `rows start at ${starts}`);
+  const state = customize(2);
+  const before = renderSetup(state, 100, 30, 12_000);
+  key(state, 'down'); key(state, 'down'); key(state, 'down'); key(state, 'down'); key(state, 'down'); key(state, 'down'); key(state, 'down'); key(state, 'down');
+  key(state, 'right'); // Chroma on: more rows appear under it.
+  const after = renderSetup(state, 100, 30, 12_000);
+  assert.deepEqual(after.slice(0, 5).map(stripAnsi).map(row => row.replace(/Step \d+ of \d+/u, '')), before.slice(0, 5).map(stripAnsi).map(row => row.replace(/Step \d+ of \d+/u, '')), 'the head is fixed');
+  assert.equal(after.length, before.length);
+  assert.match(stripAnsi(after.at(-1)!), /next step/u, 'the keys stay on the last row');
+}));
+
+test('long steps scroll within their region and keep the selected row in view', () => withColor('truecolor', () => {
+  const state = customize(2);
+  const count = 30;
+  for (let i = 0; i < count; i++) key(state, 'down');
+  const rows = renderSetup(state, 90, 18, 12_000);
+  assert.equal(rows.length, 18);
+  assert.ok(rows.some(row => row.includes(accentBackground()) && /‹|Open/u.test(stripAnsi(row))), 'the selected row is visible');
+  assert.match(stripAnsi(rows[1]!), /Look/u, 'the route stays put');
+  assert.ok(rows.some(row => /↑ \d+ more/u.test(stripAnsi(row))), 'what scrolled away is counted');
+  for (let i = 0; i < count; i++) key(state, 'up');
+  const top = renderSetup(state, 90, 18, 12_000);
+  assert.ok(top.some(row => /Theme\b/u.test(stripAnsi(row)) && stripAnsi(row).includes('‹')), 'back at the top');
 }));
 
 test('every existing row, value and note is still there, in order', () => withColor('truecolor', () => {

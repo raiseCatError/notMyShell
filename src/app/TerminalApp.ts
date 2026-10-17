@@ -889,7 +889,9 @@ export class TerminalApp {
    * decide whether to return to the /settings root or close to the
    * composer, instead of every panel guessing independently.
    */
-  private panelOrigin?: 'settings';
+  private panelOrigin?: 'settings' | 'setup';
+  /** Setup Cat waiting under an editor it opened, with its draft unapplied, and the configuration it last knew. */
+  private parkedSetup?: {state: SetupState; knew: PromptConfiguration};
   private panelOriginView: SettingsView = 'settings';
   private panelOriginRow = 0;
   /** Whether continuous session journaling is persisting; shown in Status. */
@@ -5077,6 +5079,21 @@ export class TerminalApp {
    * own panel state field first, then call this.
    */
   private returnFromPanel(): void {
+    if (this.panelOrigin === 'setup' && this.parkedSetup) {
+      // Back to the exact step: the draft, row and scroll are as they were; what the editor saved joins them.
+      const {state, knew} = this.parkedSetup;
+      this.parkedSetup = undefined; this.panelOrigin = undefined;
+      const now = this.promptConfiguration as unknown as Record<string, unknown>;
+      const before = knew as unknown as Record<string, unknown>;
+      for (const key of Object.keys(now)) {
+        if (JSON.stringify(now[key]) === JSON.stringify(before[key])) continue;
+        (state.saved as unknown as Record<string, unknown>)[key] = structuredClone(now[key]);
+        (state.draft as unknown as Record<string, unknown>)[key] = structuredClone(now[key]);
+      }
+      this.setupState = state;
+      if (!state.quick || state.quick.manual) void this.loadSetupContext(state);
+      return;
+    }
     if (this.panelOrigin === 'settings') {
       this.settingsPanelState = {section: 'root', view: this.panelOriginView, selectedIndex: 0, contentIndex: this.panelOriginRow,
         glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
@@ -6768,6 +6785,15 @@ export class TerminalApp {
     if (result.kind === 'keepSize') { this.firstRunWindow?.decline(); return; }
     if (result.kind === 'redetect') { void this.loadStartupEvidence(state); return; }
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
+    if (result.kind === 'open') {
+      // The editor opens over Setup Cat; nothing is applied or saved on the way in or out.
+      this.stopSetupPlayback();
+      this.parkedSetup = {state, knew: structuredClone(this.promptConfiguration)};
+      this.setupState = undefined;
+      this.panelOrigin = 'setup';
+      this.openDestinationPanel(result.destination);
+      return;
+    }
     if (result.kind === 'cursorEditor') {
       // The shared /cursor panel over the draft's cursor settings: changes land in the draft, nothing is saved until Apply.
       state.cursorPanel = createCursorPanel(state.draft.cursor, Date.now(), {embedded: true, advanced: result.advanced, ...(result.row ? {row: result.row} : {})});
@@ -6813,14 +6839,12 @@ export class TerminalApp {
     const tools = result.tools;
     const toolsFollow = tools === 'recommended' || tools === 'enhanced' || tools === 'individual';
     // The selector folds away into the real transcript and composer, unless another panel opens next.
-    if (fromSelector && !result.then && !understandingFollows && !toolsFollow) this.beginStartupEnding(state, welcome);
+    if (fromSelector && !understandingFollows && !toolsFollow) this.beginStartupEnding(state, welcome);
     // A window maximized for setup goes back once the ending has finished (never mid-transition), or now.
     if (state.onboarding) {
       if (this.startupEnding) this.restoreWindowAfterEnding = true;
       else this.restoreFirstRunWindow();
     }
-    // A route row: the Setup draft is applied, then the real editor opens.
-    if (result.then) { this.openDestinationPanel(result.then); return; }
     // Auto or Always with a use enabled: continue straight into model setup (the same /llm controller), detecting first.
     if (understandingFollows) { this.openUnderstandingPanel(true); return; }
     if (tools === 'recommended' || tools === 'enhanced' || tools === 'individual') {

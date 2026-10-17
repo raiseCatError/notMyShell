@@ -153,7 +153,7 @@ test('tools step: Native only resets providers in the draft; tiers never install
   assert.equal(state.draft.picker, 'native');
   press(state, {kind: 'right'});
   assert.equal(state.tools, 'recommended');
-  assert.match(plain(renderSetup(state, 120, 30)), /each install asks first/u);
+  assert.match(plain(renderSetup(state, 120, 30)).replace(/\s+/gu, ' '), /each install asks first/u);
   state.context = {statuses: {}, completion: {completionSystem: true, zshCompletions: true, fzfTab: true}};
   const text = plain(renderSetup(state, 120, 30));
   assert.match(text, /Configured zsh completion\s+Detected/u);
@@ -269,14 +269,14 @@ test('app: Setup owns a clean screen, previews the drafted panel position, never
   assert.ok(rows.some(row => row.includes('Setup')), 'Setup Cat is drawn');
   assert.ok(!rows.some(row => row.includes('WELCOME-BACKDROP-MARKER')), 'the transcript/welcome is not drawn behind Setup');
   const bottomTitle = rows.findIndex(row => row.includes('Setup'));
-  // The Start step edits the one stored field; the draft decides where the panel sits right away.
+  // The Start step edits the one stored field, but the guided setup's own geometry never depends on it.
   const state = app['setupState']!;
   state.row = rowIndex(state, 'panelPosition');
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.panelPosition, 'top');
   app['render']();
   const topTitle = frames.at(-1)!.rows.findIndex(row => row.includes('Setup'));
-  assert.ok(topTitle < bottomTitle, 'Top moves the panel to the top of the screen');
+  assert.equal(topTitle, bottomTitle, 'Setup Cat stays where it is: it fills the screen in either position');
   assert.equal(app['promptConfiguration'].panelPosition, 'bottom', 'nothing is applied until Apply');
   for (let i = 0; i < 3 && app['setupState']; i += 1) app['handleKey']({kind: i === 0 ? 'escape' : 'text', value: 'y'} as never);
   assert.equal(app['setupState'], undefined);
