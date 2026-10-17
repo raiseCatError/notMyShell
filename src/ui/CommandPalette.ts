@@ -8,6 +8,7 @@ import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
 import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
+import {GLYPHS} from './glyphs.js';
 
 /**
  * Every palette entry is a declared NMSh action. Nothing here is a shell
@@ -166,7 +167,7 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
   visible.slice(start, start + budget).forEach((item, offset) => {
     const active = start + offset === selected;
     const label = state.query ? highlightMatches(item.label, state.query, focusForeground(active), SEARCH_MATCH) : item.label;
-    rows.push(`${active ? `${ACCENT}›` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
+    rows.push(`${active ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
   });
   rows.push('', renderActionHelp(paletteActions(visible.length)));
   return rows.map(row => truncateAnsi(row, columns));

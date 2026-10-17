@@ -4,7 +4,7 @@ import {parseHexColor} from '../chroma/color.js';
 import {colorEscape} from '../chroma/escape.js';
 import {focusForeground, foreground, lazyForeground, UI_COLORS} from './palette.js';
 import {COLOR_PRESET_IDS, COLOR_PRESET_LABELS, COLOR_PRESET_STOPS, colorPresetOf} from '../chroma/colorPresets.js';
-import {getCurrentGlyphMode} from './glyphs.js';
+import {getCurrentGlyphMode, GLYPHS} from './glyphs.js';
 
 /**
  * The one custom-gradient stop editor: Chroma's Custom gradient, idle visuals'
@@ -118,7 +118,7 @@ export function renderGradientEditorRows(gradient: GradientEditorState, title: s
     const swatch = `${colorEscape(38, parseHexColor(stop)!)}████${RESET}`;
     const editing = selected && gradient.editing !== undefined
       ? `${ACCENT}${gradient.editing}${INVERSE} ${RESET}` : `${focusForeground(selected)}${stop}`;
-    rows.push(`${selected ? `${ACCENT}›` : ' '} ${SECONDARY}${String(index + 1).padStart(2)}${RESET}  ${swatch}  ${editing}${RESET}`);
+    rows.push(`${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${SECONDARY}${String(index + 1).padStart(2)}${RESET}  ${swatch}  ${editing}${RESET}`);
   });
   if (gradient.error) rows.push(`  ${foreground(UI_COLORS.failure)}${gradient.error}${RESET}`);
   return rows;

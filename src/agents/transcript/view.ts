@@ -4,7 +4,7 @@ import {displayText, projectObject} from './projection.js';
 import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../../util/text.js';
 import {harness} from '../harnesses.js';
 import {hexColor, targetStatus} from '../launcher.js';
-import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
+import {getCurrentGlyphMode, GLYPHS, checkMark} from '../../ui/glyphs.js';
 import {foreground, UI_COLORS, type RgbColor} from '../../ui/palette.js';
 import {renderControlRows, renderControls} from '../../ui/controls.js';
 import {colorLevel} from '../../presentation/capabilities.js';
@@ -331,7 +331,7 @@ export function renderSemanticAgentView(session: AgentSession, view: AgentViewSt
     const prefix: Line[] = [...wrap(`Question ${c.choiceQuestion + 1}/${session.pendingChoice.questions.length}`, accent), ...wrap(q.question.slice(0, width * 2)),
       ...(q.question.length > width * 2 ? [{styled: `${subtle}[question excerpt]${RESET}`}] : [])];
     const option = q.options[c.choiceSelected]!;
-    const body: Line[] = [...wrap(`${marks().you} ${c.choiceSelected + 1}/${q.options.length} ${c.choiceToggled.has(option.label) ? '[x] ' : ''}${option.label.slice(0, width * 2)}`),
+    const body: Line[] = [...wrap(`${marks().you} ${c.choiceSelected + 1}/${q.options.length} ${c.choiceToggled.has(option.label) ? `${checkMark(true)} ` : ''}${option.label.slice(0, width * 2)}`),
       ...wrap(option.description.slice(0, width * 2), secondary)];
     const other = `Other: ${c.choiceEditor.text.slice(-Math.max(1, width - 7))}`;
     const room = Math.max(1, height - controls.length - header.length - prefix.length - 2);

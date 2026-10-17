@@ -2,6 +2,7 @@ import {Key} from '../terminal/keys.js';
 import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {BlurMode} from './ghostty.js';
+import {GLYPHS} from '../ui/glyphs.js';
 
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
@@ -62,7 +63,7 @@ export function renderAppearancePanel(state: AppearanceState, columns: number): 
      return '█'.repeat(filled) + '░'.repeat(empty);
   };
 
-  const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
+  const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}${GLYPHS.selection}${RESET}` : ' ';
   const labelColor = (index: number) => focusForeground(index === state.selectedIndex);
 
   // Opacity

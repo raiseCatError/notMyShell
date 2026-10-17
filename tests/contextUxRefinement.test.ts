@@ -19,7 +19,7 @@ import {routeModule} from '../src/context/surfaceRouter.js';
 
 const shells = ['zsh', 'fish', 'bash'].map(id => ({adapter: shellAdapter(id as 'zsh' | 'fish' | 'bash'), executable: '/bin/' + id, version: id + ' QA'}));
 
-test('/shell current band and tick persist separately from selection; default has weight', () => {
+test('/shell: the band is the cursor; the current shell keeps its tick wherever the cursor is; default has weight', () => {
   const oldColor = process.env.NMSH_COLOR; process.env.NMSH_COLOR = 'truecolor';
   try {
     for (const defaultShell of ['zsh', 'bash'] as const) {
@@ -29,10 +29,12 @@ test('/shell current band and tick persist separately from selection; default ha
         const rows = renderShellPanel(panel, 100);
         const current = rows.find(row => stripAnsi(row).includes('zsh QA'))!;
         assert.match(stripAnsi(current), /✓ zsh.*\[current\]/u);
-        assert.match(current, /\x1b\[48;/u, 'current row has a background even when not selected');
-        assert.equal((stripAnsi(current).match(/✓/gu) ?? []).length, 1);
+        assert.equal(/\x1b\[48;/u.test(current), selected === 0, 'a background only while the cursor is on it');
+        assert.equal(rows.filter(row => /\x1b\[48;/u.test(row) && / QA/u.test(stripAnsi(row))).length, 1, 'one band: the cursor');
+        assert.equal((stripAnsi(rows.join('\n')).match(/✓/gu) ?? []).length, 1, 'one tick: the current shell');
         const def = rows.find(row => stripAnsi(row).includes(defaultShell + ' QA'))!;
-        assert.match(def, /\x1b\[1m\[default\]/u);
+        // Bold survives the band (it paints cell by cell, so check the weight and the words separately).
+        assert.ok(def.includes('\x1b[1m') && stripAnsi(def).includes('[default]'), 'the default shell has weight');
         assert.ok(rows.every(row => displayWidth(row) <= 100));
       }
     }
@@ -42,7 +44,8 @@ test('/shell current band and tick persist separately from selection; default ha
   try {
     const panel = createShellPanel(shells, 'bash', 'zsh'); panel.selected = 1;
     const painted = renderShellPanel(panel, 100);
-    assert.match(painted.find(row => stripAnsi(row).includes('bash QA'))!, /\x1b\[7m/u);
+    assert.match(painted.find(row => stripAnsi(row).includes('fish QA'))!, /\x1b\[7m/u, 'NO_COLOR: reverse video is the cursor');
+    assert.doesNotMatch(painted.find(row => stripAnsi(row).includes('bash QA'))!, /\x1b\[7m/u, 'and the current shell is not banded');
     assert.ok(painted.every(row => !/\x1b\[(?:38|48);/u.test(row)));
     const rows = painted.map(stripAnsi);
     assert.match(rows.find(row => row.includes('bash QA'))!, /✓.*\[current\]/u);

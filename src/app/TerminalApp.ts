@@ -3450,6 +3450,7 @@ export class TerminalApp {
   private async saveKeyboard(): Promise<void> {
     if (!this.keyboardState) return;
     this.keyboardState = undefined;
+    this.returnFromPanel();
 
     this.output.addHistoryLine(`${INFO}✻ Installing ${this.host.name} keyboard bindings...${RESET}`);
     this.render();
@@ -4819,9 +4820,10 @@ export class TerminalApp {
       // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
       if (this.externalPromptError && state.draft.provider !== 'nmsh') {
         this.output.addHistoryLine(`${ERROR}${providerLabel(state.draft.provider)} prompt failed; NMSh is active. ${this.externalPromptError}${RESET}`);
-      } else {
+      } else if (!this.panelOrigin) {
         this.output.addHistoryLine(`${SUCCESS}Prompt settings saved · ${describePromptConfiguration(this.promptConfiguration)}${RESET}`);
       }
+      this.returnFromPanel();
     } catch (error) {
       state.message = `Could not save prompt settings: ${error instanceof Error ? error.message : String(error)}`;
       if (state.onboarding) state.draft.onboardingComplete = false;
@@ -7430,9 +7432,11 @@ export class TerminalApp {
       if (state.family === 'suggestions') this.applySuggestionProvider();
       if (state.family === 'history') void this.loadHistory();
       if (state.family === 'navigation') { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
-      this.output.addHistoryLine(state.family === 'welcome'
+      // Opened from Settings or Setup: back there, where the new value shows; no second announcement.
+      if (!this.panelOrigin) this.output.addHistoryLine(state.family === 'welcome'
         ? `${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`
         : `${SUCCESS}${state.title} · ${selected.label}.${RESET}`);
+      this.returnFromPanel();
     } catch (error) {
       state.message = `Could not save: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -7470,7 +7474,8 @@ export class TerminalApp {
       this.output.presenter.setTreatment(next.presentation);
       this.output.presenter.setLayout(next.transcriptPresentation);
       this.transcriptPanelState = undefined;
-      this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
+      if (!this.panelOrigin) this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
+      this.returnFromPanel();
     } catch (error) {
       state.message = `Could not save transcript settings: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -10364,7 +10369,8 @@ export class TerminalApp {
     // While the block's header is scrolled away, its controls ride on the sticky row instead: never both.
     const stickyControls = sticky ? this.stickyControls(sticky.startId, columns) : undefined;
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
-      if (isRowSelected(this.selection, viewStart + offset)) return `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
+      // Selected output rows: the selection background, or reverse video without color, so they never vanish.
+      if (isRowSelected(this.selection, viewStart + offset)) return colorLevel() === 'none' ? `\u001b[7m${row.plain}${RESET}` : `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
       if (marked) return markSpans(row.plain, marked.spans, `${background(UI_COLORS.selection)}${PRIMARY}`, marked.active ? `${PRIMARY}` : SECONDARY,
         marked.active ? '' : '\u001b[4m');

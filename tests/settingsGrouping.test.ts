@@ -138,7 +138,7 @@ test('Status: named headings, factual rows, tones intact, and scrolling that nev
   const seen = new Set<string>();
   for (let offset = 0; offset <= statusLineCount(sections()); offset += 1) {
     const out = renderSettingsPanel(state({view: 'status', contentIndex: offset}), 50, 9, {status: sections()}).map(stripAnsi);
-    const body = out.filter(line => line.trim() && !line.includes('─') && !/Settings\s+Status/u.test(line) && !/to switch/u.test(line));
+    const body = out.filter(line => line.trim() && !line.includes('─') && !/Settings\s+Status/u.test(line) && !/←→ views/u.test(line));
     for (const line of body) { const row = /^\s{4}(.+?):/u.exec(line); if (row) seen.add(row[1]!); }
     const last = body.at(-1)!;
     assert.ok(!headings.includes(last.trim()), `offset ${offset}: the viewport does not end on "${last.trim()}"`);

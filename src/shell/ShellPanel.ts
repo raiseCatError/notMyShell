@@ -1,5 +1,5 @@
 import {colorLevel} from '../presentation/capabilities.js';
-import {fullWidthRowBand} from '../ui/PanelShell.js';
+import {selectedRowBand} from '../ui/PanelShell.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import {applyModulePlacement, applyShellModuleVisibility, shellModuleVisibility, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, type PromptConfiguration, type ShellModuleVisibility, type ModulePlacement} from '../prompt/configuration.js';
 import type {Key} from '../terminal/keys.js';
@@ -118,13 +118,10 @@ export function renderShellPanel(state: ShellPanelState, columns: number): strin
     const badges = shellBadges(item.adapter.id, state).replace('[default]', '\u001b[1m[default]\u001b[22m');
     const detailWidth = Math.max(0, Math.min(statusWidth, columns - 13 - displayWidth(badges) - (badges ? 2 : 0)));
     const detail = truncateAnsi(shellStatus(item), detailWidth).padEnd(detailWidth);
-    let row = `${selected ? `${accent}${GLYPHS.selection}` : ' '} ${current ? '✓' : ' '} ${focusForeground(selected)}${item.adapter.label.padEnd(6)}${reset} ${subtle}${detail}${reset}`
+    // The band is the cursor (the shared selected band); the current shell carries a mark of its own.
+    let row = `${selected ? `${accent}${GLYPHS.selection}` : ' '} ${current ? `${accent}${GLYPHS.saved}${reset}` : ' '} ${focusForeground(selected)}${item.adapter.label.padEnd(6)}${reset} ${subtle}${detail}${reset}`
       + (badges ? `  ${primary}${badges}${reset}` : '');
-    row = truncateAnsi(row, columns);
-    if (current) {
-      const band = colorLevel() === 'none' ? '\u001b[7m' : background(UI_COLORS.cwdBackground);
-      row = fullWidthRowBand(row, columns, band);
-    }
+    row = selected ? selectedRowBand(row, columns) : truncateAnsi(row, columns);
     rows.push(row);
     if (selected && !item.executable && item.reason) rows.push(`    ${subtle}${item.reason}${state.installFor?.(item.adapter.id).kind === 'recipe' ? ' · I installs it (previewed first)' : ''}${reset}`);
     if (selected && item.executable && item.adapter.id !== 'zsh') {

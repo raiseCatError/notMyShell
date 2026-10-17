@@ -5,7 +5,7 @@ import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
 import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
-import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import {getCurrentGlyphMode, GLYPHS} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, THEME_FAMILIES} from '../appearance/themeFamilies.js';
 import {FAMILY_IDS, familyOf, selectFamily, variantLabel, variantOptions} from '../appearance/themeSelection.js';
@@ -686,7 +686,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
   rows.push('');
-  const item = (index: number, text: string) => `${focusForeground(index === state.selectedIndex)}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
+  const item = (index: number, text: string) => `${focusForeground(index === state.selectedIndex)}${index === state.selectedIndex ? GLYPHS.selection : ' '} ${text}${RESET}`;
   if (railNeedsPromptConversion(state.draft)) rows.push(`${SECONDARY}  Requires Main Prompt: Inside · preview only${RESET}`, '');
   if (state.step === 'railInsideConfirm') {
     rows.push(`${PRIMARY}Context Rail Inside requires Main Prompt Inside geometry.${RESET}`);
@@ -783,7 +783,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const draftChoice = layoutChoiceIndex(state.draft);
     const savedChoice = state.saved ? layoutChoiceIndex(state.saved) : -1;
     LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
-      `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
+      `${choice.label}${index === draftChoice ? `  ${GLYPHS.chosen}` : ''}${index === savedChoice ? `  ${GLYPHS.saved} saved` : ''}`)));
   } else if (state.step === 'gradient' && state.gradient) {
     const gradient = state.gradient;
     rows.push(...renderGradientEditorRows(gradient, 'Custom gradient'));
@@ -839,21 +839,21 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     }
     if (themePreviews.length && view === 'chroma') {
       rows.push('');
-      rows.push(`${PRIMARY}Palettes${RESET}  ${SUBTLE}● selected  ✓ saved · the showcase prompt in each${RESET}`);
+      rows.push(`${PRIMARY}Palettes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved · the showcase prompt in each${RESET}`);
       TREATMENT_PRESETS.forEach((id, index) => {
-        const marker = state.draft.presentation.preset === id ? `${ACCENT}●` : `${SUBTLE}○`;
-        const savedMark = state.saved?.presentation.preset === id ? '✓' : ' ';
+        const marker = state.draft.presentation.preset === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+        const savedMark = state.saved?.presentation.preset === id ? GLYPHS.saved : ' ';
         rows.push(`${marker} ${SECONDARY}${padCells(TREATMENT_PRESET_LABELS[id], labelColumnWidth(Object.values(TREATMENT_PRESET_LABELS), columns, 2, 20), 1)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }
     if (themePreviews.length && view === 'main') {
       rows.push('');
-      rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
+      rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved${RESET}`);
       if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns), `${SUBTLE}${chromaPreviewNote(state.draft.presentation.preset !== 'off')}${RESET}`);
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
-        const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
-        const savedMark = saved?.palette === id ? '✓' : ' ';
+        const marker = state.draft.nmsh.palette === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+        const savedMark = saved?.palette === id ? GLYPHS.saved : ' ';
         const label = padCells(theme.label, labelColumnWidth(galleryPalettes(state.draft).map(palette => NATIVE_PROMPT_THEMES[palette].label), columns, 2, 20), 1);
         rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });

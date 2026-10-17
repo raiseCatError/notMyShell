@@ -7,7 +7,7 @@ import type {ModuleCategory} from '../context/packs/schema.js';
 import type {Key} from '../terminal/keys.js';
 import {focusForeground, lazyForeground, UI_COLORS} from '../ui/palette.js';
 import {cycleTab, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
-import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import {getCurrentGlyphMode, GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, labelColumnWidth, padCells, truncateAnsi} from '../util/text.js';
 import {applyModulePlacement, MODULE_SURFACE_LABELS, MODULE_SURFACES, modulePlacement, ON_COMMAND_MODULES, type ContextModuleConfig, type ModuleSurface,
   type PromptConfiguration} from './configuration.js';
@@ -549,10 +549,10 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
   }
   const item = (index: number, text: string) => {
     if (index === state.selectedIndex) selectedRow = rows.length;
-    return `${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${focusForeground(index === state.selectedIndex)}${text}${RESET}`;
+    return `${index === state.selectedIndex ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(index === state.selectedIndex)}${text}${RESET}`;
   };
   const head = rows.length + (tab === 'modules' ? 1 : 0);
-  const shown = (visible: boolean) => visible ? `${ACCENT}●` : `${SUBTLE}○`;
+  const shown = (visible: boolean) => visible ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
   const recommended = new Set<string>((context.recommendations ?? []).map(entry => entry.module));
   const mark = getCurrentGlyphMode() === 'nerd' ? '✦' : '*';
   if (tab === 'modules') {
@@ -563,7 +563,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
       const target = whereText(module, state.draft);
       const side = `${module.surface ? MODULE_SURFACE_LABELS[module.surface] : modulePlacement(module)}${module.visible && target.unavailable ? ` ${UNAVAILABLE()}` : ''}`;
       if (index === state.selectedIndex) selectedRow = rows.length;
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown(module.visible)} ${focusForeground(index === state.selectedIndex)}${padCells(label(module.id), width)}${SUBTLE}${padCells(side, 15)}${module.visible ? optionText(module) : 'hidden'}${RESET}`);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}${GLYPHS.selection}` : ' '} ${shown(module.visible)} ${focusForeground(index === state.selectedIndex)}${padCells(label(module.id), width)}${SUBTLE}${padCells(side, 15)}${module.visible ? optionText(module) : 'hidden'}${RESET}`);
     });
     if (!listed.length) rows.push(`${SECONDARY}  No matches${RESET}`);
     if (listed.some(module => module.visible && whereText(module, state.draft).unavailable)) rows.push(truncateAnsi(`${SUBTLE}${UNAVAILABLE()} that surface is not shown now; the setting is kept · Enter says why${RESET}`, columns));

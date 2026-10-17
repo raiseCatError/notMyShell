@@ -70,7 +70,7 @@ export function overviewItems(state: ProvidersOverviewState): Item[] {
 /** One provider's state in words and a glyph, never color alone. */
 export function providerStatusLabel(row: ReturnType<typeof familyFacts>['rows'][number], fallbackLabel: string): string {
   const kind = row.descriptor.kind;
-  if (row.active) return '● Active';
+  if (row.active) return `${GLYPHS.chosen} Active`;
   if (row.preferred) return `✓ Selected · fallback → ${fallbackLabel}`;
   if (kind === 'native') return 'Built in';
   if (kind === 'none') return 'Off';
@@ -164,7 +164,7 @@ export function renderProvidersOverview(state: ProvidersOverviewState, facts: Ov
         const familyState = familyFacts(definition, facts.configuration, facts.statuses);
         const active = definition.providers.find(provider => provider.id === familyState.active)!;
         const preferred = definition.providers.find(provider => provider.id === familyState.preferred);
-        const tag = familyState.notice ? `Selected ${preferred?.label ?? familyState.preferred} · fallback → ${active.label}` : '● Active';
+        const tag = familyState.notice ? `Selected ${preferred?.label ?? familyState.preferred} · fallback → ${active.label}` : `${GLYPHS.chosen} Active`;
         lines.push({item: index, text: `${mark(index)} ${subtle}${expander}${reset} ${focusForeground(isSelected)}${padCells(definition.title, nameWidth)}${reset}${primary}${padCells(truncateText(active.label, activeWidth), activeWidth)}${reset}${subtle}${tag}${reset}`});
       } else if (item.row === 'understanding') {
         lines.push({item: index, text: `${mark(index)}   ${focusForeground(isSelected)}${padCells('Local understanding', nameWidth)}${reset}${primary}${padCells(truncateText(facts.understanding.active, activeWidth), activeWidth)}${reset}${subtle}Enter opens it${reset}`});

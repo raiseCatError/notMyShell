@@ -551,7 +551,7 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
   const head = [renderTabStrip(STUDIO_TABS, TAB_IDS.indexOf(state.tab), columns, state.focus === 'tabs'), ''];
   const body: string[] = [];
   const controls: Array<[string, string]> = [];
-  const active = (ref: ThemeRef) => context.activeRef === ref ? `  ${accent}● active${RESET}` : '';
+  const active = (ref: ThemeRef) => context.activeRef === ref ? `  ${accent}${GLYPHS.chosen} active${RESET}` : '';
   const pinned = (ref: ThemeRef) => {
     const targets = context.pinnedTo(ref);
     return targets.length ? `  ${subtle}bridge: ${targets.map(target => BRIDGE_TARGET_LABELS[target]).join(', ')}${RESET}` : '';

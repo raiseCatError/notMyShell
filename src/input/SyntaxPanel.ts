@@ -114,7 +114,7 @@ export function renderSyntaxPanel(state: SyntaxPanelState, columns: number, prom
   };
   rows(draft).forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
   if (draft.highlighting && draft.colors === 'followPrompt') {
     out.push(`  ${SUBTLE}Following ${NATIVE_PROMPT_THEMES[promptPalette].label} (the saved NMSh theme, including with external prompts)${RESET}`);
@@ -122,10 +122,10 @@ export function renderSyntaxPanel(state: SyntaxPanelState, columns: number, prom
 
   const gallery: string[] = [];
   if (draft.highlighting && draft.colors === 'theme') {
-    gallery.push('', `${PRIMARY}Syntax themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
+    gallery.push('', `${PRIMARY}Syntax themes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved${RESET}`);
     for (const {id} of variantOptions(familyOf(draft.theme))) {
-      const marker = draft.theme === id ? `${ACCENT}●` : `${SUBTLE}○`;
-      const savedMark = saved.highlighting && saved.colors === 'theme' && saved.theme === id ? '✓' : ' ';
+      const marker = draft.theme === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+      const savedMark = saved.highlighting && saved.colors === 'theme' && saved.theme === id ? GLYPHS.saved : ' ';
       const sample = renderSyntaxPreviewLine(SYNTAX_PREVIEW_LINES[1], {...draft, theme: id}, promptPalette);
       gallery.push(`${marker} ${SECONDARY}${NATIVE_PROMPT_THEMES[id].label.padEnd(23)}${ACCENT}${savedMark}${RESET} ${sample}`);
     }

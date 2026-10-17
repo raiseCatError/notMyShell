@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {accessSync, constants} from 'node:fs';
 import {delimiter, join} from 'node:path';
+import {GLYPHS} from '../ui/glyphs.js';
 
 /**
  * Shared provider metadata, status and fallback. Each family keeps its own
@@ -272,7 +273,7 @@ export function resolveProvider<Id extends string>(providers: readonly ProviderD
 export function providerRowText(descriptor: ProviderDescriptor, options: {draft?: string; saved?: string; status?: ProviderStatus | 'none'}): string {
   const badge = options.status === 'none' ? '' : `  [${providerStatusLabel(descriptor, options.status)}]`;
   return `${descriptor.label} · ${descriptor.description}${badge}`
-    + `${options.draft === descriptor.id ? '  ●' : ''}${options.saved === descriptor.id ? '  ✓ saved' : ''}`;
+    + `${options.draft === descriptor.id ? `  ${GLYPHS.chosen}` : ''}${options.saved === descriptor.id ? `  ${GLYPHS.saved} saved` : ''}`;
 }
 
 /** The install this platform supports for a provider, or undefined. Pure apart from the brew lookup. */

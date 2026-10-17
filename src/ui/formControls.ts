@@ -1,6 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
+import {GLYPHS, checkMark} from './glyphs.js';
 
 /**
  * Terminal-native form controls. A control never stores or writes anything:
@@ -94,7 +95,7 @@ function tint(text: string, look: ControlLook): string {
 }
 
 export function renderToggle(value: boolean, look: ControlLook = {}): string {
-  return tint(`[${value ? 'x' : ' '}] ${value ? 'On' : 'Off'}`, look);
+  return tint(`${checkMark(value)} ${value ? 'On' : 'Off'}`, look);
 }
 
 export function renderSelect(optionLabel: string, look: ControlLook = {}): string {
@@ -103,7 +104,7 @@ export function renderSelect(optionLabel: string, look: ControlLook = {}): strin
 
 export function renderMultiSelect(options: readonly string[], selected: readonly number[], cursor: number | undefined, look: ControlLook = {}): string {
   return options.map((option, index) => {
-    const marked = `${cursor === index && look.focused ? '>' : ' '}[${selected.includes(index) ? 'x' : ' '}] ${option}`;
+    const marked = `${cursor === index && look.focused ? GLYPHS.selection : ' '}${checkMark(selected.includes(index))} ${option}`;
     return tint(marked, {...look, focused: look.focused && cursor === index});
   }).join('  ');
 }

@@ -164,7 +164,7 @@ export function renderLayoutPanel(state: LayoutPanelState, columns: number, rows
   const out = [`${PRIMARY}  Layout${RESET}`, ''];
   ROWS.forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
   const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
   const header = ['', `${PRIMARY}Preview${RESET}  ${layoutDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}  ${SUBTLE}sample content; nothing runs${RESET}`,

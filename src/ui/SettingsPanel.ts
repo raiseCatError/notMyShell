@@ -15,6 +15,7 @@ import {availabilityOf, availableValues, currentCursorHost, unavailableReason, t
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
+import {renderControls} from './controls.js';
 import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
 import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
@@ -942,18 +943,19 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
   return out;
 }
 
-function footerText(state: SettingsPanelState, row: SettingsRow | undefined, changedDefault?: string): string {
+/** The footer keys, in the shared key-hint style: what each key does on the focused control, and nothing else. */
+function footerControls(state: SettingsPanelState, row: SettingsRow | undefined, changedDefault?: string): Array<[string, string]> {
   const view = settingsView(state);
-  if (state.searchFocused) return '↑↓ results · Enter select · Esc clear';
-  if (view === 'status') return '←/→ to switch · ↑↓ to scroll · Esc to close';
-  if (state.focus === 'tabs') return '←/→ to switch · ↓ to select · Esc to close';
-  const search = view === 'config' ? ' · / to search' : '';
-  const escape = state.searchQuery?.trim() ? 'Esc to clear' : 'Esc to close';
-  const advanced = view === 'config' && !state.searchQuery?.trim() ? ` · A ${state.showAdvanced ? 'hide' : 'show'} advanced` : '';
-  const reset = changedDefault !== undefined ? ` · R reset to ${changedDefault}` : '';
-  if (isInlineEditable(row)) return `Enter/Space to change${reset}${search}${advanced} · ${escape}`;
-  if (row) return `Enter to open · ←/→ to switch${search}${advanced} · ${escape}`;
-  return `←/→ to switch${search}${advanced} · ${escape}`;
+  if (state.searchFocused) return [['↑↓', 'results'], ['Enter', 'select'], ['Esc', 'clear']];
+  if (view === 'status') return [['←→', 'views'], ['↑↓', 'scroll'], ['Esc', 'close']];
+  if (state.focus === 'tabs') return [['←→', 'views'], ['↓', 'rows'], ['Esc', 'close']];
+  const controls: Array<[string, string]> = isInlineEditable(row) ? [['Enter', 'change'], ['←→', 'change']]
+    : row ? [['Enter', 'open'], ['←→', 'views']] : [['←→', 'views']];
+  if (changedDefault !== undefined) controls.push(['R', `reset to ${changedDefault}`]);
+  if (view === 'config') controls.push(['/', 'search']);
+  if (view === 'config' && !state.searchQuery?.trim()) controls.push(['A', state.showAdvanced ? 'hide advanced' : 'advanced']);
+  controls.push(['Esc', state.searchQuery?.trim() ? 'clear search' : 'close']);
+  return controls;
 }
 
 function toneColor(tone: StatusItem['tone']): string {
@@ -1010,7 +1012,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const selectedIndex = Math.min(state.contentIndex ?? 0, Math.max(0, rows.length - 1));
   const selectedRow = tabsFocused ? undefined : rows[selectedIndex];
   const changedDefault = view === 'config' && selectedRow && settingsRowChanged(selectedRow, config) ? settingsRowDefaultLabel(selectedRow) : undefined;
-  const footer = ['', `${MARGIN}${SUBTLE}${footerText(state, selectedRow, changedDefault)}${RESET}`];
+  const footer = ['', `${MARGIN}${renderControls(footerControls(state, selectedRow, changedDefault))}`];
   // Separator + header + footer; short terminals drop the footer first.
   const chrome = 1 + header.length + footer.length;
   const tight = maxRows - chrome < 3;

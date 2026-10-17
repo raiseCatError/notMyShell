@@ -62,13 +62,13 @@ test('one-session prompt: identifying details, and R/Enter, N/Esc, A, D, and X t
 test('multi picker: move, Space toggles, A selects all then clears, Enter resumes selected in order, Esc none', () => {
   const sessions = [info('s1', 'detached'), info('s2', 'detached', {running: 'npm test'}), info('s3', 'detached')];
   const state = createMultiPicker(sessions);
-  assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /3 detached live sessions[\s\S]*› \[ \] \/w\/s1[\s\S]*npm test/);
+  assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /3 detached live sessions[\s\S]*› · \/w\/s1[\s\S]*npm test/);
   assert.equal(multiPickerKey(state, key('down')), undefined);
   multiPickerKey(state, text(' '));
   multiPickerKey(state, key('down'));
   multiPickerKey(state, text(' '));
   multiPickerKey(state, text(' ')); // toggled back off
-  assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /\[x\] \/w\/s2[\s\S]*Enter resume 1/);
+  assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /✔ \/w\/s2[\s\S]*Enter resume 1/);
   multiPickerKey(state, key('up'));
   multiPickerKey(state, key('up'));
   multiPickerKey(state, text(' '));
