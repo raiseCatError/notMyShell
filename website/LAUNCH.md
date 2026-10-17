@@ -92,6 +92,9 @@ reason to call the already integrated Horizon experience a future proposal.
 
 ## Required before publication
 
+- [ ] Follow the manual-only publishing and post-launch link sequence in `README.md`.
+  Keep the legacy GitHub Pages workflow disabled. Do not activate homepage, default
+  README or About links until both the production website and `/docs/` are reachable.
 - [ ] Review the newer onboarding follow-ups above when they become public and join
   the final release candidate. Reconcile welcome behavior, provider choices, tools,
   color controls, update notices, frame behavior and defaults against actual code.

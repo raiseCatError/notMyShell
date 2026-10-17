@@ -258,11 +258,12 @@ Preview URLs never become canonicals. `public/_headers` supplies basic security 
 cache headers; hashed Astro assets are immutable, Pagefind revalidates to prevent
 mixing deployment indexes. No tracking scripts or cookie banner are needed.
 
-## Cloudflare Pages (manual setup only)
+## Cloudflare Pages: manual publishing only
 
-No Cloudflare project, DNS, production deployment or GitHub Pages configuration has
-been created or changed by this work. After review and explicit approval, connect
-the **existing `raiseCatError/notMyShell` repository** through Pages' Git integration.
+The Git-connected Pages project **nmsh** is prepared in account
+`c1644ccedec713ad6e4f2d34cd76aa06`. Its assigned hostname is
+`nmsh-5mc.pages.dev`. It has **zero deployments** at setup. The intended custom domain
+`nmsh.raisecaterror.com` is not attached and no DNS record has been created.
 
 | Setting | Value |
 | --- | --- |
@@ -271,47 +272,95 @@ the **existing `raiseCatError/notMyShell` repository** through Pages' Git integr
 | Build command | `npm ci && npm run build:launch` |
 | Build output directory | `dist` (relative to `website`) |
 | Environment | `NODE_VERSION=22.22.0`, `SKIP_DEPENDENCY_INSTALL=1` |
-| Build image | Current supported Pages build image (v3 at verification) |
-| Build watch include paths | `website/*` (Cloudflare's `*` spans nested directories) |
-| Build watch exclude paths | Empty |
-| Production branch | Select **only after approval** and integration of this feature |
-| Preview branches | Allow this feature branch explicitly for review only when authorized |
+| Production branch | `master`, for deployment classification only |
+| Git automatic deployments | `deployments_enabled=false` |
+| Production automatic deployments | `production_deployments_enabled=false` |
+| Preview branch builds | `preview_deployment_setting=none` |
+| PR deployment comments | Disabled |
 
-The repository default `master` does not yet contain this site. Do not select it and
-claim deployment is ready without integrating the website. Use `dev` for normal PR
-integration, then make a separate, authorized production-branch decision. Connecting
-a Pages Git project can trigger deployment; do not do that as a harmless setup step.
-The production command intentionally refuses the current candidate baseline. Local
-review and inexpensive website CI use `npm run build`; no preview deployment is
-needed to review it. Do not bypass the release guard to make a production build green.
+These controls apply to **every branch**, including `master`. Git remains connected
+for source ownership, not deployment triggers. Do not use Save and Deploy, build
+hooks, retries or automatic preview builds. `.github/workflows/website.yml` only
+checks the static site; it cannot publish it. The old `deploy.yml` GitHub Pages
+workflow was disabled through GitHub and must remain disabled. Its existing public
+site was not deleted or changed.
 
-No Wrangler configuration or GitHub Actions deploy workflow is needed. The inexpensive
-`Website` workflow runs only site checks. The application's existing aggregate CI
-check still exists, but website-only changes skip its expensive CLI/platform jobs;
-mixed application changes retain those gates. Manual dispatch remains comprehensive.
-Canonical source changes affect the website only through a reviewed source-sync commit,
-so unrelated application changes do not rebuild this pinned site.
+### Credentials and approval
 
-The stable branch was observed to contain a separate legacy `site/` GitHub Pages
-workflow; `dev` does not. It was deliberately not altered or deployed. Reconcile that
-legacy surface explicitly during integration rather than assuming it serves this site.
+GitHub environment **nmsh-production** permits only the `master` branch, requires
+approval by **raiseCatError**, and disables administrator bypass. Self-review is
+allowed for this independent, single-maintainer project; clicking approval is still
+required. No deployment has been dispatched.
+
+`CLOUDFLARE_ACCOUNT_ID` is already an environment variable. The maintainer has added
+`CLOUDFLARE_API_TOKEN` as an environment secret; its presence was verified without
+reading its value or testing a deployment. The token must have only
+**Account / Cloudflare Pages / Edit**, restricted to this account. Never paste it
+into chat, commit it, or reuse broad MCP/OAuth
+credentials. Pages token access is account-scoped, so do not describe it as isolated
+to this one project. Grant no DNS, Workers, R2 or unrelated permissions. Set an expiry
+and rotate it when needed. No additional GitHub PAT is required.
+
+The deploy job receives the token only in its final step, after approval and release
+revalidation. Other jobs get a read-only GitHub token. Actions are pinned to immutable
+commits; Wrangler is version-pinned in this website's independent lockfile.
+
+### Publish when ready
+
+1. Complete `LAUNCH.md`, verify the real v0.20.0 release/tag, synchronize the published
+   source, then run `npm run verify` and `npm run build:launch`. The current candidate
+   deliberately fails publication. Do not bypass this gate.
+2. Obtain approval to integrate the website and deployment workflow through the normal
+   `dev` to `master` process. Nothing in this task merges branches. GitHub only exposes
+   a new manual workflow after it exists on the default branch.
+3. In Actions, select **Publish NMSh website**, choose **Run workflow** on `master`,
+   and enter `nmsh.raisecaterror.com`. Equivalent command, **only when authorized**:
+   `gh workflow run website-deploy.yml --repo raiseCatError/notMyShell --ref master -f confirmation=nmsh.raisecaterror.com`.
+4. The unprivileged build validates release provenance and uploads an immutable static
+   artifact. Review its exact commit and approve the pending **nmsh-production** job.
+   It rechecks the public release and manual-only Cloudflare settings, then uploads
+   that artifact with `wrangler pages deploy`, not a rebuild or arbitrary branch.
+5. Check the assigned Pages hostname. Domain attachment/DNS needs separate approval,
+   as described below. A workflow dispatch is real publication, not a preview test.
+
+Ordinary source pushes and pull requests never publish. CI-classification tests keep
+website and deployment-only changes out of the expensive application jobs. Canonical
+source changes reach this site only through a reviewed source synchronization.
 
 ### Custom domain
 
-After approving the Pages preview, add **nmsh.raisecaterror.com** in the project's
-Custom domains section. Follow Cloudflare's validation/DNS instructions for the
-actual account/zone. If DNS is external, the subdomain generally needs the CNAME
-Cloudflare specifies for the Pages project; associate the custom domain in Pages
-first. Do not invent a project hostname, overwrite an existing record or change
-production DNS without review. Confirm ownership, TLS, HTTP-to-HTTPS behavior,
-canonical origin, custom 404, headers and Pagefind loading on the final host.
-Preview indexing/access policy is a separate Pages dashboard decision; use Access
-or preview response headers as appropriate rather than changing production canonicals.
+After an approved production upload and separate domain approval, associate
+**nmsh.raisecaterror.com** in the Pages project's Custom domains section, then follow
+Cloudflare's DNS instructions for the existing `raisecaterror.com` zone. Do not add
+the domain or a CNAME now. Confirm TLS, HTTP-to-HTTPS behavior, canonical origin,
+custom 404, headers and Pagefind on the final host. `/docs/` belongs to this same
+project, not a docs subdomain.
 
-Official references checked for this handoff:
-[monorepos](https://developers.cloudflare.com/pages/configuration/monorepos/),
-[watch paths](https://developers.cloudflare.com/pages/configuration/build-watch-paths/),
-[build image/environment](https://developers.cloudflare.com/pages/configuration/build-image/),
+### Cross-site link activation, after the domain works
+
+The NMSh footer links to the already-live creator homepage. Outgoing launch links
+remain staged to avoid sending visitors to an unavailable NMSh site:
+
+- Apply `git apply website/launch-links.patch` on the reviewed integration branch
+  only after both `https://nmsh.raisecaterror.com/` and `/docs/` return the actual
+  expected pages over valid HTTPS. The patch adds separate Website and Documentation
+  README links without mixing them into the pre-publication workflow merge.
+  It targets this branch's README, not the older current `master` layout. Recheck
+  the patch against the final integrated README and retain existing source links.
+- Set About → Website to `https://nmsh.raisecaterror.com/` using repository settings
+  or `gh repo edit raiseCatError/notMyShell --homepage https://nmsh.raisecaterror.com/`.
+- The private `raisecaterror-website` repository has a local T7 branch
+  `feature/nmsh-launch-links`. It stages **View website**, **Read documentation**,
+  **View repository**, in that order, with a muted repository action. Do not push it
+  before the NMSh domain works: its current Git integration automatically deploys
+  preview branches. Its live branch and deployment settings remain unchanged.
+
+GitHub's public Website field and default README remain unchanged during preparation.
+After activation, verify both URLs, redirects and their distinct canonicals before
+publishing the homepage link commit. No publishing command in this section has run.
+
+References: [disabled Git builds](https://developers.cloudflare.com/pages/configuration/git-integration/#disable-automatic-deployments),
+[Wrangler uploads and token permissions](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/),
 [custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/).
 
 ## Troubleshooting the site

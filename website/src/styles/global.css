@@ -226,6 +226,8 @@
   .footer-top nav a { text-decoration: none; }
   .footer-bottom { margin-top: 44px; color: var(--muted); font-size: .72rem; }
   .footer-bottom a { text-decoration: none; }
+  .footer-bottom .footer-creator { text-decoration: underline; text-decoration-color: var(--line); }
+  .footer-bottom .footer-creator:hover { text-decoration-color: currentColor; }
   dialog { --search-top: min(10dvh, 88px); width: min(650px, calc(100% - 32px)); max-height: min(760px, calc(100dvh - var(--search-top) - 24px)); margin: var(--search-top) auto 24px; padding: 24px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; opacity: 0; transform: translateY(6px); transition: opacity 140ms ease, transform 140ms ease, display 140ms allow-discrete, overlay 140ms allow-discrete; }
   dialog[open] { opacity: 1; transform: none; }
   dialog::backdrop { background: #000b; opacity: 0; transition: opacity 140ms ease, display 140ms allow-discrete, overlay 140ms allow-discrete; }

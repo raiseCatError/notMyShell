@@ -3,9 +3,9 @@ name: Website
 on:
   push:
     branches: [dev, master, feature/nmsh-website]
-    paths: ['website/**', '.github/workflows/website.yml']
+    paths: ['website/**', '.github/workflows/website.yml', '.github/workflows/website-deploy.yml']
   pull_request:
-    paths: ['website/**', '.github/workflows/website.yml', '.github/workflows/ci.yml']
+    paths: ['website/**', '.github/workflows/website.yml', '.github/workflows/website-deploy.yml', '.github/workflows/ci.yml']
   workflow_dispatch:
 
 permissions:

@@ -42,7 +42,8 @@ jobs:
           from pathlib import Path
           files = Path(os.environ['CHANGED_FILES']).read_bytes().split(b'\0')
           docs_only = all(filename.startswith(b'docs/') or filename.endswith(b'.md') for filename in files if filename)
-          website_only = all(filename.startswith(b'website/') or filename == b'.github/workflows/website.yml' for filename in files if filename)
+          website_files = [filename for filename in files if filename.startswith(b'website/') or filename in (b'.github/workflows/website.yml', b'.github/workflows/website-deploy.yml')]
+          website_only = bool(website_files) and all(filename in website_files or filename == b'README.md' for filename in files if filename)
           print('code=' + str(not (website_only or (os.environ['EVENT'] == 'pull_request' and docs_only))).lower())
           PYTHON
           fi

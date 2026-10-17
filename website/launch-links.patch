@@ -1,0 +1,12 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -286,6 +286,8 @@
+ ## Community & Documentation
+ 
++- **Website** → [nmsh.raisecaterror.com](https://nmsh.raisecaterror.com/)
++- **Documentation** → [NMSh handbook](https://nmsh.raisecaterror.com/docs/)
+ - **Contributing** → [CONTRIBUTING.md](CONTRIBUTING.md)
+ - **Security** → [SECURITY.md](SECURITY.md)
+ - **Roadmap** → [ROADMAP.md](ROADMAP.md)
+ - **Changelog** → [CHANGELOG.md](CHANGELOG.md)

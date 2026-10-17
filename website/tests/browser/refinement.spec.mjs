@@ -57,6 +57,7 @@ test('branding, product hook and footer use the refined product voice', async ({
   await expect(page.locator('.brand')).toContainText('notMyShell');
   await expect(page.locator('.footer-signature p')).toHaveText('Made with curiosity and care.');
   await expect(page.locator('.footer-aside')).toHaveText('Also meows.');
+  await expect(page.locator('.site-footer').getByRole('link', { name: 'raiseCatError', exact: true })).toHaveAttribute('href', 'https://raisecaterror.com');
 });
 
 test('search keyboard controls and modal geometry stay deliberate as results change', async ({ page }) => {
