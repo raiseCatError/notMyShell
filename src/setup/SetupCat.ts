@@ -9,6 +9,8 @@ import {
 import {STARTING_POINTS, startingPointAt, startingPointDraft} from './startup/startingPoints.js';
 import {createSelector, highlightChoice, nextBackdrop, resumeSky, type StartupSelectorState} from './startup/selector.js';
 import {createStartupContext, renderStartup, type StartupContext} from './startup/view.js';
+import {StartupCanvas} from './startup/canvas.js';
+import {guidedFooter, guidedHairline, guidedMargin, guidedRibbon, guidedRoute, guidedRow, guidedStepHeader, guidedText, guidedValueColumn, RIBBON_MIN_HEIGHT, type GuidedKey} from './startup/guided.js';
 import type {EnvironmentEvidence} from './environment/detect.js';
 import {keepExistingPlan} from './environment/keepExisting.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
@@ -28,14 +30,12 @@ import {Transitions, transitionPaint, progress} from '../motion/transitions.js';
 import {overlayRow} from '../presentation/cellOverlay.js';
 import {buildContextLine, themePreviewContext} from '../prompt/prompt.js';
 import {vespyrSprite} from '../output/Welcome.js';
-import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderTools, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {TOOLS} from '../tools/catalog.js';
-import {renderControls} from '../ui/controls.js';
 import {caretColorNote, chooseBackend, currentCursorHost} from '../cursor/backends.js';
 import type {CursorPanelState} from '../cursor/CursorPanel.js';
-import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
-import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
+import {foreground, UI_COLORS} from '../ui/palette.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {MOTION_ROWS} from '../motion/motionRows.js';
 import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
 
@@ -938,8 +938,19 @@ export function installableTool(item: SetupRow, state: SetupState): string | und
 /** The smallest size where Setup Cat shows its essential controls. */
 export const SETUP_MIN_SIZE = {columns: 44, rows: 12} as const;
 
+/** The steps as the guided setup's route names them, Start through Review. */
+export const GUIDED_ROUTE: readonly string[] = SETUP_SECTIONS.map(section => section.title.replace(/ &.*$/u, '').replace(/^Optional (\w)/u, (_, first: string) => first.toUpperCase()));
+
 /** The guided setup's steps, as Customize's tiles name them (Start and Review & Apply are not steps of their own). */
-export const GUIDED_STEPS: readonly string[] = SETUP_SECTIONS.slice(1, -1).map(section => section.title.replace(/ &.*$/u, '').replace(/^Optional (\w)/u, (_, first: string) => first.toUpperCase()));
+export const GUIDED_STEPS: readonly string[] = GUIDED_ROUTE.slice(1, -1);
+
+/** What each step covers, beside its name. */
+const SECTION_SUMMARIES: Readonly<Record<string, string>> = {
+  welcome: 'how this tour works', terminal: 'glyphs your font can draw', appearance: 'theme, text and chrome', prompt: 'what your prompt shows',
+  motion: 'how events move', cursor: 'the caret and its effects', editor: 'composer, syntax and suggestions', transcript: 'how past commands look',
+  history: 'history, jumps and picking', shell: 'the shell underneath', sessions: 'restarts, alerts and updates', ask: 'plain-English help',
+  welcomeScreen: 'what a new session shows', idle: 'screensaver and activity', tools: 'optional helpers', review: 'everything you changed',
+};
 
 export function renderSetup(state: SetupState, columns: number, height: number, now = Date.now()): string[] {
   if (state.quick && !state.quick.manual) {
@@ -948,63 +959,76 @@ export function renderSetup(state: SetupState, columns: number, height: number, 
     startup.reduced = isReducedMotion() || state.saved.presentation.reducedMotion || state.saved.presentation.effectsOff;
     return renderStartup(state, columns, height, now, startup);
   }
-  const primary = foreground(UI_COLORS.primary);
-  const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
-  const accent = foreground(UI_COLORS.accent);
   const success = foreground(UI_COLORS.success);
-  const bold = '\u001B[1m';
   const reset = '\u001B[0m';
   const section = SETUP_SECTIONS[state.section]!;
   const nerd = getCurrentGlyphMode() === 'nerd';
-  const title = `  ${bold}${state.context.title ?? `${primary}Setup Cat`}${reset}  ${subtle}${nerd ? '·' : '-'} ${state.section + 1}/${SETUP_SECTIONS.length} ${section.title}${reset}`;
-  const head = [title, '  Customize anytime with /setup · presets: /setup quick', renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns),
-    ...(state.message ? wrapWords(state.message, Math.max(10, columns - 4)).map(line => `  ${primary}${line}${reset}`) : [])];
+  const width = Math.max(1, Math.floor(columns));
+  const margin = guidedMargin(width);
+  const split = guidedColumns(state, width);
+  // The selector's sky as a still ribbon when there is room for it as well as the step; otherwise its horizon alone.
+  const chrome = (sky: boolean) => {
+    const ribbon = sky ? guidedRibbon(width, state.draft) : [];
+    return [...(ribbon.length ? [...ribbon, ''] : [guidedHairline(width)]),
+      guidedRoute(GUIDED_ROUTE, state.section, width, margin), '',
+      guidedStepHeader(state.context.title ?? section.title, SECTION_SUMMARIES[section.id] ?? '', state.section, SETUP_SECTIONS.length, width, margin), '',
+      ...(state.message ? wrapWords(state.message, Math.max(10, width - margin * 2)).map(line => guidedText(line, width, margin, 'warning')) : [])];
+  };
+  let head = chrome(height >= RIBBON_MIN_HEIGHT && !state.toolBrowser);
   if (state.toolBrowser) {
-    // The shared /tools browser, inside Setup Cat: the draft and step are kept underneath.
-    const note = wrapWords(`${INSTALL_DRAFT_NOTE} Esc returns to Setup Cat.`, Math.max(10, columns - 4)).map(line => `  ${subtle}${line}${reset}`);
-    const tools = renderTools(state.toolBrowser, columns, Math.max(4, height - head.length - note.length - 1));
-    return [...framePanel([...head, ...note].map(row => truncateAnsi(row, columns)), columns), ...tools].slice(0, Math.max(1, height));
+    // The shared /tools browser, inside Setup Cat (its rows get the room the sky would take): the draft and step are kept underneath.
+    const note = wrapWords(`${INSTALL_DRAFT_NOTE} Esc returns to Setup Cat.`, Math.max(10, width - margin * 2)).map(line => guidedText(line, width, margin));
+    const tools = renderTools(state.toolBrowser, width, Math.max(4, height - head.length - note.length - 1));
+    return [...head, ...note, ...tools].slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
   }
 
-  // Stable top area: intro, controls and the selected control's help.
-  const top: string[] = [''];
+  // The live preview sits beside the rows when two columns fit (and there is one), below them otherwise; the step's
+  // facts are a table of their own, at full width after it.
+  const facts = (section.facts?.(state.draft, state.context) ?? []).map(line => `${' '.repeat(margin)}${subtle}${line}${reset}`);
+  const preview = state.context.preview ?? [];
+  const columnsSplit = split && preview.length ? split : undefined;
+  // The step's intro spans the width; then the rows (the selected one a segment) and the selected row's help.
+  const intro: string[] = [];
   for (const line of section.intro) {
-    for (const part of wrapWords(line, Math.max(10, columns - 4))) top.push(`  ${line === NATIVE_FIRST_MESSAGE ? primary : subtle}${part}${reset}`);
+    for (const part of wrapWords(line, Math.max(10, width - margin * 2))) intro.push(guidedText(part, width, margin, line === NATIVE_FIRST_MESSAGE ? 'primary' : 'subtle'));
   }
-  if (section.intro.length) top.push('');
+  if (section.intro.length) intro.push('');
+  const textWidth = Math.max(10, columnsSplit ? columnsSplit.left : width - margin * 2);
+  const rowsWidth = columnsSplit ? margin * 2 + columnsSplit.left : width;
+  const top: string[] = [];
   if (section.id === 'review') {
     const changes = setupChanges(state);
-    if (!changes.length) top.push(`  ${secondary}${state.onboarding ? 'Your current choices are ready. Enter completes setup; you can return with /setup anytime.' : 'No changes. Enter closes Setup Cat and keeps everything as it is.'}${reset}`);
-    else {
-      top.push(`  ${primary}Apply these changes?${reset}`, '');
+    if (!changes.length) {
+      for (const line of wrapWords(state.onboarding ? 'Your current choices are ready. Enter completes setup; you can return with /setup anytime.' : 'No changes. Enter closes Setup Cat and keeps everything as it is.', textWidth)) {
+        top.push(guidedText(line, rowsWidth, margin, 'secondary'));
+      }
+    } else {
+      top.push(guidedText('Apply these changes?', rowsWidth, margin, 'primary'), '');
       const labelWidth = Math.min(28, Math.max(...changes.map(change => displayWidth(change.label))) + 2);
       for (const change of changes) {
-        top.push(`  ${secondary}${padCells(change.label, labelWidth - 2)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
+        top.push(`${' '.repeat(margin)}${foreground(UI_COLORS.secondary)}${padCells(change.label, labelWidth - 2)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
       }
     }
   } else {
     const rows = currentRows(state);
-    const indent = (row: SettingsRow) => row.parent ? '  ' : '';
-    const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(indent(item.row) + item.row.label))) + 3);
+    const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(`${item.row.parent ? '  ' : ''}${item.row.label}`))) + 1);
+    const valueX = guidedValueColumn(margin, labelWidth);
     rows.forEach((item, index) => {
       const selected = index === state.row;
       const value = item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft);
       const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && item.row.control !== 'action' && rowValue(item.row, state.saved) !== value;
-      const pointer = selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
-      const unavailable = item.row.unavailable?.(state.draft);
       // An unavailable row has nothing to cycle: no arrows, and the reason is shown instead of the description.
-      const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
-        : unavailable ? `${subtle}${value}${reset}`
-        : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
-      top.push(`  ${pointer} ${focusForeground(selected, UI_COLORS.primary)}${padCells(indent(item.row) + item.row.label, labelWidth - 2)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      const kind = item.row.control === 'action' ? 'action' : item.row.unavailable?.(state.draft) ? 'unavailable' : 'value';
+      top.push(guidedRow({label: item.row.label, child: Boolean(item.row.parent), value, selected, kind, changed}, rowsWidth, margin, labelWidth));
       if (selected && state.chooser?.rowId === item.row.id) {
-        // Every choice, visible: the highlighted one is previewed live below.
+        // Every choice, visible: the highlighted one is previewed live.
         const options = chooserOptions(item.row, state.chooser.before);
         const savedValue = rowValue(item.row, state.saved);
         options.forEach((option, optionIndex) => {
           const current = optionIndex === state.chooser!.index;
-          top.push(`  ${' '.repeat(labelWidth + 2)}${current ? `${accent}${nerd ? '●' : '*'} ${focusForeground(true)}` : `${subtle}${nerd ? '○' : 'o'} ${secondary}`}${option}${reset}${option === savedValue ? ` ${subtle}${nerd ? '✓' : '(saved)'}${reset}` : ''}`);
+          const mark = current ? (nerd ? '●' : '*') : (nerd ? '○' : 'o');
+          top.push(guidedText(`${mark} ${option}${option === savedValue ? ` ${nerd ? '✓' : '(saved)'}` : ''}`, rowsWidth, margin, current ? 'primary' : 'secondary', valueX));
         });
       }
     });
@@ -1012,34 +1036,87 @@ export function renderSetup(state: SetupState, columns: number, height: number, 
     if (selected) {
       const note = selected.row.id === TOOL_CHOICE_ROW.row.id ? toolChoiceNote(state.tools) : selected.note?.(state.draft, state.context);
       const reason = selected.row.unavailable?.(state.draft);
-      top.push('', `  ${subtle}${reason ?? selected.row.description}${reset}`);
-      if (note && !reason) top.push(`  ${subtle}${note}${reset}`);
+      top.push('', ...wrapWords(reason ?? selected.row.description, textWidth).map(line => guidedText(line, rowsWidth, margin)));
+      if (note && !reason) top.push(...wrapWords(note, textWidth).map(line => guidedText(line, rowsWidth, margin)));
     }
   }
-  if (state.confirmDiscard) top.push('', `  ${primary}Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.${reset}`);
+  if (state.confirmDiscard) {
+    top.push('', ...wrapWords('Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.', textWidth).map(line => guidedText(line, rowsWidth, margin, 'primary')));
+  }
 
-  // Bottom area: the live preview starts below the controls and gives way first on short terminals.
-  const facts = section.facts?.(state.draft, state.context) ?? [];
-  const preview = [...(state.context.preview ?? []), ...facts.map(line => `  ${subtle}${line}${reset}`)];
   const selectedRow = section.id === 'review' ? undefined : currentRows(state)[state.row];
   const browsable = Boolean(selectedRow && selectedRow.row.id !== TOOL_CHOICE_ROW.row.id && !selectedRow.row.unavailable?.(state.draft) && chooserOptions(selectedRow.row, state.draft).length);
-  const footer = state.confirmDiscard
-    ? renderControls([['Enter', 'discard changes'], ['Esc', 'keep editing']])
+  const back = state.quick?.manual ? 'back to start' : state.onboarding ? 'skip for now' : 'cancel';
+  const keys: GuidedKey[] = state.confirmDiscard
+    ? [{key: '⏎', action: 'discard changes', primary: true, keep: 9}, {key: 'esc', action: 'keep editing', keep: 9}]
     : state.chooser
-      ? renderControls([['↑↓', 'preview choice'], ['Enter', 'keep'], ['Esc', 'restore']])
-      : renderControls([
-        ...(section.rows.length || section.id === 'tools' ? [['↑↓', 'select'] as [string, string], ['←→', 'change'] as [string, string]] : []),
-        ...(['cursor', 'motion'].includes(section.id) ? [['R', 'replay preview'] as [string, string]] : []),
-        ['Tab', 'next'], ['Shift+Tab', 'previous section'],
-        ['Enter', browsable ? 'choices' : selectedRow && isRouteRow(selectedRow.row) ? 'apply & open' : selectedRow?.row.control === 'action' ? 'open'
-          : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length || state.onboarding ? 'apply' : 'close') : 'next'],
-        ['Esc', state.onboarding ? 'skip for now' : 'cancel']]);
-  // Frame line, head, footer and its blank line are fixed; controls come next; the preview gets what is left.
-  const budget = Math.max(1, height - 1 - head.length - 2);
-  const controls = top.slice(0, budget);
-  const room = budget - controls.length - 1;
-  const shown = room >= 2 && preview.length ? ['', `  ${subtle}${nerd ? '─' : '-'} Preview${reset}`, ...preview].slice(0, room + 1) : [];
-  return framePanel([...head, ...controls, ...shown, '', footer].map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
+      ? [{key: '↑↓', action: 'preview choice', keep: 5}, {key: '⏎', action: 'keep', primary: true, keep: 9}, {key: 'esc', action: 'restore', keep: 8}]
+      : [
+        ...(section.rows.length || section.id === 'tools' ? [{key: '↑↓', action: 'select', short: '', keep: 3}, {key: '←→', action: 'change', short: '', keep: 4}] : []),
+        ...(['cursor', 'motion'].includes(section.id) ? [{key: 'R', action: 'replay preview', short: 'replay', keep: 1}] : []),
+        {key: 'Tab', action: 'next step', short: 'next', keep: 6}, {key: '⇧Tab', action: 'previous step', short: 'back', keep: 2},
+        {key: '⏎', primary: true, keep: 9, action: browsable ? 'choices' : selectedRow && isRouteRow(selectedRow.row) ? 'apply & open' : selectedRow?.row.control === 'action' ? 'open'
+          : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length || state.onboarding ? 'apply' : 'close') : 'next',
+        short: browsable ? 'choose' : selectedRow && isRouteRow(selectedRow.row) ? 'open' : undefined},
+        {key: 'esc', action: back, short: state.quick?.manual ? 'start' : undefined, keep: 8}];
+  const footer = guidedFooter(keys, width, margin);
+  // Decoration gives way first: without room for the step and its preview below it, the ribbon goes.
+  const below = [...preview, ...facts];
+  if (!columnsSplit && head.length > chrome(false).length && intro.length + top.length + (below.length ? below.length + 2 : 0) > height - head.length - 2) head = chrome(false);
+  const budget = Math.max(1, height - head.length - 2);
+  const label = (x: number, canvasWidth: number) => guidedText('Live preview', canvasWidth, x, 'subtle', x);
+  let body: string[];
+  if (columnsSplit) {
+    // The intro gives way first when the terminal is short, so the rows and their preview keep their place.
+    const shownIntro = intro.slice(0, Math.max(0, Math.min(intro.length, budget - top.length)));
+    const room = budget - shownIntro.length;
+    const left = top.slice(0, room);
+    const right = [label(0, columnsSplit.preview), '', ...preview].slice(0, room);
+    const sideBySide = Array.from({length: Math.max(left.length, right.length)}, (_, index) => besides(left[index] ?? '', right[index] ?? '', columnsSplit.previewX, width));
+    const rest = budget - shownIntro.length - sideBySide.length - 1;
+    body = [...shownIntro, ...sideBySide, ...(rest >= 1 && facts.length ? ['', ...facts].slice(0, rest + 1) : [])];
+  } else {
+    const controls = [...intro, ...top].slice(0, budget);
+    const room = budget - controls.length - 1;
+    body = [...controls, ...(room >= 2 && below.length ? ['', ...(preview.length ? [label(margin, width)] : []), ...below].slice(0, room + 1) : [])];
+  }
+  // The panel is as tall as its content, so the NMSh panel position decides where it sits. The sky belongs at the
+  // top of the screen: a step that fills most of it keeps the ribbon and takes the whole height; a short one has none.
+  const plain = chrome(false).length;
+  const sky = head.length > plain && head.length + body.length + 2 >= Math.ceil(height * 0.8);
+  if (head.length > plain && !sky) head = chrome(false);
+  const gap = sky ? Math.max(0, height - head.length - body.length - 2) : 0;
+  return [...head, ...body, ...Array<string>(gap).fill(''), '', footer].slice(0, Math.max(1, height)).map(row => truncateAnsi(row, width));
+}
+
+/**
+ * Two columns from 96 columns (as the selector): the rows on the left, as wide as they need (40 to 60 columns),
+ * the live preview from `previewX`.
+ */
+function guidedColumns(state: SetupState, columns: number): {left: number; previewX: number; preview: number} | undefined {
+  if (columns < 96 || SETUP_SECTIONS[state.section]?.id === 'review') return undefined;
+  const margin = guidedMargin(columns);
+  const rows = currentRows(state);
+  const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(`${item.row.parent ? '  ' : ''}${item.row.label}`))) + 1);
+  const values = Math.max(0, ...rows.map(item => displayWidth(item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft))));
+  const left = Math.max(40, Math.min(60, labelWidth + 6 + values + 6));
+  const previewX = margin + left + 4;
+  const preview = columns - previewX - margin;
+  return preview >= 36 ? {left, previewX, preview} : undefined;
+}
+
+/** The width the app renders Setup Cat's live preview at: the right column when two fit, the full width otherwise. */
+export function guidedPreviewWidth(state: SetupState, columns: number): number {
+  return guidedColumns(state, columns)?.preview ?? columns;
+}
+
+/** The rows' column clipped at `x` (padding only: its text is wrapped to fit), then the preview's. */
+function besides(left: string, right: string, x: number, width: number): string {
+  if (!right) return left;
+  const canvas = new StartupCanvas(width, 1);
+  canvas.ansi(0, 0, left, x);
+  canvas.ansi(x, 0, right, width - x);
+  return canvas.rows()[0]!;
 }
 
 /** Plain word wrap for prose rows; long words are left for truncation. */

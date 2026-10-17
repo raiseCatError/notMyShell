@@ -77,14 +77,17 @@ function tokens() {
 }
 type Tokens = ReturnType<typeof tokens>;
 
-interface Paint {level: ColorLevel; nerd: boolean; t: Tokens}
-const fg = (paint: Paint, color: Rgb) => colorEscape(38, color, paint.level);
+export interface Paint {level: ColorLevel; nerd: boolean; t: Tokens}
+/** The live theme's tokens at the current color level and glyph mode (the guided setup shares them). */
+export const startupPaint = (): Paint => ({level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', t: tokens()});
+export const fg = (paint: Paint, color: Rgb) => colorEscape(38, color, paint.level);
 const bg = (paint: Paint, color: Rgb) => colorEscape(48, color, paint.level);
 /** NO_COLOR and 16-color hosts mark the selection in reverse video instead of the accent fill. */
-const plainSelection = (paint: Paint) => paint.level === 'none' || paint.level === 'ansi16';
+export const plainSelection = (paint: Paint) => paint.level === 'none' || paint.level === 'ansi16';
 
 const glyph = (paint: Paint, nerd: string, safe: string) => paint.nerd ? nerd : safe;
-const KEY_LABELS: Record<string, [string, string]> = {'↑↓': ['↑↓', 'Up/Dn'], '1–4': ['1–4', '1-4'], '⏎': ['⏎', 'Enter'], 'esc': ['esc', 'Esc'], '←→': ['←→', 'L/R'], 'A': ['A', 'A'], 'R': ['R', 'R']};
+const KEY_LABELS: Record<string, [string, string]> = {'↑↓': ['↑↓', 'Up/Dn'], '1–4': ['1–4', '1-4'], '⏎': ['⏎', 'Enter'], 'esc': ['esc', 'Esc'], '←→': ['←→', 'L/R'], 'A': ['A', 'A'], 'R': ['R', 'R'],
+  'Tab': ['Tab', 'Tab'], '⇧Tab': ['⇧Tab', 'Shift+Tab']};
 const keyLabel = (paint: Paint, key: string) => (KEY_LABELS[key] ?? [key, key])[paint.nerd ? 0 : 1];
 
 // ---- primitives ------------------------------------------------------------------------------
@@ -103,7 +106,7 @@ function wrap(text: string, width: number): string[] {
 const truncate = (value: string, width: number) => displayWidth(value) <= width ? value : `${[...value].slice(0, Math.max(0, width - 1)).join('')}…`;
 
 /** The independent-segment notch, the label on the accent in dark ink, the end wedge pointing at the details. */
-function segment(canvas: StartupCanvas, paint: Paint, x: number, y: number, label: string, options: {open?: boolean} = {}): number {
+export function segment(canvas: StartupCanvas, paint: Paint, x: number, y: number, label: string, options: {open?: boolean} = {}): number {
   if (plainSelection(paint)) return canvas.text(x, y, label, `${BOLD}${INVERSE}`);
   const {open, close} = powerlineShapeGlyphs('wedge');
   let column = x;
@@ -113,14 +116,14 @@ function segment(canvas: StartupCanvas, paint: Paint, x: number, y: number, labe
 }
 
 /** A key on a small square plate, then what it does; the primary key sits on the accent. */
-function keycap(canvas: StartupCanvas, paint: Paint, x: number, y: number, key: string, action: string, primary = false): number {
+export function keycap(canvas: StartupCanvas, paint: Paint, x: number, y: number, key: string, action: string, primary = false): number {
   const label = keyLabel(paint, key);
   let column = paint.level === 'none' ? canvas.text(x, y, `[${label}]`, BOLD)
     : canvas.text(x, y, ` ${label} `, `${BOLD}${fg(paint, primary ? paint.t.ink : paint.t.primary)}`, bg(paint, primary ? paint.t.accent : paint.t.plate));
   if (action) column = canvas.text(column + 1, y, action, fg(paint, paint.t.subtle));
   return column;
 }
-const keycapWidth = (paint: Paint, key: string, action: string) => displayWidth(paint.level === 'none' ? `[${keyLabel(paint, key)}]` : ` ${keyLabel(paint, key)} `) + (action ? 1 + displayWidth(action) : 0);
+export const keycapWidth = (paint: Paint, key: string, action: string) => displayWidth(paint.level === 'none' ? `[${keyLabel(paint, key)}]` : ` ${keyLabel(paint, key)} `) + (action ? 1 + displayWidth(action) : 0);
 
 type KeySpec = readonly [key: string, action: string, primary?: boolean];
 

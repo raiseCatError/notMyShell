@@ -256,14 +256,20 @@ test('Setup Cat: controls stay on top, the preview sits below and gives way firs
   const state = createSetup(normalizePromptConfiguration({}));
   state.section = sectionIndex('history');
   state.context.preview = ['PREVIEW-A', 'PREVIEW-B', 'PREVIEW-C'];
-  const tall = renderSetup(state, 100, 40).map(stripAnsi);
-  const controls = tall.findIndex(item => /History\s+‹ NMSh Native ›/u.test(item));
+  // One column (under 96 columns, as in the selector): the preview below the controls, clipping first.
+  const tall = renderSetup(state, 90, 40).map(stripAnsi);
+  const controls = tall.findIndex(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item));
   const preview = tall.findIndex(item => item.includes('PREVIEW-A'));
   assert.ok(controls > 0 && preview > controls, 'preview below the controls');
-  const short = renderSetup(state, 100, 16).map(stripAnsi);
-  assert.ok(short.some(item => /History\s+‹ NMSh Native ›/u.test(item)), 'controls survive');
+  const short = renderSetup(state, 90, 16).map(stripAnsi);
+  assert.ok(short.some(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item)), 'controls survive');
   assert.ok(!short.some(item => item.includes('PREVIEW-C')), 'preview clips first');
-  assert.ok(short.length <= 16 && short.every(item => displayWidth(item) <= 100));
+  assert.ok(short.length <= 16 && short.every(item => displayWidth(item) <= 90));
+  // Two columns from 96: the preview beside the controls, which keep their rows.
+  const wide = renderSetup(state, 100, 16).map(stripAnsi);
+  assert.ok(wide.some(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item)), 'controls survive beside it');
+  assert.ok(wide.findIndex(item => item.includes('Live preview')) <= wide.findIndex(item => /History\s*\S?\s+‹/u.test(item)), 'the preview starts beside the rows');
+  assert.ok(wide.length <= 16 && wide.every(item => displayWidth(item) <= 100));
 });
 
 test('Setup Cat: providers explain themselves; Native says no installation; externals never claim to be better', () => {

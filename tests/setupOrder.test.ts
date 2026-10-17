@@ -63,7 +63,7 @@ test('Chroma has one control in Setup (Look); Prompt shows it read-only and goes
   const state = createSetup(normalizePromptConfiguration({presentation: {preset: 'aurora'}}), 'prompt');
   goTo(state, 'prompt', CHROMA_IN_LOOK_ROW.row.id);
   const rendered = plain(renderSetup(state, 100, 40));
-  assert.match(rendered, /Chroma\s+Aurora · change it in Look ›/u, 'the current Chroma, read-only, with the way to change it');
+  assert.match(rendered, /Chroma\s*\S?\s+Aurora · change it in Look ›/u, 'the current Chroma, read-only, with the way to change it');
   const before = structuredClone(state.draft);
   for (const kind of ['left', 'right'] as const) setupKey(state, {kind});
   setupKey(state, {kind: 'text', value: ' '});

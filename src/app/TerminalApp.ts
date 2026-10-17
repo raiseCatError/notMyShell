@@ -34,7 +34,7 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, GUIDED_STEPS, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, createQuickSetup, GUIDED_STEPS, guidedPreviewWidth, NATIVE_ONLY_NOTE, renderSetup, wrapWords, SETUP_MIN_SIZE, SETUP_SECTIONS, setStartupEvidence, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {detectEnvironment, type EnvironmentEvidence} from '../setup/environment/detect.js';
 import {createStartupContext, defaultStartupPreview, startupCatX, startupLayout} from '../setup/startup/view.js';
 import {paintStartupEnding, WELCOME_START_MS, type StartupEnding} from '../setup/startup/ending.js';
@@ -4932,7 +4932,8 @@ export class TerminalApp {
         startup.preview = (config, width) => this.withDraftTheme(config, () => defaultStartupPreview(config, width));
         return this.withDraftTheme(state.saved, () => renderSetup(state, columns, this.dimensions().rows));
       }
-      if (!state.toolBrowser && !(state.quick && !state.quick.manual)) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
+      // Beside the rows when two columns fit, below them otherwise: the preview is rendered for the space it gets.
+      if (!state.toolBrowser && !(state.quick && !state.quick.manual)) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, guidedPreviewWidth(state, columns)));
       state.context.title = this.setupTitle(state);
       return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
     }
@@ -6140,9 +6141,14 @@ export class TerminalApp {
     const rawPreview = chromaStep && !shown;
     const draft = rawPreview ? {...state.draft, presentation: {...state.draft.presentation, preset: 'off' as const}} : state.draft;
     const preset = state.draft.presentation.preset;
-    const chromaNote = chromaStep
-      ? [`  ${PRIMARY}\u001b[1mChroma setting${RESET}  ${SECONDARY}${preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[preset]}${RESET}  ${SUBTLE}·  preview shows ${shown ? 'it' : 'the base theme'}${preset === 'off' ? '' : `  ·  P ${shown ? 'compares with the base theme' : 'shows Chroma again'}`}${RESET}`,
-        `  ${SECONDARY}${chromaVisibilityNote(state.draft)}${RESET}`] : [];
+    // One line each where they fit; in a narrower preview (beside the rows) they wrap rather than being cut off.
+    const noteWidth = Math.max(10, columns - 4);
+    const chromaLabel = preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[preset];
+    const chromaHint = `preview shows ${shown ? 'it' : 'the base theme'}${preset === 'off' ? '' : `  ·  P ${shown ? 'compares with the base theme' : 'shows Chroma again'}`}`;
+    const chromaNote = !chromaStep ? [] : displayWidth(`Chroma setting  ${chromaLabel}  ·  ${chromaHint}`) <= noteWidth
+      ? [`  ${PRIMARY}\u001b[1mChroma setting${RESET}  ${SECONDARY}${chromaLabel}${RESET}  ${SUBTLE}·  ${chromaHint}${RESET}`, `  ${SECONDARY}${chromaVisibilityNote(state.draft)}${RESET}`]
+      : [`  ${PRIMARY}\u001b[1mChroma setting${RESET}  ${SECONDARY}${chromaLabel}${RESET}`, ...wrapWords(chromaHint.replace(/ {2}· {2}/gu, ' · '), noteWidth).map(line => `  ${SUBTLE}${line}${RESET}`),
+        ...wrapWords(chromaVisibilityNote(state.draft), noteWidth).map(line => `  ${SECONDARY}${line}${RESET}`)];
     const section = SETUP_SECTIONS[state.section]?.id;
     const width = Math.max(10, columns - 4);
     const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
@@ -6402,9 +6408,9 @@ export class TerminalApp {
     return `${label}${SUBTLE}Checking ${providerLabel(provider)}…${RESET}`;
   }
 
-  /** The Setup Cat title takes the current one-shot sweep when the step changes; otherwise it rests. */
+  /** The step's name: it takes the current one-shot sweep when the step changes; otherwise it rests. */
   private setupTitle(state: SetupState): string {
-    const text = 'Setup Cat';
+    const text = SETUP_SECTIONS[state.section]?.title ?? 'Setup Cat';
     const cells = [...text].map(glyph => ({glyph, color: glyph === ' ' ? undefined : {...UI_COLORS.primary}}));
     const elapsed = this.sweep && this.sweep.section === state.section && this.sweep.titled ? this.sweepElapsed() : Number.POSITIVE_INFINITY;
     return sweepOnce(cells, elapsed, sweepStyleFor(this.promptConfiguration), colorLevel());

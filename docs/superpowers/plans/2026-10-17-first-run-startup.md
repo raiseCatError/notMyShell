@@ -145,8 +145,13 @@ session); Modify `src/setup/startup/view.ts` (the offer line), `src/setup/SetupC
 
 **Files:** Modify `src/setup/SetupCat.ts` (manual render chrome); Tests `tests/setupCat.test.ts` (updated expectations), `tests/startupRender.test.ts`
 
-- [ ] Tests: the guided setup shows a sky ribbon (when roomy), a route of steps with the current step as a segment, *Step N of M*, the selected row as a segment with `‹ value ›`, keycap footer; every existing row, chooser, preview, tool browser and cursor panel behavior still passes.
-- [ ] Run → FAIL; implement; run → PASS; commit `feat: the guided setup speaks the selector's visual language`.
+- [x] Tests: the guided setup shows a sky ribbon (when roomy), a route of steps with the current step as a segment, *Step N of M*, the selected row as a segment with `‹ value ›`, keycap footer; every existing row, chooser, preview, tool browser and cursor panel behavior still passes. (`tests/guidedSetup.test.ts`; existing suites updated only where the chrome's text changed.)
+- [x] Run → FAIL; implement; run → PASS; commit `feat: the guided setup speaks the selector's visual language`.
+- As built (`src/setup/startup/guided.ts`): the ribbon is a still frame of the real engine in Customize's mood, shown only
+  when the step fills most of the screen (the panel then takes the full height, so the sky is always at the top); short
+  steps keep a content-height panel, so the NMSh panel position still shows where panels sit. Two columns from 96
+  columns when there is a preview (the left as wide as its rows, 40–60), the preview rendered for its column; the step's
+  intro spans the width and its facts follow at full width. Footer keys shorten one at a time, least needed first.
 
 ### Task 10: Benchmarks and captures
 

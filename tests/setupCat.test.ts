@@ -35,7 +35,7 @@ test('fresh use: Welcome states the native-first message and nothing is changed 
   const text = plain(renderSetup(state, 100, 30)).replace(/\n\s+/gu, ' ');
   assert.match(text, /Setup Cat/u);
   assert.ok(text.includes(NATIVE_FIRST_MESSAGE));
-  assert.match(text, /switch between Native and external providers anytime/u);
+  assert.match(text.replace(/\s+/gu, ' '), /switch between Native and external providers anytime/u);
   assert.match(text, /Nothing changes until you apply/u);
   assert.deepEqual(setupChanges(state), []);
 });

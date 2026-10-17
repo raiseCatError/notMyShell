@@ -257,8 +257,9 @@ test('J: the Setup Cat footer advertises Tab and Shift+Tab', () => {
     const state = createSetup(normalizePromptConfiguration({}));
     state.section = sectionIndex(id);
     const screen = plain(renderSetup(state, 120, 40));
-    assert.match(screen, /Tab next/u);
-    assert.match(screen, /Shift\+Tab previous section/u);
+    // Keycaps: the key on its plate, then what it does.
+    assert.match(screen, /Tab\s+next step/u);
+    assert.match(screen, /(?:⇧Tab|Shift\+Tab)\s+previous step/u);
   }
 });
 

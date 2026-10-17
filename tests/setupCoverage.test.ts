@@ -79,7 +79,8 @@ test('Setup → Editor exposes syntax highlighting, color mode and theme family/
   assert.doesNotMatch(rowsAt(), /Syntax theme family/u);
   press(state, 'right');
   assert.equal(state.draft.syntax.colors, 'theme');
-  assert.match(rowsAt(), /Syntax colors\s+‹ Choose theme ›/u);
+  // The selected row is a segment: its end wedge sits between the label and the value.
+  assert.match(rowsAt(), /Syntax colors\s*\S?\s+‹ Choose theme ›/u);
   assert.match(rowsAt(), /Syntax theme family/u);
   press(state, 'right');
   assert.equal(state.draft.syntax.colors, 'grayscale');
@@ -182,7 +183,7 @@ test('Setup cursor rows follow the effective renderer and its preview demonstrat
     state.draft = normalizePromptConfiguration({...state.draft, cursor: {...state.draft.cursor, renderer: 'native', shape: 'bar'}});
     goTo(state, 'cursor', 'cursorEffect');
     const text = stripAnsi(app['settingsPanelRows'](120).join('\n'));
-    assert.match(text, /Cursor effect\s+Unavailable/u);
+    assert.match(text, /Cursor effect\s*\S?\s+Unavailable/u);
     assert.match(text, /Host native is not available in this terminal\./u);
     assert.doesNotMatch(text.split('\n').find(line => /Cursor effect/u.test(line))!, /‹|Unavailable ›/u, 'no arrows on an unavailable row');
     assert.match(text, /Preview · Cursor effect: Unavailable/u);
@@ -214,6 +215,6 @@ test('Setup → Motion previews the selected motion with the real renderer, and 
     assert.ok(state.previewKey, 'the preview has started');
     app['handleKey']({kind: 'text', value: 'r'});
     assert.equal(state.previewKey, undefined, 'R replays: the next frame restarts the preview');
-    assert.match(stripAnsi(app['settingsPanelRows'](120).join('\n')), /R replay preview/u);
+    assert.match(stripAnsi(app['settingsPanelRows'](120).join('\n')), /R\s+replay/u);
   } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });
