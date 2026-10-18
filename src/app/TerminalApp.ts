@@ -8694,6 +8694,9 @@ export class TerminalApp {
     if (block && watch.status === 'stopped' && !block.finalized) {
       block.finalized = true;
       this.output.addFrontendBlock(`/track ${watch.command}`, finalResultRows(watch));
+      // The anchored transcript row can render its stopped state directly from the task.
+      // The mutable per-tracker height bookkeeping is no longer needed after finalization.
+      this.trackBlocks.delete(watch.id);
     }
     this.render();
   });
