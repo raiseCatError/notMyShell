@@ -9,7 +9,7 @@ import {editText} from '../ui/formControls.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
-import {formatBytes, type ViewDocument} from './document.js';
+import {formatBytes, inert, type ViewDocument} from './document.js';
 
 /**
  * The native read-only viewer (#397): one document in a full-height panel, never the transcript. Drawing is bounded
@@ -413,7 +413,7 @@ function detail(document: ViewDocument): string {
   }
   const kind = document.format === 'markdown' ? 'Markdown' : document.format === 'diff' ? 'diff' : document.language ?? 'text';
   const ending = document.lineEnding === 'crlf' ? ' · CRLF' : document.lineEnding === 'mixed' ? ' · mixed line endings' : '';
-  const link = document.origin.symlink ? ` · → ${document.origin.realPath}` : '';
+  const link = document.origin.symlink ? ` · → ${inert(document.origin.realPath)}` : '';
   return `${kind} · ${lines} · ${formatBytes(document.origin.bytes)}${ending}${link}`;
 }
 

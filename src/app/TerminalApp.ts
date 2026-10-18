@@ -3595,6 +3595,8 @@ export class TerminalApp {
       if (this.viewerLoad !== load || this.stopped) return;
       this.viewerLoad = undefined;
       if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Another panel opened while the file was read: it keeps the keys; the file is not opened over it.
+      if (this.hasModalInput()) return;
       this.panelOrigin = undefined;
       this.viewer = createViewer(result.document);
       this.render();

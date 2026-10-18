@@ -87,6 +87,14 @@ test('files: only regular, decodable text is read, within limits, and every refu
     assert.ok(linked.origin.kind === 'file' && linked.origin.symlink && linked.origin.realPath === join(root, 'a.ts'));
     assert.match(shown(draw(createViewer(linked), 400)).join('\n'), new RegExp(`→ ${join(root, 'a.ts').replace(/[.*+?^${}()|[\]\\/]/gu, '\\$&')}`, 'u'));
 
+    // A file name is untrusted text too: its controls never reach the transcript or the header as controls.
+    const hostileName = join(root, 'evil\u001b[2J\u202e.txt');
+    const missing = await loadFileDocument(hostileName, '/') as {reason: string};
+    assert.doesNotMatch(missing.reason, /[\u001b\u202e]/u);
+    assert.match(missing.reason, /evil␛\[2J·\.txt does not exist/u);
+    writeFileSync(hostileName, 'x\n');
+    assert.doesNotMatch(draw(createViewer(await load(hostileName))).join('').replace(/\u001b\[[0-9;]*m/gu, ''), /[\u001b\u202e]/u);
+
     // Reading changes nothing.
     assert.equal(readFileSync(join(root, 'a.ts'), 'utf8'), 'const a = 1;\r\nconst b = 2;\r\n');
   } finally { rmSync(root, {recursive: true, force: true}); }

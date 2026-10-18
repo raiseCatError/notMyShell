@@ -50,9 +50,14 @@ export function resolveViewPath(input: string, cwd: string, home = homedir()): s
   return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed);
 }
 
-/** The path as people read it: under home it starts with ~. */
+/** Text from a file name or path made inert for display: controls and invisible format characters become marks. */
+export function inert(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/gu, character => character === '\u001b' ? '␛' : '·');
+}
+
+/** The path as people read it (under home it starts with ~), safe to draw: a file name can hold control characters. */
 export function displayPath(path: string, home = homedir()): string {
-  return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
+  return inert(home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path);
 }
 
 const FILE_NAMES: Record<string, string> = {makefile: 'makefile', gnumakefile: 'makefile', dockerfile: 'dockerfile', containerfile: 'dockerfile',
