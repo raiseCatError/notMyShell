@@ -7,9 +7,11 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
 
 - `dev` = `a8b383c2` (v0.21 integrated, plus #425, #427, #428). `master` = `6af5cbab` (v0.20.0 line), an ancestor of
   `dev`. `release/v0.21.0` = `d9e08393` (`dev` at `433af8fd` plus the candidate commit).
-- PR #430 (`dev` → `release/v0.21.0`): open, CI green, **not merged** at baseline. Draft PR #429 is the v0.21 release.
-- **v0.22 PRs stay draft against `dev` until #430 merges** (its head is `dev`, so anything merged earlier would ride
-  into the release candidate). Nothing in v0.22 touches `release/v0.21.0`, its QA evidence, `master` or publishing.
+- PR #430 (`dev` → `release/v0.21.0`) was open at the start of the session and merged at 22:02 IST the same day:
+  `release/v0.21.0` = `86bb3a6c`, which contains `dev` `a8b383c2`. Draft PR #429 is the v0.21 release.
+- **v0.22 PRs stay draft against `dev` until v0.21 ships**: a fix v0.21's QA needs lands on `dev` and reaches the
+  release by another `dev` → release merge, which would carry anything v0.22 merged earlier. Nothing in v0.22
+  touches `release/v0.21.0`, its QA evidence, `master` or publishing.
 - Worktree: `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/v022` (APFS volume `T7Tmp`, UUID
   `62D4E8A9-087C-4927-A62F-25BB88B7F1C7`); unfixed comparison worktree `…/v022-base` (detached at `a8b383c2`).
   Scratch and evidence: `/Volumes/T7Tmp/ai-dev/scratch/v022/`. Tests run with `NMSH_TEST_TMPDIR=/Volumes/T7Tmp/ai-dev`.
@@ -69,5 +71,5 @@ v0.22 has had a physical pass.
 
 ## Open risks
 
-- #430 unmerged: v0.22 cannot integrate into `dev` yet.
+- v0.21 unreleased: v0.22 cannot integrate into `dev` yet (see the rule above).
 - The changelog entries sit in `dev`'s `[Unreleased]` beside v0.21's and move at reconciliation.

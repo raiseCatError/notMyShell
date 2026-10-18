@@ -13,10 +13,11 @@ run unexpectedly. On that foundation it adds a small number of workflow improvem
 ## Baseline and the v0.21 release boundary
 
 - Baseline: `dev` at `a8b383c2` (v0.21 integrated: #411–#424, then #425, #427 and #428).
-- `release/v0.21.0` (`d9e08393`) is `dev` at `433af8fd` plus its candidate commit. PR #430 (`dev` → `release/v0.21.0`)
-  carries #425, #427 and #428 into it and is open, green and unmerged. Draft PR #429 is the release itself.
-- **Rule:** v0.22 PRs target `dev` but stay **draft and unmerged until #430 has merged**. #430's head is `dev`; anything
-  merged into `dev` before it would ride into the release candidate. v0.22 never touches `release/v0.21.0`, its QA
+- `release/v0.21.0` is now `86bb3a6c`: PR #430 merged `dev` (`a8b383c2`) into it on 2026-10-18. Draft PR #429 is the
+  release itself; its physical QA has not run.
+- **Rule:** v0.22 PRs target `dev` but stay **draft and unmerged until v0.21 has shipped**. A fix that v0.21's physical
+  QA needs lands on `dev` and reaches the release branch by another `dev` → `release/v0.21.0` merge, as #430 did, so
+  anything v0.22 merged into `dev` before the release would ride along. v0.22 never touches `release/v0.21.0`, its QA
   evidence, `master` or the publishing workflow.
 - After v0.21 ships (release PR merged into `master`, tag published), reconcile: bring `master` back into `dev` if the
   runbook does, rebase the open v0.22 branches, and move v0.22 changelog entries into the new `[Unreleased]` section
