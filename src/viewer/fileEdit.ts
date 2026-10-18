@@ -82,7 +82,11 @@ export async function openForEdit(input: string, cwd: string, options: {home?: s
     try { info = await stat(directory); } catch { return {ok: false, reason: `${displayPath(directory, home)} does not exist; create the directory first.`}; }
     if (!info.isDirectory()) return {ok: false, reason: `${displayPath(directory, home)} is not a directory.`};
     if (!(await writable(directory))) return {ok: false, reason: `${displayPath(directory, home)} is not writable, so ${shown} cannot be created.`};
-    return {ok: true, file: {path, realPath: path, title: shown, lineEnding: 'lf', bom: false, finalNewline: true, lines: ['']}};
+    // The real path it will have (the folder may be reached through a symlink, as macOS /tmp is): every later save
+    // checks the file against realpath() of the path as given, which is this once the file exists.
+    let realDirectory: string;
+    try { realDirectory = await realpath(directory); } catch (error) { return {ok: false, reason: failure(error, 'open', shown)}; }
+    return {ok: true, file: {path, realPath: join(realDirectory, basename(path)), title: shown, lineEnding: 'lf', bom: false, finalNewline: true, lines: ['']}};
   }
   let handle;
   try { handle = await open(realPath, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0) | (constants.O_NOCTTY ?? 0)); }

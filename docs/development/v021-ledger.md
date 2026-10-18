@@ -7,27 +7,28 @@ Automated results here are not physical-terminal validation.
 ## Baseline (verified 2026-10-18)
 
 - `master` = `dev` = `6af5cbab`; latest release v0.20.0 (`65e4de55`); CI green on both.
-- Open PRs: draft #394 (`/track` first slice, based on an older line; reconciled by hand in slice 5, not merged).
+- Open PRs: draft #394 (`/track` first slice, based on an older line; reconciled by hand in slice 5, not merged;
+  closed as superseded by #416 in the release audit).
 - Work happens in disposable worktrees under `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/`; scratch on the T7.
 
 ## Slices
 
 | # | Slice | Issues | Branch / PR | Merged commit | State |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Design and ledger | #410 | `docs/v021-design` / [#411](https://github.com/raiseCatError/notMyShell/pull/411) → `dev` | | PR open, CI green |
-| 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` / [#412](https://github.com/raiseCatError/notMyShell/pull/412) → #411 | | PR open, CI green |
-| 2 | `/view` | #397, #402 | `feature/v021-view` / [#413](https://github.com/raiseCatError/notMyShell/pull/413) → #412 | | PR open, CI green |
-| 3 | `/edit` | #402 | `feature/v021-edit` / [#414](https://github.com/raiseCatError/notMyShell/pull/414) → #413 | | PR open, CI green |
-| 4 | Semantic Output | #386 | `feature/v021-semantic` / [#415](https://github.com/raiseCatError/notMyShell/pull/415) → #414 | | PR open, CI green (one rerun) |
-| 5 | `/track` | #393 (#394) | `feature/v021-track` / [#416](https://github.com/raiseCatError/notMyShell/pull/416) → #415 | | PR open, CI green |
-| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` / [#417](https://github.com/raiseCatError/notMyShell/pull/417) → #416 | | PR open, CI green (one rerun) |
-| 7 | Themes and controls | #401, #336 | `feature/v021-themes` / [#418](https://github.com/raiseCatError/notMyShell/pull/418) → #417 | | PR open, CI green |
-| 8 | Checkpoint ledger | #410 | `docs/v021-checkpoint` / [#419](https://github.com/raiseCatError/notMyShell/pull/419) → #418 | | PR open, CI green |
-| 9 | `/track` refresh and finalization lifecycle | #393 | `fix/v021-track-review-hardening` / [#420](https://github.com/raiseCatError/notMyShell/pull/420) → #419 | | PR open, CI green |
-| 10 | `/track` review: repetition safety gate, process cleanup, presentation | #393 | `fix/v021-stabilize` / [#421](https://github.com/raiseCatError/notMyShell/pull/421) → #420 | | PR open, CI green |
-| 11 | Flaky CI at the cause | #410 | `fix/v021-flaky-tests` / [#422](https://github.com/raiseCatError/notMyShell/pull/422) → #421 | | PR open, CI green |
-| 12 | Bugs: #388 wrapped rows, command colors after a slow zshrc, #365 width | #388, #408, #365 | `fix/v021-bugs` / [#423](https://github.com/raiseCatError/notMyShell/pull/423) → #422 | | PR open, CI green |
-| 13 | Stabilization ledger (this) | #410 | `docs/v021-stabilization` → #423 | | PR open |
+| 0 | Design and ledger | #410 | `docs/v021-design` / [#411](https://github.com/raiseCatError/notMyShell/pull/411) → `dev` | `a412fe53` | Merged into `dev` |
+| 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` / [#412](https://github.com/raiseCatError/notMyShell/pull/412) → #411 | `3282ad40` | Merged into `dev` |
+| 2 | `/view` | #397, #402 | `feature/v021-view` / [#413](https://github.com/raiseCatError/notMyShell/pull/413) → #412 | `e945c75a` | Merged into `dev` |
+| 3 | `/edit` | #402 | `feature/v021-edit` / [#414](https://github.com/raiseCatError/notMyShell/pull/414) → #413 | `934ba7ce` | Merged into `dev` |
+| 4 | Semantic Output | #386 | `feature/v021-semantic` / [#415](https://github.com/raiseCatError/notMyShell/pull/415) → #414 | `a97b3f77` | Merged into `dev` (one rerun) |
+| 5 | `/track` | #393 (#394) | `feature/v021-track` / [#416](https://github.com/raiseCatError/notMyShell/pull/416) → #415 | `a5f2fd69` | Merged into `dev` |
+| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` / [#417](https://github.com/raiseCatError/notMyShell/pull/417) → #416 | `ac543bd0` | Merged into `dev` (one rerun) |
+| 7 | Themes and controls | #401, #336 | `feature/v021-themes` / [#418](https://github.com/raiseCatError/notMyShell/pull/418) → #417 | `0ea7ca39` | Merged into `dev` |
+| 8 | Checkpoint ledger | #410 | `docs/v021-checkpoint` / [#419](https://github.com/raiseCatError/notMyShell/pull/419) → #418 | `f8e53541` | Merged into `dev` |
+| 9 | `/track` refresh and finalization lifecycle | #393 | `fix/v021-track-review-hardening` / [#420](https://github.com/raiseCatError/notMyShell/pull/420) → #419 | `d612f120` | Merged into `dev` |
+| 10 | `/track` review: repetition safety gate, process cleanup, presentation | #393 | `fix/v021-stabilize` / [#421](https://github.com/raiseCatError/notMyShell/pull/421) → #420 | `0eca52d6` | Merged into `dev` |
+| 11 | Flaky CI at the cause | #410 | `fix/v021-flaky-tests` / [#422](https://github.com/raiseCatError/notMyShell/pull/422) → #421 | `ac0f780a` | Merged into `dev` |
+| 12 | Bugs: #388 wrapped rows, command colors after a slow zshrc, #365 width | #388, #408, #365 | `fix/v021-bugs` / [#423](https://github.com/raiseCatError/notMyShell/pull/423) → #422 | `7cb857f4` | Merged into `dev` |
+| 13 | Stabilization ledger | #410 | `docs/v021-stabilization` / [#424](https://github.com/raiseCatError/notMyShell/pull/424) → #423 | `433af8fd` | Merged into `dev` |
 
 ## Decisions
 
@@ -63,7 +64,9 @@ toggle, copy flags, Off). Slice 5: section 5 (`/track` block, refresh, copy, sto
 
 ## Open risks
 
-- Merging into `dev`: see "Ordered integration" below. Use regular merge commits, in order.
+- Merging into `dev`: done (see "Ordered integration" below).
+- #426 (pre-existing): under heavy load, a reply typed right after a prompt-less read starts can be queued. Its live
+  test can fail on a loaded host; the test's own race is fixed in #427.
 - #388: absolute rows (`CSI H/f/d`) are deliberately not mapped and scroll regions are not emulated (a program's
   status row below its region is not stored); the contract is explicit and tested (stabilization).
 - Nothing in v0.21 has had a physical-terminal pass yet. Every slice issue stays open until its pass is recorded.
@@ -165,27 +168,110 @@ runs the maintainer's containers); `docker system df` stays the one Docker verb 
 
 ## Ordered integration
 
-`dev` is unprotected and allows merge commits; merged branches are not deleted automatically. Merge with regular merge
-commits, in order: #411 into `dev`; then for each of #412 … #423 and this ledger PR, retarget it to `dev`
-(`gh pr edit N --base dev`), check that its diff shows only its own changes, and merge it (`gh pr merge N --merge`).
-Then let `dev` CI pass (push runs include Fedora and both timing smokes) and run `npm run verify:release` on `dev`.
+Done on 2026-10-18. #411 to #424 were merged into `dev` in order with regular merge commits (table above). `dev` is
+`433af8fd`, whose tree is identical to #424's head `06bc2034`. Every PR head is an ancestor of `dev`, and so is
+`master` (`6af5cbab`), so the release needs no conflict resolution.
+
+## Release audit (2026-10-18)
+
+An independent pass over the integrated `dev` at `433af8fd`, from a clean detached worktree on the T7 (`npm ci`: 25
+packages, 0 vulnerabilities). Machine: macOS 27 arm64, 8 GB, Node 26.10.0, zsh 5.9, Bash 5.3.20, Fish 4.9.3, with
+`NMSH_TEST_TMPDIR=/Volumes/T7Tmp/ai-dev`. It was shared throughout (a browser, ten Docker containers in a VM, another
+agent session), with 5.4–6.7 GB of swap in use.
+
+**CI on the exact commit.** Push run [39135227830](https://github.com/raiseCatError/notMyShell/actions/runs/39135227830)
+on `433af8fd`: all 13 jobs green. That covers Quality (Node 26: build, benchmark typecheck, fast suite, diff check),
+the full suite on macOS and Ubuntu (Node 26, two shards each), Node 22 compatibility, the Fedora portability subset,
+timing smoke on macOS and Ubuntu, and the `CI` and `Verify (22.x, 26.x)` aggregates.
+
+**Local gates on `433af8fd`.**
+
+| Gate | Result |
+| --- | --- |
+| `npm ci` | PASS, 0 vulnerabilities |
+| `npm run build` | PASS |
+| `npm test` (canonical suite, 4 workers) | FAIL: 3,142 tests, 3,139 pass, 2 skipped, 1 fail, 553 s, load 3 rising to 16 |
+| `npm run typecheck:bench` | PASS (run on its own: `verify:release` stops at its first failing step) |
+| `npm run bench:smoke` | PASS, every budget, at load 4–5 |
+| `git diff --check` | PASS |
+
+The failure is `inputOwnershipLive` → `live zsh: a waiting read gets the answer typed at once …`. The answer to a
+prompt-less `read` was queued, so the read never got it. The file alone passed 3/3 at load 5–8. Four copies at once
+(load rising from 8 to 27–33) failed in 2 of 4 copies on `dev` and 3 of 4 on `master` `6af5cbab`, so this is
+pre-existing, not from v0.21. Two mechanisms, told apart by a diagnostic run that recorded the queue entries:
+
+- **Product, pre-existing, open as #426.** A key typed before NMSh has evidence that the command reads input is
+  held for at most 800 ms while the session looks. On macOS a prompt-less read needs two process-table samples, and
+  when the look misses the deadline, Enter queues. This was the full-suite failure, and it reappeared at load 20–33
+  after the test fix. It was not seen at ordinary load or in CI.
+- **Test race, fixed in #427.** The test typed its follow-up `echo BACK-…` as soon as the answer's output appeared
+  and checked the queue at once. Before the shell's prompt for the answered command arrives, Enter queues, as designed.
+  This was the CI failure on #425 (Ubuntu) and most of the parallel failures; the recorded entry was the test's own
+  follow-up.
+
+**Benchmarks** (`bench:smoke` at `433af8fd`, load 4–5), p50: pty-ready 24 ms, service-ready 233 ms, cold context
+collection 50 ms, every-module render 40 ms, configured completion warm 8.8 ms, `transcript/wrap-present-10000` 41 ms,
+`transcript/wrap-present-100000` 444 ms. Every one is within budget and within noise of the stack-head numbers above.
+
+**Code review,** highest impact first: `/edit` saving, `/view` loading, the `/track` lifecycle (`WatchTasks`,
+`repeatSafety`, `trackBlock` and the `TerminalApp` wiring), the parser's live region, Semantic Output bounds and caching,
+`SemanticService` startup timing, the new module capabilities, and what the Homebrew formula installs.
+
+- Fixed in #425: a new file in a folder reached through a symlink (macOS `/tmp`, `/var/folders`) hit a false "was
+  replaced on disk" conflict on its second save. The new file kept its unresolved path as its real path. The
+  regression fails on `dev`. Physical check 3.9.
+- Fixed in #427 (test only): the race above.
+- Filed as #426: the product behavior above.
+- Noted, not changed:
+  - The reattach notice says `zsh pid` for every shell (`TerminalApp.finishReplay`, since `b0bd6878`, before shell
+    backends). Cosmetic.
+  - `clear` removes `/track` blocks with every other block. The tracker keeps running and its summary row stays, and
+    `/track stop` writes the final result, which matches `clear`'s contract.
+  - Stopped trackers keep their last two results until 128 records accumulate. That is bounded, but not small.
+- Checked, no defect found:
+  - `/view` refuses FIFOs and devices before anything blocks, reads in bounded chunks and cuts UTF-8 on a character
+    boundary.
+  - `/edit` uses an exclusive temporary file, syncs it, checks the original's identity before renaming, refuses hard
+    links and keeps symlinks.
+  - `/track` runs each sample in its own process group, escalates TERM to KILL, ends stragglers after every sample,
+    refuses overlapping refreshes and ends everything when the window closes.
+  - `SemanticService` resolves pending lookups when it is killed during startup.
+  - Semantic readings are cached per record in a `WeakMap`.
+  - The built-in context packs are copied into `dist`, and the Homebrew formula's install list still covers every
+    file v0.21 reads at runtime: all new code compiles into `dist`, and no new assets were added.
+
+**Issues and PRs.**
+
+- Closed: #403 (a test fixture; verified on `dev` and in CI). Draft PR #394, as superseded by #416 (its scheduler,
+  panel and all 8 tests are on `dev`).
+- Open until their physical passes are recorded: #388, #393, #397, #401, #402, #408 (pass 1.7), #364, #365, #386 and
+  #336. The work still out of scope stays on each issue:
+  - #386: external providers, a fully collapsed raw view and a separate semantic search scope.
+  - #401: four families deferred.
+  - #402: the provider registry (#366).
+  - #364: Kotlin/Scala, Lua and Haskell as candidates.
+  - #365: no per-segment truncation trace for the Main Prompt.
+  - #336: no other surface needed a new control.
+- #356 stays open: it was not reproduced, and passing its reproducer does not close it.
+- #410 tracks the release.
 
 ## Release readiness
 
-Not ready to release; ready for integration. Exact-head CI on the stack head `e8411e1a` is green in every job, including
-Fedora portability and both timing smokes. Remaining gates, in order:
+**Not released, and not ready to ship until physical QA passes.** Integration, exact-commit CI and the code review are
+done. Remaining gates, in order:
 
-1. **Integration** (maintainer, or the agent where its permission policy allows): the ordered merges above, #411 to
-   #423 and this ledger PR, with regular merge commits; then `dev` CI green on push.
-2. **Local `npm run verify:release` on `dev`** at normal machine load (the in-session runs were overloaded; see above).
-3. **Physical QA, mandatory and not run**: every pass in the [checklist](../testing/v021-physical-qa.md), in Ghostty
-   and Terminal.app, recorded in its results table. Headless PTY tests and CI do not count.
-4. Then close the issues whose acceptance is met (#388, #393, #397, #401, #402 viewer and editor phases, #403, #408,
-   #364, #365, #386 first phase, #336 where applicable), move `[Unreleased]` to `[0.21.0]` in the changelog, and
-   prepare the tag, release notes and distribution. Tagging, the GitHub release, the Homebrew tap and the website
-   deploy stay with the maintainer.
+1. Merge #425 and #427 into `dev` once their CI is green. This ledger's PR follows.
+2. **Release candidate:** a `release/v0.21.0` branch from `dev` with one commit holding the version (`0.21.0`), the
+   changelog's `[0.21.0]` candidate section and the status pointers, opened as a draft PR to `master`, as v0.20 did
+   (#392). Then dispatched CI on its exact head (Fedora and both timing smokes) and a local `verify:release` on it.
+3. **Physical QA, mandatory and not run:** every pass in the [checklist](../testing/v021-physical-qa.md), on the
+   candidate build, recorded in its results table. Headless PTY tests and CI do not count.
+4. Then, with the maintainer's go-ahead: date the changelog section, merge the release PR into `master`, then the tag,
+   GitHub release, Homebrew tap and website, as in the [release runbook](v021-release-runbook.md). Close the issues
+   whose acceptance is met.
 
-Known limitations shipped deliberately: `/track` is window-owned (stops on detach); Semantic Output is its first
+Known limitations shipped deliberately: `/track` is window-owned (it stops on detach); Semantic Output is its first
 phase (no `jc`/`delta` providers); inline absolute cursor positioning is not mapped and scroll regions are not
-emulated (#388 contract); the Main Prompt has no per-segment truncation trace (#365); four theme families deferred
-(#401); type-ahead *during* a Fish read stays subject to Fish's own editor queries (#356).
+emulated (#388 contract); the Main Prompt has no per-segment truncation trace (#365); four theme families are deferred
+(#401); type-ahead *during* a Fish read stays subject to Fish's own editor queries (#356); on a heavily loaded machine
+a reply typed within about a second of starting a prompt-less read can be queued (#426, pre-existing).

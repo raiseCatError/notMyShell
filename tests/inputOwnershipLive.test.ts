@@ -83,17 +83,20 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
           await type(frontend, read.keys);
           if (read.enter) frontend.pty.write('\r');
           await frontend.waitFor(read.answered, mark, 10_000);
-          // The command completes and the composer is back: an ordinary command runs at once, not queued.
+          // The answered command completes (its record is journaled after the screen, later on a slower host; Fish's
+          // reader has the terminal, so its output is not journaled) and the shell is back at its prompt. Until then
+          // the program's output can be on screen while the command still runs, and an Enter then queues, as designed.
+          const journaled = async () => (await records(sandbox)).filter(entry => entry.command === read.command);
+          if (shell !== 'fish') await until(async () => (await journaled()).length > before, 15_000, `${what}: journaled`);
+          await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15_000, `${what}: the shell is back at its prompt`);
+          // An ordinary command then runs. Once it has, nothing typed for the program ran as a command or is left queued.
           const tag = `BACK-${reactionMs}-${read.name.length}`;
-          await frontend.run(`echo ${tag}`, new RegExp(tag, 'u'), {completion: false});
+          await frontend.run(`echo ${tag}`, new RegExp(tag, 'u'));
           const all = await records(sandbox);
           assert.equal(all.some(record => record.command.trim() === read.keys), false, `${what}: the answer never ran as a command`);
           assert.equal(await queued(sandbox), 0, `${what}: nothing was queued`);
           if (read.secret) assert.equal(strip(frontend.output.slice(mark)).includes(SECRET), false, `${what}: the hidden answer is never drawn`);
-          // Exactly once, from the journal (Fish's reader has the terminal, so its output is not journaled). The journal is
-          // written after the screen (later on a slower host): wait for this run's own record first.
-          const journaled = async () => (await records(sandbox)).filter(entry => entry.command === read.command);
-          if (shell !== 'fish') await until(async () => (await journaled()).length > before, 15_000, `${what}: journaled`);
+          // Exactly once, from the journal.
           const record = (await journaled()).at(-1);
           if (shell !== 'fish' && read.keys === 'hello') assert.equal(record?.output.match(/ANSWER=hello/gu)?.length, 1, `${what}: answered exactly once`);
           await pause(400);
