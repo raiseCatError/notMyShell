@@ -16,7 +16,7 @@ sources: [README.md, docs/architecture/shell-adapter.md, docs/architecture/platf
 
 `/shell` switches the current backend with safety checks. Jobs and session state
 matter: switching is not just changing the text in a shell label. PowerShell and
-Nushell are not supported shell backends in this launch baseline.
+Nushell are not supported shell backends.
 
 Your startup configuration is loaded through a controlled private bootstrap.
 NMSh does not silently rewrite your rc files. Prompt widgets, instant prompts,
@@ -26,8 +26,8 @@ and editor plugins that expect to own the UI may need ordinary-shell use instead
 
 | Platform | Current evidence |
 | --- | --- |
-| macOS | Primary platform; earlier physical testing exists, latest-release physical QA pending |
-| Linux | Beta; Ubuntu CI and Fedora subset, physical validation pending |
+| macOS | Primary platform; v0.20.0 first-run setup and Tools accepted physically, other checklist items not recorded |
+| Linux | Beta; Ubuntu CI and Fedora subset, no physical validation yet |
 | Windows through WSL 2 | Beta supported path; detection fixtures, no real WSL physical QA |
 | WSL 1 | Detected but not supported |
 | Native Windows | Not supported |
@@ -46,5 +46,5 @@ reachable desktop environment. Missing optional helpers should be reported, not
 treated as proof that the underlying shell cannot run.
 
 See [platform evidence](/docs/reference/platforms/) and the
-[open release QA checklist](/docs/reference/physical-qa/). Automated testing is not
+[physical QA record](/docs/reference/physical-qa/). Automated testing is not
 physical acceptance in Ghostty, Terminal.app, Linux or WSL.

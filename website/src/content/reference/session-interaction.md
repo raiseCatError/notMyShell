@@ -1,6 +1,6 @@
 ---
 title: "Session interaction design"
-description: "Canonical session interaction design from the v0.20.0 candidate source."
+description: "Canonical session interaction design from the v0.20.0 published source."
 group: Technical reference
 order: 108
 source: "docs/design/session-interaction-ux.md"

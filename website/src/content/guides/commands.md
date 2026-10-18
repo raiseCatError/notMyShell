@@ -6,7 +6,7 @@ order: 18
 sources: [README.md, src/commands/slashCommands.ts]
 ---
 
-This is a map of common actions in the launch baseline, not a replacement for the generated
+This is a map of common actions in v0.20.0, not a replacement for the generated
 `/help` in your installed version. A slash action controls NMSh; ordinary programs
 and absolute executable paths still run in your real shell.
 

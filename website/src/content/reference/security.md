@@ -1,6 +1,6 @@
 ---
 title: "Security policy"
-description: "Canonical security policy from the v0.20.0 candidate source."
+description: "Canonical security policy from the v0.20.0 published source."
 group: Technical reference
 order: 113
 source: "SECURITY.md"
@@ -10,7 +10,7 @@ Security is critical for NMSh, as it executes and presents shell commands and ha
 
 ## Supported Versions
 
-Security fixes target the latest stable release (currently v0.18.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
+Security fixes target the latest stable release (currently v0.20.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
 
 ## Scope
 

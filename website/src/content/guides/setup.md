@@ -24,7 +24,14 @@ guided wizard. For Minimal, Left/Right or Tab
 switches the One-line/Two-line choice; it starts at Two-line. Esc opens a leave
 confirmation with **Stay** selected first.
 
-Keep Existing distinguishes detected evidence from assumptions. If the prompt choice
+The review also has a **Tools** line, changed with T. Recommended defaults to
+reviewing and installing the missing Recommended + Enhanced tools that NMSh could
+verify, after the ending; Minimal and Keep Existing default to Skip. Nothing is
+installed without the tools review and its own confirmation (see
+[Tools and integrations](/docs/integrations/)).
+
+Keep Existing distinguishes detected evidence from assumptions. Besides the prompt it
+finds, it can offer NMSh Native or another installed prompt provider. If the prompt choice
 is ambiguous, review the offered provider options rather than assuming every shell
 customization can be inferred. On an already configured installation it preserves
 saved settings without re-detection unless you explicitly request it with R.
@@ -41,6 +48,9 @@ choice saves immediately, unlike the configuration draft waiting for Apply. Redu
 Motion and color/glyph capability gates still apply. Applying folds the sky away and
 brings the real composer into place; reduced motion goes directly to the settled view.
 The transition does not run a demonstration command or simulate shell output.
+
+A genuine first run adds Vespyr's welcome once, whichever starting point you apply;
+later applies add a single receipt line. Minimal keeps no welcome on later launches.
 
 The first-run introduction is remembered separately from setup completion. Attaching
 to a session and explicit setup entry points do not replay installation onboarding.
@@ -80,7 +90,7 @@ shell configuration. Review individual changes and installation plans. Use
 `/settings` for the general preferences surface, or a focused studio such as
 `/theme`, `/layout` or `/strip`.
 
-The [launch baseline](/releases/#launch-baseline) identifies the exact public code
-these instructions describe. [First-run behavior and validation](/docs/reference/onboarding/)
-records its defaults and remaining acceptance work. [Learn Mode](/learn/) is separate:
+These instructions describe the published [v0.20.0 release](/releases/).
+[First-run behavior and validation](/docs/reference/onboarding/) records its defaults
+and the acceptance evidence behind them. [Learn Mode](/learn/) is separate:
 it remains a future learning proposal, not part of setup.

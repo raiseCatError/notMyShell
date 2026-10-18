@@ -22,6 +22,11 @@ omitted fields retains historical defaults rather than silently receiving every 
 visual or retention preference. Explicit choices are preserved. See
 [Setup and first run](/docs/setup/) before applying a different starting point.
 
+Updates are Automatic, Notify only or Off. With Notify, a newer stable release shows
+one short amber notice in the transcript, once per version, with the update steps for
+this installation: Homebrew commands, `/update` for a verified source checkout, or the
+release page. Off checks nothing.
+
 ## Move settings, not the whole history
 
 ```sh

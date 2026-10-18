@@ -1,6 +1,6 @@
 ---
 title: "Read-only GitHub workspace"
-description: "Canonical read-only github workspace from the v0.20.0 candidate source."
+description: "Canonical read-only github workspace from the v0.20.0 published source."
 group: Technical reference
 order: 119
 source: "docs/architecture/github-workspace.md"

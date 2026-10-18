@@ -49,12 +49,13 @@ transcripts and live processes are different; see [Sessions](/docs/sessions/).
 
 ## Known release limitations
 
-Physical acceptance for the final v0.20 launch build is pending. Fish type-ahead
+Physical-terminal evidence for v0.20.0 is partial: the first-run setup and Tools flow
+were accepted on macOS, and no physical Linux or WSL pass has been made. Fish type-ahead
 during `read` remains a tracked compatibility concern. Managed targets are Claude
 Code beta only; the GitHub workspace is read-only and workspace regions are
 experimental, Off by default. Background tasks need a matching session service.
-Check the [candidate changelog](/docs/reference/changelog/) and
-[release status](/releases/#launch-baseline) for the exact source checkpoint.
+Check the [changelog](/docs/reference/changelog/) and
+[release notes](/releases/) for the full list of known limitations.
 
 ## Ask for help safely
 

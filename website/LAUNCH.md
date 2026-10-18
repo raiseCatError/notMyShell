@@ -90,33 +90,39 @@ paths produce a receipt. Optional tools are not detected or installed by the
 starting-point selector at this pin. Those are specific follow-up checks, not a
 reason to call the already integrated Horizon experience a future proposal.
 
-## Required before publication
+## Release synchronization (2026-10-18)
 
-- [ ] Follow the manual-only publishing and post-launch link sequence in `README.md`.
-  Keep the legacy GitHub Pages workflow disabled. Do not activate homepage, default
-  README or About links until both the production website and `/docs/` are reachable.
-- [ ] Review the newer onboarding follow-ups above when they become public and join
-  the final release candidate. Reconcile welcome behavior, provider choices, tools,
-  color controls, update notices, frame behavior and defaults against actual code.
-  Horizon itself is already documented from production integration at the current pin.
-- [ ] Verify the final candidate includes the cumulative capabilities above. Refresh
-  with `npm run sync:upstream -- --candidate <public-ref> --version 0.20.0`, then
-  review all source, guide, configuration/default and platform differences.
-- [ ] Obtain exact-build application CI/release evidence and required physical QA.
-  Website tests are not a substitute. Do not run captures as part of website work.
-- [ ] Verify a real public, non-draft, non-prerelease v0.20.0 release and immutable
-  commit, then run `npm run sync:upstream -- --published v0.20.0`. This fails closed
-  if that release does not exist. Review actual notes, date, tag and SHA.
-- [ ] Independently check the Homebrew formula. Only claim v0.20 Homebrew installation
-  if it really points to that tag. Otherwise keep the discrepancy and pinned source
-  instructions visible. Verify runtime/shell requirements and upgrade behavior.
-- [ ] Reconcile remaining candidate/follow-up notices and this inventory against the final tag.
-  Run `npm run check:upstream`, `npm run verify` and `npm run build:launch`.
-- [ ] Human review of desktop/mobile composition, tab favicon and social thumbnail;
-  approve domain/Cloudflare configuration separately. No merge or deployment is
-  authorized by a green build.
+- v0.20.0 is published: tag `v0.20.0` → `65e4de55b2d8f1ad3a734a9d415a353b56b81e2c`
+  (merge of release PR #392; tree identical to the verified release commit `efcaa9d0`).
+  It includes every source checkpoint above and the newer onboarding follow-ups listed
+  earlier (`6f8e9993` … `a469ba8e`). v0.19.0 was never published.
+- `npm run sync:upstream -- --published v0.20.0 --version 0.20.0` repinned every
+  technical reference to the tag and imported the real release history (11 public
+  releases, no v0.19.0). `launch.json` is `published`; candidate `noindex` is gone
+  (only the 404 keeps it).
+- Homebrew: the tap formula targets v0.20.0 (tap PR #3, `brew test-bot` green on
+  macOS and Linux).
+- Curated guides and pages were reconciled against the release: welcome on every first
+  run, Keep Existing provider choices, the Tools tiers and flow, the update notice,
+  queue settings and history, platform evidence. Candidate-only wording is state-gated
+  or removed. Learn Mode stays a planned proposal.
+- Checks on the synced tree: `npm test`, `npm run check`, `npm run build:launch`
+  (62 pages, internal links/anchors, sitemap, metadata, search), `npm run test:browser`
+  (17/17, axe in both themes and reduced motion). External links: 198 of 199 return
+  200; the private GitHub Project board was removed from the roadmap page and remains
+  only inside the canonical Contributing snapshot.
+- Known snapshot wording: canonical references reproduce repository documents at the
+  tag, including historical notes (for example `context-modules` still calls the v0.18
+  stack pending). They change only through a reviewed application-docs update and the
+  next sync.
 
-Candidate builds are intentionally `noindex` and omit released software-version
-structured data. The publication build gate rejects them. After verified promotion,
-the shared metadata removes that candidate safeguard automatically; the 404 remains
-`noindex`. Public release history stays actual historical publication data throughout.
+## Publication gates
+
+- [x] Real public v0.20.0 release and immutable tag verified; published sync done.
+- [x] Homebrew formula independently checked against the tag.
+- [x] `check:upstream`, `build:launch` and browser checks pass on the final tree.
+- [ ] Integrate through the normal PR process to `master` (the publish workflow only
+  runs from `master`).
+- [ ] Dispatch **Publish NMSh website** and obtain the maintainer's `nmsh-production`
+  approval. Then check the Pages hostname, attach `nmsh.raisecaterror.com` with
+  separate approval, and verify the live site before activating outgoing links.

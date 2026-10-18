@@ -12,7 +12,22 @@ sources: [README.md, docs/architecture/optional-tools.md, docs/architecture/gith
 `/integrations` reports integration health. Detection reads facts; it is not blanket
 authorization to install, source configuration or execute workspace code.
 
-Install plans show typed package-manager arguments and require confirmation.
+Tools come in tiers. **Recommended** is ripgrep, fd, fzf, jq, bat, zoxide and
+tealdeer; **Enhanced** adds tools such as eza, gh, lazygit, delta, Atuin, jc, Glow,
+xh, direnv, ShellCheck and shfmt; the rest of the curated catalog sits under All.
+`V` switches the view (Recommended + Enhanced by default) without changing what is
+selected. Space selects a tool, R and E add the missing Recommended or
+Recommended + Enhanced tools, C clears; `/` focuses search so keys never type into it.
+The same panel opens from `/tools`, Settings → Tools, the guided setup and the
+starting point's review.
+
+A check that fails or does not finish reads *Unable to verify* and is never selected
+or installed; a tool without an installer on this system reads *Unsupported here*.
+Installing zoxide, fzf or Atuin never turns on their shell hooks.
+
+Install plans show typed package-manager arguments and require confirmation. Enter
+reviews the exact command for every selected tool, then one confirmation (No is
+focused first) leads to per-tool results.
 Some tools need manual installation; NMSh does not run special installers such
 as an Oh My Zsh install script.
 

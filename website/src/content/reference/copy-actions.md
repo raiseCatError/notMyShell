@@ -1,6 +1,6 @@
 ---
 title: "Output selection and Copy Actions"
-description: "Canonical output selection and copy actions from the v0.20.0 candidate source."
+description: "Canonical output selection and copy actions from the v0.20.0 published source."
 group: Technical reference
 order: 120
 source: "docs/development/copy-actions-slice-3.md"

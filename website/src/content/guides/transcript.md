@@ -88,5 +88,5 @@ mean automatically redacted. Review text before copying or sharing it, and read
 
 Interactive applications can switch to passthrough rather than remain embedded
 in the transcript. Erase sequences and inline redraws remain compatibility-sensitive;
-check the [candidate changelog](/docs/reference/changelog/) and
-[QA checklist](/docs/reference/physical-qa/) for the exact source checkpoint.
+check the [changelog](/docs/reference/changelog/) and the
+[physical QA record](/docs/reference/physical-qa/) for what has been verified.

@@ -1,6 +1,6 @@
 ---
 title: "Background task architecture"
-description: "Canonical background task architecture from the v0.20.0 candidate source."
+description: "Canonical background task architecture from the v0.20.0 published source."
 group: Technical reference
 order: 117
 source: "docs/design/background-tasks.md"

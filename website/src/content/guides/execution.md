@@ -53,9 +53,9 @@ shell command. These protections do not make arbitrary program prompts trustwort
 
 ## Follow the sequence without losing the output
 
-The execution timeline shows running, recent and upcoming commands. In the current
-candidate it starts enabled, with two recent and two upcoming entries and an
-eight-second completed-chain display.
+The execution timeline shows running, recent and upcoming commands. It starts
+enabled, with two recent and two upcoming entries and an eight-second
+completed-chain display; `/queue settings` (or `/settings queue`) changes them.
 
 Queued output starts **Inline**. The optional **Fold** setting collapses eligible
 successful output while retaining the full text. Failures, interruptions and active
@@ -66,7 +66,8 @@ Fresh Recommended configurations enable typed queue-summary saving. Existing sav
 configurations with that field omitted keep the historical Off behavior; selecting
 a different starting point can also change the preference. Automatic summaries omit
 raw command arguments and output. Check the saved text and retention settings before
-sharing it. The final release's first-run defaults remain a launch validation item.
+sharing it. `/queue history` reviews recent settled chains and `/queue save-summary`
+saves the newest one after an exact-text review.
 
 ## Review multiline pastes
 

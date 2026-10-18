@@ -1,7 +1,9 @@
 {
-  "state": "candidate",
+  "state": "published",
   "version": "0.20.0",
-  "ref": "15d776eeb242cda330bbe654efae7fbac744b58d",
-  "commit": "15d776eeb242cda330bbe654efae7fbac744b58d",
-  "verifiedAt": "2026-10-17"
+  "ref": "v0.20.0",
+  "commit": "65e4de55b2d8f1ad3a734a9d415a353b56b81e2c",
+  "verifiedAt": "2026-10-18",
+  "date": "2026-10-18",
+  "url": "https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0"
 }
