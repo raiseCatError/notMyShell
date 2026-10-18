@@ -341,12 +341,10 @@ project, not a docs subdomain.
 The NMSh footer links to the already-live creator homepage. Outgoing launch links
 remain staged to avoid sending visitors to an unavailable NMSh site:
 
-- Apply `git apply website/launch-links.patch` on the reviewed integration branch
-  only after both `https://nmsh.raisecaterror.com/` and `/docs/` return the actual
-  expected pages over valid HTTPS. The patch adds separate Website and Documentation
-  README links without mixing them into the pre-publication workflow merge.
-  It targets this branch's README, not the older current `master` layout. Recheck
-  the patch against the final integrated README and retain existing source links.
+- Only after both `https://nmsh.raisecaterror.com/` and `/docs/` return the actual
+  expected pages over valid HTTPS, add separate Website and Documentation links to
+  the root README's Documentation section in an ordinary reviewed commit, keeping the
+  existing source links.
 - Set About → Website to `https://nmsh.raisecaterror.com/` using repository settings
   or `gh repo edit raiseCatError/notMyShell --homepage https://nmsh.raisecaterror.com/`.
 - The private `raisecaterror-website` repository has a local T7 branch
