@@ -70,6 +70,8 @@ import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
 import {loadFileDocument, outputDocument} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
+import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
+import {openForEdit, saveFile} from '../viewer/fileEdit.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -1622,11 +1624,20 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.textEditor) {
+      const editor = this.textEditor;
+      const {columns, rows} = this.dimensions();
+      const action = editorKey(editor, key, columns, rows - 4);
+      if (action) this.runEditorAction(editor, action);
+      this.render();
+      return;
+    }
     if (this.viewer) {
       const viewer = this.viewer;
       const {columns, rows} = this.dimensions();
       const action = viewerKey(viewer, key, columns, rows - 4, this.viewerLook());
       if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
       else if (action?.kind === 'copy') {
         void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
@@ -2887,6 +2898,10 @@ export class TerminalApp {
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
+    else if (slash.kind === 'editFile') {
+      if (!slash.target) this.output.addFrontendInteraction(command.trim(), 'Name a file: /edit notes.md. Your own editor and vim, nano or micro still work as usual.', INFO);
+      else this.openTextEditor(slash.target, command.trim());
+    }
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -3599,6 +3614,61 @@ export class TerminalApp {
       if (this.hasModalInput()) return;
       this.panelOrigin = undefined;
       this.viewer = createViewer(result.document);
+      this.render();
+    });
+  }
+
+  /**
+   * /edit: open one small text file in NMSh's editor, or say in the transcript why it cannot be edited (refused files
+   * stay readable in /view). `returnTo` is the viewer it was opened from; it is reopened if the file cannot be edited.
+   */
+  private openTextEditor(target: string, command: string, returnTo?: ViewerState): void {
+    void openForEdit(target, this.shellCwd).then(result => {
+      if (this.stopped) return;
+      if (!result.ok) {
+        if (returnTo && !this.hasModalInput()) { returnTo.note = result.reason; this.viewer = returnTo; }
+        else this.output.addFrontendInteraction(command, result.reason, ERROR);
+        this.render();
+        return;
+      }
+      if (this.hasModalInput()) return;
+      this.panelOrigin = undefined;
+      this.textEditor = createEditor(result.file);
+      this.render();
+    });
+  }
+
+  /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
+  private runEditorAction(editor: EditorState, action: EditorAction): void {
+    if (action.kind === 'close') { this.textEditor = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'copy') {
+      void this.copyText(action.text, 'Copied').then(note => { if (note && this.textEditor === editor) { editor.note = {text: note, tone: 'success'}; this.render(); } });
+      return;
+    }
+    editor.busy = true;
+    if (action.kind === 'reload') {
+      void openForEdit(editor.file.path, this.shellCwd).then(result => {
+        editor.busy = false;
+        if (this.textEditor !== editor) return;
+        if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; this.render(); return; }
+        this.textEditor = {...createEditor(result.file), note: {text: 'Reloaded from disk; your changes were discarded.', tone: 'info'}};
+        this.render();
+      });
+      return;
+    }
+    const lines = [...editor.buffer.lines];
+    void saveFile(editor.file, lines, {...(action.force ? {force: true} : {})}).then(result => {
+      editor.busy = false;
+      if (this.textEditor !== editor) return;
+      if (result.ok) {
+        editor.file = result.file;
+        // Only what was written is clean: typing during the save stays unsaved.
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        if (action.thenClose) { this.textEditor = undefined; this.returnFromPanel(); }
+        else editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+      } else if (result.conflict) {
+        editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
+      } else editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'};
       this.render();
     });
   }
@@ -4964,7 +5034,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.viewer || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5007,6 +5077,7 @@ export class TerminalApp {
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
+    if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanelPreview(columns));
@@ -5939,6 +6010,8 @@ export class TerminalApp {
   private viewer?: ViewerState;
   /** A file /view is still reading; a newer request or Esc cancels it. */
   private viewerLoad?: AbortController;
+  /** NMSh's small text editor (/edit, e in /view); owns keys while open. */
+  private textEditor?: EditorState;
   private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
   private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
   /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */

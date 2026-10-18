@@ -18,6 +18,8 @@
 | 1 Multi-row progress (#388) | Terminal.app | macOS | Bash or Fish | | Not run | |
 | 2 `/view` | Ghostty | macOS | zsh | | Not run | |
 | 2 `/view` | Terminal.app | macOS | zsh | | Not run | |
+| 3 `/edit` | Ghostty | macOS | zsh | | Not run | |
+| 3 `/edit` | Terminal.app | macOS | Bash or Fish | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -50,3 +52,20 @@
 - [ ] 2.8 Esc closes, the composer draft and cursor are where they were, and a running command's output kept
   arriving underneath. At 32×10 the viewer still fits and Esc is shown.
 - [ ] 2.9 `NO_COLOR=1` and Safe glyphs: matches and the current match are still visible (reverse video).
+
+## 3. Native editor (`/edit`)
+
+- [ ] 3.1 `/edit notes.txt` in an empty folder: it says *new file*; type two lines with Enter and a Tab, Ctrl+S says
+  *Saved*, Esc returns to the composer, `cat -A notes.txt` shows the tab and a final newline.
+- [ ] 3.2 Shift+arrows, Shift+Alt+arrows and Cmd+Shift+arrows select; typing replaces the selection; Ctrl+C copies
+  and Ctrl+X cuts it (paste it back with the terminal's paste); Ctrl+Z undoes a typed word in one step, Ctrl+Y redoes.
+- [ ] 3.3 Ctrl+F finds (lowercase ignores case), Enter again finds the next match.
+- [ ] 3.4 Edit, then Esc: the question offers Save, Discard changes and Keep editing; each does what it says.
+- [ ] 3.5 Conflict: `/edit notes.txt`, change it from another terminal (`echo x >> notes.txt`), then Ctrl+S: nothing is
+  written until you choose; Overwrite writes yours, Reload shows theirs.
+- [ ] 3.6 A CRLF file with a BOM keeps both after saving (`xxd file | head -1`); `chmod 640` survives a save; editing
+  through a symlink keeps the symlink.
+- [ ] 3.7 Refusals: a binary (`/edit /bin/ls`), a root-owned file (`/edit /etc/hosts`), a 2 MB file, a read-only file
+  (`chmod 444`) each explain why, and `/view` still opens them.
+- [ ] 3.8 `e` in `/view README.md` opens the editor on the same file; `vim notes.txt` and `nano notes.txt` still run as
+  usual from the composer.

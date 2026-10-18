@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {once} from 'node:events';
+import {mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {isolateConfig} from './support/isolatedConfig.js';
@@ -63,6 +64,8 @@ test('/view <file> reads relative to the shell directory; a missing file is repo
   const app = new TerminalApp();
   app['render'] = () => {};
   try {
+    // The real shell's startup prompt sets the directory; set the test's own after it.
+    await once(app['session'], 'prompt');
     app['shellCwd'] = root;
     writeFileSync(join(root, 'notes.md'), '# Notes\n\nhello\n');
     app['openViewer']('notes.md', '/view notes.md');
@@ -73,5 +76,42 @@ test('/view <file> reads relative to the shell directory; a missing file is repo
     app['openViewer']('missing.txt', '/view missing.txt');
     await until(() => /does not exist/u.test(transcriptText(app)), 'the missing-file notice');
     assert.equal(app['viewer'], undefined);
+  } finally { app['stop'](0); app['session'].kill(); isolation.restore(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test('/edit opens a small file, Ctrl+S saves it, Esc closes; e in /view edits the file shown; refusals are reported', async () => {
+  const isolation = isolateConfig();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-editapp-')));
+  const app = new TerminalApp();
+  app['render'] = () => {};
+  try {
+    // The real shell's startup prompt sets the directory; set the test's own after it.
+    await once(app['session'], 'prompt');
+    app['shellCwd'] = root;
+    writeFileSync(join(root, 'todo.txt'), 'buy milk\n');
+    app['openTextEditor']('todo.txt', '/edit todo.txt');
+    await until(() => app['textEditor'] !== undefined, 'the editor');
+    assert.equal(app['hasModalInput'](), true);
+    app['handleKey']({kind: 'bufferEnd'});
+    app['handleKey']({kind: 'text', value: ' and eggs'});
+    assert.equal(app['editor'].text, '', 'keys belong to the editor, not the composer');
+    app['handleKey']({kind: 'sendToProgram'});
+    await until(() => readFileSync(join(root, 'todo.txt'), 'utf8') === 'buy milk and eggs\n', 'the save');
+    await until(() => app['textEditor']?.busy === false, 'the save to settle');
+    assert.equal(app['textEditor']!.buffer.dirty, false);
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['textEditor'], undefined);
+
+    app['openViewer']('todo.txt', '/view todo.txt');
+    await until(() => app['viewer'] !== undefined, 'the viewer');
+    app['handleKey']({kind: 'text', value: 'e'});
+    await until(() => app['textEditor'] !== undefined, 'the editor from the viewer');
+    assert.equal(app['viewer'], undefined);
+    app['handleKey']({kind: 'escape'});
+
+    writeFileSync(join(root, 'blob'), Buffer.from([0, 1, 2]));
+    app['openTextEditor']('blob', '/edit blob');
+    await until(() => /looks binary/u.test(transcriptText(app)), 'the refusal');
+    assert.equal(app['textEditor'], undefined);
   } finally { app['stop'](0); app['session'].kill(); isolation.restore(); rmSync(root, {recursive: true, force: true}); }
 });
