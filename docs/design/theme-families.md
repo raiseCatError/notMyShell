@@ -59,9 +59,9 @@ NMSh never fetches palettes at runtime.
 | Nord | github.com/nordtheme/nord `src/nord.css` | MIT | Copyright (c) 2016-present Sven Greb |
 | Solarized | github.com/altercation/solarized (README) | MIT | Copyright (c) 2011 Ethan Schoonover |
 | One Dark / One Light | github.com/atom/one-dark-syntax, one-light-syntax `styles/colors.less` (HSL converted to hex) | MIT | Copyright (c) 2016 GitHub Inc. |
-| Ayu | github.com/ayu-theme/ayu-colors `themes/dark.yaml`, `mirage.yaml`, `light.yaml` (d461f029) | MIT | Copyright (c) 2016 Ike Ku |
+| Ayu | github.com/ayu-theme/ayu-colors `themes/dark.yaml`, `mirage.yaml`, `light.yaml` (d461f029) | MIT | Copyright (c) Konstantin Pschera (LICENSE gives no year) |
 | Kanagawa | github.com/rebelot/kanagawa.nvim `lua/kanagawa/colors.lua`, `themes.lua` (bb85e4bf) | MIT | Copyright (c) 2021 Tommaso Laurenzi |
-| Everforest | github.com/sainnhe/everforest `palette.md` (85a86eb6) | MIT | Copyright (c) 2019 Sainnhe Park |
+| Everforest | github.com/sainnhe/everforest `palette.md` (85a86eb6) | MIT | Copyright (c) 2019 sainnhe |
 | Flexoki | github.com/kepano/flexoki `README.md` palette tables (8d723bac) | MIT | Copyright (c) 2023 Steph Ango |
 | Night Owl | github.com/sdras/night-owl-vscode-theme `themes/Night Owl-color-theme.json`, `Night Owl-Light-color-theme.json` (cc291eba) | MIT | Copyright (c) 2018 Sarah Drasner |
 
