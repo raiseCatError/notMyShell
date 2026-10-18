@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Multi-line progress displays that redraw their own rows (cursor up and erase line, as concurrent downloads and container pulls do) now update in place instead of leaving a copy of every frame in the transcript ([#388](https://github.com/raiseCatError/notMyShell/issues/388)). A program can redraw only its own recent rows, at most a screen height up, never NMSh's lines or earlier commands; `/copy` copies the final rows once. Absolute cursor positioning keeps the previous behavior.
+- A queued command whose command word was still being classified when the next prompt reported new shell knowledge no longer keeps the unclassified color ([#408](https://github.com/raiseCatError/notMyShell/issues/408)).
+
 ## [0.20.0] - 2026-10-18
 
 **Terminal workflow, first-run setup, background tasks & native modules.** The first stable release since v0.18.0. A new first run lets you pick a starting point under a live aurora and review it before anything applies; queued commands read as a chronological timeline with saved summaries; completed output can be selected, copied and acted on from the keyboard; optional tools are discovered, reviewed and installed through one flow; long-running commands can run as background tasks beside the shell; and the native module catalog covers twelve more runtimes and build tools. Every new control is reached through an explicit command, key or review, and the persistent shell, the queue and program input keep their behavior.

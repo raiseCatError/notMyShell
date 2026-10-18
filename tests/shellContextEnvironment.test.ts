@@ -5,6 +5,7 @@ import {mkdtempSync, realpathSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ShellSession} from '../src/shell/ShellSession.js';
+import {markFishCompletionsGenerated} from '../scripts/test-shell-home.mjs';
 import {shellAdapter} from '../src/shell/adapters/registry.js';
 import {SHELL_IDS, knowledgeJobCount, type ShellId} from '../src/shell/adapters/ShellAdapter.js';
 import {parseShellKnowledge} from '../src/shell/ShellKnowledge.js';
@@ -15,6 +16,7 @@ const available = (id: ShellId) => Boolean(shellAdapter(id).resolveExecutable(pr
 
 async function start(id: ShellId): Promise<{shell: ShellSession; home: string}> {
   const home = realpathSync(mkdtempSync(join(tmpdir(), `nmsh-envsnap-${id}-`)));
+  markFishCompletionsGenerated(home);
   // The launch environment carries a secret and a frontend-only value: neither may be reported as a value.
   const shell = new ShellSession(home, 100, 30, home, {...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share'),
     LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', AWS_SESSION_TOKEN: 'LAUNCH_TOKEN_VALUE', AWS_PROFILE: 'launch-profile'}, id);

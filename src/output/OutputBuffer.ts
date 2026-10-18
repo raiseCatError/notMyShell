@@ -352,7 +352,16 @@ export class OutputBuffer {
     const placed = startId >= after && outputStartId <= this.parser.completedCount() && (header || (startId === 0 && outputStartId === 0));
     if (!placed) this.retireClearedBlocks();
     else if (!header) this.active.cleared = true;
+    // The resumed command may go on redrawing its own rows (not NMSh's lines written into its block meanwhile).
+    let ownRows = placed ? outputStartId : 0;
+    for (let line = ownRows; line < this.parser.completedCount(); line += 1) if (this.lineTypes.has(line)) ownRows = line + 1;
+    this.parser.fenceAt(ownRows);
     return {cleared: Boolean(this.active.cleared)};
+  }
+
+  /** The PTY's rows, which bound how far a program's output can redraw rows above its newest line. */
+  setScreenRows(rows: number): void {
+    this.parser.setScreenRows(rows);
   }
 
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
