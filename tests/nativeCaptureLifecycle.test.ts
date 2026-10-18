@@ -55,7 +55,8 @@ test('native cancellation reaps a PTY before it can process the initialization c
   // The inner shell never reads the queued command that formerly recorded its PID.
   const module = new URL('../src/shell/CompletionService.ts', import.meta.url).href;
   const program = `import {NativeCompletionSource} from ${JSON.stringify(module)};
-    import {existsSync} from 'node:fs';
+    import {existsSync, writeFileSync} from 'node:fs';
+    writeFileSync(${JSON.stringify(join(root, 'owner-ready'))}, '');
     const controller = new AbortController();
     const request = new NativeCompletionSource().query({buffer:'g',cwd:${JSON.stringify(root)}},controller.signal);
     while (!existsSync(${JSON.stringify(join(root, 'early-pid'))})) await new Promise(r=>setTimeout(r,5));
@@ -69,6 +70,9 @@ test('native cancellation reaps a PTY before it can process the initialization c
   });
   let inner = 0;
   try {
+    // A cold `node --import=tsx` compiling CompletionService's imports is not what this test bounds; under a full parallel
+    // run it alone took more than three seconds. The tight bounds below start once the owner is running.
+    await until(() => existsSync(join(root, 'owner-ready')) || owner.exitCode !== null, 30_000, 'the owner process to load');
     await until(() => { inner = publishedPid(join(root, 'early-pid')) ?? 0; return inner > 1; }, 3000, 'inner before initialization');
     await until(() => owner.exitCode !== null || owner.signalCode !== null, 2000, 'cancelled owner');
     assert.equal(owner.exitCode, 0);
