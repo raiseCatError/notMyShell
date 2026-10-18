@@ -1,5 +1,6 @@
 import {displaySafe} from '../input/PasteReview.js';
 import {colorLevel} from '../presentation/capabilities.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi, truncateText} from '../util/text.js';
 import type {WatchRun, WatchTask} from './WatchTasks.js';
@@ -13,6 +14,10 @@ import type {WatchRun, WatchTask} from './WatchTasks.js';
 
 export const MAX_TRACK_ROWS = 12;
 const RESET = '\u001b[0m';
+
+/** A tracker's state mark; Safe glyphs use ASCII. */
+const MARKS = {live: ['◉', '*'], stopped: ['■', '#'], paused: ['‖', '='], pending: ['◌', 'o']} as const;
+export const trackMark = (state: keyof typeof MARKS): string => MARKS[state][getCurrentGlyphMode() === 'nerd' ? 0 : 1];
 
 const clock = (at: number) => new Date(at).toLocaleTimeString('en-GB', {hour12: false});
 const every = (ms: number) => ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 100) / 10}s`;
@@ -35,10 +40,10 @@ export function trackStatus(watch: WatchTask, now: number, sampling: boolean): s
   const parts: string[] = [];
   let mark: string;
   let role: keyof typeof UI_COLORS = 'subtle';
-  if (watch.status === 'stopped') { mark = '■'; parts.push('stopped'); }
-  else if (watch.status === 'paused') { mark = '‖'; parts.push('paused'); }
-  else if (!run) { mark = '◌'; parts.push(sampling ? 'first run…' : 'first run pending'); }
-  else { mark = '◉'; role = outcome!.ok ? 'success' : 'failure'; parts.push('live'); }
+  if (watch.status === 'stopped') { mark = trackMark('stopped'); parts.push('stopped'); }
+  else if (watch.status === 'paused') { mark = trackMark('paused'); parts.push('paused'); }
+  else if (!run) { mark = trackMark('pending'); parts.push(sampling ? 'first run…' : 'first run pending'); }
+  else { mark = trackMark('live'); role = outcome!.ok ? 'success' : 'failure'; parts.push('live'); }
   parts.push(`every ${every(watch.intervalMs)}`);
   if (run && outcome) parts.push(`updated ${clock(finished!)}`, outcome.text);
   if (run?.truncated) parts.push('output cut at 200 kB');
@@ -48,22 +53,34 @@ export function trackStatus(watch: WatchTask, now: number, sampling: boolean): s
   return `${paint(role)}${mark}${RESET} ${paint('secondary')}${parts.join(' · ')}${RESET}`;
 }
 
+/** A result's first rows (inert, cut far past any terminal width) and its line count: once per result, not per frame. */
+const resultCache = new WeakMap<WatchRun, {head: string[]; total: number}>();
+function resultLines(run: WatchRun): {head: string[]; total: number} {
+  let cached = resultCache.get(run);
+  if (!cached) {
+    const lines = run.output.replace(/\n$/u, '').split('\n');
+    cached = {head: lines.slice(0, MAX_TRACK_ROWS).map(line => displaySafe(line.slice(0, 4096))), total: lines.length};
+    resultCache.set(run, cached);
+  }
+  return cached;
+}
+
 export function trackBlockRows(watch: WatchTask | undefined, width: number, now: number, reserved: number, sampling = false): {rows: string[]; reserved: number} {
   const color = colorLevel() !== 'none';
   const subtle = color ? foreground(UI_COLORS.subtle) : '';
   const fit = (text: string) => truncateText(text, Math.max(1, width - 4));
-  if (!watch) return {rows: [`    ${subtle}■ not running: trackers stop with the window that started them${RESET}`], reserved: 0};
+  if (!watch) return {rows: [`    ${subtle}${trackMark('stopped')} not running: trackers stop with the window that started them${RESET}`], reserved: 0};
   const status = truncateAnsi(`    ${trackStatus(watch, now, sampling)}`, width);
   // Stopped by the person: the final result was written into the transcript; the live rows end here.
   if (watch.status === 'stopped') return {rows: [status], reserved: 0};
-  const lines = watch.current ? watch.current.output.replace(/\n$/u, '').split('\n') : [];
-  const height = Math.max(reserved, Math.min(MAX_TRACK_ROWS, Math.max(1, lines.length)));
+  const {head, total} = watch.current ? resultLines(watch.current) : {head: [], total: 0};
+  const height = Math.max(reserved, Math.min(MAX_TRACK_ROWS, Math.max(1, total)));
   const body: string[] = [];
   if (!watch.current) body.push(`    ${subtle}waiting for the first result…${RESET}`);
   else {
-    const take = lines.length > height ? height - 1 : lines.length;
-    for (const line of lines.slice(0, take)) body.push(`    ${fit(displaySafe(line))}`);
-    if (take < lines.length) body.push(`    ${subtle}${fit(`… ${lines.length - take} more lines · /track copy copies them all`)}${RESET}`);
+    const take = total > height ? height - 1 : total;
+    for (const line of head.slice(0, take)) body.push(`    ${fit(line)}`);
+    if (take < total) body.push(`    ${subtle}${fit(`… ${total - take} more lines · /track copy copies them all`)}${RESET}`);
   }
   while (body.length < height) body.push('');
   return {rows: [status, ...body], reserved: height};

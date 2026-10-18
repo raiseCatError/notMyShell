@@ -1,6 +1,8 @@
 import {spawn, type ChildProcess} from 'node:child_process';
+import {statSync} from 'node:fs';
 import {StringDecoder} from 'node:string_decoder';
-import {classifyCommand, splitCommands, type PasteKind} from '../input/pasteGuard.js';
+import {classifyCommand, maskQuoted, splitCommands, writesFiles, type PasteKind} from '../input/pasteGuard.js';
+import {reachesRemote, repeatRisk} from './repeatSafety.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 
 /**
@@ -26,6 +28,7 @@ export const MAX_ACTIVE_WATCHES = 8;
 const MAX_COMMAND = 4096;
 const MAX_OUTPUT = 200_000;
 const STOP_GRACE_MS = 1500;
+const isDirectory = (path: string) => { try { return statSync(path).isDirectory(); } catch { return false; } };
 
 export function watchSafety(command: string): WatchSafety {
   if (!command.trim() || command.length > MAX_COMMAND || /[\u0000-\u001f\u007f]/u.test(command)) {
@@ -36,32 +39,37 @@ export function watchSafety(command: string): WatchSafety {
   if (/\$\(|`|[<>]\(/u.test(command)) {
     return {kind: 'refused', reason: 'Shell and process substitutions cannot be tracked repeatedly.'};
   }
-  const outsideQuotes = command.replace(/"(?:\\.|[^"\\])*"|'[^']*'/gu, '""');
-  // Detached shell jobs would outlive the observed sample and multiply on every
-  // tick; heredocs also need a different stdin/input-ownership contract.
-  if (/(?:^|[^&])&(?!&)|<</u.test(outsideQuotes)) {
+  // Detached shell jobs would outlive the observed sample and multiply on every tick; heredocs also need a different
+  // stdin/input-ownership contract. `&&` and descriptor duplication (`2>&1`, `>&2`) are not background operators; `&>`
+  // is one for the POSIX sh that runs samples (dash reads `cmd &>file` as `cmd &` then `>file`), so it stays refused.
+  if (/(?:^|[^&<>])&(?!&)|<</u.test(maskQuoted(command))) {
     return {kind: 'refused', reason: 'Background operators and heredocs cannot be tracked safely.'};
   }
+  if (writesFiles(command)) return {kind: 'refused', reason: 'NMSh won\'t repeatedly run a command whose output is redirected into a file.'};
   const parts = splitCommands(command);
   if (!parts.length) return {kind: 'refused', reason: 'There is no command to watch.'};
   let unknown = false;
+  let reason: string | undefined;
   let network = false;
   let remote = false;
   for (const part of parts) {
     const kinds = classifyCommand(part.text, part.pipedFrom);
     const bad = kinds.find(kind => REFUSED.has(kind));
-    if (bad) return {kind: 'refused', reason: `/watch won't repeatedly run a command that ${bad === 'navigation' ? 'changes directory' : bad === 'install' ? 'installs packages' : bad === 'privilege' ? 'runs as root' : bad === 'pipeline' ? 'runs downloaded code' : bad === 'destructive' ? 'deletes or destroys things' : 'modifies files'} (${part.text}).`};
+    if (bad) return {kind: 'refused', reason: `NMSh won't repeatedly run a command that ${bad === 'navigation' ? 'changes directory' : bad === 'install' ? 'installs packages' : bad === 'privilege' ? 'runs as root' : bad === 'pipeline' ? 'runs downloaded code' : bad === 'destructive' ? 'deletes or destroys things' : 'modifies files'} (${part.text}).`};
+    // Repetition has its own, stricter gate (repeatSafety.ts): a refusal there ends it; a doubt asks first.
+    const risk = repeatRisk(part.text, kinds);
+    if (risk?.kind === 'refused') return {kind: 'refused', reason: `NMSh won't repeatedly run a command that ${risk.reason}.`};
+    if (risk) { unknown = true; reason ??= risk.reason; }
     if (kinds.includes('network')) {
       network = true;
-      const target = /https?:\/\/([^/:\s]+)/u.exec(part.text)?.[1] ?? /\s([\w.-]+\.[a-z]{2,})(?:\s|$)/iu.exec(part.text)?.[1];
-      if (target && !/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/u.test(target)) remote = true;
+      if (reachesRemote(part.text, kinds)) remote = true;
     }
     // Allow only Docker's explicit read-only disk report. Other Docker verbs (including
     // 'system prune') still require confirmation, or are refused by the classifier.
     const dockerDiskReport = /^docker\s+system\s+df(?:\s+(?:-v|--verbose))?\s*$/u.test(part.text);
     if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !dockerDiskReport && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
   }
-  return unknown ? {kind: 'confirm', reason: 'NMSh can\'t tell whether this command changes anything; it will run every interval.', network, remote} : {kind: 'allowed', network, remote};
+  return unknown ? {kind: 'confirm', reason: `${reason ?? 'NMSh can\'t tell whether this command changes anything.'} It will run every interval.`, network, remote} : {kind: 'allowed', network, remote};
 }
 
 /** Parse a finite interval strictly. Invalid cadence never falls through as shell text. */
@@ -142,6 +150,8 @@ export class WatchTasks {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly children = new Map<string, ChildProcess>();
   private readonly killTimers = new Map<string, NodeJS.Timeout>();
+  /** KILL escalations for leftovers of finished samples (see endStragglers); never cleared early. */
+  private readonly stragglers = new Set<NodeJS.Timeout>();
   private readonly listeners = new Set<(watch: WatchTask, transition?: 'pass' | 'fail') => void>();
 
   /**
@@ -205,9 +215,6 @@ export class WatchTasks {
       return true;
     }
     this.children.set(id, child);
-    // Notify the presenter when a refresh begins, not only when it completes:
-    // a slow sample must be shown as refreshing while its previous result stays visible.
-    this.emit(watch);
     const take = (decoder: StringDecoder, chunk: Buffer) => {
       const kept = Math.min(chunk.length, Math.max(0, MAX_OUTPUT - receivedBytes));
       if (kept) { receivedBytes += kept; output += decoder.write(chunk.subarray(0, kept)); }
@@ -225,13 +232,17 @@ export class WatchTasks {
       child.stderr?.destroy();
     }, Math.min(60_000, watch.intervalMs * 3));
     limit.unref();
-    child.on('error', error => { spawnError = String(error); });
+    child.on('error', error => {
+      // Node names the shell when the working directory is what is missing; say which one it is.
+      spawnError = (error as NodeJS.ErrnoException).code === 'ENOENT' && !isDirectory(watch.cwd) ? `the directory ${watch.cwd} is no longer available` : String(error);
+    });
     // Only 'close' guarantees the captured stdio has finished, unlike 'exit'.
     child.on('close', (code, signal) => {
       clearTimeout(limit);
       const killTimer = this.killTimers.get(id);
       if (killTimer) clearTimeout(killTimer);
       this.killTimers.delete(id);
+      this.endStragglers(child);
       if (this.children.get(id) !== child) return;
       this.children.delete(id);
       output += stdoutDecoder.end() + stderrDecoder.end();
@@ -241,7 +252,27 @@ export class WatchTasks {
         ...(spawnError ? {error: stripTerminalControls(spawnError, 300)} : {}),
         ...(signal ? {signal} : {})});
     });
+    // The presenter shows `refreshing…` over the previous result from now on; told only once the sample is wired, so
+    // a listener that throws cannot leave a child without its handlers.
+    this.emit(watch);
     return true;
+  }
+
+  /**
+   * A finished sample's process group must be empty: anything left (a child that ignored TERM, or one that closed its
+   * output and kept running) outlived its sample and would pile up on every refresh. End it with TERM, then KILL after
+   * the grace period. The KILL timer keeps the window alive that long when it is closing, so nothing is left behind.
+   */
+  private endStragglers(child: ChildProcess): void {
+    const group = child.pid;
+    if (!group) return;
+    try { process.kill(-group, 0); } catch { return; }
+    try { process.kill(-group, 'SIGTERM'); } catch { return; }
+    const timer = setTimeout(() => {
+      this.stragglers.delete(timer);
+      try { process.kill(-group, 'SIGKILL'); } catch { /* already gone */ }
+    }, STOP_GRACE_MS);
+    this.stragglers.add(timer);
   }
 
   private signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {

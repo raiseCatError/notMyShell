@@ -53,6 +53,8 @@ export function splitCommands(text: string): Array<{text: string; pipedFrom: boo
     if (char === '\n' || char === ';') { push(false); continue; }
     if (char === '&' && next === '&') { push(false); index += 1; continue; }
     if (char === '|' && next === '|') { push(false); index += 1; continue; }
+    // `>|` is a redirection (overwrite despite noclobber), not a pipe.
+    if (char === '|' && current.endsWith('>')) { current += char; continue; }
     if (char === '|') { push(true); continue; }
     current += char;
   }
@@ -62,7 +64,31 @@ export function splitCommands(text: string): Array<{text: string; pipedFrom: boo
 
 const INTERPRETERS = /^(?:sh|bash|zsh|fish|dash|ksh|python3?|node|perl|ruby|eval|source|\.)$/u;
 
+/** Shell text with quoted strings and escaped characters masked, so operators inside them are not read as operators. */
+export function maskQuoted(text: string): string {
+  return text.replace(/\\[\s\S]|"(?:\\.|[^"\\])*"|'[^']*'/gu, match => match.startsWith('\\') ? '__' : '""');
+}
+
+/**
+ * Whether shell text redirects output into a file. Every redirection is judged on its own target, so `>/dev/null`
+ * elsewhere in the line never excuses `> ~/.zshrc`. Descriptor duplication (`2>&1`), closing (`>&-`), the null device
+ * and the standard streams are not files; `>|`, `>&file`, `&>file` and `<>` (opens for writing) are.
+ */
+export function writesFiles(text: string): boolean {
+  for (const match of maskQuoted(text).matchAll(/(&>>?|\d*>>|\d*>\||\d*<>|\d*>&|\d*>)\s*([^\s;&|<>()]*)/gu)) {
+    const operator = match[1] ?? '';
+    const target = match[2] ?? '';
+    if (operator.endsWith('<>')) return true;
+    if (operator.endsWith('>&') && /^(?:\d+|-)$/u.test(target)) continue;
+    if (/^\/dev\/(?:null|stdout|stderr|fd\/[12])$/u.test(target)) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Words of one command (quotes removed for classification only). */
+export function commandWords(text: string): string[] { return words(text); }
+
 function words(text: string): string[] {
   return text.match(/"(?:\\.|[^"])*"|'[^']*'|\S+/gu)?.map(word => word.replace(/^["']|["']$/gu, '')) ?? [];
 }
@@ -196,7 +222,7 @@ function shellKinds(text: string, pipedFrom: boolean): PasteKind[] {
   if (/^(?:mv|cp|mkdir|touch|ln|tee|sed|perl|install|chmod|chown|patch|unzip|tar)$/u.test(command) && !kinds.has('destructive')) {
     if (command !== 'sed' || /-i\b|--in-place/u.test(flags)) { kinds.delete('read'); kinds.add('modifies'); }
   }
-  if (/(?:^|[^>&])>>?\s*[^\s&|]/u.test(text.replace(/"(?:\\.|[^"])*"|'[^']*'/gu, '""')) && !/>\s*\/dev\/null/u.test(text)) kinds.add('modifies');
+  if (writesFiles(text)) kinds.add('modifies');
   if (!kinds.size) kinds.add('unknown');
   return [...kinds];
 }

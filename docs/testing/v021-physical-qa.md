@@ -103,9 +103,19 @@
 - [ ] 5.5 `/track copy` copies only the latest result; find (Ctrl+F) never matches the live rows.
 - [ ] 5.6 `/track stop`: the last result appears once in the transcript; `/resume` of the saved session shows it
   without any per-refresh copies.
-- [ ] 5.7 An unknown command asks for Yes first; `rm`, `sudo`, `cd`, `$(...)`, `&` and heredocs are refused.
+- [ ] 5.7 An unknown command asks for Yes first ("Track …?"); `rm`, `sudo`, `cd`, `$(...)`, `&` and heredocs are
+  refused. Also refused: `/track echo x > /tmp/t 2>/dev/null`, `/track git log --output=/tmp/t`, `/track npx jest -u`.
+  Asks first: `/track env ls`, `/track curl -X POST http://localhost:1/`, `/track npm publish`, `/track ssh localhost
+  true`. Starts at once: `/track npm test 2>&1`, `/track curl -s http://localhost:1/` (fails, shows the exit code).
 - [ ] 5.8 Close the window with a tracker running: no `sh` or command processes are left (`ps`). `/watch git status`
   still opens its manager.
+- [ ] 5.9 Four trackers at once (`ls`, `df -h`, `cat f.txt`, a failing one): each block refreshes on its own, the
+  composer area shows one `4 trackers · 1 failing` row, narrowing the window to 60 columns and back keeps every block
+  readable, and `/track stop all` leaves each last result once.
+- [ ] 5.10 `/track --every 2s -- sh -c 'trap "" TERM; exec >/dev/null 2>&1; exec sleep 300'` (Yes), then `/track stop`:
+  within 3 seconds `pgrep -f "sleep 300"` finds nothing.
+- [ ] 5.11 Safe glyphs (Settings → Appearance) and `NO_COLOR=1`: the status marks are ASCII (`*`, `=`, `#`) and the
+  status still says live, paused or stopped in words.
 
 ## 6. Native modules and diagnostics
 

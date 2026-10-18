@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {parseWatch, watchSafety, WatchTasks, MIN_LOCAL_MS} from '../src/tasks/WatchTasks.js';
-import {renderWatchPanel, watchPanelKey, watchRow} from '../src/tasks/WatchPanel.js';
+import {renderWatchPanel, watchNoticeRows, watchPanelKey, watchRow} from '../src/tasks/WatchPanel.js';
+import {setIconStyle} from '../src/ui/glyphs.js';
 import {stripAnsi} from '../src/util/text.js';
 
 function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
@@ -188,8 +189,38 @@ test('/track fails visibly when the command or working directory is unavailable'
       {kind: 'allowed', network: false, remote: false});
     await waitFor(() => missingCwd.runs === 1);
     assert.notEqual(missingCwd.current?.exitCode, 0, 'invalid cwd cannot be a successful refresh');
-    assert.match(missingCwd.current?.error ?? '', /ENOENT|spawn/u);
+    assert.equal(missingCwd.current?.error, `the directory ${join(cwd, 'not-here')} is no longer available`, 'names the directory, not the shell');
     assert.equal(engine.active().length, 2);
+  } finally {
+    engine.dispose();
+    rmSync(cwd, {recursive: true, force: true});
+  }
+});
+
+test('/track ends what a sample leaves in its process group: after stop, and after a sample that finished', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-orphans-'));
+  const engine = new WatchTasks('/bin/sh');
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // A child that ignores TERM and closes its output: the shell that started it can end while it keeps running.
+  const stubborn = (name: string) => `sh -c 'trap "" TERM; echo $$ > ${name}; exec >/dev/null 2>&1; exec sleep 30'`;
+  const pidOf = async (name: string) => {
+    let pid = 0;
+    await waitFor(() => { try { pid = Number(readFileSync(join(cwd, name), 'utf8').trim()); } catch { /* not yet */ } return pid > 0; });
+    return pid;
+  };
+  try {
+    const stopped = engine.start(`${stubborn('stopped.pid')}; echo done`, cwd, 5000, {kind: 'allowed', network: false, remote: false});
+    const stoppedPid = await pidOf('stopped.pid');
+    assert.ok(alive(stoppedPid));
+    assert.equal(engine.stop(stopped.id), true);
+    await waitFor(() => !alive(stoppedPid), 6000);
+
+    const finished = engine.start(`${stubborn('finished.pid')} & echo started`, cwd, 5000, {kind: 'allowed', network: false, remote: false});
+    await waitFor(() => finished.runs === 1, 6000);
+    assert.match(finished.current?.output ?? '', /started/u);
+    assert.equal(finished.current?.exitCode, 0, 'the sample itself finished normally');
+    const finishedPid = await pidOf('finished.pid');
+    await waitFor(() => !alive(finishedPid), 6000);
   } finally {
     engine.dispose();
     rmSync(cwd, {recursive: true, force: true});
@@ -227,6 +258,14 @@ test('track status says only what is known: pending, live, failed, timed out, pa
   assert.match(plain(task({current: run('ok'), runs: 1}), 2_000, true), /refreshing…/u);
   assert.match(plain(task({current: run('ok', {truncated: true}), runs: 1})), /output cut at 200 kB/u);
   assert.match(plain(task({current: run('ok'), status: 'stopped', runs: 4})), /^■ stopped/u);
+  setIconStyle('safe');
+  try {
+    assert.match(plain(task()), /^o first run pending/u, 'Safe glyphs: ASCII marks');
+    assert.match(plain(task({current: run('ok'), runs: 1})), /^\* live/u);
+    assert.match(plain(task({current: run('ok'), status: 'paused', runs: 1})), /^= paused/u);
+    assert.match(plain(task({current: run('ok'), status: 'stopped', runs: 4})), /^# stopped/u);
+    assert.match(stripAnsi(watchRow(task({current: run('ok'), status: 'paused', runs: 1}), 2_000)), /^= Track/u);
+  } finally { setIconStyle('nerd'); }
 });
 
 test('the live result keeps a stable height: shorter results pad, longer ones say how much is not shown; text is inert', () => {
@@ -264,4 +303,15 @@ test('the block: stored lines once, live rows replaced in place under them, neve
   assert.equal(logicalLines(after).some(line => line.text.includes('second')), false, 'find never matches the live result');
   buffer.clearPresentation();
   assert.equal(buffer.wrapped(80).some(row => row.derived), false);
+});
+
+test('above the composer: one row per tracker for up to two, then one summary row', () => {
+  const one = task({current: run('ok'), runs: 1});
+  const failing = task({id: 'w2', current: run('no', {exitCode: 2}), runs: 1});
+  const paused = task({id: 'w3', current: run('ok'), status: 'paused', runs: 1});
+  assert.equal(watchNoticeRows([one, failing], 2_000).length, 2);
+  const summary = watchNoticeRows([one, failing, paused, task({id: 'w4'})], 2_000);
+  assert.equal(summary.length, 1);
+  assert.equal(stripAnsi(summary[0]!), '◉ 4 trackers · 1 failing · 1 paused · /track opens the manager');
+  assert.deepEqual(watchNoticeRows([], 2_000), []);
 });

@@ -31,6 +31,10 @@ keeps a command's own flags from reading as NMSh's.
 - Live rows are presentation: find, selection and `/copy` never include them, and nothing accumulates per refresh.
 - Stopping a tracker (`/track stop`, or S in the manager) writes its **last result once** into the transcript, so
   history keeps it. A tracker whose window closes leaves only its stored lines.
+- Above the composer, each active tracker has a compact row; with more than two, one summary row (`4 trackers · 1
+  failing · /track opens the manager`) replaces them. `clear` removes the block from the transcript; the tracker keeps
+  running and stays in the manager.
+- Safe glyphs use ASCII state marks (`*` live, `=` paused, `o` pending, `#` stopped).
 
 ## Execution and safety
 
@@ -40,13 +44,29 @@ keeps a command's own flags from reading as NMSh's.
 - Default interval 5 s; at least 2 s locally and 15 s for remote network targets; at most 60 minutes. Invalid
   intervals fail before anything runs. At most 8 active trackers. A sample never overlaps another of the same tracker;
   a refresh while one runs is refused with the reason.
-- Repeated commands can repeat side effects. Read-only commands (and the exact `docker system df`) start at once;
-  unknown ones need an explicit Yes; installing, modifying, destroying, privileged, downloaded-code, `cd`, substitution,
-  background (`&`) and heredoc commands are refused.
+- Repeated commands can repeat side effects, so repetition has its own gate (`src/tasks/repeatSafety.ts`) on top of
+  the shared command classifier, and it asks when unsure:
+  - **Start at once:** read-only commands, test and check runners, the exact `docker system df`, and read-only network
+    probes: `ping`, `dig`, `nslookup`, `host`, `traceroute`, `nc -z`, a curl GET or HEAD to standard output (or
+    `-o /dev/null`), `wget -O -` or `--spider`, and package queries (`npm view`, `outdated`, `audit`).
+  - **Ask first (an explicit Yes):** unknown commands; `NAME=value` prefixes and `env <command>` (they change or run
+    another command); git's `-c`, `--config-env`, `--exec-path` and `--ext-diff`; `git fetch`; anything that sends
+    data, saves files, signs in, publishes or runs a downloaded package (`curl -X POST`, `-d`, `-o file`, non-HTTP
+    URLs, plain `wget`, `ssh`, `sftp`, HTTPie, `npm publish`, `npm login`, `npm x`, `pnpm dlx`, `npm audit fix`).
+    Network targets other than this computer also ask, and their minimum interval is 15 s.
+  - **Refused:** installing, modifying, destroying, privileged, downloaded-code and `cd` commands; substitutions,
+    background `&` and heredocs; any output redirection into a file (judged per redirection, so `2>/dev/null` never
+    excuses `> file`; `2>&1` is fine); options that write or update files (`git … --output`, `sort -o`, `find
+    -fprint`/`-fls`, `tree -o`, `yq -i`, `--fix`, `--write`, `jest -u`, snapshot updates); `scp` and `rsync` (except
+    a dry run); `--watch` modes that never finish; shutdown, reboot, halt and power-off.
 - Each sample keeps at most 200 kB of stdout and stderr (decoded as UTF-8 across chunk boundaries), says when it was
   cut, and has its terminal control sequences removed. A sample is stopped after the lesser of 60 s or three
-  intervals and shown as timed out. Stopping signals the owned process group (TERM, then KILL after a grace period);
-  processes that deliberately leave the group are not followed.
+  intervals and shown as timed out. Stopping signals the owned process group (TERM, then KILL after a grace period).
+  When a sample ends, anything still in its process group (a child that ignored TERM, or one that closed its output and
+  kept running) gets TERM and then KILL, so trackers never accumulate processes; a closing window waits for that
+  bounded grace period. Processes that deliberately leave the group (`setsid`, daemons) are not followed.
+- A tracker whose directory disappears says so (`the directory … is no longer available`) and keeps trying at its
+  interval, so a remounted volume resumes on its own.
 
 ## Ownership and limits
 
