@@ -42,6 +42,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
   {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
+  {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
   {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
   {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
@@ -171,6 +172,8 @@ export type ParsedSlashCommand =
   | {kind: 'compare'; first?: number; second?: number; error?: string}
   /** /view [path | N]: a file (relative to the shell's directory, ~ for home), output N as /copy numbers it, or the latest output. */
   | {kind: 'view'; target: string}
+  /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
+  | {kind: 'editFile'; target: string}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
@@ -268,6 +271,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
   const view = /^\/view(?:\s+([\s\S]*))?$/u.exec(input);
   if (view) return {kind: 'view', target: (view[1] ?? '').trim()};
+  const editFile = /^\/edit(?:\s+([\s\S]*))?$/u.exec(input);
+  if (editFile) return {kind: 'editFile', target: (editFile[1] ?? '').trim()};
   // /cp is /copy: one parser, one handler, every form.
   if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
   const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);

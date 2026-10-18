@@ -56,7 +56,7 @@ export interface ViewerState {
   markdown?: {width: number; rows: MarkdownRow[]};
 }
 
-export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number};
+export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number} | {kind: 'edit'; path: string};
 
 export interface ViewerLook {syntax?: SyntaxSgr; hyperlinks?: boolean}
 
@@ -400,6 +400,7 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   else if (text === 'n' && state.query) step(state, 1, width, body, look);
   else if (text === 'N' && state.query) step(state, -1, width, body, look);
   else if (text === 'c') return {kind: 'copy', text: state.document.text, lines: state.document.lines.length};
+  else if (text === 'e' && state.document.origin.kind === 'file') return {kind: 'edit', path: state.document.origin.path};
   return undefined;
 }
 
@@ -437,7 +438,7 @@ function controls(state: ViewerState, columns: number): string[] {
     ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(state.document.format === 'markdown' ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
-    ['c', 'copy all'], ['Esc', 'close'],
+    ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const] : []), ['Esc', 'close'],
   ], width);
 }
 

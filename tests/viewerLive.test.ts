@@ -56,3 +56,24 @@ test('live: /view reads a file and the latest output; find, go to line, copy all
     await frontend.run('echo AFTER-VIEW', /AFTER-VIEW/u);
   } finally { await sandbox.dispose(); }
 });
+
+test('live: /edit creates a file, typed text and Ctrl+S from real terminal bytes save it, Esc returns to the composer', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh'});
+  const frontend = sandbox.launch([], {cols: 100, rows: 30});
+  try {
+    await frontend.waitFor(/Vespyr|notMyShell|zsh/u);
+    await frontend.run('echo READY', /READY/u);
+    let mark = frontend.mark;
+    frontend.pty.write('/edit notes.txt\r');
+    await frontend.waitFor(/notes\.txt[\s\S]*new file[\s\S]*Ctrl\+S save/u, mark);
+    frontend.pty.write('first line\rsecond\tline');
+    mark = frontend.mark;
+    frontend.pty.write('\u0013');
+    await frontend.waitFor(/Saved/u, mark);
+    assert.equal(readFileSync(join(sandbox.home, 'notes.txt'), 'utf8'), 'first line\nsecond\tline\n');
+    mark = frontend.mark;
+    frontend.pty.write('\u001b');
+    await frontend.waitFor(/❯/u, mark);
+    await frontend.run('cat notes.txt', /second\s+line/u);
+  } finally { await sandbox.dispose(); }
+});
