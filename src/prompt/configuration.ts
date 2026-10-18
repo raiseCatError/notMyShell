@@ -144,10 +144,14 @@ export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscal
 /** Bundled third-party variants (see appearance/themeFamilies). */
 export type ThirdPartyPaletteId = 'catppuccinLatte' | 'catppuccinFrappe' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'dracula'
   | 'tokyonightNight' | 'tokyonightStorm' | 'tokyonightMoon' | 'tokyonightDay' | 'gruvboxDark' | 'gruvboxLight'
-  | 'rosePine' | 'rosePineMoon' | 'rosePineDawn' | 'nord' | 'solarizedDark' | 'solarizedLight' | 'oneDark' | 'oneLight';
+  | 'rosePine' | 'rosePineMoon' | 'rosePineDawn' | 'nord' | 'solarizedDark' | 'solarizedLight' | 'oneDark' | 'oneLight'
+  | 'ayuDark' | 'ayuMirage' | 'ayuLight' | 'kanagawaWave' | 'kanagawaDragon' | 'kanagawaLotus' | 'everforestDark' | 'everforestLight'
+  | 'flexokiDark' | 'flexokiLight' | 'nightOwl' | 'nightOwlLight';
 export const THIRD_PARTY_PALETTE_IDS: readonly ThirdPartyPaletteId[] = ['catppuccinLatte', 'catppuccinFrappe', 'catppuccinMacchiato', 'catppuccinMocha',
   'dracula', 'tokyonightNight', 'tokyonightStorm', 'tokyonightMoon', 'tokyonightDay', 'gruvboxDark', 'gruvboxLight',
-  'rosePine', 'rosePineMoon', 'rosePineDawn', 'nord', 'solarizedDark', 'solarizedLight', 'oneDark', 'oneLight'];
+  'rosePine', 'rosePineMoon', 'rosePineDawn', 'nord', 'solarizedDark', 'solarizedLight', 'oneDark', 'oneLight',
+  'ayuDark', 'ayuMirage', 'ayuLight', 'kanagawaWave', 'kanagawaDragon', 'kanagawaLotus', 'everforestDark', 'everforestLight',
+  'flexokiDark', 'flexokiLight', 'nightOwl', 'nightOwlLight'];
 export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
 /**
  * Rich Git state colors: `semantic` keeps meaningful Git colors under any

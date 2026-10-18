@@ -26,7 +26,7 @@ import {categoryOf, findTheme, IMPORTER_VERSION, provenanceLabel, type ThemeAsse
 import {assetRef, builtinRef, builtinTheme, type ThemeRef} from './themeRefs.js';
 import {IMPORT_FORMAT_CHOICES, IMPORT_SIZE_LIMIT, importFormatLabel, importThemeSource, type ImportOutcome, type ImportPreview} from './themeImporters.js';
 import {BRIDGE_TARGET_LABELS, type BridgeTargetId} from '../themeBridge/model.js';
-import type {CatppuccinAccent} from './themeFamilies.js';
+import {THEME_FAMILIES, themeVariant, type CatppuccinAccent} from './themeFamilies.js';
 
 /**
  * Theme Studio (/theme): create, edit, import, manage and select NMSh Native
@@ -300,6 +300,8 @@ export interface StudioContext {
 
 export interface ThemeStudioState {
   tab: StudioTab;
+  /** Built-in tab: `/` narrows the list by name, family, or dark/light. */
+  builtinFilter?: {text: string; editing: boolean};
   focus: 'tabs' | 'list';
   /** Selected row per library tab. */
   selected: Record<Exclude<StudioTab, 'import'>, number>;
@@ -354,8 +356,20 @@ function libraryItems(context: StudioContext, tab: 'imported' | 'custom'): Theme
   return context.themes.filter(asset => categoryOf(asset) === tab);
 }
 
+/** The built-in themes the filter keeps (every one without a filter): each word must match the name, family or dark/light. */
+function builtinList(state: ThemeStudioState): Array<Exclude<NativePaletteId, 'custom'>> {
+  const query = state.builtinFilter?.text.trim().toLowerCase();
+  if (!query) return BUILTIN_PALETTES;
+  return BUILTIN_PALETTES.filter(palette => {
+    const variant = themeVariant(palette);
+    const family = THEME_FAMILIES.find(item => item.id === (variant?.family ?? 'nmsh'))?.label ?? 'NMSh';
+    const words = `${builtinTheme(palette, 'mauve').name} ${family} ${variant ? (variant.dark ? 'dark' : 'light') : ''}`.toLowerCase();
+    return query.split(/\s+/u).every(term => words.includes(term));
+  });
+}
+
 function rowCount(state: ThemeStudioState, context: StudioContext): number {
-  if (state.tab === 'builtin') return BUILTIN_PALETTES.length;
+  if (state.tab === 'builtin') return builtinList(state).length;
   if (state.tab === 'imported') return libraryItems(context, 'imported').length;
   if (state.tab === 'custom') return libraryItems(context, 'custom').length + CUSTOM_ACTIONS;
   return 0;
@@ -369,7 +383,7 @@ export function selectedAsset(state: ThemeStudioState, context: StudioContext): 
 }
 
 export function selectedBuiltinRef(state: ThemeStudioState, context: StudioContext): ThemeRef {
-  return builtinRef(BUILTIN_PALETTES[state.selected.builtin] ?? 'lavender', context.accent);
+  return builtinRef(builtinList(state)[state.selected.builtin] ?? 'lavender', context.accent);
 }
 
 /** The theme the studio is showing: the editor draft, the import preview, or the selected row. */
@@ -377,7 +391,7 @@ export function previewTheme(state: ThemeStudioState, context: StudioContext): {
   if (state.editor) return {theme: state.editor.draft};
   if (state.tab === 'import') return state.importPreview ? {theme: state.importPreview.theme} : undefined;
   if (state.tab === 'builtin') {
-    const palette = BUILTIN_PALETTES[state.selected.builtin] ?? 'lavender';
+    const palette = builtinList(state)[state.selected.builtin] ?? 'lavender';
     return {theme: builtinTheme(palette, context.accent), palette};
   }
   const asset = selectedAsset(state, context);
@@ -394,7 +408,7 @@ const CUSTOM_ACTIONS = 2;
 
 /** C toggles the local preview Chroma wherever no text is being typed. */
 function typing(state: ThemeStudioState): boolean {
-  return Boolean(state.rename || state.editor?.picker || state.editor?.editingName !== undefined || (state.tab === 'import' && state.importField === 'path' && state.focus === 'list' && !state.importPreview && !state.editor));
+  return Boolean(state.rename || (state.tab === 'builtin' && state.builtinFilter?.editing) || state.editor?.picker || state.editor?.editingName !== undefined || (state.tab === 'import' && state.importField === 'path' && state.focus === 'list' && !state.importPreview && !state.editor));
 }
 
 export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, cwd: string, context: StudioContext): StudioAction | undefined {
@@ -438,6 +452,20 @@ export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, 
   const tabStep = tabCycleDelta(key);
   if (tabStep && !(state.tab === 'import' && state.focus !== 'tabs' && state.importField === 'path')) { switchTab(state, tabStep); return undefined; }
   if (state.tab === 'import') return importKey(state, key, cwd);
+  if (state.tab === 'builtin' && state.builtinFilter) {
+    const filter = state.builtinFilter;
+    // Esc clears a filter before it closes the studio.
+    if (key.kind === 'escape') { state.builtinFilter = undefined; state.selected.builtin = 0; return undefined; }
+    if (filter.editing) {
+      if (key.kind === 'enter') { filter.editing = false; return undefined; }
+      const next = editText(filter.text, key);
+      if (next !== undefined) { filter.text = next.slice(0, 40); state.selected.builtin = 0; return undefined; }
+    }
+  }
+  if (state.tab === 'builtin' && state.focus === 'list' && key.kind === 'text' && key.value === '/') {
+    state.builtinFilter = {text: state.builtinFilter?.text ?? '', editing: true};
+    return undefined;
+  }
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (key.kind === 'left' || key.kind === 'right') { switchTab(state, key.kind === 'left' ? -1 : 1); return undefined; }
   if (state.focus === 'tabs') {
@@ -458,7 +486,7 @@ export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, 
     if (letter === 'd') return {kind: 'duplicateBuiltin', ref};
     if (letter === 'e') {
       // Built-ins are immutable: editing starts a new Custom theme from it.
-      const palette = BUILTIN_PALETTES[state.selected.builtin] ?? 'lavender';
+      const palette = builtinList(state)[state.selected.builtin] ?? 'lavender';
       state.editor = createThemeEditor(undefined, palette);
       state.editor.draft = {...builtinTheme(palette, context.accent), name: `My ${builtinTheme(palette, context.accent).name}`.slice(0, 48)};
     }
@@ -565,14 +593,20 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
 
   if (state.tab === 'builtin') {
     body.push(`  ${subtle}NMSh and bundled theme families. Built-ins are immutable; duplicate one to edit it.${RESET}`);
-    const {start, items} = window(BUILTIN_PALETTES, state.selected.builtin);
+    const visible = builtinList(state);
+    if (state.builtinFilter) {
+      const caret = state.builtinFilter.editing ? `${accent}▏${RESET}` : '';
+      body.push(`  ${accent}Filter:${RESET} ${state.builtinFilter.text.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '')}${caret}${subtle} · ${visible.length} of ${BUILTIN_PALETTES.length}${RESET}`);
+      if (!visible.length) body.push(`  ${subtle}No theme matches; Esc clears the filter.${RESET}`);
+    }
+    const {start, items} = window(visible, state.selected.builtin);
     items.forEach((palette, offset) => {
       const index = start + offset;
       const theme = builtinTheme(palette, context.accent);
       const ref = builtinRef(palette, context.accent);
       body.push(`${mark(index === state.selected.builtin)} ${focusForeground(index === state.selected.builtin)}${padCells(theme.name, 26)}${RESET}${swatches(Object.values(theme.prompt).slice(0, 6), level)}${active(ref)}${pinned(ref)}`);
     });
-    controls.push(['Enter', 'set active'], ['D', 'duplicate to Custom'], ['E', 'edit a copy']);
+    controls.push(['Enter', 'set active'], ['/', 'filter'], ['D', 'duplicate to Custom'], ['E', 'edit a copy']);
   } else if (state.tab === 'imported' || state.tab === 'custom') {
     const items = libraryItems(context, state.tab);
     const rows: Array<{label: string; detail: string; ref?: ThemeRef; colors?: string[]}> = state.tab === 'custom'
