@@ -411,6 +411,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
+  {id: 'semanticOutput', label: 'Semantic Output', description: 'A one-line test or build summary (counts as the tool printed them) and the failures or diagnostics it listed, in recognized blocks. The output itself is unchanged; Off shows raw output only',
+    category: 'Transcript', control: 'boolean', get: config => config.semanticOutput, set: (config, semanticOutput) => ({...config, semanticOutput})},
   enumRow({id: 'updateMode', label: 'Automatic updates', description: 'Automatic prepares verified releases for the next launch (official source installs only); Notify only announces them; Off never checks. /update works on request', category: 'Updates',
     values: UPDATE_MODES, labels: ['Automatic', 'Notify only', 'Off'],
     get: config => config.updateMode, set: (config, updateMode) => ({...config, updateMode})}),
@@ -679,7 +681,7 @@ export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
   reducedMotion: 'Cursor & Motion', effectsOff: 'Cursor & Motion',
   shellBackend: 'Shell & Providers', suggestions: 'Shell & Providers',
   localUnderstanding: 'Local Understanding',
-  askRecord: 'Transcript & Privacy', askPresentation: 'Transcript & Privacy', outputFolding: 'Transcript & Privacy',
+  askRecord: 'Transcript & Privacy', askPresentation: 'Transcript & Privacy', outputFolding: 'Transcript & Privacy', semanticOutput: 'Transcript & Privacy',
 };
 export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   General: 'General', Updates: 'General',
@@ -716,7 +718,7 @@ const CONFIG_ORDER: readonly string[] = [
   'sessionNotices', 'terminalTitle', 'agentActivity', 'notifications',
   'shellBackend', 'welcome', 'suggestions', 'history', 'picker', 'navigation', 'tools', 'toolUpdateChecks', 'installSuggestions',
   'localUnderstanding',
-  'askRecord', 'askPresentation', 'outputFolding',
+  'askRecord', 'askPresentation', 'outputFolding', 'semanticOutput',
 ];
 const groupRank = (row: SettingsRow) => CONFIG_GROUPS.indexOf(configGroup(row));
 /** Sort key: group, the root's place in CONFIG_ORDER, the root's own position, then the row's (so a child stays under its parent). */

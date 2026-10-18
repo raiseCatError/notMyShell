@@ -23,7 +23,8 @@ function dispose(app: TerminalApp) { app['stop'](0); app['session'].kill(); }
 test('one block registry supplies keyboard palette actions and copies authoritative full plain data', () => {
   const output = new OutputBuffer();
   const record = fixture(output);
-  const passive = BLOCK_ACTIONS.filter(action => action.id !== 'explain' && action.id !== 'references');
+  // Conditional actions: explain (failed blocks), references (output with some), details (a Semantic Output listing).
+  const passive = BLOCK_ACTIONS.filter(action => action.id !== 'explain' && action.id !== 'references' && action.id !== 'details');
   assert.deepEqual(blockPaletteItems(record).map(item => item.action.kind === 'block' && item.action.id), passive.map(action => action.id));
   assert.ok(passive.some(action => action.id === 'clipCommand'));
   assert.ok(passive.some(action => action.id === 'clipOutput'));

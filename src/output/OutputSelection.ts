@@ -42,7 +42,7 @@ export interface OutputAnchor {
   offset: number;
 }
 
-const rowKind = (row: WrappedRow) => row.isFoldHint ? 'fold' : row.isHistoricalHeader ? 'historical' : row.isFilterHint ? 'filter' : 'line';
+const rowKind = (row: WrappedRow) => row.isFoldHint || row.isSemantic ? 'fold' : row.isHistoricalHeader ? 'historical' : row.isFilterHint ? 'filter' : 'line';
 const stableRow = (row: WrappedRow | undefined) => row !== undefined && ((row.lineIndex ?? -1) >= 0 || row.blockStartId !== undefined || row.activityId !== undefined);
 const matchesAnchor = (row: WrappedRow, anchor: OutputAnchor) =>
   row.lineIndex === anchor.lineIndex && row.blockStartId === anchor.blockStartId && row.activityId === anchor.activityId && rowKind(row) === anchor.kind;
