@@ -45,11 +45,11 @@
     "fast-xml-parser": "5.11.2",
     "node-pty": "^1.1.0",
     "smol-toml": "1.9.0",
-    "string-width": "^8.2.0",
+    "string-width": "^8.3.0",
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
