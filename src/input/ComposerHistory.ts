@@ -29,6 +29,15 @@ export class ComposerHistory {
   }
 
   /**
+   * Where the composer is in this browse (#389): 1-based, newest first, out of the snapshot taken when browsing
+   * started (distinct, eligible entries, the draft excluded). Only counts; never the text. Undefined unless `text`
+   * is still the shown entry.
+   */
+  position(text: string): {position: number; total: number} | undefined {
+    return this.showing(text) ? {position: this.index + 1, total: this.entries.length} : undefined;
+  }
+
+  /**
    * One step older. `source` is read only when navigation starts. Returns the
    * text to show, or undefined at the oldest entry (no wrap).
    */
