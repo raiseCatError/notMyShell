@@ -77,8 +77,8 @@ hung)`; a screenshot helps. Each result is recorded in the table with the build 
    3.9 `/edit edit/alias/new.txt` (`alias` links to `real`).
 4. **Semantic Output.** 4.1 `cd semantic/pass && npm test` (40 passing tests stand in for this repository's suite).
    4.2 `cd ../fail && npm test` (2 failing). 4.3 `cd ../ts && npx --no-install tsc --noEmit bad.ts` (2 errors); `cd
-   ../c && make` (1 error). 4.4 `cd ../../git && git status`, `ls`, `cat tracked.txt`. 4.5 back in `semantic/fail`,
-   `npm test`, then as listed, with `pbpaste` after each copy. 4.6 as listed. 4.7 in step 8. `cd ../..` when done.
+   ../c && make` (1 error). 4.4 `cd ../../git && git status`, `ls`, `cat tracked.txt`. 4.5 `cd ../semantic/fail &&
+   npm test`, then as listed, with `pbpaste` after each copy. 4.6 as listed. 4.7 in step 8. `cd ../..` when done.
 5. **`/track`.** 5.1 `/track df -h`; `/track --every 5s -- docker system df` is optional (read-only, but it asks your
    Docker daemon every 5 s). 5.2 `/track --every 2s -- cat track/f.txt`; second tab: `seq 1 2 >
    /Volumes/T7Tmp/ai-dev/q21/work/track/f.txt`, then `seq 1 40 > …`. 5.3–5.7 as listed (5.7's `/tmp/t` commands are
@@ -94,8 +94,8 @@ hung)`; a screenshot helps. Each result is recorded in the table with the build 
    Support/notMyShell/config.json" /Volumes/T7Tmp/ai-dev/q21/config-copy/nmsh/` and `/Volumes/T7Tmp/ai-dev/q21/nmsh
    copy`: the theme and prompt saved by your v0.20 install load unchanged (only the copy can change).
 8. **No color and Safe glyphs** (2.9, 4.7, 5.11, 7.4). `exit`, relaunch as `NO_COLOR=1 /Volumes/T7Tmp/ai-dev/q21/nmsh`,
-   Settings → Appearance → Safe glyphs, then 2.9 on `view/README.md`, 4.7 in `semantic/fail` at 40 columns, 5.11 with
-   `/track df -h`. Then 7.4's second half: `exit`, relaunch as `env -u COLORTERM TERM=xterm-256color
+   Settings → Appearance → Safe glyphs, then 2.9 on `view/README.md`, 4.7 with `cd semantic/fail && npm test` at 40
+   columns (`cd ../..` after), 5.11 with `/track df -h`. Then 7.4's second half: `exit`, relaunch as `env -u COLORTERM TERM=xterm-256color
    /Volumes/T7Tmp/ai-dev/q21/nmsh` and switch between two new themes.
 
 ### Sitting B: Terminal.app, Fish (passes 1, 3 and 5, about 20 minutes)
