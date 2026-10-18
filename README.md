@@ -228,6 +228,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Documentation
 
+- [Website](https://nmsh.raisecaterror.com/) · [Documentation](https://nmsh.raisecaterror.com/docs/) — the handbook, installation guide and release notes
 - [Architecture](ARCHITECTURE.md) — how NMSh works end to end, in plain language; deeper docs live under `docs/architecture/` and `docs/design/`
 - [Context Modules](docs/architecture/context-modules.md) — facts, routing, Context Rail and declarative pack direction
 - [Demo gallery](docs/demos.md) — every feature clip in one place
