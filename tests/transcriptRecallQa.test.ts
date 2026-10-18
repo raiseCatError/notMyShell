@@ -115,7 +115,7 @@ test('Setup Cat: a Transcript step after Editor, reusing the transcript rows onc
   const ids = SETUP_SECTIONS.map(section => section.id);
   assert.equal(ids.indexOf('transcript'), ids.indexOf('editor') + 1);
   const transcript = SETUP_SECTIONS[sectionIndex('transcript')]!.rows.map(item => item.row.id);
-  assert.deepEqual(transcript, ['transcriptPresentation', 'historicalPrompt', 'historyColors', 'historyTheme', 'divider', 'dividerDensity', 'dividerColors', 'outputFolding']);
+  assert.deepEqual(transcript, ['transcriptPresentation', 'historicalPrompt', 'historyColors', 'historyTheme', 'divider', 'dividerDensity', 'dividerColors', 'outputFolding', 'semanticOutput']);
   const all = SETUP_SECTIONS.flatMap(section => section.rows.map(item => item.row.id));
   assert.equal(all.filter(id => id === 'transcriptPresentation').length, 1, 'Transcript presentation appears once');
   assert.equal(all.filter(id => id === 'outputFolding').length, 1);
