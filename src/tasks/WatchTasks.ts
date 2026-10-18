@@ -1,6 +1,7 @@
 import {spawn, type ChildProcess} from 'node:child_process';
 import {StringDecoder} from 'node:string_decoder';
-import {classifyCommand, splitCommands, type PasteKind} from '../input/pasteGuard.js';
+import {classifyCommand, maskQuoted, splitCommands, writesFiles, type PasteKind} from '../input/pasteGuard.js';
+import {reachesRemote, repeatRisk} from './repeatSafety.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 
 /**
@@ -36,32 +37,36 @@ export function watchSafety(command: string): WatchSafety {
   if (/\$\(|`|[<>]\(/u.test(command)) {
     return {kind: 'refused', reason: 'Shell and process substitutions cannot be tracked repeatedly.'};
   }
-  const outsideQuotes = command.replace(/"(?:\\.|[^"\\])*"|'[^']*'/gu, '""');
-  // Detached shell jobs would outlive the observed sample and multiply on every
-  // tick; heredocs also need a different stdin/input-ownership contract.
-  if (/(?:^|[^&])&(?!&)|<</u.test(outsideQuotes)) {
+  // Detached shell jobs would outlive the observed sample and multiply on every tick; heredocs also need a different
+  // stdin/input-ownership contract. `&&`, descriptor duplication (`2>&1`) and `&>` are not background operators.
+  if (/(?:^|[^&<>])&(?![&>])|<</u.test(maskQuoted(command))) {
     return {kind: 'refused', reason: 'Background operators and heredocs cannot be tracked safely.'};
   }
+  if (writesFiles(command)) return {kind: 'refused', reason: 'NMSh won\'t repeatedly run a command whose output is redirected into a file.'};
   const parts = splitCommands(command);
   if (!parts.length) return {kind: 'refused', reason: 'There is no command to watch.'};
   let unknown = false;
+  let reason: string | undefined;
   let network = false;
   let remote = false;
   for (const part of parts) {
     const kinds = classifyCommand(part.text, part.pipedFrom);
     const bad = kinds.find(kind => REFUSED.has(kind));
-    if (bad) return {kind: 'refused', reason: `/watch won't repeatedly run a command that ${bad === 'navigation' ? 'changes directory' : bad === 'install' ? 'installs packages' : bad === 'privilege' ? 'runs as root' : bad === 'pipeline' ? 'runs downloaded code' : bad === 'destructive' ? 'deletes or destroys things' : 'modifies files'} (${part.text}).`};
+    if (bad) return {kind: 'refused', reason: `NMSh won't repeatedly run a command that ${bad === 'navigation' ? 'changes directory' : bad === 'install' ? 'installs packages' : bad === 'privilege' ? 'runs as root' : bad === 'pipeline' ? 'runs downloaded code' : bad === 'destructive' ? 'deletes or destroys things' : 'modifies files'} (${part.text}).`};
+    // Repetition has its own, stricter gate (repeatSafety.ts): a refusal there ends it; a doubt asks first.
+    const risk = repeatRisk(part.text, kinds);
+    if (risk?.kind === 'refused') return {kind: 'refused', reason: `NMSh won't repeatedly run a command that ${risk.reason}.`};
+    if (risk) { unknown = true; reason ??= risk.reason; }
     if (kinds.includes('network')) {
       network = true;
-      const target = /https?:\/\/([^/:\s]+)/u.exec(part.text)?.[1] ?? /\s([\w.-]+\.[a-z]{2,})(?:\s|$)/iu.exec(part.text)?.[1];
-      if (target && !/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/u.test(target)) remote = true;
+      if (reachesRemote(part.text, kinds)) remote = true;
     }
     // Allow only Docker's explicit read-only disk report. Other Docker verbs (including
     // 'system prune') still require confirmation, or are refused by the classifier.
     const dockerDiskReport = /^docker\s+system\s+df(?:\s+(?:-v|--verbose))?\s*$/u.test(part.text);
     if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !dockerDiskReport && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
   }
-  return unknown ? {kind: 'confirm', reason: 'NMSh can\'t tell whether this command changes anything; it will run every interval.', network, remote} : {kind: 'allowed', network, remote};
+  return unknown ? {kind: 'confirm', reason: `${reason ?? 'NMSh can\'t tell whether this command changes anything.'} It will run every interval.`, network, remote} : {kind: 'allowed', network, remote};
 }
 
 /** Parse a finite interval strictly. Invalid cadence never falls through as shell text. */
