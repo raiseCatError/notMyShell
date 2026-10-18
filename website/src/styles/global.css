@@ -135,7 +135,6 @@
   .desktop-nav a { display: inline-flex; align-items: center; text-decoration: none; font-size: .82rem; line-height: 1; color: var(--muted); position: relative; }
   .desktop-nav a:hover, .desktop-nav a[aria-current] { color: var(--text); }
   .desktop-nav a[aria-current]::after { content: ''; position: absolute; height: 2px; background: var(--accent); bottom: -1px; left: 0; right: 0; }
-  .planned-dot { display: inline-block; border: 1px solid var(--accent); width: 5px; height: 5px; border-radius: 50%; margin-left: 4px; }
   .header-actions { display: flex; align-items: center; gap: 18px; }
   .icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 34px; min-height: 36px; background: none; border: 0; padding: 3px; color: var(--muted); }
   .icon-button:hover { color: var(--accent); }
@@ -186,9 +185,6 @@
   .feature-row ul { margin: 0; padding-left: 18px; font-size: .86rem; color: var(--muted); }
   .feature-row a { color: var(--text); }
   .feature-media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px 28px; }
-  .callout-band { padding: 42px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 32px; }
-  .callout-band h2 { font-size: 1.7rem; margin-bottom: 10px; }
-  .callout-band p { color: var(--muted); max-width: 55ch; font-size: .92rem; }
   .command-block { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; min-width: 0; overflow: hidden; }
   .command-label { border-bottom: 1px solid var(--line); padding: 12px 20px; font-size: .66rem; color: var(--muted); font-family: var(--mono); text-transform: uppercase; letter-spacing: .1em; }
   pre { padding: 24px 72px 24px 24px; overflow-x: auto; background: var(--surface) !important; font-size: .8rem; line-height: 1.9; tab-size: 2; border-radius: 4px; margin: 0; }
@@ -415,8 +411,6 @@
     .feature-row p { margin-top: 18px; }
     .feature-row ul { margin-top: 18px; }
     .feature-media-grid { grid-template-columns: 1fr; gap: 32px; }
-    .callout-band { display: block; padding: 26px; }
-    .callout-band .button { margin-top: 22px; }
     .page-hero { padding: 50px 0 44px; }
     .page-hero h1 { font-size: 2.8rem; }
     .article-layout { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-bottom: 60px; }

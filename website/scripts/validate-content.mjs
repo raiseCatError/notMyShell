@@ -2,6 +2,7 @@ import { readFile, access, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { validateMedia, assertFileMembership } from './content.mjs';
 import { assertLaunch } from './launch.mjs';
+import { corrections } from './editorial.mjs';
 
 const root = new URL('../', import.meta.url);
 const read = async path => JSON.parse(await readFile(new URL(path, root), 'utf8'));
@@ -16,6 +17,9 @@ for (const file of manifest.files) {
   const markdown = await readFile(new URL(`src/content/reference/${file.slug}.md`, root));
   const hash = createHash('sha256').update(markdown).digest('hex');
   if (hash !== file.generatedSha256) throw new Error(`Generated reference changed: ${file.slug}. Edit upstream, not the snapshot.`);
+  const expected = corrections.filter(item => item.slug === file.slug && item.commit === manifest.commit).map(item => item.id);
+  if (JSON.stringify(expected) !== JSON.stringify(file.editorial || [])) throw new Error(`Editorial corrections for ${file.slug} do not match the provenance manifest. Run the upstream sync.`);
+  for (const item of corrections.filter(item => expected.includes(item.id))) if (!markdown.toString().includes(item.to) || markdown.toString().includes(item.from)) throw new Error(`Editorial correction ${item.id} is not applied exactly.`);
 }
 for (const item of release.history) {
   const markdown = await readFile(new URL(`src/content/releases/${item.tag}.md`, root));

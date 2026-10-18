@@ -4,6 +4,7 @@ description: "Canonical context modules and packs from the v0.20.0 published sou
 group: Technical reference
 order: 103
 source: "docs/architecture/context-modules.md"
+editorial: ["The release-status paragraph said the module platform was still pending acceptance. It shipped in v0.18.0 and is part of v0.20.0."]
 ---
 
 NMSh runs around a real persistent zsh, Bash or Fish session. Its native modules
@@ -14,8 +15,8 @@ without taking over shell execution or running anything the workspace chose.
 > **Release status.** v0.17.0 shipped the foundation: typed fact metadata,
 > native module routing and the Context Rail. Everything else described here —
 > capability scheduling, the first-party module catalog, declarative Context
-> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — is in
-> the v0.18 development stack, pending acceptance and release.
+> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — shipped
+> in v0.18.0 and is part of every later release, including the current v0.20.0.
 
 ## From capability to presentation
 

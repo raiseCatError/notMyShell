@@ -62,5 +62,3 @@ nmsh config export --output nmsh-settings.json
 
 Context Packs are managed through `nmsh packs`; refer to the
 [pack reference](/docs/reference/context-modules/) for the format and safety model.
-No `/learn` command is available in this release. [Learn Mode](/learn/) is a future
-proposal, subject to architecture, curriculum and security approval.

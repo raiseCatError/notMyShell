@@ -87,7 +87,7 @@ not the revised v0.20 baseline. They are retained as historical verification evi
 
 ## Shipped for review
 
-Home, Features, Install, documentation index, planned Learn, Roadmap, Releases,
+Home, Features, Install, documentation index, Roadmap, Releases,
 historical release-note pages, Architecture and custom 404. The handbook includes
 18 curated guides and 15 version-pinned technical references, with desktop sidebar,
 compact navigation/contents, anchor links, previous/next and local full-text search.
@@ -120,7 +120,7 @@ Chrome covers 1440px desktop, 834px tablet and 390px mobile; dark and light them
 blocked storage writes; clipboard success/denial; search results, no-results and
 failed-index fallback; Escape focus return; no-JS docs; compact contents/permalinks;
 404 and pending-media behavior. Automated axe checks exercise representative product,
-installation, learning and technical-doc pages in both themes.
+installation and technical-doc pages in both themes.
 
 Rendered **webpage-only** viewport QA was visually inspected at desktop/tablet/mobile
 sizes, using disposable external scratch. These images contain the website and its

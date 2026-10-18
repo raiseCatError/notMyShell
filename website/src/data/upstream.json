@@ -53,7 +53,10 @@
       "slug": "context-modules",
       "title": "Context modules and packs",
       "sourceSha256": "735b91b0fadd0ea2c33b3b9e4a56f530150e083038781e2b89e918e1385f966c",
-      "generatedSha256": "c24fb6df5fcc6fe25f6d63da1f9a826bc3e3462343845070955605e3d8452ca0"
+      "generatedSha256": "6e11afae418c6ef80e6f755196731533ae135057acf5ac8d479326095e1370ec",
+      "editorial": [
+        "context-modules-release-status"
+      ]
     },
     {
       "path": "docs/architecture/prompt-customization.md",
@@ -130,7 +133,10 @@
       "slug": "contributing",
       "title": "Contributing to NMSh",
       "sourceSha256": "a08d586847b0a8dc8bc5ba8f93cde805f1021e934e900d30bc4fc099012ee56b",
-      "generatedSha256": "688aa47c2aa3581a7debb305ba78e53db51b93e424bf9797ec87e0b3ac696a1c"
+      "generatedSha256": "c42ab4971c3c4651ddc17db918f247dd3bdc0bd06bb4d3beb052bce3d67863d6",
+      "editorial": [
+        "contributing-public-link"
+      ]
     },
     {
       "path": "CHANGELOG.md",

@@ -10,7 +10,7 @@ const socialImage = `${site.url}/brand/social-preview.png`;
 const socialAlt = 'notMyShell. A richer way to use the terminal. Vespyr, the lavender NMSh cat, on charcoal.';
 const navigation = [
   { href: '/features/', title: 'Features' }, { href: '/docs/', title: 'Docs' },
-  { href: '/learn/', title: 'Learn', planned: true }, { href: '/roadmap/', title: 'Roadmap' },
+  { href: '/roadmap/', title: 'Roadmap' },
 ];
 const isActive = (href: string) => Astro.url.pathname.startsWith(href);
 ---
@@ -55,14 +55,14 @@ const isActive = (href: string) => Astro.url.pathname.startsWith(href);
       <div class="header-inner">
         <a class="brand" href="/" aria-label="notMyShell home"><img data-brand-vespyr src="/brand/vespyr.svg" width="42" height="24" alt="" /><span>notMyShell</span></a>
         <nav class="desktop-nav" aria-label="Main navigation">
-          {navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <span class="planned-dot" aria-label=" (planned)"></span>}</a>)}
+          {navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}</a>)}
         </nav>
         <div class="header-actions">
           <button id="search-open" class="search-trigger" aria-label="Search documentation" aria-haspopup="dialog" aria-controls="docs-search" aria-keyshortcuts="Meta+K Control+K" hidden><svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.4" /><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.4" /></svg><span class="search-label">Search</span><kbd aria-hidden="true"><span id="search-modifier">⌘</span><span>K</span></kbd></button>
           <button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" hidden><span aria-hidden="true" id="theme-icon">◐</span></button>
           <a class="header-github" href={site.repo}>GitHub <span aria-hidden="true">↗</span></a>
           <a class="button small header-start" href="/install/">Get started</a>
-          <details class="mobile-menu"><summary>Menu</summary><nav aria-label="Mobile navigation">{navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <small>Planned</small>}</a>)}<a href="/install/">Get started</a><a href={site.repo}>GitHub ↗</a></nav></details>
+          <details class="mobile-menu"><summary>Menu</summary><nav aria-label="Mobile navigation">{navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}</a>)}<a href="/install/">Get started</a><a href={site.repo}>GitHub ↗</a></nav></details>
         </div>
       </div>
     </header>
