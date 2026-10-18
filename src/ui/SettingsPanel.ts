@@ -5,7 +5,7 @@ import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, ASK_COMMAND_SUGGESTIONS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -482,6 +482,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     }}),
   {id: 'askRecord', label: 'Record Ask in transcript', description: 'Keep Ask questions and replies with this session\'s transcript; commands or actions you approve still follow their normal history rules', category: 'Ask',
     control: 'boolean', get: config => config.askRecord, set: (config, askRecord) => ({...config, askRecord})},
+  enumRow({id: 'askCommandSuggestions', label: 'Command suggestions', description: 'When Ask cannot place a request, suggest one shell command from your local model (/llm). You check it, then copy or insert it; NMSh never runs it', category: 'Ask',
+    values: ASK_COMMAND_SUGGESTIONS, labels: ['Off', 'Local model'],
+    get: config => config.askCommandSuggestions, set: (config, askCommandSuggestions) => ({...config, askCommandSuggestions})}),
   enumRow({id: 'askPresentation', label: 'Ask presentation', description: 'Chat puts your Ask turns on the right; Normal keeps both sides on the left. The transcript keeps its own presentation', category: 'Ask',
     values: ASK_PRESENTATIONS, labels: ASK_PRESENTATIONS.map(mode => ASK_PRESENTATION_LABELS[mode]),
     get: config => config.askPresentation, set: (config, askPresentation) => ({...config, askPresentation})}),
@@ -718,7 +721,7 @@ const CONFIG_ORDER: readonly string[] = [
   'sessionNotices', 'terminalTitle', 'agentActivity', 'notifications',
   'shellBackend', 'welcome', 'suggestions', 'history', 'picker', 'navigation', 'tools', 'toolUpdateChecks', 'installSuggestions',
   'localUnderstanding',
-  'askRecord', 'askPresentation', 'outputFolding', 'semanticOutput',
+  'askRecord', 'askPresentation', 'askCommandSuggestions', 'outputFolding', 'semanticOutput',
 ];
 const groupRank = (row: SettingsRow) => CONFIG_GROUPS.indexOf(configGroup(row));
 /** Sort key: group, the root's place in CONFIG_ORDER, the root's own position, then the row's (so a child stays under its parent). */

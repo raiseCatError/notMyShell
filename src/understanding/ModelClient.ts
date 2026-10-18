@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {defaultRuntimeDir, ensurePrivateRuntimeDir, RUNTIME_DIR_ENV} from '../session/runtimeDir.js';
 import type {LocalModelChoice, LocalUnderstandingMode} from '../prompt/configuration.js';
 import {lineChannel, MODEL_PROTOCOL, modelSocketPath, type ClientMessage, type Priority, type ServiceMessage} from './ModelService.js';
-import type {FoldRequest, IntentRequest} from './tasks.js';
+import type {CommandRequest, FoldRequest, IntentRequest} from './tasks.js';
 
 export interface ModelStatus {state: string; model?: string; runtime?: string; clients: number; queued: number; error?: string}
 
@@ -23,6 +23,8 @@ export class ModelClient {
   private readonly pending = new Map<number, (message: ServiceMessage | undefined) => void>();
   /** Protocol of the connected service; a different one is never spoken to. */
   protocol?: number;
+  /** What the connected service says it can do (an older service lacks newer tasks, such as 'command'). */
+  features: ReadonlySet<string> = new Set();
 
   constructor(private readonly socketPath = modelSocketPath(defaultRuntimeDir()),
     private readonly start: () => void = startModelService) {}
@@ -38,7 +40,7 @@ export class ModelClient {
         this.socket = socket;
         this.send = lineChannel(socket, message => this.receive(message as ServiceMessage));
         socket.on('close', () => {
-          this.socket = undefined; this.send = undefined; this.protocol = undefined;
+          this.socket = undefined; this.send = undefined; this.protocol = undefined; this.features = new Set();
           for (const resolveRequest of this.pending.values()) resolveRequest(undefined);
           this.pending.clear();
         });
@@ -49,11 +51,29 @@ export class ModelClient {
   }
 
   private receive(message: ServiceMessage): void {
-    if (message.type === 'welcome') { this.protocol = message.protocol; return; }
+    if (message.type === 'welcome') {
+      this.protocol = message.protocol;
+      this.features = new Set(message.features ?? []);
+      for (const done of this.welcomeWaiters.splice(0)) done();
+      return;
+    }
     const resolveRequest = this.pending.get(message.id);
     if (!resolveRequest) return;
     this.pending.delete(message.id);
     resolveRequest(message);
+  }
+
+  private welcomeWaiters: Array<() => void> = [];
+
+  /** Whether the service's welcome has arrived, waiting at most timeoutMs for it. */
+  private welcomed(timeoutMs: number): Promise<boolean> {
+    if (this.protocol !== undefined) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { this.welcomeWaiters = this.welcomeWaiters.filter(item => item !== done); resolve(false); }, timeoutMs);
+      timer.unref?.();
+      const done = () => { clearTimeout(timer); resolve(true); };
+      this.welcomeWaiters.push(done);
+    });
   }
 
   /** Connect, starting the one service if none answers; concurrent windows race safely (one binds, the rest connect). */
@@ -84,8 +104,12 @@ export class ModelClient {
 
   async infer(task: 'intent', input: IntentRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown>;
   async infer(task: 'fold', input: FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown>;
-  async infer(task: 'intent' | 'fold', input: IntentRequest | FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown> {
+  async infer(task: 'command', input: CommandRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown>;
+  async infer(task: 'intent' | 'fold' | 'command', input: IntentRequest | FoldRequest | CommandRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown> {
     if (!(await this.ensure()) || (this.protocol !== undefined && this.protocol !== MODEL_PROTOCOL)) return undefined;
+    // A service started by an older NMSh does not know newer tasks; it is never sent one. Its welcome (sent right
+    // after connecting) says which it knows.
+    if (task === 'command' && (!(await this.welcomed(1500)) || !this.features.has('command'))) return undefined;
     const reply = await this.request({type: 'infer', task, input, priority: options.priority, mode: options.mode, model: options.model, ...(options.reasoning ? {reasoning: options.reasoning} : {})} as never, options.timeoutMs);
     if (reply?.type === 'result' && reply.ok) { this.lastReasoning = reply.reasoning ?? 'fast'; return reply.output; }
     return undefined;

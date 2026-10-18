@@ -125,3 +125,50 @@ export function foldExcerpt(command: string, output: string, exitCode: number, l
   const picked = all.length <= lines * 2 ? all : [...all.slice(0, lines), `… ${all.length - lines * 2} lines …`, ...all.slice(-lines)];
   return {command: program.slice(0, 60), exitCode, lines: picked.map(line => redact(line).slice(0, width))};
 }
+
+/**
+ * #432: one shell command for a request typed in Ask, from the person's own local model, only when they turned
+ * command suggestions on. The model gets the request text, the shell and the OS family: never files, environment,
+ * history, the transcript or any output. It returns data; NMSh validates it, labels its risk itself, and offers
+ * Copy or Insert. Nothing it returns is ever run by NMSh.
+ */
+export interface CommandRequest {text: string; shell: 'zsh' | 'bash' | 'fish'; os: 'macOS' | 'Linux'}
+export interface CommandSuggestion {command: string; explanation: string}
+
+const MAX_COMMAND = 1024;
+const MAX_EXPLANATION = 300;
+/** Controls, escape sequences, and invisible format characters (bidi overrides and the like) are never accepted. */
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\p{Cf}\u2028\u2029]/u;
+
+export const COMMAND_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['command', 'explanation'],
+  properties: {command: {type: ['string', 'null'], maxLength: MAX_COMMAND}, explanation: {type: 'string', maxLength: MAX_EXPLANATION}},
+} as const;
+
+/**
+ * Strict: one plain line of at most 1 KiB and a short plain explanation, or `command: null` (the model declines).
+ * A second line, an escape sequence, an invisible character, an extra field (a "risk" the model claims) or anything
+ * oversized rejects the whole answer. Returns null when the model declined, undefined when the answer is unusable.
+ */
+export function validateCommandSuggestion(raw: unknown): CommandSuggestion | null | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (!exactKeys(value, ['command', 'explanation'], ['command', 'explanation'])) return undefined;
+  if (typeof value.explanation !== 'string' || value.explanation.length > MAX_EXPLANATION || UNSAFE_TEXT.test(value.explanation)) return undefined;
+  if (value.command === null) return null;
+  if (typeof value.command !== 'string' || value.command.length > MAX_COMMAND || UNSAFE_TEXT.test(value.command)) return undefined;
+  const command = value.command.trim();
+  if (!command) return undefined;
+  return {command, explanation: value.explanation.trim()};
+}
+
+export function commandPrompt(request: CommandRequest): string {
+  const text = request.text.replace(/[\u0000-\u001f\u007f-\u009f]+/gu, '').slice(0, MAX_TEXT);
+  return [
+    `You turn a terminal user's request into ONE shell command for ${request.shell} on ${request.os}. Reply with JSON only: `
+      + '{"command": "...", "explanation": "one short sentence"}.',
+    'If no single command does it, or you are not sure, reply {"command": null, "explanation": "why"}.',
+    'One line only. Prefer read-only commands. Do not use sudo unless the request asks for it. No comments.',
+    `Request: ${text}`,
+  ].join('\n\n');
+}
