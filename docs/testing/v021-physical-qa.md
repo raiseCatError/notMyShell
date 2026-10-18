@@ -131,6 +131,9 @@
 - [ ] 6.3 In a Docker or Podman container (or a Codespace), the container module names it; on the host it shows nothing.
 - [ ] 6.4 `/modules explain` lists every configured module with its surface and reason; `/modules timings` lists the
   slowest collections; neither changes what is collected (the Status Strip CPU stays as it was).
+- [ ] 6.5 Route three modules to the Context Rail (Modules → Surface), narrow the window until one disappears, then run
+  `/modules explain`: that module says "left out for width in the last frame"; widen the window and run it again: the
+  note is gone. The same with the Status Strip.
 
 ## 7. Theme families
 

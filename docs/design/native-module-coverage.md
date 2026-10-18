@@ -64,4 +64,7 @@ capabilities as it may hold modules. Kotlin/Scala, Lua and Haskell stay candidat
 source that is reliable enough to show (a Gradle Kotlin plugin version, a rockspec, a Stack resolver) and was not judged
 worth a module per language in this release. Diagnostics (#365): `/modules explain` and `/modules timings` give a
 plain-text report of routing, visibility reasons, source states and the slowest last collections, from the engine's
-snapshots only.
+snapshots only. The Context Rail and Status Strip record how their width fitting treated each routed module in the last
+live frame (left out, or shortened), and explain says so; previews never overwrite that record. The Main Prompt and
+Right Context truncate their text rather than drop modules, so they have nothing to report; a per-segment truncation
+trace there remains future work.

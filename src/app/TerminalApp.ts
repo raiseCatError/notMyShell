@@ -5,6 +5,7 @@ import {queuePresentationChanges, queueRowKey, staleQueueSnapshot} from '../stat
 import {shellSubmission} from '../shell/submission.js';
 import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
 import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
+import {fitOutcome, newFitReport, type FitReport} from '../prompt/fitReport.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
@@ -2945,7 +2946,8 @@ export class TerminalApp {
       if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
     }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
-    else if (slash.kind === 'modules' && slash.report === 'explain') this.output.addFrontendBlock(command.trim(), explainModules(this.promptConfiguration.modules, this.modulesContext(), this.promptConfiguration));
+    else if (slash.kind === 'modules' && slash.report === 'explain') this.output.addFrontendBlock(command.trim(), explainModules(this.promptConfiguration.modules, this.modulesContext(), this.promptConfiguration, Date.now(),
+      (id, surface) => fitOutcome(surface === 'contextRail' ? this.lastFit.rail : surface === 'statusStrip' ? this.lastFit.strip : undefined, id)));
     else if (slash.kind === 'modules' && slash.report === 'timings') this.output.addFrontendBlock(command.trim(), moduleTimings(id => this.contextEngine.status(id)));
     else if (slash.kind === 'modules') { this.panelOrigin = undefined; this.openModulesManager(); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
@@ -4489,7 +4491,10 @@ export class TerminalApp {
     if (this.renderRail?.columns === columns) return this.renderRail.prepared;
     const configuration = this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh'
       ? {...this.promptConfiguration, contextRail: {...this.promptConfiguration.contextRail, mode: 'off' as const}} : this.promptConfiguration;
-    return prepareRail(this.promptContext(), columns, configuration);
+    const report = newFitReport();
+    const prepared = prepareRail(this.promptContext(), columns, configuration, 0, report);
+    this.lastFit.rail = report;
+    return prepared;
   }
 
   private contextRailRows(columns: number): string[] {
@@ -8467,10 +8472,17 @@ export class TerminalApp {
     const record = this.awakeRecord;
     const display = configuration.keepAwake.display;
     // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
-    return renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
+    // The live row records how it fitted routed modules, for /modules explain; previews of a draft do not.
+    const report = configuration === this.promptConfiguration ? newFitReport() : undefined;
+    const row = renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
       record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined,
-      this.statusStripModuleItems(configuration));
+      this.statusStripModuleItems(configuration), report);
+    if (report) this.lastFit.strip = report;
+    return row;
   }
+
+  /** How the last live frame fitted routed modules on the Rail and the Strip (#365). */
+  private readonly lastFit: {rail?: FitReport; strip?: FitReport} = {};
 
   /** Strip-routed modules with their group and, for the path, a shorter form the fitter may use first. */
   private statusStripModuleItems(configuration = this.promptConfiguration): StripModuleItem[] {
