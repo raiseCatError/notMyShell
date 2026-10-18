@@ -1,0 +1,2 @@
+# Terminal captures are byte-exact: trailing spaces are part of the rendered frame.
+*.ansi -whitespace

@@ -315,4 +315,3 @@ export async function detectEnvironment(options: {env?: NodeJS.ProcessEnv; home?
     files: scan.files.map(shown), prompts, custom: unique, tools, notes: scan.notes,
   };
 }
-

@@ -141,4 +141,3 @@ export function guidedText(text: string, width: number, margin: number, tone: 's
   const paint = startupPaint();
   return line(width, canvas => { canvas.text(x, 0, text, fg(paint, paint.t[tone]), undefined, width - margin); });
 }
-

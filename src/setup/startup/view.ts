@@ -687,4 +687,3 @@ export function defaultStartupPreview(config: PromptConfiguration, width: number
 export function createStartupContext(options: Partial<Omit<StartupContext, 'sky'>> = {}): StartupContext {
   return {sky: new CellGrid(), reopened: false, reduced: false, preview: defaultStartupPreview, steps: [], ...options};
 }
-

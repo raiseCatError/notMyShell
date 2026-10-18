@@ -84,9 +84,9 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔ npm                                    exit 0 · 8.2s 
-             ✔ git                                    exit 0 · 3.1s 
-             2 executed · 2 succeeded · wall time 11.3s             
+             ✔ npm                                    exit 0 · 8.2s
+             ✔ git                                    exit 0 · 3.1s
+             2 executed · 2 succeeded · wall time 11.3s
             ────────────────────────────────────────────────────────
 ```
 
@@ -94,7 +94,7 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             2 executed · 2 succeeded · wall time 11.3s             
+             2 executed · 2 succeeded · wall time 11.3s
             ────────────────────────────────────────────────────────
 ```
 
@@ -102,10 +102,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
  ─────── Queue Summary ────────
-  ✔ npm          exit 0 · 8.2s 
-  ✔ git          exit 0 · 3.1s 
-  2 executed · 2 succeeded ·   
-  wall time 11.3s              
+  ✔ npm          exit 0 · 8.2s
+  ✔ git          exit 0 · 3.1s
+  2 executed · 2 succeeded ·
+  wall time 11.3s
  ──────────────────────────────
 ```
 
@@ -113,10 +113,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔ git                                    exit 0 · 1.4s 
-             ✔ make                                   exit 0 · 9.2s 
-             ✘ npm                                    exit 2 · 2.4s 
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             ✔ git                                    exit 0 · 1.4s
+             ✔ make                                   exit 0 · 9.2s
+             ✘ npm                                    exit 2 · 2.4s
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -124,7 +124,7 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -132,11 +132,11 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
  ─────── Queue Summary ────────
-  ✔ git          exit 0 · 1.4s 
-  ✔ make         exit 0 · 9.2s 
-  ✘ npm          exit 2 · 2.4s 
-  3 executed · 2 succeeded ·   
-  1 failed · wall time 13.0s   
+  ✔ git          exit 0 · 1.4s
+  ✔ make         exit 0 · 9.2s
+  ✘ npm          exit 2 · 2.4s
+  3 executed · 2 succeeded ·
+  1 failed · wall time 13.0s
  ──────────────────────────────
 ```
 
@@ -144,10 +144,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔ cargo                                  exit 0 · 4.1s 
-             ✘ cargo                  interrupted · exit 130 · 4.9s 
-             2 executed · 1 succeeded · 1 interrupted ·             
-             wall time 9.0s                                         
+             ✔ cargo                                  exit 0 · 4.1s
+             ✘ cargo                  interrupted · exit 130 · 4.9s
+             2 executed · 1 succeeded · 1 interrupted ·
+             wall time 9.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -155,8 +155,8 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             2 executed · 1 succeeded · 1 interrupted ·             
-             wall time 9.0s                                         
+             2 executed · 1 succeeded · 1 interrupted ·
+             wall time 9.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -164,11 +164,11 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
  ─────── Queue Summary ────────
-  ✔ cargo        exit 0 · 4.1s 
-  ✘ …  interrupted · exit 130 · 4.9s 
-  2 executed · 1 succeeded ·   
-  1 interrupted ·              
-  wall time 9.0s               
+  ✔ cargo        exit 0 · 4.1s
+  ✘ …  interrupted · exit 130 · 4.9s
+  2 executed · 1 succeeded ·
+  1 interrupted ·
+  wall time 9.0s
  ──────────────────────────────
 ```
 
@@ -176,8 +176,8 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔ docker                                 exit 0 · 6.0s 
-             1 executed · 1 succeeded · 2 skipped · wall time 6.0s  
+             ✔ docker                                 exit 0 · 6.0s
+             1 executed · 1 succeeded · 2 skipped · wall time 6.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -185,7 +185,7 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             1 executed · 1 succeeded · 2 skipped · wall time 6.0s  
+             1 executed · 1 succeeded · 2 skipped · wall time 6.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -193,9 +193,9 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
  ─────── Queue Summary ────────
-  ✔ docker       exit 0 · 6.0s 
-  1 executed · 1 succeeded ·   
-  2 skipped · wall time 6.0s   
+  ✔ docker       exit 0 · 6.0s
+  1 executed · 1 succeeded ·
+  2 skipped · wall time 6.0s
  ──────────────────────────────
 ```
 
@@ -205,10 +205,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
 ──────────────────── Queue Summary ─────────────────────
- ✔ git                                    exit 0 · 1.4s 
- ✔ make                                   exit 0 · 9.2s 
- ✘ npm                                    exit 2 · 2.4s 
- 3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+ ✔ git                                    exit 0 · 1.4s
+ ✔ make                                   exit 0 · 9.2s
+ ✘ npm                                    exit 2 · 2.4s
+ 3 executed · 2 succeeded · 1 failed · wall time 13.0s
 ────────────────────────────────────────────────────────
 ```
 
@@ -216,10 +216,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔ git                                    exit 0 · 1.4s 
-             ✔ make                                   exit 0 · 9.2s 
-             ✘ npm                                    exit 2 · 2.4s 
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             ✔ git                                    exit 0 · 1.4s
+             ✔ make                                   exit 0 · 9.2s
+             ✘ npm                                    exit 2 · 2.4s
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -227,10 +227,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
                         ──────────────────── Queue Summary ─────────────────────
-                         ✔ git                                    exit 0 · 1.4s 
-                         ✔ make                                   exit 0 · 9.2s 
-                         ✘ npm                                    exit 2 · 2.4s 
-                         3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+                         ✔ git                                    exit 0 · 1.4s
+                         ✔ make                                   exit 0 · 9.2s
+                         ✘ npm                                    exit 2 · 2.4s
+                         3 executed · 2 succeeded · 1 failed · wall time 13.0s
                         ────────────────────────────────────────────────────────
 ```
 
@@ -238,10 +238,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ──────────────────── Queue Summary ─────────────────────
-             ✔                  git                   exit 0 · 1.4s 
-             ✔                 make                   exit 0 · 9.2s 
-             ✘                  npm                   exit 2 · 2.4s 
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             ✔                  git                   exit 0 · 1.4s
+             ✔                 make                   exit 0 · 9.2s
+             ✘                  npm                   exit 2 · 2.4s
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             ────────────────────────────────────────────────────────
 ```
 
@@ -249,10 +249,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
                         ──────────────────── Queue Summary ─────────────────────
-                         ✔                                   git  exit 0 · 1.4s 
-                         ✔                                  make  exit 0 · 9.2s 
-                         ✘                                   npm  exit 2 · 2.4s 
-                          3 executed · 2 succeeded · 1 failed · wall time 13.0s 
+                         ✔                                   git  exit 0 · 1.4s
+                         ✔                                  make  exit 0 · 9.2s
+                         ✘                                   npm  exit 2 · 2.4s
+                          3 executed · 2 succeeded · 1 failed · wall time 13.0s
                         ────────────────────────────────────────────────────────
 ```
 
@@ -262,10 +262,10 @@ These captures are produced directly by the production renderers (`renderQueueHi
 
 ```text
             ─────────────── Save this Queue Summary? ───────────────
-             ✔ npm run build                          exit 0 · 8.2s 
-             ✔ git status                           exit 0 · 800 ms 
-             ✘ deploy --token=[REDACTED]              exit 1 · 5.0s 
-             3 executed · 2 succeeded · 1 failed · wall time 14.0s  
+             ✔ npm run build                          exit 0 · 8.2s
+             ✔ git status                           exit 0 · 800 ms
+             ✘ deploy --token=[REDACTED]              exit 1 · 5.0s
+             3 executed · 2 succeeded · 1 failed · wall time 14.0s
             ────────────────────────────────────────────────────────
 Queue Summary · 3 executed · 2 succeeded · 1 failed · wall time 14.0s
 Enter saves this summary · Esc cancels
@@ -277,10 +277,10 @@ Enter saves this summary · Esc cancels
 
 ```text
             -------------------- Queue Summary ---------------------
-             + git                                    exit 0 · 1.4s 
-             + make                                   exit 0 · 9.2s 
-             x npm                                    exit 2 · 2.4s 
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             + git                                    exit 0 · 1.4s
+             + make                                   exit 0 · 9.2s
+             x npm                                    exit 2 · 2.4s
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             --------------------------------------------------------
 ```
 
@@ -309,10 +309,10 @@ Enter saves this summary · Esc cancels
 
 ```text
             -------------------- Queue Summary ---------------------
-             + git                                    exit 0 · 1.4s 
-             + make                                   exit 0 · 9.2s 
-             x npm                                    exit 2 · 2.4s 
-             3 executed · 2 succeeded · 1 failed · wall time 13.0s  
+             + git                                    exit 0 · 1.4s
+             + make                                   exit 0 · 9.2s
+             x npm                                    exit 2 · 2.4s
+             3 executed · 2 succeeded · 1 failed · wall time 13.0s
             --------------------------------------------------------
 ```
 
