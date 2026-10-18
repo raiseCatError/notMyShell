@@ -26,22 +26,25 @@ jobs:
       - id: changes
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CHANGED_FILES: ${{ runner.temp }}/nmsh-changed-files
         shell: bash
         run: |
           # Never path-skip the workflow: the final CI check must always exist.
-          # Push/manual runs always collect comprehensive evidence.
-          if [[ "$EVENT" != pull_request ]]; then
+          if [[ "$EVENT" == workflow_dispatch || -z "$BASE" || "$BASE" =~ ^0+$ ]]; then
             echo 'code=true' >> "$GITHUB_OUTPUT"
           else
             git diff --check "$BASE" "$HEAD"
-            git diff --no-renames --name-only -z "$BASE" "$HEAD" > /tmp/changed-files
+            git diff --no-renames --name-only -z "$BASE" "$HEAD" > "$CHANGED_FILES"
             python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import os
           from pathlib import Path
-          files = Path('/tmp/changed-files').read_bytes().split(b'\0')
-          docs_only = all(f.startswith(b'docs/') or f.endswith(b'.md') for f in files if f)
-          print('code=' + str(not docs_only).lower())
+          files = Path(os.environ['CHANGED_FILES']).read_bytes().split(b'\0')
+          docs_only = all(filename.startswith(b'docs/') or filename.endswith(b'.md') for filename in files if filename)
+          website_files = [filename for filename in files if filename.startswith(b'website/') or filename in (b'.github/workflows/website.yml', b'.github/workflows/website-deploy.yml')]
+          website_only = bool(website_files) and all(filename in website_files or filename == b'README.md' for filename in files if filename)
+          print('code=' + str(not (website_only or (os.environ['EVENT'] == 'pull_request' and docs_only))).lower())
           PYTHON
           fi
 
@@ -112,7 +115,8 @@ jobs:
 
   timings:
     name: Timing smoke (${{ matrix.os }}, Node 26)
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
@@ -135,7 +139,8 @@ jobs:
 
   fedora:
     name: Linux portability subset (Fedora)
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     container: fedora:42
@@ -173,7 +178,7 @@ jobs:
               required += ['quality', 'tests', 'node22']
           elif code != 'false':
               raise SystemExit('Missing change classification')
-          if '${{ github.event_name }}' != 'pull_request':
+          if code == 'true' and '${{ github.event_name }}' != 'pull_request':
               required += ['timings', 'fedora']
           failed = [name for name in required if jobs[name]['result'] != 'success']
           if failed:

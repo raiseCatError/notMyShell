@@ -1,0 +1,80 @@
+---
+import '../styles/global.css';
+import Search from '../components/Search.astro';
+import { site, launch, launchLabel, sourceUrl } from '../lib/site';
+interface Props { title: string; description?: string; docs?: boolean; noindex?: boolean }
+const { title, description = site.description, docs = false, noindex = false } = Astro.props;
+const canonical = new URL(noindex ? '/404.html' : Astro.url.pathname, site.url).href;
+const pageTitle = title === 'notMyShell' ? 'notMyShell | A richer way to use the terminal' : `${title} | notMyShell`;
+const socialImage = `${site.url}/brand/social-preview.png`;
+const socialAlt = 'notMyShell. A richer way to use the terminal. Vespyr, the lavender NMSh cat, on charcoal.';
+const navigation = [
+  { href: '/features/', title: 'Features' }, { href: '/docs/', title: 'Docs' },
+  { href: '/learn/', title: 'Learn', planned: true }, { href: '/roadmap/', title: 'Roadmap' },
+];
+const isActive = (href: string) => Astro.url.pathname.startsWith(href);
+---
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {(noindex || launch.state === 'candidate') && <meta name="robots" content="noindex" />}
+    <meta name="theme-color" content="#101114" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="notMyShell" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={socialImage} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={socialAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImage} />
+    <meta name="twitter:image:alt" content={socialAlt} />
+    <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml" sizes="any" />
+    <link rel="icon" href="/brand/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/brand/favicon-16.png" type="image/png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
+    <link rel="sitemap" href="/sitemap.xml" />
+    <script is:inline>
+      try { document.documentElement.dataset.theme = localStorage.getItem('nmsh-theme') === 'light' ? 'light' : 'dark'; } catch {}
+    </script>
+    <script type="application/ld+json" set:html={JSON.stringify({ '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: site.name, applicationCategory: 'DeveloperApplication', operatingSystem: 'macOS, Linux, WSL 2', softwareVersion: launch.state === 'published' ? launch.version : undefined, url: site.url, codeRepository: site.repo, license: sourceUrl('LICENSE'), author: { '@type': 'Person', name: site.creator, url: 'https://github.com/raiseCatError' }, description: site.description })} />
+  </head>
+  <body class:list={{ 'docs-page': docs }}>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" data-pagefind-ignore>
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="notMyShell home"><img data-brand-vespyr src="/brand/vespyr.svg" width="42" height="24" alt="" /><span>notMyShell</span></a>
+        <nav class="desktop-nav" aria-label="Main navigation">
+          {navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <span class="planned-dot" aria-label=" (planned)"></span>}</a>)}
+        </nav>
+        <div class="header-actions">
+          <button id="search-open" class="search-trigger" aria-label="Search documentation" aria-haspopup="dialog" aria-controls="docs-search" aria-keyshortcuts="Meta+K Control+K" hidden><svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.4" /><path d="m13 13 4 4" stroke="currentColor" stroke-width="1.4" /></svg><span class="search-label">Search</span><kbd aria-hidden="true"><span id="search-modifier">⌘</span><span>K</span></kbd></button>
+          <button id="theme-toggle" class="icon-button" aria-label="Switch to light theme" hidden><span aria-hidden="true" id="theme-icon">◐</span></button>
+          <a class="header-github" href={site.repo}>GitHub <span aria-hidden="true">↗</span></a>
+          <a class="button small header-start" href="/install/">Get started</a>
+          <details class="mobile-menu"><summary>Menu</summary><nav aria-label="Mobile navigation">{navigation.map(item => <a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>{item.title}{item.planned && <small>Planned</small>}</a>)}<a href="/install/">Get started</a><a href={site.repo}>GitHub ↗</a></nav></details>
+        </div>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"><slot /></main>
+    <footer class="site-footer" data-pagefind-ignore>
+      <div class="footer-top"><div class="footer-signature"><a class="footer-name" href="/">notMyShell</a><p>Made with curiosity and care.</p><span class="footer-aside">Also meows.</span></div><nav aria-label="Footer"><a href="/architecture/">Architecture</a><a href="/releases/">Releases</a><a href="/docs/reference/privacy/">Privacy</a><a href="/docs/reference/contributing/">Contribute</a></nav></div>
+      <div class="footer-bottom"><span>Independent, open-source software by <a class="footer-creator" href="https://raisecaterror.com">raiseCatError <span aria-hidden="true">↗</span></a>.</span><span><a href={sourceUrl('LICENSE')}>GPL-3.0-only</a><span aria-hidden="true"> · </span><a href="/releases/#launch-baseline">{launchLabel}</a></span></div>
+    </footer>
+    <Search />
+    <div id="feedback" role="status" aria-live="polite"></div>
+    <script>
+      import '../scripts/client';
+    </script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+---
+import { docNavigation, type documents } from '../lib/docs';
+interface Props { entries: Awaited<ReturnType<typeof documents>>; slug: string; label: string }
+const { entries, slug, label } = Astro.props;
+const groups = docNavigation(entries);
+---
+<nav class="doc-navigation" aria-label={label}>
+  {groups.map(group => <details class="nav-group" data-doc-group={group.id} open>
+    <summary>{group.title}</summary>
+    <div class="nav-children">
+      {group.articles.map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}
+      {group.children.map(child => <details class="nav-subgroup" data-doc-group={child.id} open>
+        <summary>{child.title}</summary>
+        <div class="nav-children">{child.articles.map(entry => <a href={`/docs/${entry.slug}/`} aria-current={entry.slug === slug ? 'page' : undefined}>{entry.data.title}</a>)}</div>
+      </details>)}
+    </div>
+  </details>)}
+</nav>

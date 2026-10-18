@@ -1,0 +1,26 @@
+---
+import inventory from '../data/media.json';
+interface Props { id: string; compact?: boolean }
+interface Slot { id: string; title: string; purpose: string; width: number; height: number; caption: string; altRequirement: string; src?: string; kind?: 'image' | 'video'; alt?: string; poster?: string }
+const { id, compact = false } = Astro.props;
+const slot = inventory.find(item => item.id === id) as Slot | undefined;
+if (!slot) throw new Error(`Unknown media slot: ${id}`);
+---
+<figure class:list={['media', { compact }]} data-media={id}>
+  <div class="media-frame" style={`--media-ratio: ${slot.width} / ${slot.height}`}>
+    {slot.src && slot.kind === 'video' ? (
+      <video controls preload="none" poster={slot.poster} width={slot.width} height={slot.height} aria-label={slot.alt}>
+        <source src={slot.src} />
+        <p>Your browser cannot play this video. <a href={slot.src}>Download the recording</a>.</p>
+      </video>
+    ) : slot.src ? (
+      <img src={slot.src} width={slot.width} height={slot.height} alt={slot.alt} loading="lazy" decoding="async" />
+    ) : (
+      <div class="media-pending" role="img" aria-label={`${slot.title}. ${id === 'learn-concept' ? 'Future concept' : 'Product media'} pending; no capture or functional demonstration is shown.`}>
+        <div class="media-center"><span class="media-symbol" aria-hidden="true">↗</span><span class="eyebrow">{id === 'learn-concept' ? 'Future concept' : 'Reserved for the real product'}</span><span class="media-title">{slot.title}</span></div>
+        <span class="media-status">Media pending <span aria-hidden="true">·</span> {id}</span>
+      </div>
+    )}
+  </div>
+  <figcaption>{slot.caption}</figcaption>
+</figure>

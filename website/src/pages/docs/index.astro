@@ -1,0 +1,11 @@
+---
+import Docs from '../../layouts/Docs.astro';
+import { documents, docGroups } from '../../lib/docs';
+import { launch, launchLabel } from '../../lib/site';
+const entries = await documents();
+---
+<Docs title="Documentation" description="Install NMSh, learn the everyday controls and find the technical details when you need them." slug="" headings={docGroups.map(group => ({ depth: 2, slug: group.toLowerCase().replaceAll(' ', '-'), text: group }))}>
+    <div class="actions doc-index-intro"><a class="button" href="/docs/getting-started/">Start here <span>→</span></a><a class="text-link" href="/install/">Installation <span>→</span></a></div>
+    <aside class="note doc-index-intro"><strong>{launchLabel}</strong><p>{launch.state === 'candidate' ? 'These guides follow the verified launch-candidate code.' : `These guides describe the published v${launch.version} release.`} <a href="/releases/#launch-baseline">Version and publication status</a> explains the source. Technical references retain their original design notes. Learn Mode remains a future proposal.</p></aside>
+    <div class="docs-index">{docGroups.map(group => <section id={group.toLowerCase().replaceAll(' ', '-')}><h2>{group}</h2><ul>{entries.filter(entry => entry.data.group === group).map(entry => <li><a href={`/docs/${entry.slug}/`}>{entry.data.title}<span class="doc-index-arrow" aria-hidden="true">→</span></a></li>)}</ul></section>)}</div>
+</Docs>
