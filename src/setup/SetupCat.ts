@@ -369,6 +369,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('dividerDensity')},
     {row: configRow('dividerColors'), note: () => 'Live composer dividers follow Divider lines (Look, under Chroma); past dividers never move'},
     {row: configRow('outputFolding')},
+    {row: configRow('semanticOutput')},
   ]},
   {id: 'history', title: 'History & navigation', intro: ['NMSh Native covers history, directory jumps and picking.', 'External providers are optional alternatives.'], rows: [
     providerRow('setupHistory', 'History', 'Command history source', 'History', HISTORY_PROVIDERS,

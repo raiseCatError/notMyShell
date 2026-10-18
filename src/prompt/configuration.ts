@@ -619,6 +619,8 @@ export interface PromptConfiguration {
   liveSessionMultiple: LiveSessionMultiple;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
+  /** Semantic Output: a test or build summary drawn in recognized blocks (#386). Presentation only; Off draws raw only. */
+  semanticOutput: boolean;
   /** What new presentation sessions show at the top; archived sessions keep theirs. */
   welcome: WelcomeProviderId;
   /** Ghost-text suggestion provider; external providers fall back to Native. */
@@ -865,6 +867,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   liveSessionMultiple: 'ask',
   notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
   outputFolding: 'smart',
+  semanticOutput: true,
   welcome: 'vespyr',
   suggestions: 'nmsh',
   history: 'native',
@@ -986,6 +989,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? value.liveSessionMultiple as LiveSessionMultiple : 'ask';
   // Off persists as `never`, so v0.4 configs load unchanged.
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
+  const semanticOutput = value.semanticOutput !== false;
   const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
     ? value.welcome as WelcomeProviderId : 'vespyr';
   const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
@@ -1069,7 +1073,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -1129,7 +1133,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

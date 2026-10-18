@@ -61,7 +61,7 @@ import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../th
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
-import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
+import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection, semanticCopyPayload, type CopyContent} from '../clipboard/copySelection.js';
 import {captureOutputAnchor, createOutputSelection, moveOutputSelection, restoreOutputAnchor, revealOutputSelection, validateOutputSelection, type OutputAnchor, type OutputScope, type OutputSelection} from '../output/OutputSelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
 import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, type ReportFormat} from '../clipboard/report.js';
@@ -939,6 +939,7 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.presenter.setTreatment(this.promptConfiguration.presentation);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
+    this.output.setSemanticOutput(this.promptConfiguration.semanticOutput);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
     this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
@@ -2184,6 +2185,10 @@ export class TerminalApp {
               if (affordance.copy && x >= affordance.copy.column && x <= affordance.copy.end) { this.selection = undefined; void this.copyBlock(row.blockStartId); return; }
               if (x >= affordance.column) { this.selection = undefined; this.openBlockPalette(row.blockStartId); this.render(); return; }
             }
+            if (key.kind === 'mouseClick' && row.semanticToggle !== undefined) {
+              this.output.toggleSemanticDetails(row.semanticToggle);
+              this.render();
+            }
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
               this.output.toggleExpanded(row.commandIndex);
               this.render();
@@ -3037,7 +3042,7 @@ export class TerminalApp {
         category: 'Transcript', action: {kind: 'keepHistoryClip', id: history.id}}] : [];
     const composerItems: PaletteItem[] = this.editor.text.trim() && !isSlashInput(this.editor.text)
       ? [{id: 'clip:keep-composer', label: 'Keep composer draft as clip', detail: 'Keep text in memory without changing the draft or executing it', category: 'Transcript', action: {kind: 'keepComposerClip'}}] : [];
-    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record, this.blockOptions(record)) : [])]);
   }
 
   /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
@@ -3229,7 +3234,7 @@ export class TerminalApp {
     if (this.running || this.settingsPanelActive) return;
     const record = this.output.view().completed.find(item => item.startId === startId);
     if (record && !record.frontend) {
-      this.paletteState = createPalette(blockPaletteItems(record));
+      this.paletteState = createPalette(blockPaletteItems(record, this.blockOptions(record)));
       this.blockPaletteContext = {palette: this.paletteState, scope: this.outputScope()};
       if (this.outputNavigation?.intent === 'actions' && this.outputNavigation.focusedId === startId) {
         this.blockPaletteReturn = {selection: this.outputNavigation, palette: this.paletteState};
@@ -3242,7 +3247,7 @@ export class TerminalApp {
     const records = this.output.view().completed;
     const index = records.findIndex(item => item.startId === startId);
     const record = records[index];
-    if (!record || !blockPaletteItems(record).some(item => item.action.kind === 'block' && item.action.id === action)) return;
+    if (!record || !blockPaletteItems(record, this.blockOptions(record)).some(item => item.action.kind === 'block' && item.action.id === action)) return;
     // Selection itself never runs actions. An explicit choice ends it before any editor/program handoff.
     this.endOutputNavigation(false);
     const includeStatus = this.promptConfiguration.copy.includeStatus;
@@ -3260,6 +3265,7 @@ export class TerminalApp {
       catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'view') this.openOutputViewer(record);
+    else if (action === 'details') this.output.toggleSemanticDetails(record.startId);
     else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
@@ -3583,6 +3589,11 @@ export class TerminalApp {
     finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
   }
 
+  /** Which conditional block actions this block offers. */
+  private blockOptions(record: CompletedCommand): {details: boolean} {
+    return {details: Boolean(this.output.semanticFor(record)?.items.length)};
+  }
+
   private viewerLook(): ViewerLook {
     return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks};
   }
@@ -3704,7 +3715,9 @@ export class TerminalApp {
     if (!this.outputNavigationAvailable()) return;
     const parsed = parseCopyArgs(args);
     if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
-    const {selector, status, report} = parsed.request;
+    const {status, report, content} = parsed.request;
+    // --semantic and --both copy directly: without a selection they take the latest output, whatever the copy mode.
+    const selector = content === 'semantic' || content === 'both' ? (parsed.request.selector.kind === 'default' ? {kind: 'latest' as const, count: 1} : parsed.request.selector) : parsed.request.selector;
     const includeStatus = status ?? this.promptConfiguration.copy.includeStatus;
     if (selector.kind === 'picker' || (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'picker')) {
       this.panelOrigin = undefined;
@@ -3719,7 +3732,7 @@ export class TerminalApp {
     const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
     if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
     if (report) { this.startReport(resolved.records, report); return; }
-    await this.copyRecords(resolved.records, includeStatus);
+    await this.copyRecords(resolved.records, includeStatus, undefined, parsed.request.content);
   }
 
   /**
@@ -3727,9 +3740,11 @@ export class TerminalApp {
    * stored output, oldest first, each followed by its recorded completion status when asked. Nothing to copy leaves
    * the clipboard as it was. Feedback is a brief note above the composer, given only after the write succeeded.
    */
-  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string): Promise<boolean> {
+  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string, content: CopyContent = 'raw'): Promise<boolean> {
     const scope = this.outputScope();
-    const payload = [before ?? '', copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
+    // --semantic / --both: the reading as text (raw for a record without one, said in the note); raw is the default.
+    const semantic = content === 'raw' ? undefined : semanticCopyPayload(records, content, includeStatus, record => this.output.semanticFor(record));
+    const payload = [before ?? '', semantic ? semantic.payload : copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
     if (!payload.trim()) {
       const what = records.length === 1 ? `${records[0]!.command.split('\n')[0]!.slice(0, 60)} printed no output` : 'the selected commands printed no output';
       this.noteClipboard(`Nothing to copy: ${what}; the clipboard is unchanged`, 'info');
@@ -3743,7 +3758,8 @@ export class TerminalApp {
       const live = this.output.recentShellCommands();
       this.output.expandBlocks(records.filter(record => live.includes(record) && recordCopyText(record, includeStatus)).map(record => record.startId));
     }
-    this.noteClipboard(copiedNote(records.length, copyStats(payload), includeStatus), 'success');
+    const fallback = semantic?.unavailable ? ` · ${semantic.unavailable === records.length ? 'semantic unavailable, copied raw' : `${semantic.unavailable} without a semantic reading copied raw`}` : '';
+    this.noteClipboard(`${copiedNote(records.length, copyStats(payload), includeStatus)}${content === 'semantic' && !fallback ? ' · semantic' : content === 'both' && !fallback ? ' · raw and semantic' : ''}${fallback}`, 'success');
     return true;
   }
 
@@ -7374,6 +7390,7 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
+    this.output.setSemanticOutput(next.semanticOutput);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
     return true;
@@ -7619,6 +7636,7 @@ export class TerminalApp {
       if (next.welcome === 'none') this.welcomeGeneration++;
       this.output.setTranscriptAppearance(next.transcript);
       this.output.setOutputFolding(next.outputFolding);
+    this.output.setSemanticOutput(next.semanticOutput);
       this.output.presenter.setTreatment(next.presentation);
       this.output.presenter.setLayout(next.transcriptPresentation);
       this.transcriptPanelState = undefined;

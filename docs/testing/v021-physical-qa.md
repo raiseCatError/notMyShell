@@ -20,6 +20,7 @@
 | 2 `/view` | Terminal.app | macOS | zsh | | Not run | |
 | 3 `/edit` | Ghostty | macOS | zsh | | Not run | |
 | 3 `/edit` | Terminal.app | macOS | Bash or Fish | | Not run | |
+| 4 Semantic Output | Ghostty | macOS | zsh | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -69,3 +70,18 @@
   (`chmod 444`) each explain why, and `/view` still opens them.
 - [ ] 3.8 `e` in `/view README.md` opens the editor on the same file; `vim notes.txt` and `nano notes.txt` still run as
   usual from the composer.
+
+## 4. Semantic Output
+
+- [ ] 4.1 `npm test` in this repository (long, passing): one overview row under the command (`✔ node --test · … passed ·
+  0 failed …`) above the folded output; nothing else changed; the lifecycle row appears once.
+- [ ] 4.2 A failing run (break one test): the overview says how many failed and a details row lists the failing tests;
+  details are open when the output is folded, closed when it is expanded; clicking the row and Actions → Show or hide
+  details toggle it; Ctrl+O still folds only the raw output.
+- [ ] 4.3 `npx tsc --noEmit` with an error, `cargo build` with an error, `make` of a C file with an error: a
+  diagnostics overview with `file:line:col` items.
+- [ ] 4.4 `git status`, `ls`, `cat README.md`: no overview.
+- [ ] 4.5 `/copy --semantic` and `/copy --both` on the failing run (paste into an editor); `/copy latest` is the raw
+  output only; find (Ctrl+F) never matches the overview text.
+- [ ] 4.6 Settings → Transcript → Semantic Output Off: the rows disappear from every block; On brings them back.
+- [ ] 4.7 `NO_COLOR=1` and Safe glyphs: the overview reads `+`/`x` and stays readable at 40 columns.

@@ -21,6 +21,8 @@ import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
 import type {CompletedCommand, HistoricalContextSnapshot, SecondaryActivity} from './OutputBuffer.js';
+import {semanticRows} from './semanticRows.js';
+import type {SemanticResult} from './semantic.js';
 
 /**
  * History rules are UI chrome, resolved at use so themes apply. The shipped
@@ -77,6 +79,8 @@ export interface TranscriptView {
   ownerOf: (lineIndex: number) => number | undefined;
   /** Line ids worth keeping in view inside a collapsed block's hidden middle (failures, diagnostics). */
   foldHighlights?: (record: CompletedCommand) => readonly number[];
+  /** The block's Semantic Output reading and whether its details are open (#386); undefined: raw only. */
+  semantic?: (record: CompletedCommand) => {result: SemanticResult; open: boolean} | undefined;
 }
 
 /** Transient interaction state the app tracks; the presenter decides how it looks. */
@@ -181,6 +185,9 @@ export class TranscriptPresenter {
       }
 
       const cmd = completed.find(c => c.outputStartId === i);
+      // Semantic Output: the reading's rows come first in the block's output area; the output below is unchanged.
+      const reading = cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId ? view.semantic?.(cmd) : undefined;
+      if (cmd && reading) result.push(...semanticRows(reading.result, reading.open, width, {lineIndex: cmd.outputStartId, commandIndex: completed.indexOf(cmd), startId: cmd.startId}));
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
         // Activity-bearing parents use their lifecycle row as the disclosure control below.

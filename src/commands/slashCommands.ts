@@ -39,7 +39,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/action', insertion: '/action', alias: '/actions', description: 'Same as /actions, including /action N'},
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Select completed output: Up/Down, Enter copies, Esc returns (saved Quick Copy preferences still apply)'},
-  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
+  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status; --semantic or --both the Semantic Output reading'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
   {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
   {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},

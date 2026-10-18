@@ -13,6 +13,7 @@ import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
 import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from '../session/QueueSummary.js';
+import {recognizeOutput, type SemanticResult} from './semantic.js';
 
 export {renderHistoricalContext} from './TranscriptPresenter.js';
 
@@ -155,6 +156,10 @@ export class OutputBuffer {
   /** How rows look; presentation state here is never serialized into transcripts. */
   readonly presenter = new TranscriptPresenter();
   private outputFolding: OutputFoldingMode = 'smart';
+  /** Semantic Output (#386): readings of completed output, derived and never stored; details open/closed per block. */
+  private semanticOutput = true;
+  private readonly semanticReadings = new WeakMap<CompletedCommand, SemanticResult | null>();
+  private readonly semanticDetails = new Map<number, boolean>();
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
@@ -196,6 +201,7 @@ export class OutputBuffer {
   private retireClearedBlocks(): void {
     this.completed.length = 0;
     this.userToggled.clear();
+    this.semanticDetails.clear();
     this.setOutputFilter(undefined);
     if (!this.active) return;
     this.active.start = 0;
@@ -271,6 +277,7 @@ export class OutputBuffer {
     this.firstRun = undefined;
     this.parser.restore([]);
     this.completed.length = 0;
+    this.semanticDetails.clear();
     this.visualGaps.clear();
     this.lineTypes.clear();
     this.historicalContexts.clear();
@@ -617,7 +624,43 @@ export class OutputBuffer {
       firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
+      semantic: record => {
+        const result = this.semanticFor(record);
+        return result ? {result, open: this.semanticDetailsOpen(record, result)} : undefined;
+      },
     };
+  }
+
+  setSemanticOutput(on: boolean): void { this.semanticOutput = on; }
+
+  /**
+   * The block's Semantic Output reading, computed once per record from its stored output (never stored, so a resumed
+   * transcript reads it again lazily). Only shell commands with output are read; Off reads nothing.
+   */
+  semanticFor(record: CompletedCommand): SemanticResult | undefined {
+    if (!this.semanticOutput || record.frontend || record.activities?.length || !record.output) return undefined;
+    let reading = this.semanticReadings.get(record);
+    if (reading === undefined) {
+      reading = recognizeOutput(record.command, record.output, record.exitCode) ?? null;
+      this.semanticReadings.set(record, reading);
+    }
+    // The usefulness gate: a short, passing output already reads well; a listing of failures is always worth it.
+    if (!reading || (reading.outcome === 'passed' && !reading.items.length && record.output.split('\n').length < 10)) return undefined;
+    return reading;
+  }
+
+  /** Details start open when the raw output is folded (they are what it hides), closed when it is expanded. */
+  semanticDetailsOpen(record: CompletedCommand, result = this.semanticFor(record)): boolean {
+    if (!result?.items.length) return false;
+    return this.semanticDetails.get(record.startId) ?? !record.expanded;
+  }
+
+  toggleSemanticDetails(startId: number): boolean {
+    const record = this.completed.find(item => item.startId === startId);
+    const result = record && this.semanticFor(record);
+    if (!record || !result?.items.length) return false;
+    this.semanticDetails.set(startId, !this.semanticDetailsOpen(record, result));
+    return true;
   }
 
   /** Important hidden lines of a collapsed block, by line id; computed on first draw and kept per block identity. */

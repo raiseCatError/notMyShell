@@ -5,7 +5,7 @@ import {displayWidth} from '../util/text.js';
 import {recordCopyText} from '../clipboard/copySelection.js';
 import {findOutputReferences} from '../output/references.js';
 
-export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'view' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references' | 'pin' | 'clipCommand' | 'clipOutput';
+export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'view' | 'details' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references' | 'pin' | 'clipCommand' | 'clipOutput';
 /** One registry for both pointer-opened and keyboard-opened block palettes. */
 export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: string}[] = [
   {id: 'copyCommand', label: 'Copy command', detail: 'Stored plain command'},
@@ -13,6 +13,7 @@ export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: 
   {id: 'copyBoth', label: 'Copy command + output', detail: 'Stored plain command and full output'},
   {id: 'copyReport', label: 'Copy as report…', detail: 'Command, status, exit code, duration and output as Markdown or plain text; reviewed first'},
   {id: 'compare', label: 'Compare output…', detail: 'With the previous run of this command, or another block you choose'},
+  {id: 'details', label: 'Show or hide details', detail: 'The failing tests or diagnostics Semantic Output read from this output; the output is unchanged'},
   {id: 'view', label: 'View output', detail: "Full stored output in NMSh's viewer: find, line numbers, wrap; read-only"},
   {id: 'pager', label: 'Open in pager', detail: 'Command and full stored output in your pager (less), read-only'},
   {id: 'rerun', label: 'Rerun command', detail: 'Explicitly submit a visible command in the current shell directory'},
@@ -25,10 +26,11 @@ export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: 
   {id: 'explain', label: 'Explain failure', detail: "Why it failed, from this block's own output (read-only)"},
 ];
 
-export function blockPaletteItems(record: CompletedCommand): PaletteItem[] {
-  // Explain failure is offered only on failed blocks, and references only when the output has some.
+export function blockPaletteItems(record: CompletedCommand, options: {details?: boolean} = {}): PaletteItem[] {
+  // Explain failure is offered only on failed blocks, references only when the output has some, and details only when
+  // Semantic Output listed failures or diagnostics for this block.
   const hasReferences = findOutputReferences(record).length > 0;
-  return BLOCK_ACTIONS.filter(action => (action.id !== 'explain' || (record.exitCode ?? 0) !== 0) && (action.id !== 'references' || hasReferences)).map(action => ({id: `block:${record.startId}:${action.id}`, label: action.label,
+  return BLOCK_ACTIONS.filter(action => (action.id !== 'explain' || (record.exitCode ?? 0) !== 0) && (action.id !== 'references' || hasReferences) && (action.id !== 'details' || options.details)).map(action => ({id: `block:${record.startId}:${action.id}`, label: action.label,
     detail: action.detail, category: 'Transcript', action: {kind: 'block', id: action.id, startId: record.startId}}));
 }
 

@@ -121,7 +121,9 @@ completion from bounded input (first 2 MiB), so it exists before the block is dr
 `/copy` gains `--raw` (default and current behavior), `--semantic` (the overview and details as text, raw with a note
 when there are none) and `--both` (labeled raw then semantic), mutually exclusive, combinable with existing selectors.
 Settings → Transcript → Semantic Output: On (default) / Off. External providers (`jc`, `delta`) are not part of
-this phase.
+this phase, nor are a fully collapsed raw section (raw keeps its existing fold policy) and a separate semantic search
+scope (derived rows are excluded from find and selection). Details open by default when the raw output is folded
+(they are what the fold hides) and closed when it is expanded; the reader's toggle is kept per block.
 
 ### 5. `/track` (#393, reconciling draft PR #394)
 
