@@ -254,7 +254,7 @@ test('composer history: slash suggestions still yield Up; a recalled command ope
   } finally { f.dispose(); }
 });
 
-test('composer history: multiline drafts move by line first; a recalled multiline command still reaches older history and restores the draft', () => {
+test('composer history: multiline drafts move by line first; a recalled multiline command is one step (#389) and restores the draft', () => {
   const f = fixture(['echo older', 'printf a\nprintf b']);
   try {
     f.begin('sleep 12');
@@ -267,8 +267,7 @@ test('composer history: multiline drafts move by line first; a recalled multilin
     f.app['onInput'](UP);
     assert.equal(f.text(), 'printf a\nprintf b', 'the multiline entry is recalled as one command');
     f.app['onInput'](UP);
-    f.app['onInput'](UP);
-    assert.equal(f.text(), 'echo older', 'navigation still reaches older entries');
+    assert.equal(f.text(), 'echo older', 'one Up reaches the older entry');
     f.app['onInput'](DOWN);
     assert.equal(f.text(), 'printf a\nprintf b', 'Down steps newer, entry by entry');
     f.app['onInput'](DOWN);
