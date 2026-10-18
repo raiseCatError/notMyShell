@@ -27,7 +27,9 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
     // PTY workers also own shell/helper processes. Bound fan-out on larger
     // development hosts; explicit Node --test-concurrency options still win.
     const concurrency = testConcurrency(process.env.NMSH_TEST_CONCURRENCY, availableParallelism());
-    const child = spawn(process.execPath, ['--import=tsx', '--test', `--test-concurrency=${concurrency}`, ...args, ...files], {
+    // Each file's process ends what it left running once its tests are done (a stalled test cannot hang the run).
+    const teardown = new URL('./test-file-teardown.mjs', import.meta.url).href;
+    const child = spawn(process.execPath, ['--import=tsx', `--import=${teardown}`, '--test', `--test-concurrency=${concurrency}`, ...args, ...files], {
       cwd, stdio, env,
     });
     let interrupted = false;

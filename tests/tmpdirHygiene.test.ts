@@ -62,6 +62,31 @@ test('suite runner uses short roots, removes only its own root, and reports norm
   } finally { rmSync(fixture, {recursive: true, force: true}); }
 });
 
+test('a test file that stalls with a child still running finishes, reports the stall, and leaves nothing running (#415 CI)', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'runner-'));
+  try {
+    const pidFile = join(fixture, 'child.pid');
+    const stalled = join(fixture, 'stalled.test.mjs');
+    // A piped child keeps the file's process alive after its test is cancelled: without teardown the run never ends.
+    writeFileSync(stalled, `import test from 'node:test'; import {spawn} from 'node:child_process'; import {writeFileSync} from 'node:fs';
+test('stalls past its timeout', {timeout: 300}, async () => {
+  const child = spawn('sleep', ['120'], {stdio: ['ignore', 'pipe', 'pipe']});
+  writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+  await new Promise(() => {});
+});\n`);
+    const started = Date.now();
+    const previous = process.env.NMSH_TEST_TEARDOWN_MS;
+    process.env.NMSH_TEST_TEARDOWN_MS = '500';
+    let result;
+    try { result = await runTestFiles([stalled], [], {stdio: 'ignore'}); }
+    finally { if (previous === undefined) delete process.env.NMSH_TEST_TEARDOWN_MS; else process.env.NMSH_TEST_TEARDOWN_MS = previous; }
+    assert.equal(result.code, 1, 'the cancelled test is reported as a failure');
+    assert.ok(Date.now() - started < 20_000, 'the run ends instead of waiting for the child');
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    assert.throws(() => process.kill(pid, 0), 'the child it left running was ended');
+  } finally { rmSync(fixture, {recursive: true, force: true}); }
+});
+
 test('sandbox disposal waits for an untracked late writer whose cwd still owns the sandbox', async () => {
   const sandbox = new LiveSandbox();
   const child = spawn(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync('late-journal.txt', 'done'), 150)"],
