@@ -164,3 +164,23 @@ test('/copy: --raw, --semantic and --both are one choice, never with --report or
   assert.match(both.payload, /^── NMSh · raw output ──\n✔ ok \(1ms\)\n[\s\S]*✖ broken two \(2ms\)\n── NMSh · Semantic Output ──\nnode --test: 1 passed · 2 failed\nbroken one\nbroken two$/u);
   assert.equal(both.payload.split('✔ ok (1ms)').length, 2, 'raw appears once');
 });
+
+test('hostile output cannot make recognition slow: every pattern is linear in what it reads', () => {
+  const block = (line: string, times: number) => Array.from({length: times}, () => line).join('\n');
+  const cases: Array<[string, string, string]> = [
+    ['one 2 MB line of spaces', 'cat x', `${' '.repeat(2_000_000)}x`],
+    ['Jest-like lines of digits', 'npx jest', block(`Tests: ${'1'.repeat(2000)}`, 1000)],
+    ['TAP lines padded with spaces', 'node --test', `${block(`not ok 1 - ${' '.repeat(2000)}x`, 1000)}\n# tests 1\n# pass 0\n# fail 1`],
+    ['colon-digit chains', 'make', block(`${'a:1'.repeat(660)}: error: x`, 1000)],
+    ['TypeScript-like prefixes', 'npx tsc', block(`${'(1,'.repeat(600)} - error TS1: x`, 1000)],
+    ['pytest-like banners', 'pytest', block(`= ${'1 a, '.repeat(390)} in 1s =`, 1000)],
+    ['Rust locations', 'cargo build', block(`error: x\n --> ${':1'.repeat(1000)}`, 500)],
+    ['Vitest-like lines', 'npx vitest', block(` Tests ${'(1'.repeat(1000)})`, 1000)],
+  ];
+  for (const [name, command, output] of cases) {
+    const started = performance.now();
+    recognizeOutput(command, output, 1);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 750, `${name}: ${Math.round(elapsed)}ms`);
+  }
+});
