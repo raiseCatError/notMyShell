@@ -198,7 +198,7 @@ test('Apply carries onboardingComplete, startingPoint and the draft', () => {
     assert.deepEqual([startingPoint, onboardingComplete, glyphChoiceComplete, toolsSetupComplete], ['recommended', true, true, true]);
     const {startingPoint: _s, onboardingComplete: _o, glyphChoiceComplete: _g, toolsSetupComplete: _t, ...draft} = fresh.draft;
     assert.deepEqual(rest, draft, 'exactly the reviewed draft');
-    assert.equal(recommended.tools, 'recommended', 'Review and install recommended tools is the default');
+    assert.equal(recommended.tools, 'enhanced', 'Review and install Recommended + Enhanced is the default');
     assert.equal(recommended.preselect, true);
     assert.equal(recommended.changed, true);
   }
@@ -224,7 +224,7 @@ test('Apply carries onboardingComplete, startingPoint and the draft', () => {
 
 test('T on the review chooses what happens with tools, per starting point; Skip and Keep open nothing', () => {
   const expectations = [
-    ['1', ['recommended:true', 'individual:false', 'keep:false']],
+    ['1', ['enhanced:true', 'recommended:true', 'individual:false', 'keep:false']],
     ['2', ['keep:false', 'recommended:false', 'individual:false']],
     ['4', ['keep:false', 'individual:false']],
   ] as const;
@@ -244,10 +244,10 @@ test('T on the review chooses what happens with tools, per starting point; Skip 
   const state = createQuickSetup(configured(), 0);
   press(state, 'enter');
   let text = stripAnsi(renderSetup(state, 130, 38, 10_000).join('\n'));
-  assert.match(text, /Tools\s+Review and install recommended tools/u);
+  assert.match(text, /Tools\s+Review and install Recommended \+ Enhanced/u);
   assert.match(text, /Selects what's missing\. Asks before installing\./u);
   assert.match(text, /T\s+tools/u, 'the footer names the key');
-  press(state, 't'); press(state, 't');
+  press(state, 't'); press(state, 't'); press(state, 't');
   text = stripAnsi(renderSetup(state, 130, 38, 10_000).join('\n'));
   assert.match(text, /Tools\s+Skip tools/u, 'the ground is redrawn for the new choice');
 });

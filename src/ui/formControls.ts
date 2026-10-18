@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
-import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {background, focusForeground, foreground, UI_COLORS, lazyForeground, type RgbColor} from './palette.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
-import {GLYPHS, checkMark} from './glyphs.js';
+import {GLYPHS, checkMark, getCurrentGlyphMode} from './glyphs.js';
 
 /**
  * Terminal-native form controls. A control never stores or writes anything:
@@ -115,9 +115,60 @@ export function renderTextValue(value: string, placeholder: string, look: Contro
   return look.color === false ? `${value}${cursor}` : `${tint(value, look)}${cursor}`;
 }
 
-export function renderConfirm(state: ConfirmState, look: ControlLook = {}): string {
-  const choice = (id: 'yes' | 'no', label: string) => (state.choice === id ? `[ ${label} ]` : `  ${label}  `);
-  return tint(`${choice('yes', 'Yes')} ${choice('no', 'No')}`, look);
+/**
+ * What a confirmation is for. Color says what each button does (install green, uninstall red, other neutral); the
+ * focus says which one Enter takes: a strong fill, bold high-contrast text and a pointer, while the other keeps a
+ * quiet tint. No stays the default (createConfirm).
+ */
+export interface ConfirmLabels {
+  yes?: string;
+  no?: string;
+  tone?: 'install' | 'destructive' | 'neutral';
+}
+
+const mix = (a: RgbColor, b: RgbColor, t: number): RgbColor =>
+  ({red: Math.round(a.red + (b.red - a.red) * t), green: Math.round(a.green + (b.green - a.green) * t), blue: Math.round(a.blue + (b.blue - a.blue) * t)});
+const DEEP: RgbColor = {red: 22, green: 21, blue: 28};
+const LIGHT: RgbColor = {red: 250, green: 250, blue: 252};
+const luminance = (c: RgbColor) => (0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue) / 255;
+
+function confirmTones(tone: NonNullable<ConfirmLabels['tone']>): {yes: RgbColor; no: RgbColor} {
+  const neutral = UI_COLORS.secondary;
+  if (tone === 'install') return {yes: UI_COLORS.success, no: mix(UI_COLORS.failure, neutral, 0.45)};
+  if (tone === 'destructive') return {yes: UI_COLORS.failure, no: neutral};
+  return {yes: UI_COLORS.accent, no: neutral};
+}
+
+/** The two buttons' parts: label text, and for color, each one's fill and ink. */
+function confirmParts(state: ConfirmState, labels: ConfirmLabels) {
+  const tones = confirmTones(labels.tone ?? 'neutral');
+  return (['yes', 'no'] as const).map(id => {
+    const focused = state.choice === id;
+    const color = tones[id];
+    const text = id === 'yes' ? labels.yes ?? 'Yes' : labels.no ?? 'No';
+    const fill = focused ? color : mix(color, DEEP, 0.72);
+    const ink = focused ? (luminance(color) > 0.45 ? DEEP : LIGHT) : mix(color, LIGHT, 0.25);
+    const label = ` ${focused ? GLYPHS.selection : ' '} ${text}  `;
+    return {focused, text, label, fill, ink};
+  });
+}
+
+/** One row: the Yes and No buttons. The plain path has no escapes at all: brackets and a pointer carry the focus. */
+export function renderConfirm(state: ConfirmState, look: ControlLook = {}, labels: ConfirmLabels = {}): string {
+  const parts = confirmParts(state, labels);
+  if (look.color === false) return parts.map(part => part.focused ? `[${part.label.trimEnd()} ]` : ` ${part.label.trimEnd()}  `).join(' ');
+  return parts.map(part => `${background(part.fill)}${part.focused ? '\u001B[1m' : ''}${foreground(part.ink)}${part.label}${RESET}`).join('  ');
+}
+
+/**
+ * The same buttons as /startup draws them, three rows tall: half blocks above and below in each button's fill make
+ * it a sharp filled block. The plain path is the one-row form, with a blank row above and below.
+ */
+export function renderConfirmButtons(state: ConfirmState, look: ControlLook = {}, labels: ConfirmLabels = {}): string[] {
+  if (look.color === false || getCurrentGlyphMode() !== 'nerd') return ['', renderConfirm(state, look, labels), ''];
+  const parts = confirmParts(state, labels);
+  const edge = (glyph: string) => parts.map(part => `${foreground(part.fill)}${glyph.repeat(displayWidth(part.label))}${RESET}`).join('  ');
+  return [edge('▄'), renderConfirm(state, look, labels), edge('▀')];
 }
 
 export interface FieldFrame {

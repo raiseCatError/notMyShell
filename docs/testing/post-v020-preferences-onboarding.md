@@ -62,13 +62,19 @@ until Apply.
 
 Tools: one panel and installer everywhere (`/tools`, Settings → Tools, the
 guided setup, and the review's Tools line in `/startup`, changed with T).
-Discover → select (Space, R for the missing recommended tools, C to clear) →
-Enter reviews the exact commands → one confirmation → per-tool results.
-Recommended defaults to Review and install recommended tools: the missing ones
-are ticked once detection has verified them, after the ending; Minimal and Keep
-Existing default to Skip. Chosen rows carry ✔ (`[x]` in Safe glyphs); the band is
-the cursor only. A check that fails or does not finish is *Unable to verify*,
-never Missing, and is never selected or installed.
+Recommended is ripgrep, fd, fzf, jq, bat, zoxide and tealdeer; Fastfetch stays a
+supported welcome provider without a tier. V cycles the view (Recommended →
+Recommended + Enhanced → All curated tools; Recommended + Enhanced by default)
+and never changes the selection. Keys act only outside search (`/` focuses it):
+Space selects one, R adds the missing Recommended tools, E the missing
+Recommended + Enhanced ones, C clears; Enter reviews the exact commands of every
+selected tool, then one confirmation (No first; green Yes, install; red Yes,
+uninstall) → per-tool results. `/startup` Recommended defaults to Review and
+install Recommended + Enhanced: the view's verified missing tools are ticked
+after the ending; Minimal and Keep Existing default to Skip. Status words carry
+selection (✓ Selected); the band is the cursor only. A check that fails or does
+not finish is *Unable to verify*, never Missing, and is never selected or
+installed. Installing zoxide, fzf or Atuin does not turn on their shell hooks.
 
 Custom colors: choosing Custom opens its editor at once (Setup and Settings).
 The shared gradient editor offers Lavender, Purple, Blue, Cyan, Teal, Green,

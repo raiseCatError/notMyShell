@@ -149,10 +149,11 @@ test('Apply on a genuine first run with Recommended: the welcome, once, in the r
     for (let t = 0; t < 4000 && f.app['startupEnding']; t += 40) f.paint(40);
     assert.equal(f.app['startupEnding'], undefined, 'the ending finished');
     assert.equal(f.app['startupEndingClock'], undefined, 'and its clock with it');
-    // Then the review chose Review and install recommended tools: the shared panel, filtered, nothing installed.
+    // Then the review chose Review and install Recommended + Enhanced: the shared panel, on that view, nothing installed.
     const tools = f.app['toolsPanel'];
     assert.ok(tools, 'the tools panel opens after the ending');
-    assert.equal(tools.tier, 'recommended');
+    assert.equal(tools.tier, 'enhanced');
+    assert.equal(tools.preselectTier, 'enhanced', 'both tiers\' verified missing tools are ticked once checked');
     assert.ok(tools.preselect || tools.selection, 'missing recommended tools are ticked once verified');
     assert.equal(tools.confirm, undefined, 'nothing installs without its confirmation');
     f.app['handleKey']({kind: 'escape'});

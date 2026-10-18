@@ -123,7 +123,7 @@ test('review: Enter applies the preset and a customized installation is told it 
     assert.equal(applied.configuration.onboardingComplete, true);
     assert.equal(applied.configuration.glyphChoiceComplete, true);
     assert.equal(applied.configuration.toolsSetupComplete, true);
-    assert.equal(applied.tools, 'recommended', 'Recommended reviews the recommended tools by default');
+    assert.equal(applied.tools, 'enhanced', 'Recommended reviews the Recommended + Enhanced tools by default');
     assert.equal(applied.preselect, true);
     assert.equal(applied.changed, true);
   }

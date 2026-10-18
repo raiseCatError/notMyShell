@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
-import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
+import {createConfirm, editText, handleConfirmKey, renderConfirmButtons, type ConfirmState} from '../ui/formControls.js';
 import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, cycleTab, tabCycleDelta} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
@@ -19,7 +19,7 @@ import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {renderControlRows} from '../ui/controls.js';
 import {InstallProvenance, planToolUninstall, type UninstallPlan} from './InstallProvenance.js';
 import {elevationNote, planPackageInstall, planUnavailableReason, systemPackageEnvironment, type PackageEnvironment, type PackagePlan} from '../packages/managers.js';
-import {ACTIVATION_LABELS, type ActivationFacts} from './Activation.js';
+import {ACTIVATION_LABELS, activationTools, type ActivationFacts} from './Activation.js';
 import {CONTEXT_LABELS, detectToolContexts, relevantTools, type ToolContext} from './relevance.js';
 import {discoverLocalExecutables, invalidateLocalDiscovery, type LocalExecutable} from './localDiscovery.js';
 
@@ -55,8 +55,10 @@ export interface ToolsPanel {
   selection?: Set<string>;
   /** The selection was changed by hand, so detection finishing never replaces it. */
   selectionTouched?: boolean;
-  /** Tick the missing recommended tools once detection has verified them (Review and install recommended). */
+  /** Tick the missing tools of `preselectTier` once detection has verified them (Review and install …). */
   preselect?: boolean;
+  /** Recommended, or Recommended + Enhanced ('enhanced'); fixed when the panel opens, whatever V shows later. */
+  preselectTier?: ToolTier;
   /** One combined install: each tool's place while it runs, kept as the results until Enter or Esc. */
   progress?: InstallProgress[];
   /** The progress list is finished and shown as results. */
@@ -104,10 +106,22 @@ export function choosable(state: ToolsPanel, tool: Tool): boolean {
  * or without an installer are left out and named; nothing is installed.
  */
 export function selectRecommended(state: ToolsPanel): {added: number; skipped: string[]} {
+  return selectTiers(state, 'recommended');
+}
+
+/** The tiers a preset covers: Recommended, or Recommended + Enhanced. */
+const tiersOf = (tier: ToolTier): readonly ToolTier[] => tier === 'enhanced' ? ['recommended', 'enhanced'] : ['recommended'];
+
+/**
+ * R and E: adds every verified missing, installable tool of the preset's tiers, keeping whatever else is selected
+ * (C starts over). Installed, unverified and unsupported tools are never added; the ones left out are named.
+ */
+export function selectTiers(state: ToolsPanel, tier: ToolTier): {added: number; skipped: string[]} {
   const selection = state.selection ??= new Set();
   const skipped: string[] = [];
   let added = 0;
-  for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
+  const tiers = tiersOf(tier);
+  for (const tool of TOOLS.filter(item => item.tier !== undefined && tiers.includes(item.tier))) {
     const status = state.statuses[tool.id]?.state;
     if (status === 'installed' || status === 'builtin') continue;
     if (status !== 'missing') { skipped.push(`${tool.label} (${status === 'unknown' ? 'unable to verify' : status === 'unhealthy' ? 'needs attention' : 'still checking'})`); continue; }
@@ -119,15 +133,30 @@ export function selectRecommended(state: ToolsPanel): {added: number; skipped: s
 function selectionMessage(state: ToolsPanel, result: {added: number; skipped: string[]}): string {
   const count = state.selection?.size ?? 0;
   const skipped = result.skipped.length ? ` Not selected: ${result.skipped.join(', ')}.` : '';
-  if (!count) return result.skipped.length ? `Nothing to select.${skipped}` : 'Every recommended tool is already installed.';
+  if (!count) return result.skipped.length ? `Nothing to select.${skipped}` : 'Everything in this set is already installed.';
   return `${count} selected. Enter reviews the install; nothing runs until you confirm.${skipped}`;
 }
 /** Review and install recommended: ticks the missing ones once every recommended tool has a verified status. */
 export function maybePreselect(state: ToolsPanel): void {
   if (!state.preselect || state.selectionTouched) return;
-  if (TOOLS.some(tool => tool.tier === 'recommended' && !state.statuses[tool.id])) return;
+  const tier = state.preselectTier ?? 'recommended';
+  if (TOOLS.some(tool => tool.tier !== undefined && tiersOf(tier).includes(tool.tier) && !state.statuses[tool.id])) return;
   state.preselect = false;
-  state.message = selectionMessage(state, selectRecommended(state));
+  state.message = selectionMessage(state, selectTiers(state, tier));
+}
+
+/** V: Recommended → Recommended + Enhanced → All curated tools. Never installs, never changes the selection. */
+export const TOOL_VIEWS = ['recommended', 'enhanced', undefined] as const;
+export const TOOL_VIEW_LABELS = {recommended: 'Recommended', enhanced: 'Recommended + Enhanced', all: 'All curated tools'} as const;
+export const toolViewLabel = (tier: ToolTier | undefined): string => TOOL_VIEW_LABELS[tier ?? 'all'];
+function cycleView(state: ToolsPanel): void {
+  const current = visibleTools(state)[state.selected]?.id;
+  const at = TOOL_VIEWS.indexOf(state.tier);
+  state.tier = TOOL_VIEWS[(at + 1) % TOOL_VIEWS.length];
+  state.recommendedOnly = false;
+  // The highlighted tool stays highlighted when the new view lists it.
+  const index = current ? visibleTools(state).findIndex(tool => tool.id === current) : -1;
+  state.selected = Math.max(0, index);
 }
 
 /** The reviewed install for one tool: the detected package manager's exact argv, or undefined for manual. */
@@ -256,7 +285,7 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
       state.recommendedOnly = choice === 0;
       state.tier = choice === 0 ? 'recommended' : choice === 1 ? 'enhanced' : undefined;
       if (choice === SKIP) return 'close';
-      if (choice <= 1) { state.preselect = true; maybePreselect(state); }
+      if (choice <= 1) { state.preselect = true; state.preselectTier = choice === 1 ? 'enhanced' : 'recommended'; maybePreselect(state); }
       return 'finishOnboarding';
     }
     return undefined;
@@ -349,6 +378,11 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
   } else if (key.kind === 'text' && /^r$/iu.test(key.value) && state.tab === 'discover') {
     state.selectionTouched = true;
     state.message = selectionMessage(state, selectRecommended(state));
+  } else if (key.kind === 'text' && /^e$/iu.test(key.value) && state.tab === 'discover') {
+    state.selectionTouched = true;
+    state.message = selectionMessage(state, selectTiers(state, 'enhanced'));
+  } else if (key.kind === 'text' && /^v$/iu.test(key.value) && state.tab === 'discover') {
+    cycleView(state);
   } else if (key.kind === 'text' && /^c$/iu.test(key.value) && state.tab === 'discover') {
     state.selectionTouched = true;
     state.message = state.selection?.size ? 'Selection cleared. Nothing was installed.' : 'Nothing is selected.';
@@ -520,11 +554,14 @@ export function toolCounts(state: ToolsPanel, tools: readonly Tool[]): string {
   const count = (test: (tool: Tool) => boolean) => curated.filter(test).length;
   const installed = count(tool => state.statuses[tool.id]?.state === 'installed');
   const missing = count(tool => state.statuses[tool.id]?.state === 'missing');
-  const selected = count(tool => state.statuses[tool.id]?.state === 'missing' && state.selection?.has(tool.id) === true);
   const unknown = count(tool => state.statuses[tool.id]?.state === 'unknown');
   const checking = count(tool => !state.statuses[tool.id]);
-  return [`${installed} already installed`, `${missing} missing`, `${selected} selected`, ...(unknown ? [`${unknown} unable to verify`] : []),
-    ...(checking ? [`${checking} checking`] : [])].join(' · ');
+  // The selection is the whole one, whatever this view shows; what the view hides is said, not dropped.
+  const chosen = [...(state.selection ?? [])].filter(id => state.statuses[id]?.state === 'missing');
+  const listed = new Set(curated.map(tool => tool.id));
+  const hidden = chosen.filter(id => !listed.has(id)).length;
+  return [`${installed} already installed`, `${missing} missing`, ...(unknown ? [`${unknown} unable to verify`] : []), ...(checking ? [`${checking} checking`] : []),
+    `${chosen.length} selected to install${hidden ? ` (${hidden} not in this view)` : ''}`].join(' · ');
 }
 
 export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
@@ -550,7 +587,8 @@ export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
 function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: number): string {
   const badge = statusBadge(state, tool);
   const chosen = state.selection?.has(tool.id) === true && state.statuses[tool.id]?.state === 'missing';
-  const labelWidth = columns >= 60 ? 22 : Math.max(8, columns - 20);
+  // Narrow panels give the name less room first, so the status (what matters) stays readable.
+  const labelWidth = columns >= 60 ? 22 : Math.max(8, Math.min(22, columns - 27));
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
   const statusText = columns >= 34 ? badge.text.padEnd(21) : `${badge.text.slice(0, 1)} `;
   const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
@@ -562,6 +600,13 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const quiet = onSelectedBand();
   const statusColor = badge.color === SUBTLE ? quiet : badge.color;
   return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${ACCENT}${label}${RESET}${chosen ? BOLD : ''}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
+}
+
+/** Tools whose use needs a shell hook (zoxide's z, fzf's keys, Atuin's history): installing is not activating. */
+function hookNotes(tools: readonly Tool[]): string[] {
+  const hooked = tools.filter(tool => activationTools().includes(tool.id)).map(tool => tool.label);
+  if (!hooked.length) return [];
+  return ['', `  ${WARNING}${hooked.join(' and ')}: installing does not turn on ${hooked.length === 1 ? 'its' : 'their'} shell hook; NMSh never edits your shell config.${RESET}`];
 }
 
 /** What X would do for an installed tool, in one line. */
@@ -607,8 +652,8 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
   let footer: Array<[string, string]> = state.searchFocused
     ? [['type', 'search'], ['↑↓', 'move'], ['Enter', 'done'], ['Esc', 'clear']]
     : state.tab === 'discover'
-      ? [['↑↓', 'move'], ['Space', 'select'], ['R', 'select recommended'], ...(chosenCount ? [['C', 'clear'] as [string, string], ['Enter', `review ${chosenCount} install${chosenCount === 1 ? '' : 's'}`] as [string, string]] : [['Enter', 'details'] as [string, string]]),
-        ['/', 'search'], ['Tab', 'tabs'], ['U', 'updates'], esc]
+      ? [['↑↓', 'move'], ['Space', 'select'], ['R', 'recommended'], ['E', '+ enhanced'], ...(chosenCount ? [['C', 'clear'] as [string, string], ['Enter', `review ${chosenCount} install${chosenCount === 1 ? '' : 's'}`] as [string, string]] : [['Enter', 'details'] as [string, string]]),
+        ['V', 'view'], ['/', 'search'], ['Tab', 'tabs'], ['U', 'updates'], esc]
       : [['↑↓', 'move'], ['Enter', 'details'], ['/', 'search'], ['Tab', 'tabs'], ['U', 'updates'], esc];
   if (state.progress) {
     // Discover → Select → Review → Confirm → this: each tool's state while the install runs, then the results.
@@ -636,8 +681,9 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
       ...plans.map(({tool, plan}) => `  ${SECONDARY}${tool.label}${RESET} ${SUBTLE}→${RESET} ${SECONDARY}${plan.managerLabel}${RESET} ${SUBTLE}→${RESET} ${PRIMARY}${plan.package}${RESET}  ${SUBTLE}${plan.label}${RESET}`),
       ...(plans.some(({plan}) => plan.elevation === 'administrator') ? ['', `  ${FAILURE}${elevationNote(plans.find(({plan}) => plan.elevation === 'administrator')!.plan)}${RESET}`] : []),
       ...(state.bulk.excluded.length ? ['', `  ${SUBTLE}Not included:${RESET}`, ...state.bulk.excluded.map(item => `  ${SUBTLE}${item.tool.label}: ${item.reason}${RESET}`)] : []),
-      '', `  ${SUBTLE}Each runs separately; one failing does not undo the others. Shell hooks and settings are not touched.${RESET}`, '',
-      `  ${renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'})}`);
+      ...hookNotes(plans.map(({tool}) => tool)),
+      '', `  ${SUBTLE}Each runs on its own; one failing does not undo the others. Shell config is not touched.${RESET}`,
+      ...renderConfirmButtons(state.confirm, {focused: true, color: colorLevel() !== 'none'}, {yes: 'Yes, install', no: 'No, cancel', tone: 'install'}).map(row => `  ${row}`));
     footer = [['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'back to the list']];
   } else if (state.confirm && state.uninstall) {
     const external = state.uninstall.kind === 'external-homebrew';
@@ -646,14 +692,16 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
       `  ${SUBTLE}Runs${RESET}        ${PRIMARY}${state.recipe?.label ?? ''}${RESET}  ${SUBTLE}(no sudo, no shell)${RESET}`,
       ...(external && !state.advancedAcknowledged ? ['', `  ${FAILURE}Advanced: this removes software NMSh did not install. Continue to the final confirmation?${RESET}`] : []),
       ...(external && state.advancedAcknowledged ? ['', `  ${FAILURE}Final confirmation for software NMSh did not install.${RESET}`] : []),
-      `  ${SUBTLE}Your NMSh settings and shell config are not changed.${RESET}`, '',
-      `  ${renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'})}`);
+      `  ${SUBTLE}Your NMSh settings and shell config are not changed.${RESET}`,
+      ...renderConfirmButtons(state.confirm, {focused: true, color: colorLevel() !== 'none'}, {yes: 'Yes, uninstall', no: 'No, keep', tone: 'destructive'}).map(row => `  ${row}`));
     footer = [['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']];
   } else if (state.confirm) {
     rows.push(`${PRIMARY}  ${state.upgrading ? 'Upgrade' : 'Install'} ${state.detail?.label ?? 'tool'}?${RESET}`, '', `  ${SUBTLE}Runs${RESET}  ${PRIMARY}${state.recipe?.label ?? ''}${RESET}`,
       ...(state.recipe && 'elevation' in state.recipe && elevationNote(state.recipe as PackagePlan) ? [`  ${FAILURE}${elevationNote(state.recipe as PackagePlan)}${RESET}`] : []),
-      `  ${SUBTLE}Changes installed software only; shell hooks and settings are not touched.${RESET}`, '',
-      `  ${renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'})}`);
+      ...(state.detail ? hookNotes([state.detail]) : []),
+      `  ${SUBTLE}Changes installed software only; shell hooks and settings are not touched.${RESET}`,
+      ...renderConfirmButtons(state.confirm, {focused: true, color: colorLevel() !== 'none'},
+        state.upgrading ? {yes: 'Yes, upgrade', no: 'No, cancel', tone: 'install'} : {yes: 'Yes, install', no: 'No, cancel', tone: 'install'}).map(row => `  ${row}`));
     footer = [['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']];
   } else if (state.task?.state.status === 'running') {
     rows.push(...renderTaskProgress(state.task.state));
@@ -716,10 +764,15 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     const search = state.searchFocused || state.query
       ? `${SUBTLE}Search${RESET}  ${PRIMARY}${state.query}${caret}${RESET}`
       : `${SUBTLE}/ to search${RESET}`;
-    if (state.fromSetup && state.tab === 'discover') rows.push(`  ${SECONDARY}Nothing installs until you review the exact commands and confirm. Esc skips.${RESET}`);
-    rows.push(`  ${search}${tierLabel ? `  ${ACCENT}${tierLabel}${RESET}` : ''}${checked}`);
+    if (state.tab === 'discover') {
+      const [open, close] = getCurrentGlyphMode() === 'nerd' ? ['‹', '›'] : ['<', '>'];
+      rows.push(`  ${SUBTLE}View${RESET}  ${BOLD}${ACCENT}${open} ${toolViewLabel(state.tier ?? (state.recommendedOnly ? 'recommended' : undefined))} ${close}${RESET}  ${SUBTLE}V change${RESET}`);
+      if (state.fromSetup) rows.push(...['Press V to browse more tools. Space selects individually.', 'Nothing installs until you review the exact commands and confirm. Esc skips.']
+        .flatMap(line => wrapped(line, columns)).map(line => `  ${SECONDARY}${line}${RESET}`));
+    }
+    rows.push(`  ${search}${state.tab !== 'discover' && tierLabel ? `  ${ACCENT}${tierLabel}${RESET}` : ''}${checked}`);
     const listed = visibleTools(state);
-    rows.push(state.tab === 'discover' ? `  ${SECONDARY}${toolCounts(state, listed)}${RESET}` : '', '');
+    rows.push(...(state.tab === 'discover' ? wrapped(toolCounts(state, listed), columns).map(line => `  ${SECONDARY}${line}${RESET}`) : ['']), '');
     const tools = visibleTools(state);
     state.selected = Math.max(0, Math.min(state.selected, tools.length - 1));
     const relevant = relevantHere(state);
@@ -743,7 +796,7 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     const selected = tools[state.selected];
     if (selected) rows.push('', `  ${SUBTLE}${state.errors[selected.id] ?? selected.description}${selected && relevant.has(selected.id) ? ` Shown because this looks like a ${CONTEXT_LABELS[relevant.get(selected.id)!]}.` : ''}${RESET}`);
   }
-  if (state.message && !state.results) rows.push('', ...wrapped(state.message, columns).map(line => `  ${SECONDARY}${line}${RESET}`));
+  if (state.message && !state.results && !state.confirm) rows.push('', ...wrapped(state.message, columns).map(line => `  ${SECONDARY}${line}${RESET}`));
   const controls = renderControlRows(footer, Math.max(10, columns - 4)).map(row => `  ${row}`);
   // The keys stay on screen: when the content is taller than the panel, it gives up rows from its end first.
   const room = Math.max(1, height - 1 - controls.length - 1);

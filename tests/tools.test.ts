@@ -20,7 +20,7 @@ import {join} from 'node:path';
 
 test('offline catalog, truthful filters and curated argv recipes do not execute discovery', () => {
   assert.equal(new Set(TOOLS.map(tool => tool.id)).size, TOOLS.length);
-  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'tealdeer', 'zoxide']);
+  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['bat', 'fd', 'fzf', 'jq', 'rg', 'tealdeer', 'zoxide']);
   const state = createToolsPanel(new Set(['fzf']));
   state.statuses.fzf = {state: 'installed', version: 'stub 1'};
   state.statuses.fd = {state: 'missing'};
@@ -108,7 +108,7 @@ test('curated developer tools use verified Homebrew package and executable names
 test('badges separate provider integration, recommendation tier, lifecycle and environment facts', () => {
   const state = createToolsPanel();
   assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'fzf')!), ['Recommended']);
-  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'fastfetch')!), ['Integrated · Welcome', 'Recommended']);
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'fastfetch')!), ['Integrated · Welcome']);
   assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'shellcheck')!), ['Enhanced']);
   assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'node')!), ['Detected environment']);
   assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'neofetch')!), ['Integrated · Welcome', 'Fastfetch recommended', 'Legacy']);
@@ -207,7 +207,8 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
   assert.ok(/\u001b\[48;|\u001b\[7m/u.test(selected), 'selected row has a background band or reverse-video fallback');
   assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
-  assert.match(plain.slice(-3).join(' '), /↑↓ move · Space select · R select recommended · Enter details · \/ search · Tab tabs/u);
+  const keys = plain.slice(-3).join(' ');
+  for (const hint of ['↑↓ move', 'Space select', 'R recommended', 'E + enhanced', 'Enter details', 'V view', '/ search', 'Tab tabs']) assert.ok(keys.includes(hint), hint);
   assert.match(plain.at(-1)!, /Esc close/u, 'the keys wrap onto a second row instead of being cut off');
   const lazygit = plain.find(row => row.includes('lazygit'))!;
   assert.match(lazygit, /Missing/u, 'Missing stays Missing; whether NMSh can install it here is a separate label');
@@ -491,7 +492,7 @@ test('Recommended always lists every recommended tool: installed ones found on P
   const plain = renderTools(state, 110, 40).map(stripAnsi);
   for (const label of ['ripgrep', 'fd', 'fzf', 'zoxide', 'jq']) assert.ok(plain.some(line => new RegExp(`\\b${label}\\b\\s+✔ Already installed`, 'u').test(line)), label);
   assert.ok(plain.some(line => /tealdeer\)?\s+✓ Selected/u.test(line)));
-  assert.ok(plain.some(line => /\d+ already installed · 1 missing · 1 selected/u.test(line)), 'counts at a glance');
+  assert.ok(plain.some(line => /\d+ already installed · 1 missing · 1 selected to install/u.test(line)), 'counts at a glance');
   // The default view shows them first, under one heading; the Local tab still lists what was found on PATH.
   state.tier = undefined;
   assert.ok(visibleTools(state).slice(0, recommended.length).every(tool => tool.tier === 'recommended'));
@@ -634,4 +635,109 @@ test('R, C and the preselection: verified missing recommended tools only, and ne
   toolsKey(manual, {kind: 'text', value: 'C'});
   assert.equal(manual.selection!.size, 0);
   assert.match(manual.message ?? '', /Selection cleared\. Nothing was installed\./u);
+});
+
+
+import {createConfirm, handleConfirmKey, renderConfirm, renderConfirmButtons} from '../src/ui/formControls.js';
+import {selectTiers, toolCounts} from '../src/tools/ToolsPanel.js';
+import {STARTUP_TOOL_OPTIONS} from '../src/setup/startup/startingPoints.js';
+
+test('confirmation buttons: color says what each does, focus says which Enter takes; No is the default, also without color', () => {
+  const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR, NMSH_ICONS: process.env.NMSH_ICONS};
+  try {
+    delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor'; delete process.env.NMSH_ICONS;
+    const state = createConfirm();
+    assert.equal(state.choice, 'no', 'No is the default');
+    const install = {yes: 'Yes, install', no: 'No, cancel', tone: 'install' as const};
+    const row = renderConfirm(state, {focused: true}, install);
+    const [yes, no] = row.split('\u001b[0m');
+    assert.match(stripAnsi(no!), /› No, cancel/u, 'the focused button has the pointer');
+    assert.ok(no!.includes('\u001b[1m'), 'and bold text');
+    assert.ok(!stripAnsi(yes!).includes('›') && !yes!.includes('\u001b[1m'), 'the other has neither');
+    const green = `\u001b[48;2;116;181;154m`, red = `\u001b[48;2;205;115;123m`;
+    handleConfirmKey({kind: 'left'}, state);
+    assert.ok(renderConfirm(state, {focused: true}, install).startsWith(green), 'Yes, install: a strong green fill when focused');
+    const destructive = renderConfirm(state, {focused: true}, {yes: 'Yes, uninstall', no: 'No, keep', tone: 'destructive'});
+    assert.ok(destructive.startsWith(red) && stripAnsi(destructive).includes('Yes, uninstall') && stripAnsi(destructive).includes('No, keep'), 'Yes, uninstall: red');
+    assert.equal(renderConfirmButtons(state, {focused: true}, install).length, 3, 'the /startup button: three rows');
+    // Without color: brackets and the pointer carry the focus, with no escapes at all; the other button stays plain.
+    const plain = renderConfirm(createConfirm(), {focused: true, color: false}, install);
+    assert.doesNotMatch(plain, /\u001b/u);
+    assert.match(plain, /^ {4}Yes, install {3}\[ › No, cancel \]$/u);
+    process.env.NMSH_ICONS = 'safe';
+    assert.match(renderConfirm(createConfirm(), {focused: true, color: false}, install), /\[ > No, cancel \]/u, 'Safe glyphs: an ASCII pointer');
+    assert.equal(renderConfirmButtons(createConfirm(), {focused: true}, install).filter(Boolean).length, 1, 'and no half blocks');
+    // Existing callers keep working with the default labels.
+    assert.match(stripAnsi(renderConfirm(createConfirm(), {focused: true, color: false})), /Yes .*\[ > No \]/u);
+    // Enter takes the focused one; Esc always cancels.
+    const choice = createConfirm();
+    assert.equal(handleConfirmKey({kind: 'enter'}, choice), 'cancel', 'Enter on the default No cancels');
+    handleConfirmKey({kind: 'right'}, choice);
+    assert.equal(handleConfirmKey({kind: 'enter'}, choice), 'confirm');
+    assert.equal(handleConfirmKey({kind: 'escape'}, {choice: 'yes'}), 'cancel');
+  } finally {
+    for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+});
+
+test('V cycles the view without installing or forgetting anything; R and E add their tiers, C starts over', () => {
+  const state = createToolsPanel();
+  state.contexts = [];
+  state.packages = env('ID=ubuntu', ['apt-get', 'brew'], {isRoot: true});
+  for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+  for (const id of ['tealdeer', 'lazygit', 'delta']) state.statuses[id] = {state: 'missing'};
+  state.statuses.zoxide = {state: 'unknown', detail: 'the check did not finish'};
+  state.statuses.mise = {state: 'missing'}; // Enhanced, but a project tool: E adds it only because it is in the tier
+  state.statuses.node = {state: 'missing'}; // an environment tool: never in a preset
+  state.tier = 'recommended';
+  toolsKey(state, {kind: 'text', value: 'r'});
+  assert.deepEqual([...state.selection!].sort(), ['tealdeer'], 'R: verified missing Recommended only; zoxide is unverified');
+  toolsKey(state, {kind: 'text', value: 'e'});
+  assert.deepEqual([...state.selection!].sort(), ['delta', 'lazygit', 'mise', 'tealdeer'], 'E adds Enhanced and keeps the rest');
+  assert.ok(!state.selection!.has('node') && !state.selection!.has('zoxide'), 'no environment tool, nothing unverified');
+  // A hand-picked tool outside both presets survives R and E.
+  state.tier = undefined;
+  state.selected = visibleTools(state).findIndex(tool => tool.id === 'node');
+  toolsKey(state, {kind: 'text', value: ' '});
+  toolsKey(state, {kind: 'text', value: 'r'});
+  assert.ok(state.selection!.has('node'), 'presets only add');
+  // V: Recommended → Recommended + Enhanced → All, keeping the highlight and the whole selection.
+  state.tier = 'recommended';
+  state.selected = visibleTools(state).findIndex(tool => tool.id === 'tealdeer');
+  toolsKey(state, {kind: 'text', value: 'v'});
+  assert.equal(state.tier, 'enhanced');
+  assert.equal(visibleTools(state)[state.selected]?.id, 'tealdeer', 'the highlighted tool stays highlighted');
+  toolsKey(state, {kind: 'text', value: 'v'});
+  assert.equal(state.tier, undefined, 'All curated tools');
+  toolsKey(state, {kind: 'text', value: 'v'});
+  assert.equal(state.tier, 'recommended');
+  assert.equal(state.confirm, undefined, 'switching views never installs');
+  assert.equal(state.selection!.size, 5, 'or changes the selection');
+  assert.match(toolCounts(state, visibleTools(state)), /5 selected to install \(4 not in this view\)/u, 'the count is the whole selection');
+  const review = reviewBulk(state);
+  assert.equal(review.items.length + review.excluded.length, 5, 'and the review covers every selected tool');
+  assert.match(renderTools(state, 120, 40).map(stripAnsi).join('\n'), /View\s+‹ Recommended ›\s+V change/u);
+  toolsKey(state, {kind: 'text', value: 'c'});
+  assert.equal(state.selection!.size, 0, 'C clears everything, hidden or not');
+  // Letters never reach the search field.
+  assert.equal(state.query, '');
+  assert.deepEqual(selectTiers(createToolsPanel(), 'enhanced'), {added: 0, skipped: [...TOOLS.filter(tool => tool.tier).map(tool => `${tool.label} (still checking)`)]});
+});
+
+test('onboarding Tools choices: each opens its own view and preselection; Minimal and Keep Existing skip', () => {
+  const ids = (id: 'recommended' | 'minimal' | 'existing') => STARTUP_TOOL_OPTIONS[id].map(option => `${option.choice}:${option.preselect}`);
+  assert.deepEqual(ids('recommended'), ['enhanced:true', 'recommended:true', 'individual:false', 'keep:false'], 'Recommended + Enhanced first');
+  assert.equal(ids('minimal')[0], 'keep:false');
+  assert.equal(ids('existing')[0], 'keep:false');
+  // What the app opens for each: Recommended + Enhanced preselects both tiers, Recommended only its own, Choose individually nothing.
+  for (const [tier, expected] of [['enhanced', ['delta', 'tealdeer']], ['recommended', ['tealdeer']]] as const) {
+    const state = createToolsPanel();
+    state.contexts = [];
+    state.packages = env('ID=ubuntu', ['apt-get', 'brew'], {isRoot: true});
+    state.tier = tier; state.preselect = true; state.preselectTier = tier;
+    for (const tool of TOOLS) state.statuses[tool.id] = {state: 'installed'};
+    state.statuses.tealdeer = {state: 'missing'}; state.statuses.delta = {state: 'missing'}; state.statuses.jq = {state: 'unknown'};
+    maybePreselect(state);
+    assert.deepEqual([...state.selection!].sort(), expected, `${tier}: verified missing tools of its tiers only`);
+  }
 });

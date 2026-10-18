@@ -829,7 +829,7 @@ function toolChoiceNote(choice: ToolChoice): string {
     case 'keep': return 'Installed tools and providers stay as they are';
     case 'native': return 'Every provider uses NMSh Native; nothing is uninstalled';
     case 'recommended': return 'Opens /tools with the missing recommended tools selected; nothing installs until you confirm';
-    case 'enhanced': return 'Also lists Enhanced CLI tools (bat, eza, delta, gh, …); not better for everyone';
+    case 'enhanced': return 'Opens /tools with missing Recommended and Enhanced tools selected (eza, delta, gh, …); nothing installs until you confirm';
     case 'individual': return 'Opens /tools on the full catalog; each install asks first';
   }
 }

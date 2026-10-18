@@ -26,9 +26,13 @@ import {setIconStyle} from '../src/ui/glyphs.js';
 const tool = (id: string) => TOOLS.find(item => item.id === id)!;
 const plain = (rows: string[]) => rows.map(stripAnsi).join('\n');
 
-test('tiers: the conservative Recommended toolkit is unchanged; Enhanced is separate and never "better"', () => {
-  assert.deepEqual(toolsInTier('recommended').map(item => item.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'tealdeer', 'zoxide']);
-  assert.deepEqual(toolsInTier('enhanced').map(item => item.id).sort(), ['atuin', 'bat', 'btop', 'delta', 'direnv', 'duf', 'dust', 'eza', 'gh', 'glow', 'hyperfine', 'jc', 'just', 'lazygit', 'mise', 'procs', 'shellcheck', 'shfmt', 'tokei', 'watchexec', 'xh']);
+test('tiers: Recommended is ripgrep, fd, fzf, jq, bat, zoxide and tealdeer; Enhanced is separate; Fastfetch stays supported, untiered', () => {
+  assert.deepEqual(toolsInTier('recommended').map(item => item.id).sort(), ['bat', 'fd', 'fzf', 'jq', 'rg', 'tealdeer', 'zoxide']);
+  const fastfetch = TOOLS.find(item => item.id === 'fastfetch')!;
+  assert.equal(fastfetch.tier, undefined, 'NMSh has its own welcome: Fastfetch is not a default recommendation');
+  assert.equal(fastfetch.providerFamily, 'welcome', 'but it stays a supported welcome provider');
+  assert.ok(toolInstall(fastfetch, true), 'and installable');
+  assert.deepEqual(toolsInTier('enhanced').map(item => item.id).sort(), ['atuin', 'btop', 'delta', 'direnv', 'duf', 'dust', 'eza', 'gh', 'glow', 'hyperfine', 'jc', 'just', 'lazygit', 'mise', 'procs', 'shellcheck', 'shfmt', 'tokei', 'watchexec', 'xh']);
   const state = createToolsPanel();
   state.tier = 'recommended';
   assert.ok(visibleTools(state).every(item => item.tier === 'recommended'));

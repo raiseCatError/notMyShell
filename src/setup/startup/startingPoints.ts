@@ -47,7 +47,7 @@ export const STARTING_POINT_COPY: Readonly<Record<StartingPointId, StartingPoint
 
 /** What happens with optional tools after a starting point applies (T on the review). Every install still asks first. */
 export interface StartupToolOption {
-  choice: 'keep' | 'recommended' | 'individual';
+  choice: 'keep' | 'recommended' | 'enhanced' | 'individual';
   /** Tick the missing recommended tools once they are verified. */
   preselect: boolean;
   label: string;
@@ -57,7 +57,8 @@ export interface StartupToolOption {
 const CHOOSE: StartupToolOption = {choice: 'individual', preselect: false, label: 'Choose tools individually', short: 'choose tools', detail: 'The full list, nothing selected.'};
 export const STARTUP_TOOL_OPTIONS: Readonly<Record<Exclude<StartingPointId, 'customize'>, readonly StartupToolOption[]>> = {
   recommended: [
-    {choice: 'recommended', preselect: true, label: 'Review and install recommended tools', short: 'install recommended', detail: 'Selects what\'s missing. Asks before installing.'},
+    {choice: 'enhanced', preselect: true, label: 'Review and install Recommended + Enhanced', short: 'install recommended + enhanced', detail: 'Selects what\'s missing. Asks before installing.'},
+    {choice: 'recommended', preselect: true, label: 'Review and install Recommended only', short: 'install recommended', detail: 'The core set only. Asks before installing.'},
     CHOOSE,
     {choice: 'keep', preselect: false, label: 'Skip tools', short: 'skip tools', detail: 'Nothing is installed. /tools anytime.'},
   ],
