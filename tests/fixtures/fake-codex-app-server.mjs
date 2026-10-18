@@ -37,7 +37,9 @@ createInterface({input: process.stdin}).on('line', line => {
     if (scenario === 'fail') return send({method: 'turn/completed', params: {threadId: 'thr_1', turn: {id: 'turn_1', status: 'failed', error: {message: 'usage limit reached\nsecond line'}, items: []}}});
     send({method: 'item/started', params: {threadId: 'thr_1', turnId: 'turn_1', startedAtMs: 1, item: {type: 'commandExecution', id: 'item_1', command: 'rm -rf build', commandActions: [], cwd: '/tmp', status: 'inProgress'}}});
     send({id: 100, method: 'item/commandExecution/requestApproval', params: {threadId: 'thr_1', turnId: 'turn_1', itemId: 'item_1', startedAtMs: 1, command: 'rm -rf build', cwd: '/tmp', reason: 'cleans the build'}});
-    send({id: 101, method: 'item/tool/requestUserInput', params: {threadId: 'thr_1', turnId: 'turn_1', itemId: 'item_9', questions: []}});
+    // A moment later, as a separate read: the person may already have answered 100, so the client's refusal of 101 can
+    // reach this server after that answer (and after the turn completes). Tests must wait for what they assert.
+    setTimeout(() => send({id: 101, method: 'item/tool/requestUserInput', params: {threadId: 'thr_1', turnId: 'turn_1', itemId: 'item_9', questions: []}}), 30);
     return;
   }
   if (id === 100) {
