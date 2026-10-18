@@ -1,4 +1,5 @@
 import {colorLevel} from '../presentation/capabilities.js';
+import type {FitReport} from './fitReport.js';
 import {promptFacts, moduleFactContext, safeContextText, factAllowed} from '../context/facts.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import {moduleDefinition} from '../context/modules.js';
@@ -644,7 +645,7 @@ export function buildContextLine(
 }
 
 /** Resolve appearance through the existing semantic theme context, restoring it after a chosen-theme render. */
-export function buildContextRail(context: PromptContext, width: number, configuration: PromptConfiguration, time = 0): string[] {
+export function buildContextRail(context: PromptContext, width: number, configuration: PromptConfiguration, time = 0, report?: FitReport): string[] {
   const rail = configuration.contextRail;
   if (configuration.provider !== 'nmsh' || rail.mode === 'off') return [];
   const saved = themeContext();
@@ -682,10 +683,15 @@ export function buildContextRail(context: PromptContext, width: number, configur
         compact[0] = true;
       }
     }
+    if (report) for (const group of groups) {
+      const index = rows.findIndex(row => row.includes(group[0]!));
+      if (index === -1) report.dropped.add(group[0]!.id); else if (compact[index]) report.compacted.add(group[0]!.id);
+    }
     const paintedRows = rows.map((blocks, index) => {
       if (!blocks.length || width <= 0) return '';
       const painted = paint(blocks, compact[index]!);
       if (displayWidth(painted) <= width) return painted;
+      for (const block of blocks) report?.compacted.add(block.id);
       if (mirrored) return fitRightPowerlineBlocks([...blocks].reverse(), width, fitted => paintPhysical(fitted, true));
       return fitPowerlineBlocks(blocks, 0, 0, width, nmsh.endStyle, false,
         nmsh.startStyle, nmsh.connector, resolveConnectorFade('off', nmsh.connector), nmsh.connectorFadeColors, promptRenderExtras(draft, time));

@@ -36,6 +36,11 @@
 - [ ] 1.3 Resize the window narrower and wider while 1.2 runs: no earlier command, prompt or NMSh notice is erased.
 - [ ] 1.4 `/copy` of that block copies the final rows once, not every frame.
 - [ ] 1.5 `printf '10%%\r20%%\r100%%\n'` still shows one `100%` line; `clear` still clears.
+- [ ] 1.5a At 40 columns, a progress display whose line is wider than the window (for example `pip install` of a
+  large wheel, `cargo build` of a crate with a long name, or the wrapped-row fixture in `tests/ansiLiveRegion.test.ts`)
+  redraws in place and every log line printed before it stays.
+- [ ] 1.5b On Linux, `sudo apt install <small package>` (fancy progress on): the transcript keeps the dpkg log lines and
+  contains no `Progress: [ nn%]` fragments.
 - [ ] 1.6 `vim`, `less` and `htop` still take the full screen and return to the composer.
 - [ ] 1.7 Queue two quick commands (`ls` then `pwd`) with Ctrl+Q while a short command runs: both stored command
   lines end with the known-command color (#408).
@@ -126,6 +131,9 @@
 - [ ] 6.3 In a Docker or Podman container (or a Codespace), the container module names it; on the host it shows nothing.
 - [ ] 6.4 `/modules explain` lists every configured module with its surface and reason; `/modules timings` lists the
   slowest collections; neither changes what is collected (the Status Strip CPU stays as it was).
+- [ ] 6.5 Route three modules to the Context Rail (Modules → Surface), narrow the window until one disappears, then run
+  `/modules explain`: that module says "left out for width in the last frame"; widen the window and run it again: the
+  note is gone. The same with the Status Strip.
 
 ## 7. Theme families
 

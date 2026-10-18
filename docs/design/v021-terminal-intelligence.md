@@ -55,8 +55,16 @@ lines. Fix: a bounded **live region**: the cursor may move up and down only with
 never above the most recent NMSh-authored line or the command's start, and never more than the PTY's screen height
 (a terminal cannot address scrollback either). Supported: `CSI A/B/E/F` (cursor up/down/next/previous line),
 `ESC M`, `ESC D`, `ESC E`, save/restore (`ESC 7/8`, `CSI s/u`), `CSI J` 0/1 within the region, `CSI K` 0/1/2.
-Absolute row addressing (`CSI H/f/d` with a row) is not mapped: inline programs cannot know where their rows are, so
-it keeps today's behavior (appends), documented. Copy and search see what the terminal would show at the end; the
+**Rows are the terminal's rows** (stabilization): once the frontend reports the PTY's width, a stored line wider than
+it occupies several rows, so a program that counts the rows it drew (as progress libraries measure wrapping) moves
+over exactly those rows. Moving by stored lines instead climbed past a wrapped line into the program's own earlier
+output and erased it at narrow widths (reproduced, and in a real PTY at 40 columns). Carriage return, backspace,
+`CSI G/C/D` and `CSI K` act on the cursor's row within its line; a resize re-wraps stored lines at the new width, as
+a reflowing terminal does. The contract stays deliberately limited: absolute row addressing (`CSI H/f/d` with a row)
+is not mapped, because inline programs cannot know where their rows are (cursor position reports are not answered),
+so the cursor stays where it is; scroll regions (`CSI r`) are not emulated, except that text a program draws below a
+region it set (a reserved status row, such as an installer's progress line) is not stored, so it cannot leak into the
+log rows. Copy and search see what the terminal would show at the end; the
 intermediate frames are not kept, as a terminal's scrollback does not keep them. Raw events in the session spool are
 unchanged and replay through the same parser. Tests: single and multi-row redraws, interleaved stdout, split
 sequences, clamping at the fence, NMSh lines inserted mid-redraw, metadata never edited, a real-PTY run of the

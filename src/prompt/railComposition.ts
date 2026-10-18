@@ -1,6 +1,7 @@
 import {colorLevel} from '../presentation/capabilities.js';
 import type {PromptContext} from '../shell/ShellContext.js';
 import type {PromptConfiguration} from './configuration.js';
+import type {FitReport} from './fitReport.js';
 import {buildContextParts, buildContextRail, buildInlineContextPrefix, buildRightContext} from './prompt.js';
 import {railPresentation, type RailPresentation} from './railLayout.js';
 import {planScreen, regionOf, type ScreenPlan} from '../app/screenPlan.js';
@@ -12,11 +13,11 @@ const RESET = '\u001b[0m';
 export interface PreparedRail {presentation: RailPresentation; content: string[]; time: number}
 
 /** Facts arrive resolved. This projection never requests or collects a value. */
-export function prepareRail(context: PromptContext, columns: number, configuration: PromptConfiguration, time = 0): PreparedRail {
+export function prepareRail(context: PromptContext, columns: number, configuration: PromptConfiguration, time = 0, report?: FitReport): PreparedRail {
   const enabled = configuration.provider === 'nmsh' && configuration.contextRail.mode !== 'off';
   const parts = buildContextParts(context, columns, configuration, time);
   const budget = railPresentation(configuration, enabled ? configuration.contextRail.rows : 0, columns, parts);
-  const content = enabled && !(budget.width === 0 && configuration.contextRail.mode === 'auto') ? buildContextRail(context, budget.width, configuration, time) : [];
+  const content = enabled && !(budget.width === 0 && configuration.contextRail.mode === 'auto') ? buildContextRail(context, budget.width, configuration, time, report) : [];
   return {content, time, presentation: railPresentation(configuration, content.length, columns, parts)};
 }
 

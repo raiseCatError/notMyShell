@@ -1,5 +1,5 @@
 import test, {beforeEach, afterEach} from 'node:test';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import assert from 'node:assert';
@@ -99,4 +99,16 @@ test('SemanticService ignores commands when dead and cleans resources', async ()
   
   assert.equal((service as any).zdotdir, '', 'zdotdir must be cleared');
   assert.equal((service as any).isDead, true, 'service must be marked dead');
+});
+
+test('a slow configuration delays the first answer, not the helper\'s life: lookups are timed from when it reads them', {timeout: 30_000}, async () => {
+  // Sourcing takes longer than one lookup's limit (nvm, a large framework); the first lookup used to time out, end the
+  // helper, and leave every later command without its known/unknown color for the session.
+  writeFileSync(join(fixtureHome, '.zshrc'), 'sleep 2\n');
+  const service = createService();
+  const [first, source] = await Promise.all([service.classifyCommand('ls'), service.resolveSource('ls')]);
+  assert.strictEqual(first, 'executable');
+  assert.strictEqual(source?.kind, 'executable');
+  assert.strictEqual((service as any).isDead, false);
+  assert.strictEqual(await service.classifyCommand('cd'), 'builtin', 'later lookups are still answered');
 });

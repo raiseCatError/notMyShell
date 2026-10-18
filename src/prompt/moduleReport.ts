@@ -19,7 +19,8 @@ const age = (status: Status, now: number) => status.collectedAt === undefined ? 
 const took = (status: Status) => status.durationMs === undefined ? '' : `, took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
 const STATE: Record<string, string> = {fresh: 'fresh', stale: 'stale', pending: 'collecting', absent: 'nothing to show', timeout: 'timed out', failed: 'failed', idle: 'not collected'};
 
-export function explainModules(modules: readonly ContextModuleConfig[], context: ModulesContext, configuration: PromptConfiguration, now = Date.now()): string[] {
+export function explainModules(modules: readonly ContextModuleConfig[], context: ModulesContext, configuration: PromptConfiguration, now = Date.now(),
+  fit?: (id: string, surface: string) => 'dropped' | 'compacted' | undefined): string[] {
   const rows: string[] = [];
   for (const module of modules) {
     const definition = moduleDefinition(module.id);
@@ -33,7 +34,11 @@ export function explainModules(modules: readonly ContextModuleConfig[], context:
         : context.conditionMet?.(module) === false ? 'hidden: its condition does not match here'
           : whyText(module, surface, statuses, definition.triggers);
     const where = surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface];
-    rows.push(`${inert(definition.label, 48)} (${module.id}) · ${where} · ${inert(why, 200)}`);
+    // Width: what the last frame's fitting did on its surface (higher priorities are kept, then shortened, longest).
+    const fitted = module.visible && surface !== 'hidden' && (!availability || availability.available) ? fit?.(module.id, surface) : undefined;
+    const width = fitted === 'dropped' ? ' · left out for width in the last frame (higher-priority modules kept)'
+      : fitted === 'compacted' ? ' · shortened to fit the width in the last frame' : '';
+    rows.push(`${inert(definition.label, 48)} (${module.id}) · ${where} · ${inert(why, 200)}${width}`);
     const sources = sourced.map(({id, status}) => `${id} ${STATE[status.state] ?? status.state}${age(status, now)}${took(status)}${status.evidence ? ` (${inert(status.evidence, 80)})` : ''}`);
     if (sources.length) rows.push(`  reads ${sources.join('; ')}`);
   }
