@@ -57,8 +57,8 @@ about line 200 (`:200` Enter), press `o`. The viewer closes and the composer hol
 runs). Enter opens the editor at line 200; quitting it returns to NMSh's composer.
 2.2 Type a draft (`git status`), then `/view long.txt` via Actions or `/view`, press `o`: the viewer stays and says the
 composer has a draft; the draft is unchanged after Esc.
-2.3 A name with spaces: `printf 'x\n' > 'my notes.txt'`, `/view "my notes.txt"`, `o`: the composer command quotes the
-path as one argument.
+2.3 A name with spaces: `printf 'x\n' > 'my notes.txt'`, `/view my notes.txt` (the rest of the line is the path, no
+quotes), `o`: the composer command quotes the path as one argument.
 2.4 With `VISUAL` and `EDITOR` unset, outside any editor: `o` says no editor is known and how to set one.
 2.5 Inside Zed's or VS Code's integrated terminal: `o` opens the file at the line in that editor; the viewer stays.
 2.6 Markdown: `/view README.md` (rendered), `o` opens at the start; after `m` (source) it opens at the line shown.
