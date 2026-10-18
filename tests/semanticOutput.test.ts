@@ -113,38 +113,38 @@ test('presentation: an overview row inside the block, details by the raw fold, n
   const pass = block(buffer, 'npm test', passingRun, 0);
   const before = JSON.stringify(buffer.transcript().lines);
   const rows = buffer.wrapped(100);
-  const overview = rows.filter(row => row.isSemantic);
+  const overview = rows.filter(row => row.derived);
   assert.deepEqual(overview.map(row => row.plain), ['  ✔ node --test · 12 passed · 0 failed']);
   assert.equal(overview[0]!.blockStartId, pass.startId, 'the row belongs to its block');
-  assert.ok(rows.findIndex(row => row.isSemantic) < rows.findIndex(row => row.plain.includes('test 0')), 'before the output');
+  assert.ok(rows.findIndex(row => row.derived) < rows.findIndex(row => row.plain.includes('test 0')), 'before the output');
   assert.equal(JSON.stringify(buffer.transcript().lines), before, 'drawing a reading stores nothing');
   assert.equal(logicalLines(rows).some(line => line.text.includes('node --test')), false, 'raw search never sees derived rows');
 
   const fail = block(buffer, 'npm test', failingRun, 1);
-  const failRows = buffer.wrapped(100).filter(row => row.isSemantic && row.blockStartId === fail.startId);
+  const failRows = buffer.wrapped(100).filter(row => row.derived && row.blockStartId === fail.startId);
   assert.equal(fail.expanded, true, 'a short failing output stays expanded');
   assert.deepEqual(failRows.map(row => row.plain), ['  ✘ node --test · 1 passed · 2 failed', '  › 2 failing tests · click or Actions to show'],
     'raw is expanded, so the details (what it shows) start closed');
   assert.equal(failRows[1]!.semanticToggle, fail.startId);
   assert.ok(buffer.toggleSemanticDetails(fail.startId));
-  assert.deepEqual(buffer.wrapped(100).filter(row => row.isSemantic && row.blockStartId === fail.startId).map(row => row.plain).slice(1),
+  assert.deepEqual(buffer.wrapped(100).filter(row => row.derived && row.blockStartId === fail.startId).map(row => row.plain).slice(1),
     ['  ⌄ 2 failing tests', '    ✘ broken one', '    ✘ broken two']);
   buffer.toggleExpanded(0);
   assert.equal(buffer.semanticDetailsOpen(fail), true, 'folding the raw output leaves the reader\'s choice alone');
 
   buffer.setSemanticOutput(false);
-  assert.equal(buffer.wrapped(100).some(row => row.isSemantic), false, 'Off: raw only');
+  assert.equal(buffer.wrapped(100).some(row => row.derived), false, 'Off: raw only');
   assert.equal(buffer.semanticFor(fail), undefined);
 });
 
 test('presentation: short passing output reads well already; failures and diagnostics are always summarized', () => {
   const buffer = new OutputBuffer();
   block(buffer, 'npm test', lines('ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'), 0);
-  assert.equal(buffer.wrapped(80).some(row => row.isSemantic), false);
+  assert.equal(buffer.wrapped(80).some(row => row.derived), false);
   block(buffer, 'make', "a.c:1:1: error: nope", 2);
-  assert.deepEqual(buffer.wrapped(80).filter(row => row.isSemantic).map(row => row.plain), ['  ✘ GCC/Clang · 1 error', '  › 1 diagnostic · click or Actions to show']);
+  assert.deepEqual(buffer.wrapped(80).filter(row => row.derived).map(row => row.plain), ['  ✘ GCC/Clang · 1 error', '  › 1 diagnostic · click or Actions to show']);
   block(buffer, 'git status', lines('On branch main', 'nothing to commit, working tree clean'), 0);
-  assert.equal(buffer.wrapped(80).filter(row => row.isSemantic).length, 2, 'unrecognized output gets nothing');
+  assert.equal(buffer.wrapped(80).filter(row => row.derived).length, 2, 'unrecognized output gets nothing');
 });
 
 test('/copy: --raw, --semantic and --both are one choice, never with --report or the picker; semantic copies fall back to raw once', () => {

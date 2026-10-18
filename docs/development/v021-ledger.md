@@ -19,7 +19,7 @@ Automated results here are not physical-terminal validation.
 | 2 | `/view` | #397, #402 | `feature/v021-view` (stacked on slice 1) | | PR open |
 | 3 | `/edit` | #402 | `feature/v021-edit` (stacked on slice 2) | | PR open |
 | 4 | Semantic Output | #386 | `feature/v021-semantic` (stacked on slice 3) | | PR open |
-| 5 | `/track` | #393 (#394) | | | |
+| 5 | `/track` | #393 (#394) | `feature/v021-track` (stacked on slice 4) | | PR open |
 | 6 | Modules and diagnostics | #364, #365 | | | |
 | 7 | Themes and controls | #401, #336 | | | |
 
@@ -30,13 +30,17 @@ Automated results here are not physical-terminal validation.
 - #408 is a production race in `SemanticService` (superseded lookups resolved `unknown`), plus a test that raced the
   real shell's startup knowledge.
 - `/track` stays window-owned like `/watch` in v0.21; service-owned scheduling is deferred and documented.
+- PR #394's `WatchTasks.ts`/`WatchPanel.ts` were adopted as written (neither file changed on `dev` since its base) and
+  its tests kept; its other edits were re-applied by hand. #394 itself is superseded by the slice 5 PR and was not merged.
+- `/track` samples run `sh -c` (as `/watch` always has) with the live shell's PATH, not the session shell, so `/watch`
+  semantics stay the same for Fish users.
 
 ## Physical QA still required
 
 Checklist: [v0.21 physical QA](../testing/v021-physical-qa.md). Slice 1: section 1 (multi-row progress in Ghostty
 and Terminal.app, queued highlight colors). Slice 2: section 2 (`/view` keys, rendering, refusals, hostile text,
 NO_COLOR). Slice 3: section 3 (`/edit` editing keys, saving, conflicts, refusals). Slice 4: section 4 (overview rows, details
-toggle, copy flags, Off).
+toggle, copy flags, Off). Slice 5: section 5 (`/track` block, refresh, copy, stop, cleanup).
 
 ## Verification notes
 

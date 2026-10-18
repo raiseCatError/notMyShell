@@ -160,6 +160,9 @@ export class OutputBuffer {
   private semanticOutput = true;
   private readonly semanticReadings = new WeakMap<CompletedCommand, SemanticResult | null>();
   private readonly semanticDetails = new Map<number, boolean>();
+  /** /track: the stored line each live result is drawn under (line id → tracker id), and who draws it. */
+  private readonly trackAnchors = new Map<number, string>();
+  private liveRowsProvider?: (id: string, width: number) => readonly string[];
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
@@ -202,6 +205,7 @@ export class OutputBuffer {
     this.completed.length = 0;
     this.userToggled.clear();
     this.semanticDetails.clear();
+    this.trackAnchors.clear();
     this.setOutputFilter(undefined);
     if (!this.active) return;
     this.active.start = 0;
@@ -278,6 +282,7 @@ export class OutputBuffer {
     this.parser.restore([]);
     this.completed.length = 0;
     this.semanticDetails.clear();
+    this.trackAnchors.clear();
     this.visualGaps.clear();
     this.lineTypes.clear();
     this.historicalContexts.clear();
@@ -624,6 +629,10 @@ export class OutputBuffer {
       firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
+      liveRows: (line, width) => {
+        const id = this.trackAnchors.get(line);
+        return id === undefined ? undefined : this.liveRowsProvider?.(id, width);
+      },
       semantic: record => {
         const result = this.semanticFor(record);
         return result ? {result, open: this.semanticDetailsOpen(record, result)} : undefined;
@@ -632,6 +641,21 @@ export class OutputBuffer {
   }
 
   setSemanticOutput(on: boolean): void { this.semanticOutput = on; }
+
+  /** Who draws each /track block's live rows (presentation only; nothing it returns is stored). */
+  setLiveRows(provider: (id: string, width: number) => readonly string[]): void { this.liveRowsProvider = provider; }
+
+  /**
+   * A /track block: NMSh's lines for the command, stored once like any frontend block; the tracker's live result is
+   * drawn under its last line and replaced in place on every refresh. Returns that line's id.
+   */
+  addTrackBlock(id: string, command: string, rows: readonly string[]): number {
+    this.addFrontendBlock(command, rows);
+    const anchor = this.parser.completedCount() - 1;
+    this.trackAnchors.set(anchor, id);
+    return anchor;
+  }
+
 
   /**
    * The block's Semantic Output reading, computed once per record from its stored output (never stored, so a resumed

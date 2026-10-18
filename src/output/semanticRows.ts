@@ -25,7 +25,7 @@ export function semanticRows(result: SemanticResult, open: boolean, width: numbe
   const paint = (role: keyof typeof UI_COLORS) => color ? foreground(UI_COLORS[role]) : '';
   const passed = result.outcome === 'passed';
   const icon = passed ? GLYPHS.success : GLYPHS.failure;
-  const base = {lineIndex: owner.lineIndex, commandIndex: owner.commandIndex, isSemantic: true as const};
+  const base = {lineIndex: owner.lineIndex, commandIndex: owner.commandIndex, derived: true as const};
   const overviewPlain = truncateText(`  ${icon} ${result.source} · ${result.overview}${result.complete ? '' : ' · from the end of the output'}`, width);
   const rows: WrappedRow[] = [{...base, plain: overviewPlain,
     ansi: `${paint(passed ? 'success' : 'failure')}${overviewPlain.slice(0, 2 + icon.length + 1)}${RESET}${paint('secondary')}${overviewPlain.slice(2 + icon.length + 1)}${RESET}`}];

@@ -128,7 +128,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
   {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
   {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings'},
-  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume|refresh)'},
+  {name: '/track', insertion: '/track ', description: 'Keep one live result of a finite command in the transcript, refreshed in place (/track df -h · /track --every 5s -- docker system df · pause|resume|refresh|stop|copy)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
@@ -232,7 +233,7 @@ export type ParsedSlashCommand =
   | {kind: 'providers'; family?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'}
   | {kind: 'llm'}
   | {kind: 'doctor'}
-  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start' | 'copy'; arguments: string; /** Typed as /track: keep one live result in the transcript. */ track?: boolean}
   | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
@@ -387,11 +388,14 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings|history|save-summary))?\s*$/u.exec(input);
   if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
     : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'};
-  const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
+  // /track shares the /watch scheduler, safety gate and manager; it also keeps one live result in the transcript.
+  const watch = /^\/(watch|track)(?:\s+(.*))?$/u.exec(input);
   if (watch) {
-    const rest = (watch[1] ?? '').trim();
-    const op = /^(stop|pause|resume|now)(?:\s+(.*))?$/u.exec(rest);
-    return op ? {kind: 'watch', op: op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()} : {kind: 'watch', op: rest ? 'start' : 'list', arguments: rest};
+    const track = watch[1] === 'track';
+    const rest = (watch[2] ?? '').trim();
+    const op = new RegExp(`^(stop|pause|resume|now|refresh${track ? '|copy' : ''})(?:\\s+(.*))?$`, 'u').exec(rest);
+    const kind = op ? (op[1] === 'refresh' ? 'now' : op[1]) as 'stop' | 'pause' | 'resume' | 'now' | 'copy' : rest && rest !== 'list' ? 'start' : 'list';
+    return {kind: 'watch', op: kind, arguments: op ? (op[2] ?? '').trim() : rest === 'list' ? '' : rest, ...(track ? {track: true} : {})};
   }
   const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
   if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};

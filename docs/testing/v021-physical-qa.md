@@ -21,6 +21,8 @@
 | 3 `/edit` | Ghostty | macOS | zsh | | Not run | |
 | 3 `/edit` | Terminal.app | macOS | Bash or Fish | | Not run | |
 | 4 Semantic Output | Ghostty | macOS | zsh | | Not run | |
+| 5 `/track` | Ghostty | macOS | zsh | | Not run | |
+| 5 `/track` | Terminal.app | macOS | Fish | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -85,3 +87,19 @@
   output only; find (Ctrl+F) never matches the overview text.
 - [ ] 4.6 Settings → Transcript → Semantic Output Off: the rows disappear from every block; On brings them back.
 - [ ] 4.7 `NO_COLOR=1` and Safe glyphs: the overview reads `+`/`x` and stays readable at 40 columns.
+
+## 5. `/track`
+
+- [ ] 5.1 `/track df -h` and (where Docker runs) `/track --every 5s -- docker system df`: one block, a status row and the
+  result; it updates in place every interval while you run other commands; scrolling up and selecting text in other
+  blocks is never disturbed.
+- [ ] 5.2 Make the result shorter and longer (`/track --every 2s -- cat f.txt` while editing `f.txt`): shorter results
+  do not move what is below; longer ones say how many lines are not shown.
+- [ ] 5.3 `/track refresh` twice quickly: the second is refused, never overlapped. `/track pause`, `/track resume`.
+- [ ] 5.4 A failing command (`/track --every 2s -- ls missing`): the status shows the exit code, never a healthy result.
+- [ ] 5.5 `/track copy` copies only the latest result; find (Ctrl+F) never matches the live rows.
+- [ ] 5.6 `/track stop`: the last result appears once in the transcript; `/resume` of the saved session shows it
+  without any per-refresh copies.
+- [ ] 5.7 An unknown command asks for Yes first; `rm`, `sudo`, `cd`, `$(...)`, `&` and heredocs are refused.
+- [ ] 5.8 Close the window with a tracker running: no `sh` or command processes are left (`ps`). `/watch git status`
+  still opens its manager.

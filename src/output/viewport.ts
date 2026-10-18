@@ -20,8 +20,9 @@ export interface WrappedRow {
   isFilterHint?: boolean;
   /** A row of the first-run welcome (0 is Vespyr's block above it), so the ending can reveal it line by line. */
   firstRunLine?: number;
-  /** A Semantic Output row: derived presentation, never transcript content (skipped by search, selection and copy). */
-  isSemantic?: boolean;
+  /** Derived presentation (a Semantic Output reading, a /track live result): never transcript content, so search,
+   * selection and copy skip it. */
+  derived?: boolean;
   /** Clicking this row opens or closes the Semantic Output details of the block with this startId. */
   semanticToggle?: number;
 }

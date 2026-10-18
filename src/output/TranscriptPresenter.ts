@@ -79,6 +79,8 @@ export interface TranscriptView {
   ownerOf: (lineIndex: number) => number | undefined;
   /** Line ids worth keeping in view inside a collapsed block's hidden middle (failures, diagnostics). */
   foldHighlights?: (record: CompletedCommand) => readonly number[];
+  /** A /track block's live rows under this stored line, replaced on every refresh; undefined for other lines. */
+  liveRows?: (lineIndex: number, width: number) => readonly string[] | undefined;
   /** The block's Semantic Output reading and whether its details are open (#386); undefined: raw only. */
   semantic?: (record: CompletedCommand) => {result: SemanticResult; open: boolean} | undefined;
 }
@@ -285,6 +287,8 @@ export class TranscriptPresenter {
         else if (cmdIndex !== -1) row.commandIndex = cmdIndex;
         result.push(row);
       }
+      // A /track block's live result, under its stored line (derived: never stored, searched, selected or copied).
+      for (const ansi of view.liveRows?.(i, width) ?? []) result.push({ansi: truncateAnsi(ansi, width), plain: stripAnsi(truncateAnsi(ansi, width)), lineIndex: i, derived: true});
     }
     if (active) {
       for (const activity of active.activities) {
