@@ -68,7 +68,7 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, typ
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {loadFileDocument, outputDocument} from '../viewer/document.js';
+import {displayPath, loadFileDocument, outputDocument} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
@@ -268,8 +268,9 @@ import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.j
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
 import {runDoctor} from '../doctor/doctor.js';
-import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
+import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
+import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
@@ -940,6 +941,7 @@ export class TerminalApp {
     this.output.presenter.setTreatment(this.promptConfiguration.presentation);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.setSemanticOutput(this.promptConfiguration.semanticOutput);
+    this.output.setLiveRows((id, width) => this.trackRows(id, width));
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
     this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
@@ -1928,13 +1930,28 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.watchPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'confirm' && panel.confirm) {
         const pending = panel.confirm;
+        const size = this.dimensions();
+        if (size.columns < 40 || size.rows < 14) {
+          panel.message = 'Resize to at least 40 columns and 14 rows to review this recurring command.';
+          this.render();
+          return;
+        }
         panel.confirm = undefined;
         const safety = watchSafety(pending.command);
         if (safety.kind === 'refused') panel.message = safety.reason;
-        else { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+        else if (this.startWatch(pending.track ? `/track ${pending.command}` : `/watch ${pending.command}`, pending.command, pending.cwd, pending.intervalMs, safety, Boolean(pending.track))) {
+          // A confirmed /track shows its block in the transcript; the manager closes.
+          if (pending.track) { this.watchPanel = undefined; this.returnFromPanel(); }
+          else panel.selected = this.watches.active().length - 1;
+        }
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
-      else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'now' && !this.watches.runNow(action.id)) panel.message = 'A result is still being produced; no second one was started.';
+      else if (action?.kind === 'copy') {
+        const latest = this.watches.get(action.id)?.current;
+        if (!latest) panel.message = 'No completed result to copy yet.';
+        else void this.copyText(latest.output, 'Copied the latest result').then(note => { if (note && this.watchPanel === panel) { panel.message = note; this.render(); } });
+      }
       else if (action?.kind === 'stop') this.watches.stop(action.id);
       this.render();
       return;
@@ -3013,7 +3030,7 @@ export class TerminalApp {
     else if (slash.kind === 'providers') this.openProvidersOverview(slash.family);
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
-    else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
+    else if (slash.kind === 'watch') this.handleWatch(command.trim(), slash.op, slash.arguments, slash.track === true);
     else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
@@ -8662,16 +8679,45 @@ export class TerminalApp {
   private doctorPanel?: DoctorPanelState;
   private watchPanel?: WatchPanelState;
   /** Watches NMSh schedules itself; they live (and stop) with this window. */
-  private readonly watches = new WatchTasks(resolveCommand('sh') ?? '/bin/sh');
-  private readonly watchSubscription = this.watches.onChange((_watch, transition) => {
+  private readonly watches = new WatchTasks(resolveCommand('sh') ?? '/bin/sh', Date.now, () => ({...process.env, PATH: this.shellPath()}));
+  /** Watches started with /track: their live transcript block keeps the height it reached (see trackBlockRows). */
+  private readonly trackBlocks = new Map<string, {reserved: number; finalized: boolean}>();
+  private readonly watchSubscription = this.watches.onChange((watch, transition) => {
     if (this.stopped) return;
     // A watch moving between failing and passing is one meaningful event.
     if (transition) this.transitions.echo(transition === 'pass' ? 'taskDone' : 'taskFailed', Date.now());
+    // A tracker the person stopped leaves its last result in the transcript once (a closing window leaves nothing).
+    const block = this.trackBlocks.get(watch.id);
+    if (block && watch.status === 'stopped' && !block.finalized) {
+      block.finalized = true;
+      this.output.addFrontendBlock(`/track ${watch.command}`, finalResultRows(watch));
+    }
     this.render();
   });
 
+  /** A /track block's live rows (presentation only). */
+  private trackRows(id: string, width: number): string[] {
+    const block = this.trackBlocks.get(id);
+    const {rows, reserved} = trackBlockRows(this.watches.get(id), width, Date.now(), block?.reserved ?? 0, this.watches.sampling(id));
+    if (block) block.reserved = reserved;
+    return rows;
+  }
+
+  /** Start a classified (or confirmed) watch; /track also writes its block, whose live rows follow it in place. */
+  private startWatch(command: string, watched: string, cwd: string, intervalMs: number | undefined, safety: Exclude<WatchSafety, {kind: 'refused'}>, track: boolean): boolean {
+    let watch;
+    try { watch = this.watches.start(watched, cwd, intervalMs, safety); }
+    catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'Could not start tracking.', ERROR); return false; }
+    if (track) {
+      this.trackBlocks.set(watch.id, {reserved: 0, finalized: false});
+      const place = cwd === this.shellCwd ? 'here' : `in ${displayPath(cwd)}`;
+      this.output.addTrackBlock(watch.id, command, [`${GLYPHS.info} Tracking ${watch.command} ${place} with sh -c and your shell's PATH (not its aliases or functions). /track stop ends it.`]);
+    }
+    return true;
+  }
+
   /** /watch …: start (classified first), list, pause, resume, run now, stop. */
-  private handleWatch(command: string, op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start', argument: string): void {
+  private handleWatch(command: string, op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start' | 'copy', argument: string, track = false): void {
     const active = this.watches.active();
     const pick = () => {
       const index = /^\d+$/u.test(argument) ? Number(argument) - 1 : active.length - 1;
@@ -8679,24 +8725,41 @@ export class TerminalApp {
     };
     if (op === 'list') { this.panelOrigin = undefined; this.watchPanel = {selected: 0, output: false}; return; }
     if (op === 'start') {
-      const {command: watched, intervalMs} = parseWatch(argument);
+      const parsed = parseWatch(argument);
+      if (parsed.error) { this.output.addFrontendInteraction(command, parsed.error, ERROR); return; }
+      const {command: watched, intervalMs} = parsed;
       const safety = watchSafety(watched);
       if (safety.kind === 'refused') { this.output.addFrontendInteraction(command, safety.reason, ERROR); return; }
       this.panelOrigin = undefined;
       if (safety.kind === 'confirm' || safety.remote) {
         this.watchPanel = {selected: 0, output: false, confirm: {command: watched, cwd: this.shellCwd, ...(intervalMs ? {intervalMs} : {}),
-          reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no'}};
+          reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no', ...(track ? {track: true} : {})}};
         return;
       }
-      this.watches.start(watched, this.shellCwd, intervalMs, safety);
-      this.watchPanel = {selected: this.watches.active().length - 1, output: false};
+      // /track shows its result in the transcript; /watch opens its manager as before.
+      if (this.startWatch(command, watched, this.shellCwd, intervalMs, safety, track) && !track) this.watchPanel = {selected: this.watches.active().length - 1, output: false};
       return;
     }
-    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stopped every watch.', INFO); return; }
+    const noun = track ? 'tracker' : 'watch';
+    if (op === 'stop' && argument === 'all') {
+      for (const watch of active) this.watches.stop(watch.id);
+      this.output.addFrontendInteraction(command, active.length ? `Stopped every ${noun}; their processes are being ended.` : `Nothing is being ${track ? 'tracked' : 'watched'}.`, INFO);
+      return;
+    }
     const watch = pick();
-    if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
-    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
-    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Running' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the watch on ${watch.command}.` : 'Nothing changed.', INFO);
+    if (!watch) { this.output.addFrontendInteraction(command, `Nothing is being ${track ? 'tracked' : 'watched'}.`, INFO); return; }
+    if (op === 'copy') {
+      if (!watch.current) { this.output.addFrontendInteraction(command, `No completed result of ${watch.command} yet.`, INFO); return; }
+      // The latest completed result only, as plain text: never earlier refreshes, never the block's own lines.
+      void this.copyText(watch.current.output, `Copied the latest result of ${watch.command.slice(0, 40)}`);
+      return;
+    }
+    if (op === 'now' && !this.watches.runNow(watch.id)) {
+      this.output.addFrontendInteraction(command, `A result of ${watch.command} is still being produced; no second one was started.`, INFO);
+      return;
+    }
+    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : true;
+    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refreshing' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the ${noun} on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */

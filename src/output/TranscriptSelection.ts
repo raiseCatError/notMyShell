@@ -52,7 +52,7 @@ export function selectedText(rows: readonly WrappedRow[], selection: TranscriptS
   let previousLine: number | undefined;
   for (let index = start; index <= end && index < rows.length; index += 1) {
     const row = rows[index]!;
-    if (row.isFilterHint || row.isSemantic) continue;
+    if (row.isFilterHint || row.derived) continue;
     const text = row.plain.slice(row.indent ?? 0);
     // Continuation rows of the same logical line are joined exactly; padding is trimmed once the line ends.
     if (row.lineIndex !== undefined && row.lineIndex === previousLine && lines.length) lines[lines.length - 1] += text;
