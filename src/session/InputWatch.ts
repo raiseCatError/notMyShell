@@ -60,6 +60,13 @@ const BUSY_SHARE = 0.25;
 /** The second sample when the first saw the shell holding the terminal: soon, so a prompt-less `read` is seen in time. */
 const FOLLOW_UP_MS = 100;
 
+/**
+ * What two samples say about the foreground group's CPU use. true: computing (on a CPU while measured, or using one
+ * between samples); false: idle between this sample and the previous one; 'runnable': on a CPU in this sample with
+ * nothing earlier to compare, which alone does not say it computes; undefined: not yet known.
+ */
+type Busy = boolean | 'runnable' | undefined;
+
 const defaultTimer = (callback: () => void, ms: number) => {
   const timer = setTimeout(callback, ms);
   timer.unref?.();
@@ -282,14 +289,20 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.emit('change', this.state);
   }
 
-  private decide(sample: TerminalSample, busy: boolean | undefined, now: number): {confidence: 'confirmed' | 'likely'; mode: InputMode} | undefined {
+  private decide(sample: TerminalSample, busy: Busy, now: number): {confidence: 'confirmed' | 'likely'; mode: InputMode} | undefined {
     const modes = sample.modes;
     const mode: InputMode = !modes ? 'line' : !modes.canonical ? 'key' : !modes.echo ? 'hidden' : 'line';
     if (sample.readingTerminal === true) return {confidence: 'confirmed', mode};
     // The kernel says every foreground thread is blocked on something other than the terminal.
     if (sample.readingTerminal === false || busy === true) return undefined;
-    if (modes && modes.canonical && !modes.echo) return {confidence: 'confirmed', mode: 'hidden'};
     const shellHolds = shellHoldsTerminal(sample.foreground);
+    if (busy === 'runnable') {
+      // On a CPU in the only sample there is. On a loaded machine the shell is still runnable for a moment after
+      // writing its exec marker, before its builtin blocks in read: the follow-up says whether it computes.
+      if (shellHolds && modes) this.followUp = true;
+      return undefined;
+    }
+    if (modes && modes.canonical && !modes.echo) return {confidence: 'confirmed', mode: 'hidden'};
     if (modes && !modes.canonical) return this.line.open || shellHolds ? {confidence: 'confirmed', mode: 'key'} : undefined;
     // Ordinary line input: only a question left open, quiet output, and an idle group seen across two samples.
     if (busy === false && this.line.open && promptShaped(this.line.line) && now - this.lastOutput >= LIKELY_QUIET_MS) return {confidence: 'likely', mode: 'line'};
@@ -303,20 +316,26 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     return undefined;
   }
 
-  /** true: computing; false: idle between this sample and the previous one; undefined: not yet known. */
-  private busy(foreground: ForegroundProcess[], now: number): boolean | undefined {
+  private busy(foreground: ForegroundProcess[], now: number): Busy {
     if (!foreground.length) return undefined;
-    let known = !foreground.some(item => item.state.startsWith('R')) ? true : undefined;
-    let busy = known === undefined;
+    let busy = false;
+    let measured = true;
+    let runnable = false;
     for (const item of foreground) {
+      const onCpu = item.state.startsWith('R');
       const before = this.previous.get(item.pid);
-      if (item.cpuMs === undefined || !before) { if (known) known = false; continue; }
+      if (item.cpuMs === undefined || !before) {
+        measured = false;
+        if (onCpu) runnable = true;
+        continue;
+      }
       const elapsed = now - before.at;
-      if (elapsed > 0 && (item.cpuMs - before.cpuMs) / elapsed > BUSY_SHARE) busy = true;
+      if (onCpu || (elapsed > 0 && (item.cpuMs - before.cpuMs) / elapsed > BUSY_SHARE)) busy = true;
     }
     this.remember(foreground, now);
     if (busy) return true;
-    return known ? false : undefined;
+    if (runnable) return 'runnable';
+    return measured ? false : undefined;
   }
 
   private remember(foreground: ForegroundProcess[], now: number): void {

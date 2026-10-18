@@ -281,6 +281,53 @@ test('watch: lookNow samples at once, outside the backed-off schedule; nothing r
   assert.equal(line.watch.state.request, undefined);
 });
 
+test('watch (#426): a first sample that catches the shell still on a CPU is not proof it computes; the follow-up decides', async () => {
+  // A loaded machine: the shell wrote its exec marker and is about to block in `read`, but is still runnable when the
+  // first look samples it. With nothing earlier to compare, one sample cannot say it computes.
+  const h = harness("read -r QA_REPLY; printf 'ANSWER=%s\\n' \"$QA_REPLY\"");
+  h.set({modes: lineModes, foreground: shellFg('Rs+', 10)});
+  const looked = h.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  h.set({modes: lineModes, foreground: shellFg('Ss+', 10)});
+  await h.advance(100);
+  await looked;
+  assert.equal(h.watch.state.request?.confidence, 'likely', 'blocked and idle in the follow-up: a line read');
+  assert.equal(h.watch.state.request?.mode, 'line');
+
+  // The same with line input off (`read -k 1`): confirmed key input once the follow-up sees it blocked.
+  const key = harness('read -k 1 x; echo got:$x');
+  key.set({modes: keyModes, foreground: shellFg('Rs+', 10)});
+  const keyLooked = key.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  key.set({modes: keyModes, foreground: shellFg('Ss+', 10)});
+  await key.advance(100);
+  await keyLooked;
+  assert.equal(key.watch.state.request?.mode, 'key');
+  assert.equal(key.watch.state.request?.confidence, 'confirmed');
+
+  // A shell that is computing stays not waiting: on a CPU in both samples, and using it in between.
+  const busy = harness('while :; do :; done');
+  busy.set({modes: lineModes, foreground: shellFg('Rs+', 10)});
+  const busyLooked = busy.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  busy.set({modes: lineModes, foreground: shellFg('Rs+', 90)});
+  await busy.advance(100);
+  await busyLooked;
+  assert.equal(busy.watch.state.request, undefined);
+  assert.ok(busy.changes.every(state => !state.request), 'never reported, not even for a moment');
+
+  // Another program on a CPU with no prompt and ordinary line settings: still nothing, and the look ends after its one
+  // sample (it settles without the follow-up timer running).
+  const other = harness('make');
+  other.set({modes: lineModes, foreground: fg('R+', 10, 'make')});
+  let otherDone = false;
+  const otherLooked = other.watch.lookNow().then(() => { otherDone = true; });
+  await new Promise(done => setImmediate(done));
+  assert.equal(otherDone, true, 'no follow-up was asked for');
+  await otherLooked;
+  assert.equal(other.watch.state.request, undefined);
+});
+
 test('watch: no false positives for builds, sleep, network waits, progress bars, statuses or log streams', async () => {
   // A build that printed a colon-ended status and is computing.
   const build = harness('make');

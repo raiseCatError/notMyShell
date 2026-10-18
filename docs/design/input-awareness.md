@@ -65,8 +65,15 @@ Probes back off (every 10 s after a minute of quiet), and the first look comes 1
 typed in that time would be routed on no evidence. So the frontend holds the keys that decide where typing goes, the
 first key of a draft and an Enter that would queue, and asks the session to look now (`input-look`, answered by
 `input-looked` after any `input-state` the look produced). Keys typed right after Enter wait for the shell's exec first.
-The hold ends when the look is done, when evidence arrives, or after 800 ms, and the keys are then routed on what is
-known, in the order typed. A program that took the terminal meanwhile (Fish's reader) gets them as raw keys. Ctrl+C is
+The hold ends when the look is done or when evidence arrives, and the keys are then routed on what is known, in the
+order typed. Until then nothing typed is drawn, sent or queued: the keys may be a hidden reply, and an Enter may answer
+the command or queue the next one (#426). A look usually takes tens of milliseconds, but on a loaded machine it can take
+seconds (a prompt-less line read needs two samples, and each starts `stty` and `ps`); after 800 ms the composer says
+`Checking whether … is waiting for input · your typing is kept`, so nobody types it again. The hold is bounded at 5 s,
+after which the keys are routed on what is known. A first sample that finds the shell holding its terminal while still
+on a CPU, with nothing earlier to compare, is not taken as computing: on a loaded machine the shell is runnable for a
+moment before its builtin blocks in `read`, so the follow-up sample decides. A program that took the terminal
+meanwhile (Fish's reader) gets the keys as raw keys. Ctrl+C is
 never held, and typing right after Ctrl+C or Ctrl+Z stays type-ahead for the prompt. Both ends negotiate the feature;
 an older service is never asked and behaves as before.
 

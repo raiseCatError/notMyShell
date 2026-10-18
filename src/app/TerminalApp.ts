@@ -422,8 +422,13 @@ const WARNING = lazyForeground(UI_COLORS.warning);
 const ERROR = lazyForeground(UI_COLORS.failure);
 /** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
 const STOP_TYPE_AHEAD_MS = 2000;
-/** Longest a key waits for an on-demand look at the running command's input state before it is routed anyway. */
-const OWNERSHIP_LOOK_MS = 800;
+/**
+ * Keys held for an on-demand look at the running command's input state are routed when the look answers. A look is
+ * itself bounded (two probes of at most 1.5 s each); this only guards against an answer that never comes.
+ */
+const OWNERSHIP_LOOK_MS = 5000;
+/** A look still running after this long (a loaded machine) says so in the composer: the typing is kept, not lost. */
+const OWNERSHIP_LOOK_SLOW_MS = 800;
 /** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
 const QUEUE_CONFIRM_SETTLE_MS = 600;
 /** The transcript keeps at least this many rows when the expanded queue takes some (as withQueueRows does). */
@@ -847,7 +852,7 @@ export class TerminalApp {
    * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
    */
-  private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; release: () => void};
+  private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; slow: boolean; release: () => void};
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -11453,6 +11458,7 @@ export class TerminalApp {
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
+    if (this.ownershipLook?.slow) return {text: `Checking whether ${program} is waiting for input · your typing is kept`, waiting: false};
     // A waiting program gets the one instruction, with or without a queue; a question NMSh has not yet probed reads
     // as a line.
     if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
@@ -11878,7 +11884,11 @@ export class TerminalApp {
     return key.kind === 'enter' && Boolean(text.trim()) && !isSlashInput(text) && this.queueAvailable() && !this.answersByDefault();
   }
 
-  /** Hold the key (and any typed after it) until the session has looked, then route them on that evidence. */
+  /**
+   * Hold the key (and any typed after it) until the session has looked, then route them on that evidence. Until then
+   * nothing typed is drawn, sent or queued: it may be a hidden reply, and its Enter may answer the command or queue the
+   * next one. On a loaded machine the look can take seconds (#426); the composer then says the typing is kept.
+   */
   private holdForOwnershipLook(key: Key): void {
     const running = this.running!;
     const keys = [key];
@@ -11887,6 +11897,7 @@ export class TerminalApp {
       if (released) return;
       released = true;
       clearTimeout(timer);
+      clearTimeout(slow);
       if (this.ownershipLook?.keys === keys) this.ownershipLook = undefined;
       // The command ended while NMSh looked. A reply to its open question is discarded, never run; anything else
       // is what it would have been without the look: typing for the next command, Enter running it after.
@@ -11907,7 +11918,9 @@ export class TerminalApp {
     };
     const timer = setTimeout(release, OWNERSHIP_LOOK_MS);
     timer.unref?.();
-    const hold = {keys, startId: running.startId, answering: this.answersByDefault(), release};
+    const slow = setTimeout(() => { hold.slow = true; this.render(); }, OWNERSHIP_LOOK_SLOW_MS);
+    slow.unref?.();
+    const hold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, release};
     this.ownershipLook = hold;
     void this.lookWhenStarted(running.startId, Date.now() + OWNERSHIP_LOOK_MS).then(release, release);
   }
