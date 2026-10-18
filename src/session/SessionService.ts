@@ -310,7 +310,7 @@ export class SessionService {
             if (!session || !features.has('input-look')) { send({type: 'error', code: 'state', message: 'no session input to look at'}); break; }
             const {id} = message;
             // Any input-state the look produces is sent first (synchronously, as the watch emits it).
-            void session.shell.inputWatch.lookNow().then(() => { if (owned === session) send({type: 'input-looked', id}); });
+            void session.shell.inputWatch.lookNow().then(result => { if (owned === session) send({type: 'input-looked', id, result}); });
             break;
           }
           case 'input':

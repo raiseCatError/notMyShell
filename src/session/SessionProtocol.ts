@@ -26,7 +26,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -114,8 +114,11 @@ export type ServerMessage =
    */
   /** The session's command queue (QueueState as JSON) and what just happened to it. */
   | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
-  /** The look asked for by input-look id is done; only to frontends that listed 'input-look'. */
-  | {type: 'input-looked'; id: number}
+  /**
+   * The look asked for by input-look id is done; only to frontends that listed 'input-look'. result: what it saw
+   * (a LookResult), from services that advertise 'input-look-result'; older frontends ignore it.
+   */
+  | {type: 'input-looked'; id: number; result?: string}
   | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
   | {type: 'tasks'; state: string}
@@ -203,7 +206,7 @@ const SHAPES: Record<string, Shape> = {
   dismiss: {sessionId: 'string'},
   queue: {change: 'string'},
   'input-look': {id: 'int'},
-  'input-looked': {id: 'int'},
+  'input-looked': {id: 'int', result: 'string?'},
   'queue-state': {state: 'string', dispatched: 'int?', refused: 'string?', dropped: 'int?'},
   task: {change: 'string'},
   tasks: {state: 'string'},

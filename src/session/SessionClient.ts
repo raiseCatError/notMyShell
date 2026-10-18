@@ -1,3 +1,4 @@
+import type {LookResult} from './inputState.js';
 import type {EventEmitter} from 'node:events';
 import type {ShellMarker} from '../shell/ShellProtocol.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
@@ -91,10 +92,11 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
    */
   task?(change: TaskOp): void;
   /**
-   * Look at the running command's input state now; resolves true once the look is done (any change it found has
-   * already been emitted as inputState), false when whatever owns the shell cannot look on demand.
+   * Look at the running command's input state now; resolves once the look is done (any change it found has already
+   * been emitted as inputState) with what it saw, or undefined when whatever owns the shell cannot look on demand,
+   * is gone, or is an older service that does not say (it lacks 'input-look-result').
    */
-  lookInput?(): Promise<boolean>;
+  lookInput?(): Promise<LookResult | undefined>;
   /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
   readonly features: ReadonlySet<ServiceFeature>;
   /** Build of the session service, when it reported one. */

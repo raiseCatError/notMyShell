@@ -7,6 +7,7 @@ import {taskUpdateFrom, tasksFrom, type TaskOp} from '../backgroundTasks/protoco
 import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
+import {lookResultFrom, type LookResult} from './inputState.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {AttachedSession, SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
 
@@ -219,7 +220,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   features: ReadonlySet<ServiceFeature> = new Set();
   serviceBuild?: string;
   private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
-  private looks = new Map<number, (looked: boolean) => void>();
+  private looks = new Map<number, (result: LookResult | undefined) => void>();
   private nextLook = 1;
 
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
@@ -249,7 +250,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
       ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
     else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
-    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(true); this.looks.delete(message.id); }
+    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(lookResultFrom(message.result)); this.looks.delete(message.id); }
     else if (message.type === 'queue-state') {
       const state = queueStateFrom(message.state);
       if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
@@ -270,7 +271,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.exited = true;
     this.pendingSwitch?.reject(new Error('The session ended.'));
     this.pendingSwitch = undefined;
-    for (const done of this.looks.values()) done(false);
+    for (const done of this.looks.values()) done(undefined);
     this.looks.clear();
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
@@ -284,9 +285,9 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   write(data: string): void { this.send({type: 'input', data}); }
   queue(change: QueueOp): void { if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !this.features.has('queue-timeline')) return; if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
   task(change: TaskOp): void { if (this.features.has('background-tasks')) this.send({type: 'task', change: JSON.stringify(change)}); }
-  lookInput(): Promise<boolean> {
+  lookInput(): Promise<LookResult | undefined> {
     // Never send a message the service did not advertise.
-    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(false);
+    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(undefined);
     const id = this.nextLook++;
     return new Promise(resolve => { this.looks.set(id, resolve); this.send({type: 'input-look', id}); });
   }

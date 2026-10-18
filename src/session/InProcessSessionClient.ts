@@ -6,6 +6,7 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {SERVICE_FEATURES, type ServiceFeature} from './SessionProtocol.js';
 import {QueueDispatcher, type QueueShell} from './QueueDispatcher.js';
 import type {QueueOp} from './CommandQueue.js';
+import type {LookResult} from './inputState.js';
 import {SessionTasks} from '../backgroundTasks/sessionTasks.js';
 import type {TaskOp} from '../backgroundTasks/protocol.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
@@ -78,11 +79,9 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   }
   interrupt(): void { this.dispatcher.onInterrupt(); this.shell.interrupt(); }
   queue(change: QueueOp): void { this.dispatcher.request(change); }
-  async lookInput(): Promise<boolean> {
+  async lookInput(): Promise<LookResult | undefined> {
     const watch = this.shell.inputWatch;
-    if (!watch) return false;
-    await watch.lookNow();
-    return true;
+    return watch ? watch.lookNow() : undefined;
   }
 
   private queueShell(): QueueShell {

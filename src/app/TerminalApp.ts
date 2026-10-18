@@ -211,7 +211,7 @@ import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
-import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {completionWaitFact, heldInputActions, heldInputRows, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queueSettingsPreview} from '../status/queueSettingsPreview.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
@@ -221,7 +221,7 @@ import {buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSu
 import type {QueueTimeline} from '../session/ExecutionTimeline.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
-import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
+import {directInput, type InputState, type InputTiming, type LookResult} from '../session/inputState.js';
 import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
@@ -429,6 +429,20 @@ const STOP_TYPE_AHEAD_MS = 2000;
 const OWNERSHIP_LOOK_MS = 5000;
 /** A look still running after this long (a loaded machine) says so in the composer: the typing is kept, not lost. */
 const OWNERSHIP_LOOK_SLOW_MS = 800;
+/** How held keys end: on the evidence (route), dropped, sent to the program as typed, or shown in the composer. */
+type HoldSettle = 'route' | 'discard' | 'send' | 'reveal';
+/** Keys held while NMSh looks at whether the running command reads input (#426). */
+interface OwnershipHold {
+  keys: Key[];
+  startId: number;
+  /** A question was open when the hold began: the typing is a reply. */
+  answering: boolean;
+  /** The look has run past OWNERSHIP_LOOK_SLOW_MS: the composer says the typing is kept. */
+  slow: boolean;
+  /** No usable evidence: the typing stays held and hidden until evidence arrives or the person chooses. */
+  uncertain: boolean;
+  settle: (how: HoldSettle) => void;
+}
 /** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
 const QUEUE_CONFIRM_SETTLE_MS = 600;
 /** The transcript keeps at least this many rows when the expanded queue takes some (as withQueueRows does). */
@@ -852,7 +866,7 @@ export class TerminalApp {
    * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
    */
-  private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; slow: boolean; release: () => void};
+  private ownershipLook?: OwnershipHold;
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -1394,7 +1408,7 @@ export class TerminalApp {
     }
     if (this.passthrough && !this.startupPending) {
       // Keys held for an ownership look were typed first: they reach the program first.
-      this.ownershipLook?.release();
+      this.ownershipLook?.settle('route');
       this.session.write(data);
       return;
     }
@@ -2300,9 +2314,14 @@ export class TerminalApp {
     }
     if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
-      // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
-      if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
-      this.ownershipLook.release();
+      const hold = this.ownershipLook;
+      // Ctrl+C is never held, and what was typed before it whose reader NMSh did not know is discarded, as a terminal
+      // flushes its input queue on an interrupt: it never becomes a queued entry or the next command (#426).
+      if (key.kind === 'interrupt') hold.settle('discard');
+      else if (hold.uncertain && key.kind === 'sendToProgram') { hold.settle('send'); return; }
+      else if (hold.uncertain && key.kind === 'complete') { hold.settle('reveal'); return; }
+      else if (hold.uncertain && key.kind === 'escape') { hold.settle('discard'); return; }
+      else { hold.keys.push(key); return; }
     } else if (this.needsOwnershipLook(key)) {
       this.holdForOwnershipLook(key);
       return;
@@ -4382,6 +4401,8 @@ export class TerminalApp {
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
     }
+    // Keys still held for this command's look are settled now that it is over (#426).
+    this.ownershipLook?.settle('route');
     // A command may have changed what workspace facts say (npm version, terraform workspace select, aws configure).
     this.contextEngine.invalidate('command');
     void this.refreshContext(cwd);
@@ -11436,6 +11457,8 @@ export class TerminalApp {
     const queue = listed?.[0] ?? this.queueLine(columns);
     if (!this.running) return queue ? (listed ? ['', queue] : [queue, '']) : [];
     const request = this.inputState?.request;
+    // Typing held without evidence of who reads it: say so, and how to choose, in the rows a wait would use.
+    if (this.ownershipLook?.uncertain) return heldInputRows(this.running.command.trim().split(/\s+/u)[0] || 'the command', columns);
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
       const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
@@ -11458,6 +11481,7 @@ export class TerminalApp {
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
+    if (this.ownershipLook?.uncertain) return {text: heldInputActions(this.running.command.trim().split(/\s+/u)[0] || 'the command'), waiting: true};
     if (this.ownershipLook?.slow) return {text: `Checking whether ${program} is waiting for input · your typing is kept`, waiting: false};
     // A waiting program gets the one instruction, with or without a queue; a question NMSh has not yet probed reads
     // as a line.
@@ -11854,7 +11878,7 @@ export class TerminalApp {
       const typed = draft && draft.startId === this.running.startId && !this.queueCompose && !this.queueEdit ? this.editor.text : '';
       this.onActiveModeChange('PASSTHROUGH');
       if (typed && this.passthrough) { this.editor.clear(); this.runningDraft = undefined; this.session.write(typed); }
-      this.ownershipLook?.release();
+      this.ownershipLook?.settle('route');
       return;
     }
     const request = state.request;
@@ -11867,7 +11891,7 @@ export class TerminalApp {
       this.session.write(typed);
     } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
     // The evidence a held key waited for has arrived.
-    if (request) this.ownershipLook?.release();
+    if (request) this.ownershipLook?.settle('route');
     this.render();
   }
 
@@ -11887,48 +11911,109 @@ export class TerminalApp {
   /**
    * Hold the key (and any typed after it) until the session has looked, then route them on that evidence. Until then
    * nothing typed is drawn, sent or queued: it may be a hidden reply, and its Enter may answer the command or queue the
-   * next one. On a loaded machine the look can take seconds (#426); the composer then says the typing is kept.
+   * next one (#426). A look usually answers in milliseconds; after OWNERSHIP_LOOK_SLOW_MS the composer says the typing
+   * is kept. When the look saw nothing usable, or never answers within OWNERSHIP_LOOK_MS, the typing stays held and
+   * hidden (uncertain) until evidence arrives or the person chooses: Ctrl+S sends it to the program, Tab shows it in
+   * the composer, Esc discards it. It is never routed on a guess. Ctrl+C discards it, as a terminal flushes its input.
+   * A command that ends while its typing was held past the slow mark never runs it.
    */
   private holdForOwnershipLook(key: Key): void {
     const running = this.running!;
     const keys = [key];
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      clearTimeout(timer);
+    // The command line's own first word (sudo, not the command sudo runs): what the person sees running.
+    const program = running.command.trim().split(/\s+/u)[0] || 'the command';
+    const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter' || item.kind === 'newline';
+    const discarded = (message: string) => { if (keys.some(typing)) this.output.addFrontendInteraction(program, message, INFO); };
+    let settled = false;
+    const settle = (how: HoldSettle) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(bound);
       clearTimeout(slow);
-      if (this.ownershipLook?.keys === keys) this.ownershipLook = undefined;
-      // The command ended while NMSh looked. A reply to its open question is discarded, never run; anything else
-      // is what it would have been without the look: typing for the next command, Enter running it after.
+      if (this.ownershipLook === hold) this.ownershipLook = undefined;
       const ended = this.running?.startId !== running.startId;
-      const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter';
-      if (ended && hold.answering && keys.some(typing)) {
-        this.output.addFrontendInteraction(commandWords(running.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      const doubted = hold.slow || hold.uncertain;
+      if (how === 'discard') {
+        if (doubted) discarded('Your held typing was discarded, not sent or run.');
+        this.render();
+        return;
+      }
+      if (how === 'send') {
+        // What the composer shows and what was held, in the order typed, as the bytes a terminal sends.
+        const bytes = `${this.editor.text}${keys.map(item => directKeyBytes(item) ?? '').join('')}`;
+        this.editor.clear();
+        this.runningDraft = undefined;
+        if (bytes) this.session.write(bytes);
+        if (/[\r\n]/u.test(bytes)) this.answerSent();
+        this.render();
+        return;
+      }
+      if (how === 'reveal') {
+        // Shown for review, never routed: a final Enter is not replayed, earlier ones become new lines.
+        let end = keys.length;
+        while (end > 0 && keys[end - 1]!.kind === 'enter') end -= 1;
+        this.replayingHeld = true;
+        try { for (const item of keys.slice(0, end)) this.handleKey(item.kind === 'enter' ? {kind: 'newline'} as Key : item); } finally { this.replayingHeld = false; }
+        this.render();
+        return;
+      }
+      // The command ended while NMSh looked. A reply to its open question is discarded, never run; so is typing held
+      // past the slow mark, since NMSh never learned whether it was a reply (a timed read that gave up). Anything else
+      // is what it would have been without the look: typing for the next command, Enter running it after.
+      if (ended && (hold.answering || doubted) && keys.some(typing)) {
+        discarded(hold.answering ? 'The command finished before your reply was sent; the reply was discarded, not run.'
+          : `${program} ended before NMSh could tell whether your typing was for it; it was discarded, not run.`);
+        const rest = keys.filter(item => !typing(item));
+        this.replayingHeld = true;
+        try { for (const item of rest) this.handleKey(item); } finally { this.replayingHeld = false; }
+        this.render();
+        return;
       }
       // The program took the terminal meanwhile (a native reader, a full-screen program): the keys are its own, in order.
       if (!ended && this.passthrough) {
         for (const item of keys) { const bytes = directKeyBytes(item); if (bytes) this.session.write(bytes); }
         return;
       }
-      const replay = ended && hold.answering ? keys.filter(item => !typing(item)) : keys;
       this.replayingHeld = true;
-      try { for (const item of replay) this.handleKey(item); } finally { this.replayingHeld = false; }
+      try { for (const item of keys) this.handleKey(item); } finally { this.replayingHeld = false; }
       this.render();
     };
-    const timer = setTimeout(release, OWNERSHIP_LOOK_MS);
-    timer.unref?.();
+    // No usable evidence yet: keep the typing held and hidden, and say so (never route it on a guess).
+    const doubt = () => {
+      if (settled) return;
+      if (this.running?.startId !== running.startId || this.passthrough || this.inputState?.request || this.inputState?.terminalOwner) { settle('route'); return; }
+      hold.uncertain = true;
+      this.render();
+    };
+    const bound = setTimeout(doubt, OWNERSHIP_LOOK_MS);
+    bound.unref?.();
     const slow = setTimeout(() => { hold.slow = true; this.render(); }, OWNERSHIP_LOOK_SLOW_MS);
     slow.unref?.();
-    const hold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, release};
+    const hold: OwnershipHold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, uncertain: false, settle};
     this.ownershipLook = hold;
-    void this.lookWhenStarted(running.startId, Date.now() + OWNERSHIP_LOOK_MS).then(release, release);
+    // A look that saw nothing usable (a probe failed or timed out) gets one more look before the typing is left held:
+    // gathering evidence once more, not waiting longer. An older service does not say what it saw: its answer is
+    // routed as it always was (documented limit).
+    let relooked = false;
+    const deadline = Date.now() + OWNERSHIP_LOOK_MS;
+    const look = () => void this.lookWhenStarted(running.startId, deadline).then(answered, () => answered('unknown'));
+    const answered = (result: LookResult | undefined) => {
+      if (settled) return;
+      const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request)
+        || (result === undefined && this.session.features.has('input-look-result'));
+      if (!blind) settle('route');
+      else if (!relooked && this.running?.startId === running.startId) { relooked = true; look(); }
+      else doubt();
+    };
+    look();
   }
 
   /** Look once the shell has started the command (keys typed right after Enter arrive before its exec). */
-  private async lookWhenStarted(startId: number, deadline: number): Promise<void> {
+  private async lookWhenStarted(startId: number, deadline: number): Promise<LookResult | undefined> {
     while (this.running?.startId === startId && this.running.awaitingExec && Date.now() < deadline) await new Promise(done => setTimeout(done, 15));
-    if (this.running?.startId === startId && !this.running.awaitingExec) await this.session.lookInput?.();
+    if (this.running?.startId !== startId) return 'idle';
+    if (this.running.awaitingExec) return 'unknown';
+    return this.session.lookInput?.();
   }
 
   /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */

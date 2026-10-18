@@ -2,8 +2,8 @@ import {EventEmitter} from 'node:events';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {OpenLine, promptShaped, promptText} from './openLine.js';
 import {AlternateScreenTracker} from './TerminalModes.js';
-import type {ForegroundProcess, TerminalProbe, TerminalSample} from './terminalProbe.js';
-import {type InputMode, type InputRequest, type InputState} from './inputState.js';
+import type {ForegroundProcess, TerminalModes, TerminalProbe, TerminalSample} from './terminalProbe.js';
+import {type InputMode, type InputRequest, type InputState, type LookResult} from './inputState.js';
 
 /**
  * Watches one session's running command for a credible request for input. Lives beside the PTY (in the session
@@ -185,16 +185,24 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
    * Look at once, outside the schedule: a key is about to be routed and must not be routed on old or missing
    * evidence (the schedule backs off to one look every few seconds). Resolves once a fresh sample was applied, or
    * at once when nothing runs. When the first sample saw the shell holding the terminal, a second one decides.
+   * Says what it saw (#426): whether the terminal echoes typing (from any sample taken, even one overtaken by newer
+   * output, since echo is a setting of the terminal), that it could not tell, or that nothing runs.
    */
-  async lookNow(): Promise<void> {
+  async lookNow(): Promise<LookResult> {
+    let seen: TerminalModes | undefined;
     for (let sample = 0; sample < 2; sample += 1) {
       while (this.probing) await this.probing;
-      if (this.disposed || !this.running || !this.options.probe) return;
+      if (this.disposed || !this.running) return 'idle';
+      if (!this.options.probe) return 'unavailable';
       this.followUp = false;
-      await this.look(true);
-      if (!this.followUp || this.request) return;
+      seen = (await this.look(true))?.modes ?? seen;
+      if (!this.followUp || this.request) break;
       await new Promise<void>(done => { this.setTimer(done, FOLLOW_UP_MS); });
     }
+    if (this.disposed || !this.running) return 'idle';
+    if (this.request?.mode === 'hidden') return 'hidden';
+    if (!seen) return 'unknown';
+    return seen.canonical && !seen.echo ? 'hidden' : 'visible';
   }
 
   dispose(): void {
@@ -236,27 +244,28 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.cancelTimer = this.setTimer(() => { this.cancelTimer = undefined; void this.look(); }, delay);
   }
 
-  /** One sample; onDemand looks (lookNow) leave the schedule's back-off where it was. */
-  private async look(onDemand = false): Promise<void> {
-    if (this.disposed || !this.running || this.probing) return;
+  /** One sample, returned even when newer output made it stale; onDemand looks (lookNow) leave the back-off as it was. */
+  private async look(onDemand = false): Promise<TerminalSample | undefined> {
+    if (this.disposed || !this.running || this.probing) return undefined;
     if (!onDemand) this.looks += 1;
     if (this.ownsTerminal) {
       if (this.request) this.closeWait(this.now(), true);
       this.schedule();
-      return;
+      return undefined;
     }
     const tty = this.options.tty?.();
     const probe = this.options.probe;
-    if (!tty || !probe) return;
+    if (!tty || !probe) return undefined;
     const generation = this.generation;
     this.lastProbeAt = this.now();
     let sample: TerminalSample | undefined;
     const probing = (async () => { try { sample = await probe({tty}); } catch { sample = undefined; } })();
     this.probing = probing;
     try { await probing; } finally { this.probing = undefined; }
-    if (this.disposed || !this.running) return;
+    if (this.disposed || !this.running) return undefined;
     if (generation === this.generation && sample) this.apply(sample, this.now());
     this.schedule();
+    return sample;
   }
 
   /** Decide from one sample. Exposed for tests through InputWatch.evaluate. */
@@ -293,6 +302,11 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     const modes = sample.modes;
     const mode: InputMode = !modes ? 'line' : !modes.canonical ? 'key' : !modes.echo ? 'hidden' : 'line';
     if (sample.readingTerminal === true) return {confidence: 'confirmed', mode};
+    // Echo off with line input: the terminal shows nothing typed, so neither does NMSh, whatever else is known. Without
+    // the other evidence (the group computes, or the kernel says it is blocked elsewhere) it is only likely (#426).
+    if (modes && modes.canonical && !modes.echo) {
+      return {confidence: sample.readingTerminal === false || busy === true || busy === 'runnable' ? 'likely' : 'confirmed', mode: 'hidden'};
+    }
     // The kernel says every foreground thread is blocked on something other than the terminal.
     if (sample.readingTerminal === false || busy === true) return undefined;
     const shellHolds = shellHoldsTerminal(sample.foreground);
@@ -302,7 +316,6 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
       if (shellHolds && modes) this.followUp = true;
       return undefined;
     }
-    if (modes && modes.canonical && !modes.echo) return {confidence: 'confirmed', mode: 'hidden'};
     if (modes && !modes.canonical) return this.line.open || shellHolds ? {confidence: 'confirmed', mode: 'key'} : undefined;
     // Ordinary line input: only a question left open, quiet output, and an idle group seen across two samples.
     if (busy === false && this.line.open && promptShaped(this.line.line) && now - this.lastOutput >= LIKELY_QUIET_MS) return {confidence: 'likely', mode: 'line'};
