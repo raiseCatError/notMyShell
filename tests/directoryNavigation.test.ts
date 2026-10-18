@@ -46,7 +46,9 @@ test('zoxide query uses a temporary copy, caches results and falls back on missi
   try {
     await writeFile(join(directory, 'db.zo'), 'original', {mode: 0o600});
     const binary = join(directory, 'zoxide');
-    await writeFile(binary, `#!${process.execPath}\nconst fs=require('node:fs');if(process.env._ZO_DATA_DIR===process.env.ORIGINAL_DB)process.exit(2);fs.writeFileSync(process.env._ZO_DATA_DIR+'/db.zo','sorted');fs.appendFileSync(process.env.CALLS,JSON.stringify(process.argv.slice(2))+'\\n');process.stdout.write('20.5 /work/one\\n 4.0 /work/two spaces\\n');\n`, {mode: 0o700});
+    // A shell script, like the real (native) zoxide quick to start: a Node stand-in's cold start could exceed the query's
+    // 1.5 s limit on a loaded machine, and the service then (rightly) fell back to Native.
+    await writeFile(binary, `#!/bin/sh\n[ "$_ZO_DATA_DIR" = "$ORIGINAL_DB" ] && exit 2\nprintf sorted > "$_ZO_DATA_DIR/db.zo"\nprintf '["%s","%s","%s","%s"]\\n' "$1" "$2" "$3" "$4" >> "$CALLS"\nprintf '20.5 /work/one\\n 4.0 /work/two spaces\\n'\n`, {mode: 0o700});
     const calls = join(directory, 'calls');
     const service = new DirectoryService({...process.env, PATH: directory, _ZO_DATA_DIR: directory, ORIGINAL_DB: directory, CALLS: calls});
     assert.equal((await service.query([], '', 'zoxide'))[0]?.path, '/work/one');
