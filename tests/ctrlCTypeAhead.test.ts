@@ -69,3 +69,28 @@ test('#436: a stale hidden report after Ctrl+C does not route type-ahead to the 
     assert.equal(f.text(), 'ls', 'what was typed before it began stays the draft');
   } finally { f.dispose(); }
 });
+
+test('#436 review: a question still open after the type-ahead window (the program read through Ctrl+C) applies again', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('stubborn-prompt');
+    const asked = Date.now();
+    f.state({since: asked, confidence: 'confirmed', mode: 'hidden'});
+    f.tick(200);
+    f.app['onInput']('\u0003');
+    f.tick(20);
+    // The session never saw the wait close: its word is still the hidden question from before the stop.
+    f.state({since: asked, confidence: 'confirmed', mode: 'hidden'});
+    f.type('ls');
+    assert.equal(f.text(), 'ls', 'within the window: type-ahead for the prompt');
+    assert.deepEqual(f.written, []);
+    // The window closes (2 s after the stop) with no newer word from the session.
+    f.tick(2000);
+    t.mock.timers.tick(2000);
+    assert.equal(f.app['inputState']?.request?.mode, 'hidden', 'the open hidden question applies again');
+    f.type('pw');
+    assert.deepEqual(f.written, ['p', 'w'], 'new keys go straight to the program, never drawn');
+    assert.equal(f.text(), 'ls', 'the draft typed as type-ahead is never handed over as a reply');
+  } finally { f.dispose(); }
+});
