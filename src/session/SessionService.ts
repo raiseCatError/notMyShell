@@ -1,3 +1,6 @@
+import {QueueDispatcher} from './QueueDispatcher.js';
+import {SessionTasks, type TaskListener} from '../backgroundTasks/sessionTasks.js';
+import {taskOpFrom} from '../backgroundTasks/protocol.js';
 import {assignSignature} from './signatures.js';
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
@@ -6,10 +9,12 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
-import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, inputStateMessage, parseClientFeatures, queueOpFrom, queueStateMessage, type ClientFeature, type ServerMessage,
+  type SessionInfo, type SessionState} from './SessionProtocol.js';
+import type {InputState} from './inputState.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
-import {EndedNotices, SessionNoticeTracker} from './SessionNotices.js';
+import {EndedNotices, INPUT_NOTICE_DELAY_MS, SessionNoticeTracker} from './SessionNotices.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
 
 export const SERVICE_NAME = 'nmshd';
@@ -39,7 +44,13 @@ interface ManagedSession {
   size: {columns: number; rows: number};
   /** The one writable frontend; undefined while detached. */
   controller?: Send;
-  running?: {command: string; since: number};
+  /** What the controlling frontend said it understands (its hello). */
+  controllerFeatures?: ReadonlySet<ClientFeature>;
+  /** The running command's input state (InputWatch, beside the PTY): the one source every surface reads. */
+  input?: InputState;
+  /** Pending check that a wait lasted long enough to become a cross-session notice. */
+  inputNoticeTimer?: NodeJS.Timeout;
+  running?: {command: string; since: number; queued?: string};
   /** When zsh last returned to its prompt. */
   idleSince: number;
   screen: AlternateScreenTracker;
@@ -52,6 +63,12 @@ interface ManagedSession {
   /** This session's cross-session notice; cleared when the session is focused. */
   notices: SessionNoticeTracker;
   knowledge?: string;
+  /** This session's command queue; it runs only in this session's shell (see QueueDispatcher). */
+  queue: QueueDispatcher;
+  /** This session's background tasks: beside its shell, in their own terminals, ended with the session. */
+  tasks: SessionTasks;
+  /** The attached frontend's task listener, when it listed 'background-tasks'. */
+  taskListener?: TaskListener;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -77,9 +94,10 @@ function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
     case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
-      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
+      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed}), ...(event.queued === undefined ? {} : {queued: event.queued})};
     case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at,
-      ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge})};
+      ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge}),
+      ...(event.inputWaits ? {inputWaitMs: event.inputWaitMs ?? 0, inputWaits: event.inputWaits} : {})};
   }
 }
 
@@ -120,15 +138,17 @@ export class SessionService {
     return [...this.sessions.values()].map(session => ({...session.record}));
   }
 
-  private info(session: ManagedSession): SessionInfo {
+  private info(session: ManagedSession, features: ReadonlySet<ClientFeature> = new Set()): SessionInfo {
     const {record, running} = session;
+    const request = running ? session.input?.request : undefined;
     const evidence = session.evidence.snapshot();
     // Read only when someone lists sessions; nothing polls the process table.
     const process = running ? session.shell.foregroundProcess : undefined;
     session.notices.observeProcess(process);
     if (evidence.attentionSince !== undefined) session.notices.onAttention(evidence.attentionSince);
     session.notices.checkLongRunning(Date.now());
-    const notice = session.notices.notice;
+    // A notice kind an older frontend cannot decode is left out for it (it would reject the whole list).
+    const notice = session.notices.notice?.kind === 'input' && !features.has('input-state') ? undefined : session.notices.notice;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt), shell: session.backend,
       ...(record.signature ? {signature: record.signature} : {}), ...(record.name ? {name: record.name} : {}),
       ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
@@ -139,7 +159,11 @@ export class SessionService {
       ...(evidence.title ? {title: evidence.title} : {}),
       ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
       ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {}),
-      ...(notice ? {notice} : {})};
+      ...(notice ? {notice} : {}),
+      ...(request ? {inputSince: request.since, inputConfidence: request.confidence, inputMode: request.mode,
+        ...(request.prompt ? {inputPrompt: request.prompt.slice(0, 120)} : {})} : {}),
+      ...(features.has('queue') && session.queue.queue.size ? {queued: session.queue.queue.size,
+        ...(session.queue.state.paused ? {queuePaused: session.queue.state.paused.reason} : {})} : {})};
   }
 
   async start(): Promise<void> {
@@ -174,6 +198,7 @@ export class SessionService {
     const send = (message: ServerMessage) => { if (!socket.destroyed) socket.write(encodeMessage(message)); };
     let greeted = false;
     let owned: ManagedSession | undefined;
+    let features: ReadonlySet<ClientFeature> = new Set();
 
     socket.on('data', chunk => {
       for (const result of decoder.push(chunk as unknown as string)) {
@@ -191,6 +216,7 @@ export class SessionService {
             return;
           }
           greeted = true;
+          features = parseClientFeatures(message.features);
           send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1, features: SERVICE_FEATURES.join(','),
             ...(this.options.build ? {build: this.options.build} : {})});
           continue;
@@ -206,7 +232,9 @@ export class SessionService {
               const backend = message.shell === undefined ? 'zsh' : message.shell;
               if (!isShellId(backend)) throw new Error(`unknown shell backend ${backend}`);
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend);
+              owned.controllerFeatures = features;
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid, shell: owned.backend});
+              this.attachTasks(owned, send, features);
             } catch (error) {
               send({type: 'error', code: 'spawn', message: error instanceof Error ? error.message : String(error)});
             }
@@ -217,15 +245,16 @@ export class SessionService {
             if (!session) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
             if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
             owned = session;
-            this.bind(session, send);
+            this.bind(session, send, features);
             // Opening a session is focusing it: its notice is no longer news in any window.
             session.notices.clear();
             this.endedNotices.dismiss(session.record.id);
-            const info = this.info(session);
+            const info = this.info(session, features);
             const {backlog} = session;
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
+              ...(features.has('queue') && session.running?.queued !== undefined ? {runningQueued: session.running.queued} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
               ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge}), shell: session.backend,
               ...(session.shell.isReady ? {} : {startup: session.shell.startupTail() ?? ''})});
@@ -233,6 +262,11 @@ export class SessionService {
             const missed = backlog.events();
             for (const event of missed) send(toMessage(event));
             send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
+            // The live input state is not a stream event: a reattaching frontend gets it now, after the replay.
+            if (features.has('input-state') && info.running && session.input) send(inputStateMessage(session.input));
+            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}, {timeline: features.has('queue-timeline'), history: features.has('queue-history')}));
+            // Background tasks kept running while detached: their list and recent output, never started again.
+            this.attachTasks(session, send, features);
             this.redraw(session, message.columns, message.rows);
             break;
           }
@@ -245,19 +279,49 @@ export class SessionService {
             }
             break;
           case 'list':
-            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session, features)), ended: this.endedNotices.list(Date.now())});
             break;
           case 'dismiss':
             this.sessions.get(message.sessionId)?.notices.clear();
             this.endedNotices.dismiss(message.sessionId);
             send({type: 'dismissed', sessionId: message.sessionId});
             break;
+          case 'task': {
+            const change = taskOpFrom(message.change);
+            if (!owned || !features.has('background-tasks')) send({type: 'error', code: 'state', message: 'no background tasks for this connection'});
+            else if (!change) send({type: 'error', code: 'task', message: 'not a background task request'});
+            else {
+              const refused = owned.tasks.request(change);
+              if (refused) send({type: 'error', code: 'task', message: refused});
+            }
+            break;
+          }
+          case 'queue': {
+            const change = queueOpFrom(message.change);
+            if (!owned || !features.has('queue')) send({type: 'error', code: 'state', message: 'no session queue for this connection'});
+            else if (!change) send({type: 'error', code: 'queue', message: 'not a queue change'});
+            else if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !features.has('queue-timeline')) send({type: 'error', code: 'queue', message: 'queue timeline review not negotiated'});
+            else if ((change.op === 'history-detail' || change.op === 'save-summary' || change.op === 'summaries-auto') && !features.has('queue-history')) send({type: 'error', code: 'queue', message: 'queue history review not negotiated'});
+            else owned.queue.request(change);
+            break;
+          }
+          case 'input-look': {
+            const session = owned;
+            if (!session || !features.has('input-look')) { send({type: 'error', code: 'state', message: 'no session input to look at'}); break; }
+            const {id} = message;
+            // Any input-state the look produces is sent first (synchronously, as the watch emits it).
+            void session.shell.inputWatch.lookNow().then(() => { if (owned === session) send({type: 'input-looked', id}); });
+            break;
+          }
           case 'input':
+            // Ctrl+C reaching a running command: what was queued after it waits (see QueueDispatcher).
+            if (message.data.includes('\u0003')) owned?.queue.onInterrupt();
             owned?.evidence.onInput();
             owned?.notices.clear();
             if (owned) {
               const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
               owned.shell.once('inputRejected', rejected);
+              if (message.submission === 1 || /[\r\n]/u.test(message.data)) owned.queue.onSubmission();
               owned.shell.write(message.data, message.submission === 1);
               owned.shell.off('inputRejected', rejected);
             }
@@ -279,7 +343,7 @@ export class SessionService {
             if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
             const name = message.name.replace(/[\u0000-\u001f\u007f]/gu, '').trim().slice(0, 40);
             if (name) target.record.name = name; else delete target.record.name;
-            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session, features)), ended: this.endedNotices.list(Date.now())});
             break;
           }
           case 'resize':
@@ -309,15 +373,59 @@ export class SessionService {
     });
   }
 
-  private bind(session: ManagedSession, send: Send): void {
+  private bind(session: ManagedSession, send: Send, features: ReadonlySet<ClientFeature>): void {
     session.controller = send;
+    session.controllerFeatures = features;
     session.record.state = 'attached';
+    session.queue.onOwnershipChanged();
+  }
+
+  /** The attached frontend hears about this session's tasks only when it understands them. */
+  private attachTasks(session: ManagedSession, send: Send, features: ReadonlySet<ClientFeature>): void {
+    if (!features.has('background-tasks')) return;
+    const listener: TaskListener = {
+      tasks: records => { if (session.controller === send) send({type: 'tasks', state: JSON.stringify(records)}); },
+      output: (taskId, update) => { if (session.controller === send) send({type: 'task-output', taskId, update: JSON.stringify(update)}); },
+    };
+    session.taskListener = listener;
+    session.tasks.attach(listener);
   }
 
   private detach(session: ManagedSession, send: Send): void {
     if (session.controller !== send) return;
+    session.tasks.detach(session.taskListener);
+    session.taskListener = undefined;
     session.controller = undefined;
+    session.controllerFeatures = undefined;
     session.record.state = 'detached';
+    session.queue.onOwnershipChanged();
+  }
+
+  /**
+   * A new input state from the session's watch: the attached frontend hears it at once; a wait that lasts becomes
+   * one cross-session notice (sticky until answered or focused), and a resolved wait withdraws it.
+   */
+  private onInputState(session: ManagedSession, state: InputState): void {
+    const before = session.input?.request;
+    session.input = state;
+    // Preserve explicit reader ownership for detach/reattach and transcript cuts,
+    // even on Fish versions that send no terminal input-mode escape.
+    if (state.terminalOwner) session.screen.interactive = true;
+    if (session.controllerFeatures?.has('input-state')) session.controller?.(inputStateMessage(state));
+    const request = state.request;
+    if (!request) {
+      if (session.inputNoticeTimer) { clearTimeout(session.inputNoticeTimer); session.inputNoticeTimer = undefined; }
+      if (before) session.notices.onInputResolved();
+      return;
+    }
+    if (before?.since === request.since && session.inputNoticeTimer) return;
+    if (session.inputNoticeTimer) clearTimeout(session.inputNoticeTimer);
+    session.inputNoticeTimer = setTimeout(() => {
+      session.inputNoticeTimer = undefined;
+      const current = session.input?.request;
+      if (current && current.since === request.since) session.notices.onInputNeeded(current.since, current.confidence, current.program);
+    }, Math.max(0, request.since + INPUT_NOTICE_DELAY_MS - Date.now()));
+    session.inputNoticeTimer.unref?.();
   }
 
   /**
@@ -358,7 +466,14 @@ export class SessionService {
       state: 'attached', protocolVersion: PROTOCOL_VERSION, signature};
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
-      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id)};
+      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell),
+      tasks: undefined as unknown as SessionTasks};
+    // The session's own shell runs each task's command; the launch environment is used for the spawn only.
+    session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
+    session.queue.on('state', (state, event) => {
+      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event,
+        {timeline: session.controllerFeatures.has('queue-timeline'), history: session.controllerFeatures.has('queue-history')}));
+    });
     this.sessions.set(record.id, session);
     this.wire(session);
     return session;
@@ -380,12 +495,15 @@ export class SessionService {
       else session.controller?.({type: 'output', data});
     });
     shell.on('startup', output => session.controller?.({type: 'startup', output}));
+    shell.on('inputState', state => this.onInputState(session, state));
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
-      session.running = {command, since: at};
+      // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.
+      const queued = session.queue.onExec(command, at, historyAllowed)?.text;
+      session.running = {command, since: at, ...(queued === undefined ? {} : {queued})};
       session.evidence.onExec();
       session.notices.onExec(command, at);
-      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
+      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed}), ...(queued === undefined ? {} : {queued})});
     });
     shell.on('prompt', marker => {
       session.knowledge = marker.knowledge;
@@ -396,10 +514,17 @@ export class SessionService {
       session.notices.onPrompt(marker.exitCode, Date.now(), marker.cwd);
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
-        ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge})});
+        ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge}),
+        ...(marker.inputWaits ? {inputWaitMs: marker.inputWaitMs ?? 0, inputWaits: marker.inputWaits} : {})});
+      // After the prompt is on its way: the next queued command, if any, starts from this evidence only.
+      session.queue.onPrompt(marker.exitCode, session.idleSince, marker);
     });
     shell.on('exit', event => {
+      session.queue.onShellExit();
+      // The session ends: so do its background tasks (interrupt, terminate, then kill what remains).
+      void session.tasks.shutdown();
       this.sessions.delete(record.id);
+      if (session.inputNoticeTimer) { clearTimeout(session.inputNoticeTimer); session.inputNoticeTimer = undefined; }
       // Ending with no window attached is news; with one attached, that window saw it.
       if (!session.controller) this.endedNotices.add(session.notices.ended(event.exitCode, Date.now(), record.cwd));
       // Detached: keep what the journal lacks on disk for archiving. Attached:
@@ -449,6 +574,7 @@ export class SessionService {
     session.running = undefined;
     session.idleSince = Date.now();
     session.screen.reset();
+    session.queue.onShellSwitched(next);
     this.wire(session);
   }
 
@@ -461,6 +587,7 @@ export class SessionService {
     this.closed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     for (const session of this.sessions.values()) session.shell.kill();
+    await Promise.all([...this.sessions.values()].map(session => session.tasks.shutdown()));
     this.sessions.clear();
     for (const socket of this.connections) socket.destroy();
     // Closing the listening server unlinks its socket path.

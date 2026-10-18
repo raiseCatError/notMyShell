@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import {mkdtemp, readFile, rm, writeFile, mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import type {Key} from '../src/terminal/keys.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
 import {
   createSetup, NATIVE_FIRST_MESSAGE, parseSetupEntry, providerNote, renderSetup, sectionIndex, SETUP_SECTIONS, setupChanges,
-  setupIsIdempotent, setupKey, type SetupState,
+  setupIsIdempotent, setupKey, setupSelectedRow, type SetupState,
 } from '../src/setup/SetupCat.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {paletteItems} from '../src/ui/CommandPalette.js';
@@ -34,7 +35,7 @@ test('fresh use: Welcome states the native-first message and nothing is changed 
   const text = plain(renderSetup(state, 100, 30)).replace(/\n\s+/gu, ' ');
   assert.match(text, /Setup Cat/u);
   assert.ok(text.includes(NATIVE_FIRST_MESSAGE));
-  assert.match(text, /switch between Native and external providers anytime/u);
+  assert.match(text.replace(/\s+/gu, ' '), /switch between Native and external providers anytime/u);
   assert.match(text, /Nothing changes until you apply/u);
   assert.deepEqual(setupChanges(state), []);
 });
@@ -100,7 +101,7 @@ test('edits show in Review & Apply with from → to and apply normalized configu
 
 test('direct entries are views into the same model; unknown entries are rejected', () => {
   assert.deepEqual(parseSlashCommand('/setup'), {kind: 'setup'});
-  for (const entry of ['prompt', 'appearance', 'chroma', 'tools', 'editor']) {
+  for (const entry of ['prompt', 'look', 'appearance', 'chroma', 'tools', 'editor']) {
     assert.deepEqual(parseSlashCommand(`/setup ${entry}`), {kind: 'setup', entry});
     assert.equal(parseSetupEntry(entry), entry);
   }
@@ -110,7 +111,7 @@ test('direct entries are views into the same model; unknown entries are rejected
   assert.equal(createSetup(DEFAULT_PROMPT_CONFIGURATION, 'tools').section, sectionIndex('tools'));
   const chroma = createSetup(DEFAULT_PROMPT_CONFIGURATION, 'chroma');
   assert.equal(chroma.section, sectionIndex('appearance'));
-  assert.equal(SETUP_SECTIONS[chroma.section]!.rows[chroma.row]!.row.id, 'treatmentPreset');
+  assert.equal(setupSelectedRow(chroma)?.row.id, 'treatmentPreset', 'the selected (shown) row, not an index into hidden ones');
   // Tab moves through every section of the one model and wraps.
   const state = createSetup(DEFAULT_PROMPT_CONFIGURATION, 'editor');
   for (let i = 0; i < SETUP_SECTIONS.length; i++) press(state, {kind: 'complete'});
@@ -152,7 +153,7 @@ test('tools step: Native only resets providers in the draft; tiers never install
   assert.equal(state.draft.picker, 'native');
   press(state, {kind: 'right'});
   assert.equal(state.tools, 'recommended');
-  assert.match(plain(renderSetup(state, 120, 30)), /each install asks first/u);
+  assert.match(plain(renderSetup(state, 120, 30)).replace(/\s+/gu, ' '), /nothing installs until you confirm/u);
   state.context = {statuses: {}, completion: {completionSystem: true, zshCompletions: true, fzfTab: true}};
   const text = plain(renderSetup(state, 120, 30));
   assert.match(text, /Configured zsh completion\s+Detected/u);
@@ -192,6 +193,12 @@ async function withApp(run: (app: TerminalApp, configPath: string) => Promise<vo
   const app = new TerminalApp();
   try {
     app['render'] = () => {};
+    // /setup is normally entered from the ready composer. Calling runSlash
+    // directly during startup bypasses that boundary; a slow shell's recovery
+    // panel correctly owns Enter until its first authenticated prompt.
+    const deadline = Date.now() + 20_000;
+    while (app['startupPending'] && Date.now() < deadline) await delay(10);
+    assert.equal(app['startupPending'], false, 'the shell reached its first prompt before panel interaction');
     await run(app, path);
   } finally {
     app['stop'](0);
@@ -201,6 +208,21 @@ async function withApp(run: (app: TerminalApp, configPath: string) => Promise<vo
     await rm(directory, {recursive: true, force: true});
   }
 }
+
+test('app: startup recovery holds Apply until the shell reaches its first prompt', () => withApp(async (app, path) => {
+  const before = await readFile(path, 'utf8');
+  await app['runSlash']('/setup', {kind: 'setup'});
+  const state = app['setupState']!;
+  state.section = SETUP_SECTIONS.length - 1;
+  app['startupPending'] = true;
+  app['startupPanel'] = {since: Date.now(), tail: 'waiting for startup'};
+  app['handleKey']({kind: 'enter'});
+  assert.equal(app['setupState'], state, 'startup recovery retains ownership of Enter');
+  assert.equal(await readFile(path, 'utf8'), before, 'nothing is applied while startup is blocked');
+  app['endStartupWatch']();
+  app['handleKey']({kind: 'enter'});
+  assert.equal(app['setupState'], undefined, 'the ready shell releases panel interaction');
+}, {onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true}));
 
 test('app: /setup never writes on open or cancel; Apply persists through the normal path and keeps unknown fields', () => withApp(async (app, path) => {
   const before = await readFile(path, 'utf8');
@@ -247,14 +269,14 @@ test('app: Setup owns a clean screen, previews the drafted panel position, never
   assert.ok(rows.some(row => row.includes('Setup')), 'Setup Cat is drawn');
   assert.ok(!rows.some(row => row.includes('WELCOME-BACKDROP-MARKER')), 'the transcript/welcome is not drawn behind Setup');
   const bottomTitle = rows.findIndex(row => row.includes('Setup'));
-  // The Start step edits the one stored field; the draft decides where the panel sits right away.
+  // The Start step edits the one stored field, but the guided setup's own geometry never depends on it.
   const state = app['setupState']!;
   state.row = rowIndex(state, 'panelPosition');
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.panelPosition, 'top');
   app['render']();
   const topTitle = frames.at(-1)!.rows.findIndex(row => row.includes('Setup'));
-  assert.ok(topTitle < bottomTitle, 'Top moves the panel to the top of the screen');
+  assert.equal(topTitle, bottomTitle, 'Setup Cat stays where it is: it fills the screen in either position');
   assert.equal(app['promptConfiguration'].panelPosition, 'bottom', 'nothing is applied until Apply');
   for (let i = 0; i < 3 && app['setupState']; i += 1) app['handleKey']({kind: i === 0 ? 'escape' : 'text', value: 'y'} as never);
   assert.equal(app['setupState'], undefined);
@@ -269,6 +291,9 @@ test('first launch opens Setup Cat and Apply completes onboarding even without a
   app['startOnboarding']();
   const state = app['setupState']!;
   assert.ok(state, 'first run opens the shared Setup Cat');
+  if (state.intro) app['handleKey']({kind: 'enter'});
+  app['handleKey']({kind: 'text', value: '3'}); // Manual retains the complete wizard.
+  app['handleKey']({kind: 'enter'});
   state.section = sectionIndex('review');
   assert.match(renderSetup(state, 120, 40).map(stripAnsi).join('\n'), /completes setup/u);
   app['handleKey']({kind: 'enter'});

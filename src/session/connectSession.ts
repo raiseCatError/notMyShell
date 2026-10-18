@@ -132,11 +132,13 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
 }
 
 /** Live sessions and recently-ended notices, for cross-session notices; empty when no service runs. */
-export async function listSessionNotices(options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
+export async function listSessionNotices(options: {env?: NodeJS.ProcessEnv; runtimeDir?: string; throwOnError?: boolean} = {}): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
   const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
   try {
     return await listSessionsWithNotices(socketPathFor(runtimeDir), 1500);
-  } catch {
+  } catch (error) {
+    // Live views must distinguish a failed poll from a validated empty registry.
+    if (options.throwOnError) throw error;
     return {sessions: [], ended: []};
   }
 }

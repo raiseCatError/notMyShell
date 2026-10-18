@@ -1,4 +1,4 @@
-import {detectProvider, installUnavailableReason, providerInstall, resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily, type ProviderStatus} from '../providers/providers.js';
+import {detectProvider, installUnavailableReason, providerInstall, resolveCommand, verified, type ProviderDescriptor, type ProviderInstall, type ProviderFamily, type ProviderStatus} from '../providers/providers.js';
 import type {PromptProviderId} from '../prompt/configuration.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {detectBackend as detectKeepAwake} from '../keepAwake/keepAwake.js';
@@ -31,6 +31,8 @@ export type ToolCapability = 'executable utility' | 'shell framework' | 'prompt 
 export interface Tool extends ProviderDescriptor {
   /** Shared bounded discovery evidence, when the matching executable is locally present. */
   localDetection?: LocalExecutable;
+  /** A local executable that is not in the catalog: display only, never in Discover's list, no management. */
+  localOnly?: boolean;
   category: typeof TOOL_CATEGORIES[number];
   /** Kept for existing callers: true exactly for the Recommended tier. */
   recommended?: boolean;
@@ -85,12 +87,12 @@ export const TOOLS: readonly Tool[] = [
   tool('rg', 'ripgrep', 'Search & Files', 'Fast recursive text search.', 'https://github.com/BurntSushi/ripgrep', {package: 'ripgrep', recommended: true}),
   tool('fd', 'fd', 'Search & Files', 'Simple file discovery.', 'https://github.com/sharkdp/fd', {recommended: true}),
   tool('fzf', 'fzf', 'Search & Files', 'Optional interactive supplied-candidate picker.', 'https://github.com/junegunn/fzf', {recommended: true, providerFamily: 'picker'}),
-  tool('bat', 'bat', 'Search & Files', 'File viewing with syntax colors.', 'https://github.com/sharkdp/bat', ENHANCED),
+  tool('bat', 'bat', 'Search & Files', 'File viewing with syntax colors.', 'https://github.com/sharkdp/bat', {recommended: true}),
   tool('eza', 'eza', 'Search & Files', 'Optional directory listing.', 'https://github.com/eza-community/eza', ENHANCED),
   tool('gh', 'GitHub CLI', 'Git & Development', 'GitHub workflows; authentication is managed by gh.', 'https://cli.github.com/', {...ENHANCED, relevantTo: ['git']}),
   tool('lazygit', 'lazygit', 'Git & Development', 'Interactive Git frontend.', 'https://github.com/jesseduffield/lazygit', {...ENHANCED, relevantTo: ['git']}),
   tool('delta', 'delta', 'Git & Development', 'Optional Git diff presentation.', 'https://github.com/dandavison/delta', {package: 'git-delta', ...ENHANCED, relevantTo: ['git']}),
-  tool('zoxide', 'zoxide', 'Navigation & History', 'Optional directory ranking; existing hooks stay unchanged.', 'https://github.com/ajeetdsouza/zoxide', {recommended: true, providerFamily: 'navigation'}),
+  tool('zoxide', 'zoxide', 'Navigation & History', 'Directory jumping. Installing does not turn on z: that needs its shell hook, which NMSh never adds for you.', 'https://github.com/ajeetdsouza/zoxide', {recommended: true, providerFamily: 'navigation'}),
   tool('atuin', 'Atuin', 'Navigation & History', 'Optional local history provider; no sync or hook setup.', 'https://atuin.sh/', {providerFamily: 'history', ...ENHANCED}),
   tool('jq', 'jq', 'Data / Structured Text', 'Read and transform JSON.', 'https://jqlang.org/', {recommended: true, relevantTo: ['kubernetes']}),
   tool('yq', 'yq', 'Data / Structured Text', 'Structured text tooling; multiple yq implementations exist.', 'https://github.com/mikefarah/yq', {relevantTo: ['kubernetes']}),
@@ -127,7 +129,7 @@ export const TOOLS: readonly Tool[] = [
   tool('procs', 'procs', 'Project / Language Tooling', 'A modern process viewer.', 'https://github.com/dalance/procs', {package: 'procs', ...ENHANCED}),
   tool('btop', 'btop', 'Project / Language Tooling', 'Interactive resource monitor.', 'https://github.com/aristocratos/btop', {package: 'btop', ...ENHANCED}),
   tool('tokei', 'tokei', 'Project / Language Tooling', 'Count code across languages.', 'https://github.com/XAMPPRocky/tokei', {package: 'tokei', ...ENHANCED, relevantTo: ['project']}),
-  tool('fastfetch', 'Fastfetch', 'Shell / Workflow', 'Optional startup welcome capture.', 'https://github.com/fastfetch-cli/fastfetch', {providerFamily: 'welcome', integration: 'welcome', recommended: true}),
+  tool('fastfetch', 'Fastfetch', 'Shell / Workflow', 'Optional startup welcome capture.', 'https://github.com/fastfetch-cli/fastfetch', {providerFamily: 'welcome', integration: 'welcome'}),
   tool('neofetch', 'Neofetch', 'Shell / Workflow', 'Startup welcome capture, if already installed.', 'https://github.com/dylanaraps/neofetch',
     {providerFamily: 'welcome', integration: 'welcome', legacy: true, successor: 'Fastfetch', package: ''}),
   tool('macchina', 'Macchina', 'Shell / Workflow', 'Optional startup welcome capture.', 'https://github.com/Macchina-CLI/macchina',
@@ -155,6 +157,11 @@ export function detectTool(tool: Tool, env: NodeJS.ProcessEnv = process.env): Pr
     return Promise.resolve(fact ? {state: 'installed', detail: fact.source ? `${fact.path} · ${fact.source}` : fact.path} : {state: 'missing'});
   }
   return detectProvider(tool, env.PATH ?? '');
+}
+
+/** detectTool that never throws or hangs: a failed or unfinished check is `unknown` (Unable to verify), never `missing`. */
+export function verifyTool(tool: Tool, timeoutMs = 4000, env: NodeJS.ProcessEnv = process.env): Promise<ProviderStatus> {
+  return verified(() => detectTool(tool, env), timeoutMs);
 }
 
 /** Legacy tools and tools without a curated package keep no recipe. */
@@ -188,7 +195,7 @@ export function promoteLocalExecutables(local: readonly LocalExecutable[], tools
 /** Build a display-only local row. It intentionally has no management metadata or actions. */
 export function localExecutableTool(item: LocalExecutable): Tool {
   return {id: localExecutableId(item.name), label: item.name, category: 'System capabilities', description: 'Local detected', source: item.evidence,
-    package: '', kind: 'external', family: 'tool', executable: item.name, versionArgs: undefined, localDetection: item,
+    package: '', kind: 'external', family: 'tool', executable: item.name, versionArgs: undefined, localDetection: item, localOnly: true,
     capabilities: ['executable utility']};
 }
 

@@ -444,7 +444,7 @@ function harness(patch: Partial<PromptConfiguration['idleVisuals']>) {
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['startupPending'] = false;
-  app['configuration'] = {...app['configuration'], idleVisuals: {...app['configuration'].idleVisuals, timeout: 1, ...patch}};
+  app['configuration'] = {...app['configuration'], cursor: {...app['configuration'].cursor, effect: 'none', motion: 'off'}, motion: {...app['configuration'].motion, contextTransitions: 'off'}, idleVisuals: {...app['configuration'].idleVisuals, timeout: 1, ...patch}};
   return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); isolation.restore(); }};
 }
 const goIdle = (app: TerminalApp) => { app['lastActivity'] = Date.now() - 10 * 60_000; app['onIdleTimeout'](); };

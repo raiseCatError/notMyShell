@@ -42,15 +42,19 @@ export class LiveSandbox {
     mkdirSync(this.runtime, {mode: 0o700});
     chmodSync(this.runtime, 0o700);
     writeFileSync(join(this.config, 'nmsh', 'config.json'),
-      JSON.stringify({onboardingComplete: true, glyphChoiceComplete: true, updateChecks: false, ...config}));
+      JSON.stringify({onboardingComplete: true, glyphChoiceComplete: true, updateChecks: false, ...config,
+        // Most live tests read the plain wording; a test that is about Expressive wording asks for it.
+        liveActivity: {style: 'classic', ...(config.liveActivity as Record<string, unknown> | undefined)}}));
   }
 
   get env(): NodeJS.ProcessEnv {
-    return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, NMSH_RUNTIME_DIR: this.runtime,
+    // XDG_DATA_HOME is hermetic like HOME: an ambient value (a developer's or CI machine's) must never point the
+    // sandbox's shells — Fish reads its history file there — at shared state outside the sandbox.
+    return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, XDG_DATA_HOME: join(this.home, '.local', 'share'), NMSH_RUNTIME_DIR: this.runtime,
       TMPDIR: this.temp, TMP: this.temp, TEMP: this.temp,
       TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '',
       // A host NMSh cannot open windows in, so tests never launch real terminal windows.
-      TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', ...this.extraEnv};
+      TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', HYPRLAND_INSTANCE_SIGNATURE: '', ...this.extraEnv};
   }
 
   sessions() { return listLiveSessions({runtimeDir: this.runtime}); }
@@ -58,10 +62,10 @@ export class LiveSandbox {
   /** The journals frontends in this sandbox wrote. */
   transcripts() { return new TranscriptStore(join(this.config, 'nmsh', 'sessions')); }
 
-  launch(args: string[] = [], size = {cols: 100, rows: 30}, attachmentEnv: Record<string, string> = {}): Frontend {
+  launch(args: string[] = [], size = {cols: 100, rows: 30}, attachmentEnv: Record<string, string> = {}, entry = ENTRY): Frontend {
     // Run outside the repository: a SIGKILLed frontend must never leave git
     // state (index.lock from a prompt's git status) behind in the checkout.
-    return this.trackFrontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, ENTRY, ...args],
+    return this.trackFrontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, entry, ...args],
       {cwd: this.home, ...size, env: {...this.env, ...attachmentEnv} as Record<string, string>}));
   }
 
@@ -157,11 +161,12 @@ export class LiveSandbox {
 export class Frontend {
   output = '';
   exitCode: number | undefined;
+  exitSignal: number | undefined;
   readonly exited: Promise<number>;
 
   constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>) {
     pty.onData(data => { this.output += data; });
-    this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; resolve(event.exitCode); }));
+    this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; this.exitSignal = event.signal; resolve(event.exitCode); }));
   }
 
   get mark(): number { return this.output.length; }
@@ -174,7 +179,7 @@ export class Frontend {
     } catch (error) {
       const state = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', String(this.pty.pid)], {encoding: 'utf8', timeout: 2000});
       if (error instanceof Error) error.message += `; frontend=${JSON.stringify({pid: this.pty.pid, elapsedMs: Date.now() - started,
-        exitCode: this.exitCode, outputBytes: this.output.length, alive: processAlive(this.pty.pid),
+        exitCode: this.exitCode, exitSignal: this.exitSignal, outputBytes: this.output.length, alive: processAlive(this.pty.pid),
         state: state.stdout?.trim(), stateStatus: state.status, stateError: state.error?.message})}`;
       throw error;
     }

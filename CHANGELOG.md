@@ -6,6 +6,216 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-18
+
+**Terminal workflow, first-run setup, background tasks & native modules.** The first stable release since v0.18.0. A new first run lets you pick a starting point under a live aurora and review it before anything applies; queued commands read as a chronological timeline with saved summaries; completed output can be selected, copied and acted on from the keyboard; optional tools are discovered, reviewed and installed through one flow; long-running commands can run as background tasks beside the shell; and the native module catalog covers twelve more runtimes and build tools. Every new control is reached through an explicit command, key or review, and the persistent shell, the queue and program input keep their behavior.
+
+**v0.19.0 was never published.** Its terminal workflow (input awareness, command queue, copy and Smart Folding, Copy as Report, Compare output, references, paste review, pins and recipes, activity wording) ships for the first time in this release; there is no v0.19.0 tag or download. Its notes are kept below as [0.19.0 — not released separately](#0190---not-released-included-in-0200). Upgrading from v0.18.0 brings both sections.
+
+Verification: one full canonical `verify:release` on the release commit (build, the complete unit and real-PTY suite, benchmark typecheck and timing smoke) and exact-commit CI (Ubuntu and macOS shards, Node 22 and 26, Fedora portability subset, both timing smokes). Physical-terminal evidence: the maintainer tested and accepted the first-run starting point, guided Setup and Tools flow on macOS; the formal v0.19 and v0.20 checklists were not completed item by item, and no physical Linux, Omarchy or WSL pass has been made ([v0.20 physical QA record](docs/testing/v020-physical-qa.md)).
+
+### Added
+
+#### First run: starting points under a reactive aurora
+- A fresh installation opens one starting point: four choices (**NMSh Recommended**, **Minimal Terminal**, **Customize Everything**, **Keep Existing**) under NMSh's real Aurora engine, with Vespyr on the horizon. Highlighting a choice changes the sky's mood in a short cross-fade; nothing applies until you review the choice and press Enter, and Esc asks *Leave setup?* with Stay first. `A` cycles the backdrop through Aurora, Subtle and Off and is saved at once. Reduced Motion, Effects Off, `NO_COLOR` and 16-color terminals get a still or plain sky, and every choice, Apply and Leave stay reachable down to 16 × 6.
+- Apply folds the sky into one rule and raises the real composer into place; a genuine first run adds Vespyr's welcome once, whichever starting point it chose. Later applies add one receipt line.
+- **Keep Existing** reads your environment read-only (Starship, Powerlevel10k or Oh My Posh, colors and tools) and keeps what it finds; it can also offer NMSh Native or another installed prompt. No file outside NMSh's configuration is changed.
+- **Minimal Terminal** starts Two-line (←→ One-line) with a quiet Flow composer and no greeting; an existing greeting is hidden, not deleted.
+- **Customize Everything** opens the guided setup in the selector's visual language (route of steps, *Step N of M*, keycaps, a live preview from 96 columns). Esc returns to the choices without closing setup. The guided setup keeps one fixed frame, and editors it opens return to the same step, row and unapplied draft.
+- `/startup`, `/setup quick` and Settings → Starting point reopen the selector; `/setup` opens the guided setup directly, and `/setup prompt|look|motion|cursor` stay direct.
+- On the first run only, where NMSh can prove the window is its own (Terminal.app; kitty on macOS with a remote-control socket; Hyprland 0.55+ with a Lua configuration), it offers to maximize the window for setup and restores it afterwards if it is still as NMSh left it. Nothing about the offer is saved ([first-run window maximization](docs/testing/first-run-window-maximization.md)).
+
+#### Optional tools: one discovery and install flow
+- `/tools`, Settings → Tools, the guided setup and the starting point's review share one panel and installer. Tools have tiers: **Recommended** (ripgrep, fd, fzf, jq, bat, zoxide, tealdeer) and **Enhanced** (for example eza, gh, lazygit, delta, Atuin, jc, Glow, xh, direnv, ShellCheck, shfmt), plus the rest of the curated catalog. `V` switches the view (Recommended → Recommended + Enhanced → All curated tools; Recommended + Enhanced by default) without changing the selection.
+- Space selects one tool, `R` and `E` add the missing Recommended or Recommended + Enhanced tools, `C` clears; keys never type into search (`/` focuses it). Enter reviews the exact package-manager command of every selected tool, then one confirmation with semantic buttons (No first; green *Yes, install*; red *Yes, uninstall*) and per-tool results.
+- A check that fails or does not finish reads *Unable to verify*, never Missing, and is never selected or installed; a missing tool without an installer on this system reads *Unsupported here*. Installing zoxide, fzf or Atuin never turns on their shell hooks. Fastfetch stays a supported welcome provider without a tier.
+
+#### Execution timeline and queue
+- Queued commands are shown as a safe chronological timeline: the running command, up to two recent results and up to two upcoming commands, with semantic motion that respects Reduced Motion.
+- `/settings queue` and `/queue settings` open one Queue destination: queue behavior, failure policy, the live timeline, recent and upcoming counts, completed-view retention, queued output display and saved summaries. Short forms: `/q`, `/qp` or `/pause` (pause), `/qr` (review, then resume), `/qc` (review, then clear).
+- **Queued output folding:** with *Fold queued output*, a successful queued command's long output folds behind a hint and `Ctrl+O` expands or collapses it. Folding is presentation only: copies keep every line, tabs and Unicode. Inline is the default; failures, interruptions and output you are inspecting stay expanded.
+- **Queue summaries:** settled chains are kept for review (`/queue history`, newest first, with results on demand) and can be saved as typed, privacy-safe summaries in the session's transcript (`/queue save-summary` after an exact-text review). Saved summaries hold observed facts only; restoring or reattaching never runs anything.
+- **Multi-line paste choices:** reviewing a multi-line paste offers Run as block, Queue separately, Edit or Cancel. Separation that would not be safe is refused with the reason; block and edit stay available.
+
+#### Output selection and Actions
+- `/copy` selects completed output from the keyboard: Up/Down moves between outputs, Enter copies, Esc returns to the draft and view. `/actions` (and `/actions N`) opens the actions for a completed output. Saved Quick Copy and picker preferences still apply, and the selected surface stays continuous across prompt segments, wedges and inverse output.
+
+#### Colors, cursor and updates
+- Choosing Custom colors opens a real editor at once: ten presets (Lavender, Purple, Blue, Cyan, Teal, Green, Amber, Orange, Rose, White), a live preview, each stop's hex, `S` to apply and Esc to cancel. The cursor idle effect gets its own colors (Follow cursor effect by default, as before).
+- `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors. Auto uses the portable effect until a supported native integration is configured; the terminal still controls its physical caret color.
+- With update notifications set to Notify, a newer stable release shows one short amber notice in the transcript, once per version, with the way to update *this* installation: brew commands for Homebrew, `/update` for a verified source checkout, the release page otherwise.
+
+#### Workspace sidebar and detail panel — experimental, Off by default ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
+- **Experimental and Off by default.** Turn it on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). While Off, `/sidebar` and `/panel` say how to turn it on and open nothing, and `keymap.json` workspace bindings are kept but take no key (`/keys` says so). Turning it Off closes open regions and gives the shell every column again. `/worktrees`, `/sessions`, `/github` and `/background` never depend on it. The docked layout is expected to be replaced by integrations with dedicated Git tools in a later release.
+- When on, `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
+- On a wide terminal the regions dock beside the transcript and the shell is sized to the middle; on a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them.
+- Opening a worktree stages its `cd` in an empty composer; tmux navigation selects panes and windows by id through tmux from fixed system locations. Nothing runs by itself.
+- `keymap.json` binds workspace keys, opt-in and validated (composer keys must say what they replace); `/keys` shows the keys in effect, problems in the file and keys the terminal or tmux may take first; `/keys reload` reads it again.
+
+#### Background tasks ([#382](https://github.com/raiseCatError/notMyShell/issues/382))
+- `/background run <command>` (`/bg run`) starts a long-running command (`adb logcat`, `tail -f`, a dev server) in its own terminal beside the shell, in the shell's directory with its PATH, without the shell's aliases, functions or unexported variables.
+- A task bar above the composer: Up from an idle composer (after a shown agent shelf) or Shift+Up focuses it; Enter opens a task's output, `x` stops it (again later: terminate, then kill, paced so a held key cannot jump to SIGKILL), Delete removes a finished one. `/background` lists every task with details and preferences; `/background t3`, `stop`, `kill`, `remove` and `clear` act directly.
+- Tasks belong to the session: they keep running while the window is detached, a reattached window shows them and their recent output, and ending the session ends them. Task output never enters the shell, the transcript, copies, reports or comparisons; the transcript gets one line when a task starts and when it fails.
+- Suggestions are **off by default**. `/background suggestions on` offers a recognized command's family when you submit it: `b` background once, Enter here as before, `a` always, `n` never ask, Esc back to the draft.
+
+#### Native modules ([#364](https://github.com/raiseCatError/notMyShell/issues/364))
+- Runtimes: .NET, Swift, Zig and Deno ([#370](https://github.com/raiseCatError/notMyShell/pull/370), which also becomes the canonical Ruby and PHP implementation), Elixir, Dart and Flutter ([#372](https://github.com/raiseCatError/notMyShell/pull/372)). Requested versions come from the project's own files, active versions from the install location; no tool is ever run and a binary inside the workspace is refused.
+- One `build` module for Bazel, Gradle, Maven, CMake, Meson and Make with the version the project pins ([#373](https://github.com/raiseCatError/notMyShell/pull/373)).
+- Mercurial bookmark or branch and Jujutsu repository state in the version-control extras pack ([#374](https://github.com/raiseCatError/notMyShell/pull/374)).
+
+#### Managed Claude Code ([#347](https://github.com/raiseCatError/notMyShell/pull/347))
+- `/model` and `/effort` as native pickers over Claude's documented control requests; a change shows as requested until Claude reports it.
+- Claude mods with their real types and states per launch identity (read only). Turning a Claude plugin on or off from NMSh is **off in this release**: it was never verified against a live account and it would write your Claude settings, so the row names the `claude plugin enable|disable … --scope …` command to run yourself. Behind the experimental `NMSH_EXPERIMENTAL_CLAUDE_PLUGIN_TOGGLE=1`, it goes through Claude's own command at the installed scope and running managed sessions reload. NMSh never edits Claude's settings files. Managed Claude stays beta; its physical QA was deferred for this release.
+- A context panel beside the agent conversation, provenance on every runtime fact, and Markdown rendering for agent output that reveals real link destinations and refuses smuggled characters.
+
+#### Worktrees and controls
+- `/worktrees` shows a related pull request only from evidence: the last `/github` listing of the same repository, with the PR's head branch in its own repository exactly the worktree's branch; `p` opens it in `/github` ([#381](https://github.com/raiseCatError/notMyShell/pull/381)).
+- A shared action-control renderer whose states are told apart by marks, not color, first used by the `/worktrees` confirmation ([#369](https://github.com/raiseCatError/notMyShell/pull/369)).
+
+### Changed
+- **Fresh defaults are NMSh Recommended:** Lavender Native, Rich motion (Expressive context and events, Sweep launch, Seal completion, cursor travel), Chat transcript with grayscale history, Smart folding, automatic typed queue summaries and a Project + Session window title. Cursor effects start Off with a theme-colored caret (choosing Fire starts on the Classic flame), and Minimal starts Two-line. **Saved configurations keep their behavior:** fields missing from an existing file read as their previous values (no added motion, no cursor effect, Normal transcript, summaries and title Off), and explicit and unknown fields survive saving.
+- Setup runs Look → Prompt → Motion, and Chroma is chosen in Look only. Setup previews show the real result (real screen-saver previews, a Chroma preview that follows the setting and says what hides it, a legible activity-wording example).
+- Menus share one set of selection glyphs with ASCII forms under Safe glyphs; the selection band marks the cursor only, and status words such as *✓ Selected* carry the selection. Panels opened from Settings return to Settings.
+- Confirmations use semantic Yes/No controls: No is focused first, and an install or uninstall names what it will do.
+- The background task bar is readable at rest; finished tasks show their outcome briefly (6 s, 30 s after a failure) and then stay listed in `/background`.
+- NMSh's own lines (`/copy` confirmations, notices, completion rows) wrap at word boundaries in narrow windows, with continuation rows indented under the text instead of splitting words such as `5 l`/`ines`. Copying a selection still gives the line exactly as stored. Shell output keeps the terminal's column wrapping ([#349](https://github.com/raiseCatError/notMyShell/pull/349)).
+
+### Fixed
+- **Input ownership:** replies to `read`, `read -k 1`, `read -n 1` and hidden reads are no longer queued, left in the composer or lost, however soon they are typed; Ctrl+C or Ctrl+Z ends a waiting question and what you type next is for the prompt. A waiting read is shown in its own color with the program's question and one instruction.
+- **Exact `/copy`:** copies are the bytes the program printed, tabs and the final newline included.
+- **Composer history while a command runs:** ↑/↓ recall history again while a command that reads nothing is running; a program reading input, a full-screen program or an edited queue entry keeps the keys. Recalled text reaches the queue only through Enter, and `/shell` starts navigation fresh in the new shell.
+- Queued, attached and restored commands get the composer's syntax colors once their command word is classified.
+- The queue shows what runs next and in what order, and resume and approve are reviewed in place; nothing runs from one key and a typed `y` never approves. Paste review never lets an NMSh command label mask what the shell would run.
+- Pausing the queue or declining an approval is acknowledged only once the session owner reports it, and the draft is kept. An interruption (Ctrl+C, exit 130) holds pending queued work.
+- The selected surface no longer lets prompt segment backgrounds, Powerline connectors or inverse video punch through it.
+- Vespyr is composited pixel by pixel, with no background rectangle behind the cat.
+- Tools: recommended tools stay listed once installed, and a tool check's timeout always fires.
+- Background tasks signal only their own process group through a task-local guard, never a saved numeric group id, so a reused process id cannot be signalled.
+- The Codex app-server adapter sends a cancel made before Codex names the turn as soon as it does (the adapter remains unwired).
+
+### Security
+- Approval prompts show everything they approve: a multi-line command is shown on every line (cut at 600 characters with the remainder counted), so a harmless first line can no longer hide what follows; this fixes the shipped Claude adapter's permission prompts ([#380](https://github.com/raiseCatError/notMyShell/pull/380)).
+- Executable Portable Mods stay disabled behind a documented threat model and a regression gate; the only processes the mods code may start are Claude's own `plugin` commands in four reviewed forms, without a shell ([#379](https://github.com/raiseCatError/notMyShell/pull/379)).
+- Background tasks: every request, task record and output update crossing the session boundary is validated; task output is sanitized line by line and bounded; signals reach only a task's own process group; the environment is used for the spawn only and never stored.
+- Workspace text from tmux, Git and keymap files has whole escape sequences removed before it is drawn.
+- Saving a queue summary goes through the same scrollable exact-text review as reports; compact display can never hide persisted command arguments, redacted text cannot be edited in that review, and automatic summaries keep recognized command labels only when the session owner observed that the command is eligible for history.
+- Reviewed paste blocks submit exactly the entries you kept, in the order shown; a removed or empty block can never submit the original paste.
+- Keep Existing detection and the window-maximization probe are read-only; the probe never changes a window it cannot prove is NMSh's own.
+
+### Compatibility
+- Node.js 22 or newer; zsh, Bash 4.4+ and Fish, as in v0.18.0. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- Queue history, summaries and acknowledged pause need a session service from this release; a service started by an older NMSh keeps the older queue behavior until it restarts.
+- Background tasks need a session service from this release (a service started by an older NMSh says so until it restarts) and POSIX process groups (macOS, Linux, WSL 2).
+- The tmux section of the sidebar needs tmux in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`.
+
+### Upgrade notes
+- **From v0.18.0:** settings, themes, modules, sessions and history carry over. An existing installation does not see the first-run starting point (`/startup` opens it any time) and keeps its saved presentation; fields it never saved read as their previous behavior. The v0.19.0 upgrade notes below also apply: activity wording becomes Expressive and the command queue is on by default.
+- With update notifications on Notify, NMSh shows one amber notice per new stable release; Off checks nothing.
+- Nothing new is on after the upgrade: the experimental sidebar and panel are Off (a configuration without the new `workspacePanels` setting reads as Off, and nothing else in it changes), the composer binds no workspace keys, and background suggestions are off.
+- Restart the session service (or start a new session) to use background tasks, queue history and summaries.
+- Homebrew: `brew upgrade raiseCatError/tap/nmsh` installs whatever version the tap's formula points to; check `nmsh --version` (see the README for the tap's status).
+
+### Known limitations
+- **Physical-terminal evidence is partial.** The maintainer tested and accepted the first-run starting point, guided Setup and Tools flow on macOS; physical QA during stabilization found the input-ownership, exact-copy, queue and Setup issues fixed above. The formal checklist passes for background tasks, the new modules, managed Claude and the v0.19 workflow were not recorded item by item. No physical Linux (including Omarchy/Hyprland), WSL 2, iTerm2, kitty, WezTerm or Windows Terminal pass has been made; Linux remains beta on automated CI. The experimental workspace regions, drawers and keymap host notes are not physically tested.
+- The first-run window offer on Hyprland/Omarchy and kitty is covered by automated tests only.
+- Clicks focus a region but do not select sidebar rows; the mouse wheel scrolls the transcript wherever the pointer is.
+- The sidebar lists tmux and worktrees only; NMSh sessions and managed targets as rows, and module diagnostics in the detail panel (they stay in `/modules` details), are not included.
+- Background tasks run in a separate shell: aliases, functions and unexported variables of the live shell are not available. A service restart ends the tasks it owned. Output kept by the task owner is 5,000 lines or 2 MiB per task.
+- The Codex app-server adapter is included but not wired: Codex and OpenCode sessions are shown, not controlled. Claude Remote Control stays unsupported for managed targets.
+- Claude mod enable/disable has not been exercised against a live Claude account in this release's verification.
+- Everything listed under v0.19.0's known limitations still applies.
+
+## [0.19.0] - Not released (included in 0.20.0)
+
+**Terminal workflow.** One command's result becomes useful for the next without NMSh taking execution away from the real shell. NMSh notices when a running command is waiting for you, lets you prepare the next commands while one runs, copies exactly what you choose, turns output into reviewed reports and comparisons, and keeps the commands you reuse. Nothing derived from output, the clipboard, a pin or a recipe runs without an explicit action, and every queued command still runs in your one persistent shell.
+
+Verification: automated CI (unit and real-PTY suites on macOS and Ubuntu, Node 22 and 26, a Fedora portability subset and the timing smoke) on the integrated head, plus the per-feature canonical, Linux/Fish 3.7 and report/compare/clipboard security gates recorded in [the frontend freeze handoff](https://github.com/raiseCatError/notMyShell/blob/ca26b9be62f2d7eb7f083e05bd6a2fcff9334811/docs/development/workflow-frontend-freeze.md). This candidate was never published on its own: no v0.19.0 tag or release exists, and everything below first ships in v0.20.0. Physical-terminal status is recorded with v0.20.0 ([v0.19 physical QA checklist](docs/testing/v019-physical-qa.md)).
+
+### Added
+
+#### Input awareness ([#348](https://github.com/raiseCatError/notMyShell/pull/348))
+- **Input awareness:** a command that waits for an answer is no longer just "Running". NMSh reads the terminal's own state, without touching the program. A password or other no-echo read, or a single-key question such as `e2fsck`'s `Fix<y>?`, is confirmed; on Linux, any blocking read of the terminal is confirmed too. An ordinary line question left open by an idle process is shown as "Probably waiting for input". The question stays visible beside the composer however far the transcript has scrolled, and the window title, `/sessions`, `/resume` and a cross-session notice show the wait. Hidden and single-key input goes straight to the program, keystroke by keystroke, and is never shown or kept. A reply left unsent when the command ends is discarded, never run as a shell command. Waiting time is measured separately from wall-clock time and reported on completion. See `docs/design/input-awareness.md`.
+- Fish's own `read` and other builtin readers are recognized from authenticated terminal ownership, and input typed during startup, before the shell is ready, or while a hidden read is open goes only to the program that currently owns the terminal.
+
+#### Command queue ([#357](https://github.com/raiseCatError/notMyShell/pull/357))
+- Commands typed while another runs are **queued in the same shell** and run after it, one at a time, only when the shell reports it is ready, keeping the directory, variables and functions. Multiline entries keep their meaning (Fish `begin`/`end`, zsh and Bash brace groups). `/queue` shows, edits, reorders, pauses, resumes or clears them; queued command text is drawn, never interpreted.
+- When the running program is waiting for an answer, Enter answers it and **Ctrl+Q** composes a queue entry instead. While a program reads keys directly, Ctrl+Q takes the next command for the queue and **Ctrl+S** sends the composer's text to the program.
+- A failure or interrupt **pauses** the rest of the queue. Detach and reattach never submit an entry twice; switching shells pauses the queue, and a shell that exits drops its entries instead of replaying them in another shell. Silence is never taken as completion.
+
+#### Copy and Smart Folding ([#358](https://github.com/raiseCatError/notMyShell/pull/358), [#350](https://github.com/raiseCatError/notMyShell/issues/350))
+- `/copy N`, `/copy -N` (the latest N), ranges `A-B` and lists `1,3,5`; `--status` adds the completion row; `/cp` is the same command in every form.
+- `/copy ui` opens an interactive picker; `/copy settings` chooses Quick Copy or the picker by default and whether copies include status.
+- A sticky Copy control keeps block actions reachable while a long block's header is scrolled away.
+- **Smart Folding** keeps long diagnostics readable; the full output stays stored, and copies include folded lines.
+
+#### Copy as Report ([#360](https://github.com/raiseCatError/notMyShell/pull/360), [#351](https://github.com/raiseCatError/notMyShell/issues/351))
+- One or several command blocks as a Markdown or plain-text report with command, output, directory and exit status, always shown for review first. Enter copies exactly the reviewed text; cancel leaves the clipboard unchanged.
+- Likely secrets and private paths are **redacted** in the review before any Markdown is added; edited text is rescanned, changed lines are marked, and an unredacted choice is labelled. Redaction is best-effort (see Known limitations).
+
+#### Compare output ([#361](https://github.com/raiseCatError/notMyShell/pull/361), [#352](https://github.com/raiseCatError/notMyShell/issues/352))
+- `/compare` (the latest output with its previous run), `/compare N`, `/compare N M` (numbers as for `/copy`), or Actions → Compare output…: a line diff with counts, hunks and collapsed unchanged regions, side by side from 140 columns and unified below, with labelled whitespace normalization. Output lost while detached is marked incomplete.
+- In the comparison, `r` opens the diff as a reviewed, redacted report. `c` copies the sanitized plain diff **directly, without redaction** (it shows a caution when the detector flags a likely secret).
+
+#### References, paste review, clips, pins and recipes ([#368](https://github.com/raiseCatError/notMyShell/pull/368), [#353](https://github.com/raiseCatError/notMyShell/issues/353)–[#355](https://github.com/raiseCatError/notMyShell/issues/355))
+- Files, links, commits and device names in a block's output can be opened, copied or staged from its Actions; nothing runs by itself.
+- **F8 / Shift+F8** walk failed commands (by exit status, not text matching) and keep your draft; the palette offers Previous/Next failed command too.
+- **Paste review:** a pasted zsh, Bash or Fish sequence can be split into commands and parse-checked without running anything; confirming queues the reviewed list. `/ps` reads the clipboard only when you run it.
+- **Queue conditions:** an entry can wait for its own approval (withdrawn if the entry is edited) or be marked `always` to run even after a plain failure, never after an interrupt.
+- `/clips`: text deliberately kept in memory for this window, reviewed before insertion and gone when the window closes. Optional clipboard-change hints on macOS (`/clips suggestions on`, off by default) read only the pasteboard's change counter, never its contents.
+- `/pins`: pinned commands with their directory (palette → Pin selected history command) and recipes with quoted placeholders, staged or reviewed and queued, never run automatically.
+
+#### Activity wording ([#367](https://github.com/raiseCatError/notMyShell/pull/367), [#362](https://github.com/raiseCatError/notMyShell/issues/362))
+- **Expressive** (the new default) gives each running command one stable phrase from a curated 663-pair vocabulary (`✦ Cooking… · 18s`, then `✔ Cooked for 18.0s`), kept across detach and reattach; **Classic** keeps plain Running/Completed wording (Settings → Live activity → Activity wording, and Setup). Failures, interrupts, agents and queued runs keep factual wording, and copies, reports and restored records always store the factual form.
+
+#### Modules and themes
+- Module details explain where a fact came from, its freshness, cache retention and measured collection time, and say when a fact is uncollected or unknown rather than implying it; `/doctor` reports Context Engine health ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Ruby and PHP version modules read the project's own files and the install location, never running an interpreter. The Gemfile `ruby` declaration is parsed in linear time.
+- `/theme` imports **Starship** configurations as Native themes from their static colors only; format strings and custom commands are never evaluated, and the preview lists what was not carried over.
+
+### Changed
+- **Setup Cat order: Look → Prompt → Motion.** The first steps after Terminal are now **Look** (formerly Appearance): theme family, variant, accent, theme text, UI chrome, then Chroma (the only place Setup chooses it) with its dependent rows under it; **Prompt**, which shows Chroma as a read-only line that goes to Look; and **Motion**, which now starts with Reduced Motion, Decorative effects, Shimmer and Milestone effects above the motion rows they govern. Cursor follows Motion. Every setting stays reachable and saved values are unchanged; `/setup look` opens Look (`/setup appearance` and `/setup chroma` still work).
+
+### Fixed
+- **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.
+- **Passwords:** text typed at a password prompt is no longer drawn in the composer.
+- Startup and termination: a quit or termination signal at any point during startup cleans up the frontend; a prompt that arrives after the window has closed can no longer restart context collection or queue work.
+- Reattaching to a fullscreen program gives it the terminal and its size at once, before the session journal is written.
+- Native completion accepts readiness that arrives in fragments (LF or CRLF) within its existing bounds.
+- The command directory recorded with a command is the shell's authenticated directory at submission, even when asynchronous context collection still describes the previous prompt.
+- Restored command and status rows follow the attaching window's NO_COLOR setting.
+- `/sessions` refreshes live session facts without losing the selection, query, draft or focus.
+- A clipboard write is reported as complete only when the whole payload was delivered and the clipboard tool exited successfully.
+
+### Security
+- Every session socket request (listings, notices, dismiss, rename, kill), not only create and attach, verifies the private runtime directory's ownership before connecting.
+- A client cancelled before it started discards output withheld for it instead of exposing it.
+- Report and comparison text is redacted before Markdown is added; hostile command, status and directory text (line breaks, backticks) stays enclosed, with bounded delimiter sizing for backtick-rich data. Report review stays readable at extreme terminal widths.
+- Comparison chooser headings and pasted-text review show control, bidi and zero-width characters visibly instead of sending them to the terminal.
+- The pins panel shows control and bidi characters in labels and prompts instead of writing them to the terminal.
+
+### Compatibility
+- Node.js 22 or newer, as before. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- zsh, Bash 4.4+ and Fish. Fish 3.7 on Linux is covered by the frontend freeze verification; automated Bash coverage is 5.x, so the 4.4 minimum was not exercised directly.
+- The command queue and queue conditions need a session service from this release: a service started by an older NMSh reports the queue as unavailable until it restarts.
+- Clipboard-change hints need macOS; Linux has no supported metadata-only clipboard counter.
+
+### Upgrade notes
+- Activity wording becomes **Expressive** by default, including for existing settings. Choose Classic in Settings → Live activity → Activity wording to keep the previous wording.
+- The command queue is on by default (Settings can turn it off). Existing session services keep running; restart them (or start a new session) to use the queue.
+- Settings, themes, modules and history carry over unchanged. Clipboard suggestions stay off until turned on.
+
+### Known limitations
+- Physical-terminal status for these features is recorded under v0.20.0's known limitations.
+- Redaction is pattern-based and can miss custom, encoded or unknown secret forms and private paths; review every report. Comparison `c` and plain `/copy` copy without redaction by design.
+- A clipboard tool that fails after it started writing may already have changed the clipboard; NMSh cannot roll it back.
+- Fish can drop type-ahead entered while its own `read` is still running, as in any terminal ([#356](https://github.com/raiseCatError/notMyShell/issues/356)).
+- Project and branch facts can lag a fast directory change while collection is pending; a failed `/sessions` poll keeps the last validated view.
+- A concurrent resize and quit key in native `less` can lose the quit key; synchronized automated tests do not prove arbitrary physical resize timing.
+- A forced SIGKILL of the frontend can bypass helper cleanup; normal stop, SIGTERM and SIGHUP clean up owned helpers.
+- Exact last-frame module width-compaction explanations and dedicated external source previews are not included ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Ruby and PHP were the candidate's only new runtimes; the full native runtime set (.NET, Swift, Zig, Deno, Elixir, Dart, Flutter, build systems) is part of v0.20.0.
+
+
 ## [0.18.0] - 2026-10-13
 
 **Context Engine, Managed Agents & Workspaces.** Context modules become a platform: facts are collected on demand by bounded, privacy-labelled capabilities, the first-party catalog ships as declarative Context Packs, and the Status Strip becomes a full second surface for modules. Claude Code can run as a managed target inside NMSh, with its permission requests and questions answered natively. `/worktrees` and a read-only `/github` workspace are the first delivered slices of the workspace work. The release also carries the fixes from the v0.17 Ghostty physical-QA pass and a set of passthrough, tmux, transcript and Fish correctness fixes.
@@ -398,7 +608,8 @@ Session & Interaction UX, plus the appearance and customization system.
 ### Fixed
 - Process cleanup teardown to safely kill detached helper shells and delete temporary configuration directories during testing.
 
-[Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/raiseCatError/notMyShell/compare/v0.18.0...v0.20.0
 [0.18.0]: https://github.com/raiseCatError/notMyShell/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/raiseCatError/notMyShell/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/raiseCatError/notMyShell/compare/v0.7.0...v0.16.0

@@ -7,6 +7,7 @@ import {
 } from '../src/ui/formControls.js';
 import {adjustSettingsRow, SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
+import {setIconStyle} from '../src/ui/glyphs.js';
 
 const key = (kind: string, value?: string): Key => ({kind, value} as Key);
 const text = (value: string) => key('text', value);
@@ -56,7 +57,13 @@ test('plain rendering carries focus, changed state and errors in text', () => {
     renderTextValue('hi', 'Search', plain), renderTextValue('', 'Search', plain), renderConfirm(createConfirm(), plain)]) {
     assert.equal(hasEscape(rendered), false, rendered);
   }
-  assert.equal(renderToggle(false, plain), '[ ] Off');
+  assert.equal(renderToggle(false, plain), '· Off');
+  assert.equal(renderToggle(true, plain), '✔ On');
+  setIconStyle('safe');
+  try {
+    assert.equal(renderToggle(false, plain), '[ ] Off', 'Safe glyphs: the ASCII checkbox');
+    assert.equal(renderToggle(true, plain), '[x] On');
+  } finally { setIconStyle('nerd'); }
   const rows = renderField({label: 'Name', control: renderTextValue('x', '', plain), description: 'Shown in the prompt',
     changed: true, error: 'too short', focused: true, color: false}, 60);
   assert.deepEqual(rows, ['> Name  x_ (changed)', '  Shown in the prompt', '  Error: too short']);

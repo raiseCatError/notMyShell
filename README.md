@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest published stable release: [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0180---2026-10-13) for its scope and known limitations; physical-terminal QA for this release is still pending.
+Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
 
 ## See notMyShell in motion
 
@@ -53,7 +53,8 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 - **A composer that stays where you want it** — Bottom, Top or Flow (right after the newest output), one-line or two-line, with true multiline editing.
 - **Semantic highlighting** — commands, builtins, aliases and functions are classified against your real shell as you type; partial input is never executed.
-- **A transcript you can use** — command blocks with status and timing, folding for long output, `/find` and `/filter`, plain-text `/copy`.
+- **A transcript you can use** — command blocks with status and timing, folding for long output, `/find` and `/filter`, exact `/copy` with keyboard output selection and `/actions`.
+- **A terminal workflow** — NMSh shows when a command is waiting for you, queues the next commands as a readable timeline with saved summaries, turns output into reviewed reports and comparisons, and runs long-lived commands as background tasks beside the shell (`/background`).
 - **Live sessions** — closing a window detaches the shell instead of killing it; running commands keep going. `/resume` or `nmsh --attach` brings them back.
 - **Prompt providers** — NMSh Native (Powerline, Soft, Minimal, Outline styles), Starship, Oh My Posh, Powerlevel10k or None.
 - **Theme Studio and Theme Bridge** — built-in, imported and custom themes in `/theme`; opt-in `/theme-bridge` carries the active theme to fzf, less/man, file listings, bat, tmux, Vim, Neovim and Helix through files NMSh owns and you review.
@@ -116,7 +117,7 @@ brew install raiseCatError/tap/nmsh
 nmsh
 ```
 
-The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) maintains formula updates through its native autobump and test-bot workflows. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
+The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) updates its formula after each release through its own bump and test-bot workflows, so it can lag behind the newest release; `nmsh --version` shows what you have, and [building from source](#build-from-source) gets the current release from `master`. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
 
 To uninstall the Homebrew package:
 
@@ -153,13 +154,19 @@ Do not set `nmsh` as your system/login shell with `chsh`. Keep zsh, Bash or Fish
 
 **Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); for source installations, `nmsh uninstall` removes only NMSh's own launcher links (use `brew uninstall nmsh` for Homebrew packages); `nmsh doctor` prints a diagnostic for bug reports.
 
+On a fresh installation NMSh opens its starting point: four choices under a live aurora, with Vespyr on the horizon. **NMSh Recommended** is the full look; **Minimal Terminal** is NMSh's quiet one (Two-line or One-line); **Customize Everything** is a guided tour of every setting; **Keep Existing** keeps your own prompt (Starship, Powerlevel10k or Oh My Posh), colors and tools, after reading your setup without changing anything. Highlighting a choice changes the sky; nothing applies until you review it and press Enter, and Esc asks before leaving. `A` switches the backdrop between Aurora, Subtle and Off. Reduced Motion, Effects Off, NO_COLOR and 16-color terminals get a still or plain version, and every choice stays reachable down to 16 × 6.
+
+On that first run only, where NMSh can prove the window is its own (Terminal.app; kitty on macOS with a remote-control socket; Hyprland 0.55+ with a Lua configuration, as on Omarchy), it offers to maximize the window for setup and puts it back afterwards. Nothing about it is saved; elsewhere the offer simply never appears. See [first-run window maximization](docs/testing/first-run-window-maximization.md).
+
+`/startup` reopens the starting point anytime (so do `/setup quick` and Settings → Starting point). `/setup` opens the guided setup directly. Existing saved preferences keep their previous behavior. `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors; Auto uses the portable effect until a supported native integration is configured. The terminal still controls its physical caret color.
+
 ## Core commands
 
 Type `/` in the composer for the full list, or `/help` for everything grouped by area. The ones you will reach for most:
 
 | Area | Commands |
 | --- | --- |
-| Settings and setup | `/settings` (`/config`), `/setup`, `/palette` (F1), `/help`, `/status` |
+| Settings and setup | `/settings` (`/config`), `/startup`, `/setup`, `/palette` (F1), `/help`, `/status` |
 | Composer and prompt | `/prompt`, `/modules`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |

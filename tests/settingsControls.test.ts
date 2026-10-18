@@ -112,12 +112,12 @@ test('search highlights matches restrainedly, distinct from the selected row', (
   assert.ok(plain(renderSettingsPanel(config({searchQuery: 'foobar'}), 80)).some(row => row.includes('No settings match "foobar"')));
 });
 
-test('footer follows Claude-style phrasing for the focused control', () => {
+test('footer: the shared key hints for the focused control', () => {
   const footer = (state: SettingsPanelState) => stripAnsi(renderSettingsPanel(state, 120).at(-1)!).trim();
-  assert.equal(footer(config()), 'Enter/Space to change · / to search · A show advanced · Esc to close');
-  assert.equal(footer(config({contentIndex: rowIndex('provider', false)})), 'Enter to open · ←/→ to switch · / to search · A show advanced · Esc to close');
+  assert.equal(footer(config()), 'Enter change · ←→ change · / search · A advanced · Esc close');
+  assert.equal(footer(config({contentIndex: rowIndex('provider', false)})), 'Enter open · ←→ views · / search · A advanced · Esc close');
   assert.equal(footer(config({searchFocused: true, searchQuery: 'x'})), '↑↓ results · Enter select · Esc clear');
-  assert.equal(footer(config({view: 'status'})), '←/→ to switch · ↑↓ to scroll · Esc to close');
+  assert.equal(footer(config({view: 'status'})), '←→ views · ↑↓ scroll · Esc close');
   assert.ok(!footer(config()).includes('Tab'));
 });
 
@@ -152,6 +152,7 @@ test('Space and Enter toggle a real boolean; values stay shared with Status', ()
   assert.equal(app['promptConfiguration'].transcript.divider, true);
   for (let step = 0; step < 4; step++) app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
+  app['handleKey']({kind: 'right'}); // Recommended starts at Grayscale; cycle through Follow prompt to Theme.
   assert.equal(app['promptConfiguration'].transcript.historyColors, 'theme');
   assert.ok(app['statusSections']().flat().some(item => item.label === 'History colors' && item.value === 'Theme'));
 }));

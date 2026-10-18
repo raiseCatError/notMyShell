@@ -1,0 +1,16 @@
+  Queue history[0m  recent 5 chains[0m
+  Observed facts from this session; nothing here runs again.[0m
+
+›[0m ✘ Finished · chain 5[0m  3 results · 1 failed · wall 14.0s[0m
+  ✘ Cleared · chain 4[0m  1 result · 2 skipped · wall 6.0s[0m
+  ✘ Finished · chain 3[0m  2 results · 1 interrupted · wall 9.0s[0m
+  ✘ Finished · chain 2[0m  3 results · 1 failed · wall 13.0s[0m  · summary saved[0m
+  ✔ Finished · chain 1[0m  2 results · wall 11.3s[0m  · summary saved[0m
+
+  Retained results (redacted review form)[0m
+  ✔[0m npm run build[0m  exit 0 · 8.2s[0m
+  ✔[0m git status[0m  exit 0 · 800 ms[0m
+  ✘[0m deploy --token=[REDACTED][0m  exit 1 · 5.0s[0m
+
+  /queue save-summary saves the newest chain, after a review.[0m
+↑↓ select · Enter hide results · s save summary · Esc close[0m

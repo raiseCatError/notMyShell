@@ -88,6 +88,12 @@ async function startedWith(sandbox: LiveSandbox, bin: string): Promise<Frontend>
   return app;
 }
 
+async function waitForAgentCompletion(sandbox: LiveSandbox): Promise<void> {
+  await until(async () => (await sandbox.transcripts().list()).some(session =>
+    session.transcript.records.some(record => record.command === 'agent-account2')),
+  15000, 'completed journal for agent-account2');
+}
+
 test('a wrapper that launches an inline interactive UI gets the terminal: keys reach it, then NMSh returns', async () => {
   const sandbox = new LiveSandbox();
   try {
@@ -105,6 +111,8 @@ test('a wrapper that launches an inline interactive UI gets the terminal: keys r
     app.pty.write('\r');
     await app.waitFor(/PICKED-1/, mark);
     assert.doesNotMatch(strip(app.output.slice(mark)), /\d;2m|\[\?2004h/, 'no control sequences leak as text');
+    // PICKED is emitted before process.exit: the program still owns input until command completion.
+    await waitForAgentCompletion(sandbox);
     await app.run('echo BACK-IN-NMSH', /BACK-IN-NMSH/);
   } finally {
     await sandbox.dispose();
@@ -150,6 +158,7 @@ process.stdout.write = (chunk, ...args) => {
       'visible passthrough ownership must follow raw input setup');
     second.pty.write('\u001b[B\r');
     await second.waitFor(/PICKED-1/);
+    await waitForAgentCompletion(sandbox);
     await second.run('echo AFTER-REATTACH', /AFTER-REATTACH/);
   } finally {
     await sandbox.dispose();

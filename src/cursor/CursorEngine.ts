@@ -22,6 +22,8 @@ export interface CursorPoint {row: number; column: number}
 /** What a particle is, so Fire, Sparks, Embers, Lightning and Railgun each keep their own look and motion. */
 export type ParticleStyle = 'fire' | 'sparks' | 'embers' | 'bolt' | 'beam';
 export interface Particle {x: number; y: number; vx: number; vy: number; age: number; life: number; heat: number; style: ParticleStyle;
+  /** Shed by the idle effect, so it takes the idle colors. */
+  idle?: boolean;
   /** A fixed glyph (bolt segments, beam cells); the others are chosen from their energy. */
   glyph?: string}
 
@@ -32,6 +34,8 @@ export interface EffectPalette {
   caret: RgbColor;
   trail: RgbColor[];
   particles: RgbColor[];
+  /** The idle effect's own colors; absent, it follows the movement effect (particles, and the caret for the glow). */
+  idle?: RgbColor[];
 }
 
 /** Where the engine may draw (the input rows), so effects never paint over the transcript or other chrome. */
@@ -239,9 +243,9 @@ export class CursorEngine {
     const chance = (idle === 'flame' ? 0.02 : idle === 'embers' ? 0.006 : 0.005) * dt * AMOUNT[this.settings.particleAmount];
     if (this.random() >= chance || this.particles.length >= MAX_PARTICLES / 3) return;
     const x = this.goal.column + (this.random() - 0.5) * (idle === 'embers' ? 3 : idle === 'flame' ? 2.6 : 1.6);
-    if (idle === 'flame') this.particles.push({x, y: this.goal.row - 0.1, vx: (this.random() - 0.5) * 0.002, vy: -0.0008 - this.random() * 0.0012, age: 0, life: 280 + this.random() * 320, heat: 0.6 + this.random() * 0.4, style: 'fire'});
-    else if (idle === 'embers') this.particles.push({x, y: this.goal.row - 0.2, vx: (this.random() - 0.5) * 0.001, vy: -0.0003 - this.random() * 0.0004, age: 0, life: 800 + this.random() * 700, heat: 0.5 + this.random() * 0.4, style: 'embers'});
-    else this.particles.push({x, y: this.goal.row - 0.3, vx: (this.random() < 0.5 ? -1 : 1) * (0.008 + this.random() * 0.02), vy: -0.002 - this.random() * 0.003, age: 0, life: 220 + this.random() * 220, heat: 0.7 + this.random() * 0.3, style: 'sparks'});
+    if (idle === 'flame') this.particles.push({x, y: this.goal.row - 0.1, vx: (this.random() - 0.5) * 0.002, vy: -0.0008 - this.random() * 0.0012, age: 0, life: 280 + this.random() * 320, heat: 0.6 + this.random() * 0.4, style: 'fire', idle: true});
+    else if (idle === 'embers') this.particles.push({x, y: this.goal.row - 0.2, vx: (this.random() - 0.5) * 0.001, vy: -0.0003 - this.random() * 0.0004, age: 0, life: 800 + this.random() * 700, heat: 0.5 + this.random() * 0.4, style: 'embers', idle: true});
+    else this.particles.push({x, y: this.goal.row - 0.3, vx: (this.random() < 0.5 ? -1 : 1) * (0.008 + this.random() * 0.02), vy: -0.002 - this.random() * 0.003, age: 0, life: 220 + this.random() * 220, heat: 0.7 + this.random() * 0.3, style: 'sparks', idle: true});
   }
 
   /** Frames per second needed now: 0 when nothing animates (no scheduler at all). */
@@ -323,7 +327,7 @@ export class CursorEngine {
     for (const particle of this.particles) {
       const life = 1 - particle.age / particle.life;
       const glyph = particle.glyph ? (life < 0.25 ? (particle.style === 'beam' ? '·' : particle.glyph) : particle.style === 'beam' && life < 0.55 && particle.glyph === '━' ? '─' : particle.glyph) : particleGlyph(particle.style, life * particle.heat);
-      const color = gradientAt(palette.particles, 1 - life);
+      const color = gradientAt(particle.idle && palette.idle?.length ? palette.idle : palette.particles, 1 - life);
       // A glyph where the cell is blank; over text, the text itself takes the particle's color.
       put(Math.round(particle.y), Math.round(particle.x), {glyph, foreground: color, tint: {color, amount: Math.max(0.3, life * intensity)}, ...(intensity < 0.7 || life < 0.3 ? {dim: true} : {})});
     }
@@ -332,8 +336,9 @@ export class CursorEngine {
       const pulse = 0.35 + 0.25 * Math.sin(now / 520);
       if (this.settings.idleEffect === 'glow' || this.settings.idleEffect === 'flame') {
         const level = Math.max(0.15, Math.min(1, pulse * intensity));
-        put(this.goal.row, this.goal.column, {tint: {color: palette.caret, amount: level}});
-        put(this.goal.row, this.goal.column + 1, {glyph: shade(level), foreground: palette.caret, tint: {color: palette.caret, amount: level}, ...(level < 0.4 ? {dim: true} : {})});
+        const glow = palette.idle?.length ? palette.idle[Math.min(1, palette.idle.length - 1)]! : palette.caret;
+        put(this.goal.row, this.goal.column, {tint: {color: glow, amount: level}});
+        put(this.goal.row, this.goal.column + 1, {glyph: shade(level), foreground: glow, tint: {color: glow, amount: level}, ...(level < 0.4 ? {dim: true} : {})});
       }
     }
     // The visual caret while travelling: a block at the rounded head with a partial block for the fractional column.

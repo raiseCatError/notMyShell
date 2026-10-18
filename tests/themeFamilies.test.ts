@@ -22,9 +22,45 @@ import {UI_COLORS} from '../src/ui/palette.js';
 import {colorPickerKey, createColorPicker, hsvToRgb, renderColorPicker, rgbToHsv, xterm256} from '../src/ui/ColorPicker.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {setIconStyle} from '../src/ui/glyphs.js';
+import {addTheme} from '../src/appearance/themeLibraryActions.js';
 
 const HEX = /^#[0-9a-f]{6}$/u;
 const plain = (rows: string[]) => rows.map(stripAnsi).join('\n');
+
+test('Starship and Oh My Posh imports preview lossy mapping before saving and preserve provider files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-maple-theme-preview-'));
+  try {
+    const providers = [
+      {name: 'starship.toml', kind: 'starship', text: '[directory]\nstyle = "fg:#112233"\n[custom.untrusted]\ncommand = "touch NEVER_EXECUTED"\nstyle = "fg:#ff0000"\n'},
+      {name: 'theme.omp.json', kind: 'oh-my-posh', text: JSON.stringify({blocks: [{segments: [{type: 'path', foreground: '#112233', background: '#334455', template: '{{ .Env.SECRET }} $(touch NEVER_EXECUTED)'}]}]})},
+    ];
+    for (const provider of providers) {
+      await writeFile(join(directory, provider.name), provider.text);
+      const context = {themes: [], accent: 'mauve' as const, pinnedTo: () => []};
+      const state = createThemeStudio(context, 'import');
+      state.importPath = provider.name;
+      assert.equal(studioKey(state, {kind: 'enter'}, 'none', directory, context), undefined);
+      assert.ok(state.importPreview, provider.name);
+      assert.ok(state.importPreview.warnings.length, 'unsupported logic must be disclosed');
+      assert.equal(context.themes.length, 0, 'preview stores nothing');
+      const shown = plain(renderThemeStudio(state, context, 100, 50, 'none', []));
+      assert.match(shown, /Import preview/u);
+      studioKey(state, {kind: 'escape'}, 'none', directory, context);
+      assert.equal(state.importPreview, undefined);
+      assert.equal(context.themes.length, 0);
+      studioKey(state, {kind: 'enter'}, 'none', directory, context);
+      const action = studioKey(state, {kind: 'enter'}, 'none', directory, context);
+      assert.equal(action?.kind, 'importTheme');
+      if (action?.kind !== 'importTheme') continue;
+      assert.equal(action.origin.kind, provider.kind);
+      const saved = addTheme(structuredClone(DEFAULT_PROMPT_CONFIGURATION), action.theme, action.origin);
+      assert.ok(saved.ok);
+      if (saved.ok) assert.equal(saved.config.themes.length, 1);
+      assert.equal(await readFile(join(directory, provider.name), 'utf8'), provider.text);
+      await assert.rejects(readFile(join(directory, 'NEVER_EXECUTED')), {code: 'ENOENT'});
+    }
+  } finally { await rm(directory, {recursive: true, force: true}); }
+});
 
 test('theme families: canonical variants, valid ids, licenses recorded, NMSh themes unchanged', () => {
   assert.deepEqual(THEME_FAMILIES.map(family => family.id), ['nmsh', 'catppuccin', 'dracula', 'tokyonight', 'gruvbox', 'rosepine', 'nord', 'solarized', 'onedark', 'custom']);

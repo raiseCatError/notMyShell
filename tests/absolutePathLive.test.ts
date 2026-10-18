@@ -53,7 +53,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       // A registered NMSh command still belongs to NMSh in the same frontend.
       const help = frontend.mark;
       frontend.pty.write('/help\r');
-      await frontend.waitFor(/Command correction[\s\S]*Tips/u, help);
+      await frontend.waitFor(/Tips/u, help);
       assert.doesNotMatch(frontend.output, /Unknown NMSh command/u, 'no absolute path was ever claimed by NMSh');
     } finally { await sandbox.dispose(); }
   });

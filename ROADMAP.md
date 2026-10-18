@@ -4,7 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) — released; physical QA pending ([checklist](docs/testing/v018-physical-qa.md)) |
+| **Current release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); physical QA partial ([record](docs/testing/v020-physical-qa.md)) |
+| **Not released separately** | v0.19.0 — Terminal workflow candidate; never tagged or published, its work first ships in v0.20.0 |
+| **Previous release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
 | **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and further Theme Bridge work released in v0.18.0 |
 | **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
@@ -12,7 +14,7 @@
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.18.0.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.20.0.
 
 ## Current engineering focus — native modules and Context Engine
 
@@ -155,6 +157,21 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Maintainer exercised real CLI/TUI use; deterministic suite extended; ongoing regression tracking |
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
+
+## Released — v0.20.0 Terminal workflow, first-run setup, background tasks & native modules
+
+Released on 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392), built cumulatively on the unpublished v0.19 candidate: the standalone module work merged through
+`integration/v020-modules` (#370 → #372 → #373, #374, #369, #381, #379, #380, #375 → #376/#377/#378, #383 → #384), then
+#347 and #349, then the frontend wiring of the workspace regions, background tasks and related PRs. Executable
+Portable Mods stay disabled (#379); the Codex app-server adapter ships unwired (#380). Physical-QA stabilization of both
+candidates (#395, #396) and the post-v0.20 slices then followed on one linear line: the execution timeline, Queue
+settings, queue history and summaries, queued output folding and paste choices, output selection and Actions, the
+first-run starting point, guided Setup, shared Tools flow, update notice and color editor. See CHANGELOG → 0.20.0;
+physical QA is partial ([record](docs/testing/v020-physical-qa.md)).
+
+## Not released separately — v0.19 Terminal workflow candidate
+
+Integrated on `release/v0.19.0` from `v0.18.0` with merge commits, preserving history: the frozen workflow stack ([#348](https://github.com/raiseCatError/notMyShell/pull/348) → [#357](https://github.com/raiseCatError/notMyShell/pull/357) → [#358](https://github.com/raiseCatError/notMyShell/pull/358) → [#360](https://github.com/raiseCatError/notMyShell/pull/360) → [#361](https://github.com/raiseCatError/notMyShell/pull/361) → [#368](https://github.com/raiseCatError/notMyShell/pull/368)) and its independent sibling [#367](https://github.com/raiseCatError/notMyShell/pull/367), tracked by [#359](https://github.com/raiseCatError/notMyShell/issues/359). Automated gates are recorded in the release PR; it was never published on its own and first ships in v0.20.0. Deferred to v0.20 or later: exact last-frame module compaction explanations and dedicated external source previews ([#365](https://github.com/raiseCatError/notMyShell/issues/365)), and the full native runtime set ([#364](https://github.com/raiseCatError/notMyShell/issues/364)).
 
 ## Released — v0.18 Context Engine, Managed Agents & Workspaces
 

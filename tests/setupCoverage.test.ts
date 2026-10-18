@@ -79,7 +79,8 @@ test('Setup → Editor exposes syntax highlighting, color mode and theme family/
   assert.doesNotMatch(rowsAt(), /Syntax theme family/u);
   press(state, 'right');
   assert.equal(state.draft.syntax.colors, 'theme');
-  assert.match(rowsAt(), /Syntax colors\s+‹ Choose theme ›/u);
+  // The selected row is a segment: its end wedge sits between the label and the value.
+  assert.match(rowsAt(), /Syntax colors\s*\S?\s+‹ Choose theme ›/u);
   assert.match(rowsAt(), /Syntax theme family/u);
   press(state, 'right');
   assert.equal(state.draft.syntax.colors, 'grayscale');
@@ -123,18 +124,48 @@ test('Setup → Editor syntax preview is the real renderer and follows the draft
   } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });
 
-test('Setup routes: an editor Setup does not embed applies the draft first, then opens; list resets run on the draft', () => {
+test('Setup routes: an editor Setup does not embed opens over it with nothing applied; list resets run on the draft', () => {
   const state = createSetup(clone(), 'appearance');
   goTo(state, 'appearance', 'setupChromeColors');
-  state.draft = {...state.draft, reducedMotion: undefined} as never;
+  const draft = JSON.stringify(state.draft);
   const result = press(state, 'enter');
-  assert.equal(result?.kind, 'apply');
-  assert.equal(result?.kind === 'apply' && result.then, 'chromeColors');
+  assert.deepEqual(result, {kind: 'open', destination: 'chromeColors'});
+  assert.equal(JSON.stringify(state.draft), draft, 'the draft is untouched');
   const tools = createSetup({...clone(), ignoredInstallSuggestions: ['bat', 'eza']}, 'tools');
   goTo(tools, 'tools', 'resetInstallSuggestions');
   assert.equal(press(tools, 'enter'), undefined, 'no editor opens');
   assert.deepEqual(tools.draft.ignoredInstallSuggestions, [], 'reset in the draft');
   assert.deepEqual(tools.saved.ignoredInstallSuggestions, ['bat', 'eza'], 'nothing saved until Apply');
+});
+
+test('an editor opened from Setup returns to the exact step on Esc: same row, same unapplied draft, nothing saved or announced', () => {
+  const isolation = isolateConfig();
+  const app = new TerminalApp();
+  try {
+    app['render'] = () => {};
+    app['startSetup']('appearance');
+    const state = app['setupState']!;
+    goTo(state, 'appearance', 'promptVibrance');
+    app['handleKey']({kind: 'right'});
+    const draft = JSON.stringify(state.draft);
+    const saved = JSON.stringify(app['promptConfiguration']);
+    assert.notEqual(draft, JSON.stringify(state.saved), 'an unapplied change waits in the draft');
+    goTo(state, 'appearance', 'setupChromeColors');
+    const row = state.row;
+    const history = app['output'].transcript().lines.length;
+    app['handleKey']({kind: 'enter'});
+    assert.ok(app['chromeEditor'], 'the editor opens');
+    assert.equal(app['setupState'], undefined);
+    assert.equal(JSON.stringify(app['promptConfiguration']), saved, 'nothing applied on the way in');
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['chromeEditor'], undefined);
+    assert.equal(app['setupState'], state, 'back in the same Setup');
+    assert.equal(SETUP_SECTIONS[state.section]!.id, 'appearance');
+    assert.equal(state.row, row, 'on the same row');
+    assert.equal(JSON.stringify(state.draft), draft, 'with the same unapplied draft');
+    assert.equal(JSON.stringify(app['promptConfiguration']), saved, 'nothing applied on the way out');
+    assert.equal(app['output'].transcript().lines.length, history, 'and nothing announced');
+  } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });
 
 test('Setup stays draft-based while its embedded cursor editor runs: nothing saves behind its back', () => {
@@ -153,8 +184,7 @@ test('Setup stays draft-based while its embedded cursor editor runs: nothing sav
     app['handleKey']({kind: 'right'}); // Speed
     app['handleKey']({kind: 'text', value: 'a'});
     assert.equal(state.cursorPanel!.advanced, true, 'A reaches the physics');
-    app['handleKey']({kind: 'down'});
-    app['handleKey']({kind: 'down'});
+    state.cursorPanel!.selected = 4; // A numeric physics row, independent of contextual palette rows.
     app['handleKey']({kind: 'right'});
     assert.notEqual(JSON.stringify(state.draft.cursor), saved, 'the change landed in the Setup draft');
     assert.equal(JSON.stringify(app['promptConfiguration'].cursor), saved, 'the live configuration is untouched');
@@ -183,7 +213,7 @@ test('Setup cursor rows follow the effective renderer and its preview demonstrat
     state.draft = normalizePromptConfiguration({...state.draft, cursor: {...state.draft.cursor, renderer: 'native', shape: 'bar'}});
     goTo(state, 'cursor', 'cursorEffect');
     const text = stripAnsi(app['settingsPanelRows'](120).join('\n'));
-    assert.match(text, /Cursor effect\s+Unavailable/u);
+    assert.match(text, /Cursor effect\s*\S?\s+Unavailable/u);
     assert.match(text, /Host native is not available in this terminal\./u);
     assert.doesNotMatch(text.split('\n').find(line => /Cursor effect/u.test(line))!, /‹|Unavailable ›/u, 'no arrows on an unavailable row');
     assert.match(text, /Preview · Cursor effect: Unavailable/u);
@@ -215,6 +245,6 @@ test('Setup → Motion previews the selected motion with the real renderer, and 
     assert.ok(state.previewKey, 'the preview has started');
     app['handleKey']({kind: 'text', value: 'r'});
     assert.equal(state.previewKey, undefined, 'R replays: the next frame restarts the preview');
-    assert.match(stripAnsi(app['settingsPanelRows'](120).join('\n')), /R replay preview/u);
+    assert.match(stripAnsi(app['settingsPanelRows'](120).join('\n')), /R\s+replay/u);
   } finally { app['stop'](0); app['session'].kill(); isolation.restore(); }
 });

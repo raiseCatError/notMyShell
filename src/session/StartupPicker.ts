@@ -1,6 +1,7 @@
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import {formatAge, sessionText, tildePath} from './sessionList.js';
+import {GLYPHS, checkMark} from '../ui/glyphs.js';
 
 // Launch-time restore screens, shown before any session is attached. Each has
 // one destructive key, X, which only opens a confirmation; the kill itself is
@@ -82,8 +83,8 @@ export function renderMultiPicker(state: MultiPickerState, columns: number, now:
   if (confirming) return renderKillConfirm(confirming, columns, now);
   const rows = [`NMSh · ${state.sessions.length} detached live session${state.sessions.length === 1 ? '' : 's'}`, ''];
   state.sessions.forEach((session, index) => {
-    const mark = state.selected.has(session.id) ? '[x]' : '[ ]';
-    rows.push(clip(`${index === state.cursor ? '›' : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
+    const mark = checkMark(state.selected.has(session.id));
+    rows.push(clip(`${index === state.cursor ? GLYPHS.selection : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
   });
   const count = state.selected.size;
   rows.push('', clip(`↑↓ move · Space select · A all · X kill · Enter resume ${count === 0 ? 'none' : count} · Esc none`),

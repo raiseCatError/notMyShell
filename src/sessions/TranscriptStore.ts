@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
+import {queueSummaryFrom, SUMMARY_LIMIT} from '../session/QueueSummary.js';
 
 /** Another live process holds this transcript's lock. */
 export class TranscriptBusyError extends Error {
@@ -41,8 +42,10 @@ export interface LiveLink {
   sessionId: string;
   /** Last shell stream event reflected in this transcript. */
   seq: number;
+  /** Presentation-only dictionary index; never execution status. */
+  previousActivityIndex?: number;
   /** The command in flight when this checkpoint was taken. */
-  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number};
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number; activityIndex?: number};
 }
 
 function parseLive(value: unknown): LiveLink | undefined {
@@ -52,8 +55,13 @@ function parseLive(value: unknown): LiveLink | undefined {
   const running = live.running as Record<string, unknown> | undefined;
   const validRunning = running && typeof running.command === 'string' && typeof running.cwd === 'string'
     && ['startedAt', 'startId', 'outputStartId'].every(key => Number.isSafeInteger(running[key]));
+  const index = (value: unknown): number | undefined => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) < 10_000 ? value as number : undefined;
+  const previousActivityIndex = index(live.previousActivityIndex);
+  const activityIndex = index(running?.activityIndex);
+  const {activityIndex: rawActivityIndex, ...runningFacts} = running ?? {};
   return {sessionId: live.sessionId, seq: live.seq as number,
-    ...(validRunning ? {running: running as unknown as NonNullable<LiveLink['running']>} : {})};
+    ...(previousActivityIndex === undefined ? {} : {previousActivityIndex}),
+    ...(validRunning ? {running: {...runningFacts, ...(activityIndex === undefined ? {} : {activityIndex})} as unknown as NonNullable<LiveLink['running']>} : {})};
 }
 
 export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {
@@ -64,6 +72,19 @@ export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview'
 
 interface TranscriptFile extends TranscriptSession {
   schemaVersion: number;
+}
+
+/** Journaled summaries fail closed: bounded, valid artifacts only, exactly one per chain. */
+function validQueueSummaries(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > SUMMARY_LIMIT) return false;
+  const ids = new Set<string>();
+  for (const summary of value) {
+    const parsed = queueSummaryFrom(summary);
+    if (!parsed || ids.has(parsed.id)) return false;
+    ids.add(parsed.id);
+  }
+  return true;
 }
 
 function isTranscript(value: unknown): value is OutputTranscript {
@@ -83,10 +104,16 @@ function isTranscript(value: unknown): value is OutputTranscript {
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
     && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
+      && (record.queued === undefined || typeof record.queued === 'boolean')
       && (record.startedAt === undefined || Number.isFinite(record.startedAt))
       && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
+      && (record.inputWaitMs === undefined || (Number.isFinite(record.inputWaitMs) && record.inputWaitMs >= 0))
+      && (record.inputWaits === undefined || (Number.isSafeInteger(record.inputWaits) && record.inputWaits >= 0))
       && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
+      && (record.outputIncomplete === undefined || record.outputIncomplete === true)
+      && (record.copyText === undefined || typeof record.copyText === 'string')
+      && (record.outputNewline === undefined || record.outputNewline === true)
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined
@@ -123,7 +150,8 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && transcript.visualGaps.every(index => Number.isInteger(index) && index >= 0)
     && Array.isArray(transcript.lineTypes)
     && transcript.lineTypes.every(entry => Array.isArray(entry) && entry.length === 2
-      && Number.isInteger(entry[0]) && entry[0] >= 0 && (entry[1] === 'command' || entry[1] === 'metadata'));
+      && Number.isInteger(entry[0]) && entry[0] >= 0 && (entry[1] === 'command' || entry[1] === 'metadata'))
+    && validQueueSummaries(transcript.queueSummaries);
 }
 
 function parseSession(text: string): TranscriptSession {

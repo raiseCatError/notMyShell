@@ -23,22 +23,25 @@ test('syntax cache follows custom theme edits even when chrome is unchanged', ()
   } finally { setThemeContext(previous.accent, previous.custom); }
 });
 
-test('chosen tools retain reverse-video selection with NO_COLOR and focus elsewhere', () => {
+test('chosen tools read Selected with NO_COLOR and focus elsewhere; reverse video is the cursor only', () => {
   const previous = process.env.NO_COLOR;
   process.env.NO_COLOR = '1';
   try {
     const state = createToolsPanel();
+    for (const tool of visibleTools(state)) state.statuses[tool.id] = {state: 'missing'};
     const items = visibleTools(state);
+    const rowOf = (rows: string[], label: string) => rows.find(line => new RegExp(`^ {2}(?:› | {2})${label} {2,}`, 'u').test(stripAnsi(line)))!;
     state.selection = new Set([items[0]!.id]); state.selected = 1;
-    const row = renderTools(state, 120, 50).find(line => line.includes(items[0]!.label))!;
-    assert.ok(row.startsWith('\u001b[7m'), 'chosen row remains distinguishable without color');
-    assert.equal(displayWidth(row), 120, 'selection fills the row');
-    assert.doesNotMatch(stripAnsi(row), /\[[x ]\]|›/u, 'chosen row has no checkbox or focus pointer');
-    const focused = renderTools(state, 120, 50).find(line => line.includes(items[1]!.label))!;
+    const row = rowOf(renderTools(state, 120, 50), items[0]!.label);
+    assert.match(stripAnsi(row), new RegExp(`^ {4}${items[0]!.label}\\s+✓ Selected`, 'u'), 'chosen row remains distinguishable without color');
+    assert.doesNotMatch(row, /\u001b\[7m/u, 'and is not banded like the cursor');
+    assert.doesNotMatch(stripAnsi(row), /›/u, 'chosen row has no focus pointer');
+    const focused = rowOf(renderTools(state, 120, 50), items[1]!.label);
     assert.match(stripAnsi(focused), /›/u, 'keyboard focus is separately identifiable');
+    assert.ok(focused.includes('\u001b[7m'), 'reverse video marks the cursor');
     state.selection.clear();
-    const unchosen = renderTools(state, 120, 50).find(line => line.includes(items[0]!.label))!;
-    assert.doesNotMatch(unchosen, /\u001b\[7m/u, 'reverse video tracks chosen state');
+    const unchosen = rowOf(renderTools(state, 120, 50), items[0]!.label);
+    assert.match(stripAnsi(unchosen), /○ Missing/u, 'the status tracks chosen state');
     assert.doesNotMatch(row, /\u001b\[(?:38|48);/u);
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });
@@ -59,19 +62,21 @@ test('focused canonical settings label uses the accent, not ordinary text', () =
   assert.ok(line.includes(`\u001b[1m${foreground(UI_COLORS.accent)}Syntax highlighting`));
 });
 
-test('chosen tools retain the semantic selection band when keyboard focus moves away', () => {
+test('chosen tools keep Selected when keyboard focus moves away; only the cursor has a band', () => {
   const state = createToolsPanel();
+  for (const tool of visibleTools(state)) state.statuses[tool.id] = {state: 'missing'};
   const items = visibleTools(state);
+  const rowOf = (rows: string[], label: string) => rows.find(line => new RegExp(`^ {2}(?:› | {2})${label} {2,}`, 'u').test(stripAnsi(line)))!;
   state.selection = new Set([items[0]!.id]);
   state.selected = 1;
   const rows = renderTools(state, 120, 50);
-  const line = rows.find(row => stripAnsi(row).includes(items[0]!.label))!;
-  assert.ok(line.startsWith(background(UI_COLORS.selection)), 'chosen band persists away from focus');
-  assert.equal(displayWidth(line), 120, 'selection fills the row');
-  assert.doesNotMatch(stripAnsi(line), /\[[x ]\]|›/u, 'chosen row has no checkbox or focus pointer');
-  const focused = rows.find(row => stripAnsi(row).includes(items[1]!.label))!;
+  const line = rowOf(rows, items[0]!.label);
+  assert.match(stripAnsi(line), new RegExp(`^ {4}${items[0]!.label}\\s+✓ Selected`, 'u'), 'Selected persists away from focus');
+  assert.doesNotMatch(line, /\u001b\[48;/u, 'no band: highlighting is not choosing');
+  const focused = rowOf(rows, items[1]!.label);
   assert.match(stripAnsi(focused), /›/u, 'keyboard focus moved to the other row');
-  assert.ok(!focused.startsWith(background(UI_COLORS.selection)), 'focus and chosen state use distinct bands');
+  assert.ok(/\u001b\[48;/u.test(focused) && displayWidth(focused) === 120, 'the cursor alone has the full-width band');
+  assert.equal(background(UI_COLORS.selection).length > 0, true);
 });
 
 test('syntax theme family can move from NMSh to Catppuccin with a real preview', () => {

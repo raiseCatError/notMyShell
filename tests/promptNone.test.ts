@@ -15,14 +15,25 @@ import {historicalPromptLevel} from '../src/output/TranscriptPanel.js';
 import {stripAnsi} from '../src/util/text.js';
 import {describePromptConfiguration, PROVIDER_ORDER} from '../src/prompt/PromptPanel.js';
 
+const FIXTURE_CWD = '/fixture/project';
+
 function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; cleanup: () => void} {
   const isolation = isolateConfig();
   const app = new TerminalApp();
   const frames: TerminalFrame[] = [];
+  // Geometry is compared at a fixed size and context. Host checkout paths
+  // can legitimately consume the one-line prefix and wrap the input.
+  app['dimensions'] = () => ({columns: 80, rows: 24});
+  app['context'] = {cwd: FIXTURE_CWD, project: 'project', home: '/fixture', exitStatus: 0};
+  app['refreshContext'] = async () => {};
   app['renderer'].render = (frame: TerminalFrame) => { frames.push(frame); };
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['configuration'] = normalizePromptConfiguration({...DEFAULT_PROMPT_CONFIGURATION, ...config});
+  // Fresh-install cursor effects paint transient trail glyphs onto the blank cells inside
+  // freshly typed text (the space in `echo hello`), so literal composer rows are only
+  // deterministic with the pointer artwork off; the prompt marker is the subject here.
+  app['configuration'].cursor.effect = 'none';
   return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); isolation.restore(); }};
 }
 
@@ -41,7 +52,7 @@ test('Prompt None: the marker is the configured prompt symbol (default, choice, 
     const {app, frames, cleanup} = harness({provider: 'none', onboardingComplete: true, ...config});
     try {
       await app['refreshProviderPrompt']();
-      app['onShellPrompt'](0, process.cwd());
+      app['onShellPrompt'](0, FIXTURE_CWD);
       app['editor'].insert('echo hello');
       app['render']();
       assert.ok(plainRows(frames.at(-1)!).some(row => row.startsWith(`${nerd} echo hello`)), `marker ${nerd}`);
@@ -76,7 +87,7 @@ for (const layout of ['twoLine', 'oneLine'] as const) {
       try {
         for (const instance of [none, native]) {
           await instance.app['refreshProviderPrompt']();
-          instance.app['onShellPrompt'](0, process.cwd());
+          instance.app['onShellPrompt'](0, FIXTURE_CWD);
           instance.app['editor'].insert('git status');
           instance.app['render']();
         }
@@ -102,7 +113,7 @@ for (const layout of ['twoLine', 'oneLine'] as const) {
 test('Prompt None history: submissions store no snapshot and render no prompt; switching back restores the prompt', () => {
   const {app, cleanup} = harness({provider: 'none', onboardingComplete: true});
   try {
-    app['onShellPrompt'](0, process.cwd());
+    app['onShellPrompt'](0, FIXTURE_CWD);
     app['effectivePromptProvider'] = 'none';
     const context = app['historicalContext'](process.cwd(), {project: 'p', branch: 'main'}, 'ls');
     assert.equal(context.prompt, undefined, 'no prompt snapshot');

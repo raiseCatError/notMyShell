@@ -219,15 +219,16 @@ test('app: submitting sweeps the prompt row once; the transcript record never ca
   } finally { cleanup(); }
 });
 
-test('app: Setup Cat title takes the pass when the step changes and rests otherwise', () => {
+test('app: the step\'s name takes the pass when the step changes and rests otherwise', () => {
   const {app, cleanup} = setupApp();
   try {
     app['startSetup']();
     app['render']();
     const state = app['setupState']!;
-    assert.equal(stripAnsi(app['setupTitle'](state)), 'Setup Cat');
+    assert.equal(stripAnsi(app['setupTitle'](state)), 'Start');
     app['handleKey']({kind: 'complete'});
     app['render']();
+    assert.equal(stripAnsi(app['setupTitle'](state)), 'Terminal', 'the new step\'s name');
     assert.equal(app['sweep']?.titled, true, 'a new step: the title sweeps');
     app['endSweep']();
     const resting = app['setupTitle'](state);

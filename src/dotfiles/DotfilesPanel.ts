@@ -120,7 +120,7 @@ export function renderDotfilesPanel(state: DotfilesState, columns: number, heigh
     if (!state.items.length) lines.push(`  ${subtle}No configuration NMSh understands was found.${reset}`);
     state.items.forEach((item, index) => {
       const selected = index === state.selected && state.expanded === undefined;
-      const glyph = item.kind === 'fields' || item.kind === 'copy' ? `${accent}✓${reset}` : item.kind === 'inspect' ? `${subtle}○${reset}` : `${warning}!${reset}`;
+      const glyph = item.kind === 'fields' || item.kind === 'copy' ? `${accent}${GLYPHS.saved}${reset}` : item.kind === 'inspect' ? `${subtle}${GLYPHS.unchosen}${reset}` : `${warning}!${reset}`;
       lines.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${glyph} ${focusForeground(selected)}${padCells(item.file.tool.label, 10)}${reset}${padCells(item.file.repoPath, 32)}${selected && item.modes.length > 1 ? `${accent}‹ ${MODE_LABELS[item.mode]} ›${reset}` : MODE_LABELS[item.mode]}`);
       lines.push(`      ${subtle}${item.note}${item.fields?.length ? ' · Enter reviews each value' : ''}${reset}`);
       if (state.expanded === index && item.fields) {

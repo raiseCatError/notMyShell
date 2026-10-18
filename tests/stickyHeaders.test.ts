@@ -122,7 +122,7 @@ test('sticky is never stored: transcript, journal payload, and copy stay unchang
   const after = output.transcript();
   assert.equal(JSON.stringify(after), before);
   assert.ok(!JSON.stringify(after).includes('blockStartId'));
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'charlie-out-0\ncharlie-out-1\ncharlie-out-2\ncharlie-out-3\ncharlie-out-4');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'charlie-out-0\ncharlie-out-1\ncharlie-out-2\ncharlie-out-3\ncharlie-out-4\n');
 });
 
 test('follow mode keeps a running command pinned; Jump to bottom is unaffected', () => {

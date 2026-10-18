@@ -40,7 +40,7 @@ export function sanitizeTitle(text: string): string {
 /** The title NMSh wants: Project shows the project only; Project and session adds the session's display name. */
 export function composeTitle(mode: TerminalTitleMode, project: string, session: string | undefined, running?: string): string | undefined {
   if (mode === 'off') return undefined;
-  const identity = mode === 'session' && session ? `${project} — ${session}` : project;
+  const identity = [project, ...(mode === 'session' ? [session] : [])].filter(value => value?.trim()).join(' — ') || 'notMyShell';
   return running ? `${running} · ${identity}` : identity;
 }
 

@@ -35,9 +35,17 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
 };
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
+  {name: '/actions', insertion: '/actions', description: 'Select completed output: Up/Down moves, Enter opens Actions, Esc returns; /actions N opens output N directly'},
+  {name: '/action', insertion: '/action', alias: '/actions', description: 'Same as /actions, including /action N'},
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
-  {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
-  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
+  {name: '/copy', insertion: '/copy', description: 'Select completed output: Up/Down, Enter copies, Esc returns (saved Quick Copy preferences still apply)'},
+  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
+  {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
+  {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
+  {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
+  {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
+  {name: '/clips', insertion: '/clips', description: 'Text deliberately kept in memory for this frontend; review before inserting, remove or clear'},
+  {name: '/cp', insertion: '/cp', description: 'Same as /copy (every form: /cp 2, /cp -3, /cp ui, /cp latest, --status)'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
@@ -50,9 +58,14 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/theme-bridge', insertion: '/theme-bridge', description: 'Theme Bridge: extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim, Vim and Helix (opt-in per tool)'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/settings queue', insertion: '/settings queue', description: 'Queue: queued-command behavior, execution timeline, results and motion'},
+  {name: '/startup', insertion: '/startup', description: 'Starting point: NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing; review before applying'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
+  {name: '/setup quick', insertion: '/setup quick', description: 'Same as /startup: choose a starting point and review it before applying'},
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
-  {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
+  {name: '/setup look', insertion: '/setup look', description: 'Setup Cat: theme, UI chrome and Chroma (the Look step)'},
+  {name: '/setup appearance', insertion: '/setup appearance', description: 'Same as /setup look'},
+  {name: '/setup motion', insertion: '/setup motion', description: 'Setup Cat: Reduced Motion, decorative effects and motion, with a live preview'},
   {name: '/setup transcript', insertion: '/setup transcript', description: 'Setup Cat: transcript presentation, history colors, dividers and folding'},
   {name: '/setup cursor', insertion: '/setup cursor', description: 'Setup Cat: cursor shape, effects and colors, with a live preview'},
   {name: '/setup syntax', insertion: '/setup syntax', description: 'Setup Cat: editor, syntax colors and suggestions'},
@@ -97,11 +110,22 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/extensions', insertion: '/extensions', description: 'Alias of /mods'},
   {name: '/worktrees', insertion: '/worktrees', description: 'This repository\'s Git worktrees: open one, create or remove with a reviewed plan'},
   {name: '/github', insertion: '/github', description: 'Read-only GitHub workspace for this repository: PRs, issues, checks and diffs (uses gh)'},
+  {name: '/sidebar', insertion: '/sidebar', description: 'Experimental (Off by default; Settings → Layout): workspace sidebar beside the transcript: tmux panes, worktrees and managers'},
+  {name: '/panel', insertion: '/panel', description: 'Experimental (Off by default; Settings → Layout): detail panel for what the sidebar selects; q or /panel closes it'},
+  {name: '/keys', insertion: '/keys', description: 'Workspace keys in effect, problems in keymap.json and host notes (/keys reload)'},
+  {name: '/background', insertion: '/background', description: 'Background tasks: list, output, stop and remove (/background run <command> · stop|kill|remove t3 · clear · suggestions on|off)'},
+  {name: '/bg', insertion: '/bg', description: 'Same as /background'},
   {name: '/prs', insertion: '/prs', description: 'Open pull requests in the GitHub workspace'},
   {name: '/issues', insertion: '/issues', description: 'Open issues in the GitHub workspace'},
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
+  {name: '/q', insertion: '/q', alias: '/queue', description: 'Same as /queue, including every subcommand'},
+  {name: '/qp', insertion: '/qp', alias: '/queue', description: 'Pause the command queue'},
+  {name: '/qr', insertion: '/qr', alias: '/queue', description: 'Review before resuming the queue'},
+  {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
+  {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
+  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -133,7 +157,17 @@ export const slashCommands: readonly SlashCommand[] = RAW_COMMANDS.map(command =
 
 export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
-  | {kind: 'copy'; index: number}
+  /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
+  | {kind: 'copy'; args: string}
+  | {kind: 'actions'; index?: number; error?: string}
+  | {kind: 'copySettings'}
+  /** /ps: read the clipboard now and bring it to paste review. */
+  | {kind: 'pasteClipboard'}
+  | {kind: 'clips'; suggestions?: boolean}
+  /** /pins: the pins and recipes panel. */
+  | {kind: 'pins'}
+  /** /compare [A [B]]: outputs by /copy number; A defaults to the latest, B to A's previous run (or a choice). */
+  | {kind: 'compare'; first?: number; second?: number; error?: string}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
@@ -148,7 +182,7 @@ export type ParsedSlashCommand =
   /** /caffeinate, /awake and /zoomies: one Keep Awake action. A timeout is a validated number of seconds; `invalid` names bad input. */
   | {kind: 'keepAwake'; op: 'panel' | 'status' | 'stop' | 'start'; mode?: 'idle' | 'display' | 'system' | 'all'; timeoutSeconds?: number; invalid?: string}
   | {kind: 'setup'; entry?: string}
-  | {kind: 'settings'; view: 'config' | 'status'}
+  | {kind: 'settings'; view: 'config' | 'status'; destination?: 'queue'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
   | {kind: 'layout'}
@@ -182,6 +216,10 @@ export type ParsedSlashCommand =
   | {kind: 'ai'; target?: string}
   | {kind: 'mods'; provider?: string}
   | {kind: 'worktrees'}
+  | {kind: 'workspace'; region: 'sidebar' | 'panel'; focus: boolean}
+  | {kind: 'keys'; reload: boolean}
+  /** /background and /bg: the text is parsed by parseBackgroundCommand (a run keeps its command byte for byte). */
+  | {kind: 'background'; input: string}
   | {kind: 'github'; tab: 'prs' | 'issues' | 'search'}
   | {kind: 'managedTarget'; provider: 'claude' | 'codex'; action: 'open' | 'new'}
   | {kind: 'rawProvider'; command?: string}
@@ -189,6 +227,7 @@ export type ParsedSlashCommand =
   | {kind: 'llm'}
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -207,8 +246,27 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
-  const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
-  if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
+  const actions = /^\/(?:actions|action)(?:\s+(.*?))?\s*$/u.exec(input);
+  if (actions) {
+    const selector = actions[1]?.trim();
+    if (!selector) return {kind: 'actions'};
+    return /^[1-9]\d{0,2}$/u.test(selector) ? {kind: 'actions', index: Number(selector)}
+      : {kind: 'actions', error: 'Use /actions or /actions N (1 is the latest completed output).'};
+  }
+  const compare = /^\/compare(?:\s+(.*?))?\s*$/u.exec(input);
+  if (compare) {
+    const words = (compare[1] ?? '').split(/\s+/u).filter(Boolean);
+    if (words.length > 2 || words.some(word => !/^[1-9]\d{0,2}$/u.test(word))) return {kind: 'compare', error: 'Use /compare, /compare N or /compare N M (numbers as /copy shows them, 1 is the latest).'};
+    return {kind: 'compare', ...(words[0] ? {first: Number(words[0])} : {}), ...(words[1] ? {second: Number(words[1])} : {})};
+  }
+  if (/^\/ps\s*$/u.test(input)) return {kind: 'pasteClipboard'};
+  const clips = /^\/clips(?:\s+suggestions\s+(on|off))?\s*$/u.exec(input);
+  if (clips) return {kind: 'clips', ...(clips[1] ? {suggestions: clips[1] === 'on'} : {})};
+  if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
+  // /cp is /copy: one parser, one handler, every form.
+  if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
+  const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
+  if (copy) return {kind: 'copy', args: copy[1] ?? ''};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
@@ -238,8 +296,11 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     }
     return {kind: 'keepAwake', op: 'panel', invalid: word};
   }
-  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
+  // The starting-point selector; exactly /startup (it takes no arguments, and there is no /preset).
+  if (/^\/startup\s*$/u.test(input)) return {kind: 'setup', entry: 'quick'};
+  const setup = /^\/setup(?:\s+(quick|manual|prompt|look|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
+  if (/^\/(?:settings|config)\s+queue\s*$/u.test(input)) return {kind: 'settings', view: 'config', destination: 'queue'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
@@ -287,6 +348,11 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const mods = /^\/(?:mods|extensions)\s*$/u.exec(input);
   if (mods) return {kind: 'mods'};
   if (/^\/worktrees\s*$/u.test(input)) return {kind: 'worktrees'};
+  const region = /^\/(sidebar|panel)(?:\s+(focus))?\s*$/u.exec(input);
+  if (region) return {kind: 'workspace', region: region[1] as 'sidebar' | 'panel', focus: Boolean(region[2])};
+  if (/^\/(?:background|bg)(?:[ \t]|$)/u.test(input)) return {kind: 'background', input};
+  const keys = /^\/keys(?:\s+(reload))?\s*$/u.exec(input);
+  if (keys) return {kind: 'keys', reload: Boolean(keys[1])};
   const github = /^\/(github|prs|issues)\s*$/u.exec(input);
   if (github) return {kind: 'github', tab: github[1] === 'issues' ? 'issues' : 'prs'};
   const providerMods = /^\/(claude|codex|opencode)\s+mods\s*$/u.exec(input);
@@ -306,6 +372,11 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (family) return {kind: 'providers', family: (family === 'pickers' ? 'picker' : family) as 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
+  const shortcut = ({'/qp': 'pause', '/pause': 'pause', '/qr': 'resume', '/qc': 'clear'} as const)[input.trim() as '/qp'];
+  if (shortcut) return {kind: 'queue', op: shortcut};
+  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings|history|save-summary))?\s*$/u.exec(input);
+  if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
+    : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();

@@ -1,0 +1,18 @@
+────────────────────────────────[0m
+> npm test[0m[K[0m
+Running test suite...[0m
+[0m
++ Jumped for 3.1s · from queue ·[0m
+  done 12:00[0m
+[0m
+────────────────────────────────[0m
+> git status[0m[K[0m
+On branch feature/example[0m
+- Queue · 4 commands[0m -----------[0m
+·[0m git status[0m             Running[0m
+>[0m echo done[0m                 Next[0m
+Running[0m · [0m13.3s[0m · [0m1 pending[0m
+Shell-hunting…[0m · 1.0s[0m
+--------------------------------[0m
+>[0m Enter queues the next command…[0m
+--------------------------------[0m

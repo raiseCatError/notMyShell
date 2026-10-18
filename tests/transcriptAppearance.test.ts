@@ -23,7 +23,7 @@ import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 const context = themePreviewContext();
 const sample: HistoricalContextSnapshot = {cwd: context.cwd, prompt: nativePromptSnapshot(context, DEFAULT_PROMPT_CONFIGURATION)};
-const appearance = (overrides: Partial<TranscriptAppearance>): TranscriptAppearance => ({...DEFAULT_TRANSCRIPT_APPEARANCE, ...overrides});
+const appearance = (overrides: Partial<TranscriptAppearance>): TranscriptAppearance => ({...DEFAULT_TRANSCRIPT_APPEARANCE, historyColors: 'followPrompt', dividerColors: 'chroma', ...overrides});
 const backgrounds = (ansi: string) => [...ansi.matchAll(/48;2;(\d+);(\d+);(\d+)m/gu)].map(match => match.slice(1, 4).map(Number) as [number, number, number]);
 
 test('divider and historical prompt combine independently', () => {
@@ -95,7 +95,7 @@ test('OutputBuffer applies transcript appearance as presentation only', () => {
 });
 
 test('/transcript panel edits a draft with saved markers, previews, and a theme gallery', () => {
-  const saved = {...DEFAULT_TRANSCRIPT_APPEARANCE};
+  const saved = appearance({});
   const state: TranscriptPanelState = {selectedIndex: 0, draft: {...saved}, saved};
   const key = (kind: 'up' | 'down' | 'left' | 'right') => handleTranscriptPanelKey({kind} as Key, state);
   key('right');
@@ -124,9 +124,9 @@ test('/transcript panel edits a draft with saved markers, previews, and a theme 
 });
 
 test('transcript settings normalize safely and persist in the NMSh config', async () => {
-  assert.deepEqual(normalizeTranscriptAppearance(undefined), DEFAULT_TRANSCRIPT_APPEARANCE);
-  assert.deepEqual(normalizeTranscriptAppearance({divider: 'yes', historyColors: 'neon', historyTheme: 'nope', dividerDensity: 'tiny'}), DEFAULT_TRANSCRIPT_APPEARANCE);
-  assert.deepEqual(normalizePromptConfiguration({}).transcript, DEFAULT_TRANSCRIPT_APPEARANCE);
+  assert.deepEqual(normalizeTranscriptAppearance(undefined), appearance({}));
+  assert.deepEqual(normalizeTranscriptAppearance({divider: 'yes', historyColors: 'neon', historyTheme: 'nope', dividerDensity: 'tiny'}), appearance({}));
+  assert.deepEqual(normalizePromptConfiguration({}).transcript, appearance({}));
   assert.deepEqual(parseSlashCommand('/transcript'), {kind: 'transcript'});
   assert.deepEqual(parseSlashCommand('/history foo'), {kind: 'history', query: 'foo'}, '/history keeps its meaning');
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-transcript-'));

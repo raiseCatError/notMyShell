@@ -1,6 +1,7 @@
 import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, moduleDefinition, type ContextModuleId} from '../context/modules.js';
 export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
+import {COLOR_PRESET_IDS, COLOR_PRESET_LABELS} from '../chroma/colorPresets.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -239,6 +240,7 @@ export interface TranscriptAppearance {
   dividerColors: DividerColorMode;
 }
 
+/** Conservative component/legacy fallback; the Recommended root supplies its presentation choices explicitly. */
 export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
   divider: true,
   historicalPrompt: true,
@@ -366,9 +368,9 @@ export const MOTION_SPEEDS = ['slow', 'normal', 'fast'] as const;
 /** Intensity scales how strong the paint is; speed scales how long it lasts. Medium/Normal is each renderer's own baseline. */
 export interface MotionTuning {intensity: typeof MOTION_INTENSITIES[number]; speed: typeof MOTION_SPEEDS[number]}
 export const DEFAULT_MOTION_TUNING = (): Record<MotionRendering, MotionTuning> => ({clean: {intensity: 'medium', speed: 'normal'}, rich: {intensity: 'medium', speed: 'normal'}});
-/** Fresh installs: restrained motion, Clean rendering. */
-export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle', cursorTravel: 'on',
-  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
+/** NMSh Recommended: finite expressive motion; accessibility gates still take precedence. */
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'expressive', commandLaunch: 'sweep', completionHighlight: 'vivid', completionEffect: 'seal', eventFeedback: 'expressive', cursorTravel: 'on',
+  rendering: 'rich', tuning: DEFAULT_MOTION_TUNING()};
 /** Existing configs without a motion group: nothing new moves until the person turns it on. */
 export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off', cursorTravel: 'off',
   rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
@@ -414,8 +416,15 @@ export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
  */
 export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom', 'chosen'] as const;
 export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
+/**
+ * The cursor idle effect's colors: Follow cursor effect (the movement effect's, as before; the default),
+ * the theme, a named preset, or its own stops.
+ */
+export const CURSOR_IDLE_COLOR_SOURCES = ['effect', 'theme', ...COLOR_PRESET_IDS, 'custom'] as const;
+export type CursorIdleColorSource = typeof CURSOR_IDLE_COLOR_SOURCES[number];
+export const CURSOR_IDLE_COLOR_LABELS: Readonly<Record<CursorIdleColorSource, string>> = {effect: 'Follow cursor effect', theme: 'Follow theme', ...COLOR_PRESET_LABELS, custom: 'Custom'};
 export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
-export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient'] as const;
+export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient', 'theme'] as const;
 export const CURSOR_LEVELS = ['low', 'medium', 'high'] as const;
 export type CursorLevel = typeof CURSOR_LEVELS[number];
 export const CURSOR_EASINGS = ['out-cubic', 'out-expo', 'linear', 'spring'] as const;
@@ -439,6 +448,8 @@ export interface CursorSettings {
   color: {source: CursorColorSource; custom?: string; /** Choose theme: the theme and (Catppuccin) accent the cursor uses. */ theme?: NativePaletteId; themeAccent?: CatppuccinAccent};
   trail: {source: typeof CURSOR_TRAIL_COLORS[number]; colors: string[]};
   particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
+  /** The idle effect's own colors; `effect` follows the movement effect's. */
+  idleColors: {source: CursorIdleColorSource; colors: string[]};
   speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
   advanced: CursorAdvanced;
 }
@@ -446,7 +457,7 @@ export const DEFAULT_CURSOR_ADVANCED: CursorAdvanced = {shortMoveMs: 40, longMov
   trailExponent: 1.6, maxTrail: 24, moveThreshold: 1, dwellMs: 600, particleDensity: 1, particleLifetimeMs: 520, spread: 0.6, particleSpeed: 1, drag: 0.9, gravity: 1, fps: 60};
 /** Factory defaults: no motion, no effect, no idle effect. Existing users see no surprise animation. */
 export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host', renderer: 'auto', motion: 'off', effect: 'none', idleEffect: 'off',
-  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []},
+  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []}, idleColors: {source: 'effect', colors: []},
   speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED};
 
 const HEX = /^#[0-9a-f]{6}$/iu;
@@ -458,6 +469,7 @@ export function normalizeCursor(value: unknown): CursorSettings {
   const color = isRecord(v.color) ? v.color : {};
   const trail = isRecord(v.trail) ? v.trail : {};
   const particles = isRecord(v.particles) ? v.particles : {};
+  const idleColors = isRecord(v.idleColors) ? v.idleColors : {};
   const advanced = isRecord(v.advanced) ? v.advanced : {};
   const colors = (list: unknown) => Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && HEX.test(item)).slice(0, 6) : [];
   const a = DEFAULT_CURSOR_ADVANCED;
@@ -469,6 +481,7 @@ export function normalizeCursor(value: unknown): CursorSettings {
       ...(color.themeAccent !== undefined ? {themeAccent: normalizeCatppuccinAccent(color.themeAccent)} : {})},
     trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
     particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
+    idleColors: {source: pick(CURSOR_IDLE_COLOR_SOURCES, idleColors.source, 'effect'), colors: colors(idleColors.colors)},
     speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
     particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'),
     advanced: {shortMoveMs: clampNumber(advanced.shortMoveMs, 0, 200, a.shortMoveMs), longMoveMs: clampNumber(advanced.longMoveMs, 40, 600, a.longMoveMs),
@@ -550,15 +563,28 @@ export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
 export const LIVE_ACTIVITY_COLORS = ['appearance', 'lavender', 'grayscale', 'custom'] as const;
 export type LiveActivityColors = typeof LIVE_ACTIVITY_COLORS[number];
 export const LIVE_ACTIVITY_COLOR_LABELS: Record<LiveActivityColors, string> = {appearance: 'Follow appearance', lavender: 'Native Lavender', grayscale: 'Grayscale', custom: 'Custom'};
-export interface LiveActivitySettings {colors: LiveActivityColors; customStops: string[]}
-export const DEFAULT_LIVE_ACTIVITY: LiveActivitySettings = {colors: 'appearance', customStops: []};
+/** Expressive: a playful working phrase and its past-tense counterpart on success. Classic: plain "Running" and "Completed". Failures and interrupts read the same in both. */
+export const ACTIVITY_STYLES = ['expressive', 'classic'] as const;
+export type ActivityStyle = typeof ACTIVITY_STYLES[number];
+export const ACTIVITY_STYLE_LABELS: Record<ActivityStyle, string> = {expressive: 'Expressive', classic: 'Classic'};
+
+export interface LiveActivitySettings {colors: LiveActivityColors; customStops: string[]; style: ActivityStyle}
+export const DEFAULT_LIVE_ACTIVITY: LiveActivitySettings = {colors: 'appearance', customStops: [], style: 'expressive'};
 
 export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
   const v = isRecord(value) ? value : {};
   const customStops = validCustomStops(v.customStops) ? v.customStops.map(stop => stop.toLowerCase()) : [];
   const colors = LIVE_ACTIVITY_COLORS.includes(v.colors as LiveActivityColors) ? v.colors as LiveActivityColors : 'appearance';
-  return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops};
+  const style = ACTIVITY_STYLES.includes(v.style as ActivityStyle) ? v.style as ActivityStyle : DEFAULT_LIVE_ACTIVITY.style;
+  return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops, style};
 }
+
+/** The starting-point selector's backdrop (Aurora on, subtle or off); local presentation state, never exported. */
+export type OnboardingBackdrop = 'off' | 'subtle' | 'aurora';
+
+/** The starting points the selector offers, in order. */
+export const STARTING_POINT_IDS = ['recommended', 'minimal', 'customize', 'existing'] as const;
+export type StartingPointId = typeof STARTING_POINT_IDS[number];
 
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
@@ -568,11 +594,20 @@ export interface PromptConfiguration {
   pastePreview: 'smart' | 'always' | 'off';
   provider: PromptProviderId;
   onboardingComplete: boolean;
+  /** Installation introduction only; saved legacy objects without it have already seen onboarding. */
+  introSeen: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
   toolsSetupComplete: boolean;
   /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
   glyphStyle: GlyphStyle;
   glyphChoiceComplete: boolean;
+  /** Backdrop behind the starting-point selector; never exported. */
+  onboardingBackdrop: OnboardingBackdrop;
+  /**
+   * The starting point last applied from the selector: a label only, shown as current when it reopens.
+   * Never used to recompute settings (the effective configuration stays the only source of truth) and never exported.
+   */
+  startingPoint?: StartingPointId;
   /** Maximum unpinned presentation sessions; null disables rotation. */
   sessionRetention: SessionRetention;
   /** Automatic updates: Automatic prepares verified releases, Notify only announces them, Off never checks. `/update` always works on request. */
@@ -628,6 +663,8 @@ export interface PromptConfiguration {
   uiChrome: UiChromeSettings;
   /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
   sessionNotices: boolean;
+  /** What /copy does without a selection, and whether copies include NMSh's completion status. */
+  copy: CopySettings;
   /** Named agent launch profiles (provider-specific, never credentials); see src/agents/sessions/manager.ts. */
   agentProfiles: AgentProfile[];
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
@@ -638,6 +675,16 @@ export interface PromptConfiguration {
   localUnderstanding: LocalUnderstandingSettings;
   /** Local-only agent CLI activity stats (durations and counts; never content). */
   agentActivity: boolean;
+  /** Enter while a command runs queues the next command (Ctrl+S sends to the program); off: Enter sends to the program. */
+  commandQueue: boolean;
+  queueFailurePolicy: 'pause' | 'continue';
+  /** How the execution timeline presents observed queue work (the Queue destination: /settings queue, /queue settings). */
+  queue: QueuePresentationSettings;
+  /**
+   * Experimental, Off by default: the docked workspace sidebar and detail panel (/sidebar, /panel). Off, neither opens
+   * and their keymap bindings do nothing; /worktrees, /sessions, /github and /background are unaffected.
+   */
+  workspacePanels: boolean;
   /** Shell backend for new sessions; /shell switches only the current session unless saved as default. */
   shellBackend: ShellId;
   /** Where /open and /open-diff delegate: the surrounding editor (auto), Zed, VS Code, or $VISUAL/$EDITOR. */
@@ -708,15 +755,109 @@ export interface PromptConfiguration {
   spacing: number;
 }
 
+/** New configurations navigate transcript output; explicitly saved Quick Copy/Interactive Picker choices remain valid. */
+export const COPY_MODES = ['navigate', 'quick', 'picker'] as const;
+export type CopyMode = typeof COPY_MODES[number];
+export const COPY_MODE_LABELS: Record<CopyMode, string> = {navigate: 'Output navigation', quick: 'Quick Copy', picker: 'Interactive Picker'};
+
+export interface CopySettings {
+  /** What `/copy` with no selection does. */
+  mode: CopyMode;
+  /** Append each command's completion status (Completed/failed/interrupted, time, exit code, waits) after its output. */
+  includeStatus: boolean;
+  /** After a successful copy, unfold the blocks whose output was copied. Never changes what is copied. */
+  autoExpand: boolean;
+}
+
+export const DEFAULT_COPY: CopySettings = {mode: 'navigate', includeStatus: false, autoExpand: false};
+
+export function normalizeCopy(value: unknown): CopySettings {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return {mode: raw.mode === 'quick' || raw.mode === 'picker' ? raw.mode : 'navigate', includeStatus: raw.includeStatus === true, autoExpand: raw.autoExpand === true};
+}
+
+/** The Queue settings' steppers; retention accepts any integer in 6–30, the stepper offers these presets. */
+export const QUEUE_RECENT_RESULTS_STEPS = [0, 1, 2] as const;
+export const QUEUE_UPCOMING_STEPS = [1, 2] as const;
+export const QUEUE_TRANSIENT_SECONDS_STEPS = [6, 8, 10, 15, 20, 30] as const;
+/** The saved summary's choices; every row applies whatever auto-save is set to. */
+export const QUEUE_SUMMARY_DETAILS = ['detailed', 'compact'] as const;
+export const QUEUE_SUMMARY_PLACEMENTS = ['left', 'center', 'right'] as const;
+export const QUEUE_SUMMARY_ALIGNS = ['left', 'center', 'right'] as const;
+export const QUEUE_SUMMARY_DETAIL_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_DETAILS[number], string>> = {detailed: 'Detailed', compact: 'Compact'};
+export const QUEUE_SUMMARY_POSITION_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_PLACEMENTS[number], string>> = {left: 'Left', center: 'Centered', right: 'Right'};
+export const QUEUE_OUTPUT_DISPLAYS = ['inline', 'fold'] as const;
+export type QueueOutputDisplay = typeof QUEUE_OUTPUT_DISPLAYS[number];
+export const QUEUE_OUTPUT_DISPLAY_LABELS: Readonly<Record<QueueOutputDisplay, string>> = {inline: 'Inline', fold: 'Fold queued output'};
+export type QueueSummaryDetail = typeof QUEUE_SUMMARY_DETAILS[number];
+export type QueueSummaryPlacement = typeof QUEUE_SUMMARY_PLACEMENTS[number];
+export type QueueSummaryAlign = typeof QUEUE_SUMMARY_ALIGNS[number];
+
+/**
+ * How the execution timeline presents observed queue work. Presentation only: it never changes dispatch, pause,
+ * approval or review, and the classic one-line row and pending list remain available with the timeline off.
+ */
+export interface QueuePresentationSettings {
+  /** Show queued work as the observed chronological timeline instead of the classic pending list. */
+  liveTimeline: boolean;
+  /** Finished results kept visible above the running command (0–2). */
+  recentResults: number;
+  /** Waiting commands listed below the running command (1–2); the rest stay behind a compact count. */
+  upcoming: number;
+  /** Keep a finished chain visible briefly after it ends. */
+  transient: boolean;
+  /** How long the finished chain stays visible (6–30 seconds). */
+  transientSeconds: number;
+  /** Output display preference for finished queued commands: inline (default) or collapsed behind a fold hint. */
+  outputDisplay: QueueOutputDisplay;
+  /** Save one typed summary automatically when each chain settles; Off keeps summaries explicit and reviewed. */
+  autoSaveSummary: boolean;
+  /** How saved summaries read: each observed result, or the compact totals container. */
+  summaryDetail: QueueSummaryDetail;
+  /** Where the bounded summary container sits in its row. */
+  summaryPlacement: QueueSummaryPlacement;
+  /** How the text inside the container aligns; status glyphs and facts keep their columns. */
+  summaryAlign: QueueSummaryAlign;
+  /** Show each observed duration in a saved summary. */
+  summaryDurations: boolean;
+  /** Show each observed exit code in a saved summary. */
+  summaryExitCodes: boolean;
+  /** Show observed input waits when one was recorded; nothing is ever guessed. */
+  summaryInputWaits: boolean;
+}
+
+function boundedCount(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+/** A hand-set value from a closed set; anything else falls back to the shipped default. */
+function pickValue<T extends string>(values: readonly T[], value: unknown, fallback: T): T {
+  return typeof value === 'string' && (values as readonly string[]).includes(value) ? value as T : fallback;
+}
+
+export function normalizeQueuePresentation(value: unknown): QueuePresentationSettings {
+  const raw = isRecord(value) ? value : {};
+  return {liveTimeline: raw.liveTimeline !== false, recentResults: boundedCount(raw.recentResults, 0, 2, 2),
+    upcoming: boundedCount(raw.upcoming, 1, 2, 2), transient: raw.transient !== false, transientSeconds: boundedCount(raw.transientSeconds, 6, 30, 8),
+    outputDisplay: pickValue(QUEUE_OUTPUT_DISPLAYS, raw.outputDisplay, 'inline'),
+    autoSaveSummary: raw.autoSaveSummary === true,
+    summaryDetail: pickValue(QUEUE_SUMMARY_DETAILS, raw.summaryDetail, 'detailed'),
+    summaryPlacement: pickValue(QUEUE_SUMMARY_PLACEMENTS, raw.summaryPlacement, 'center'),
+    summaryAlign: pickValue(QUEUE_SUMMARY_ALIGNS, raw.summaryAlign, 'left'),
+    summaryDurations: raw.summaryDurations !== false, summaryExitCodes: raw.summaryExitCodes !== false, summaryInputWaits: raw.summaryInputWaits === true};
+}
+
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
   motion: {...DEFAULT_MOTION},
   pastePreview: 'smart',
   provider: 'nmsh',
   onboardingComplete: false,
+  introSeen: false,
   toolsSetupComplete: false,
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
+  onboardingBackdrop: 'aurora',
   sessionRetention: 1000,
   updateMode: 'automatic',
   updateFrequency: 'daily',
@@ -734,18 +875,27 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   installSuggestions: true,
   ignoredInstallSuggestions: [],
   promptSymbol: 'chevron',
-  cursor: {...DEFAULT_CURSOR},
+  // Cursor effects start Off; choosing Fire starts on the Classic flame (the default particle model).
+  cursor: {...structuredClone(DEFAULT_CURSOR), color: {source: 'theme'}},
   statusStrip: {...DEFAULT_STATUS_STRIP},
   keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
   sessionNotices: true,
+  copy: {...DEFAULT_COPY},
   askRecord: true,
   askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
+  commandQueue: true,
+  queueFailurePolicy: 'pause',
+  queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
+    outputDisplay: 'inline',
+    autoSaveSummary: true, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
+    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false},
+  workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',
-  terminalTitle: 'off',
+  terminalTitle: 'session',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -757,14 +907,14 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   ohMyPosh: {configPath: null},
-  transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
+  transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE, historyColors: 'grayscale', dividerColors: 'history'},
   syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
   panelPosition: 'bottom',
   composerDividers: true,
-  transcriptPresentation: 'normal',
+  transcriptPresentation: 'chat',
   contextRail: {...DEFAULT_CONTEXT_RAIL},
   modules: [
     {id: 'shell', visible: true, condition: 'shellDiffers'},
@@ -783,6 +933,19 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   gap: 1,
   spacing: 1,
 };
+
+/** Explicit quiet preset, built from the same canonical configuration and normalized schema. */
+export function minimalPromptConfiguration(layout: ComposerLayout = 'twoLine'): PromptConfiguration {
+  const c = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  return normalizePromptConfiguration({...c, welcome: 'none', composerPosition: 'flow', composerLayout: layout,
+    placement: 'composer', composerDividers: false, transcriptPresentation: 'normal', spacing: 0, gap: 0,
+    nmsh: {...c.nmsh, style: 'minimal', styleProfiles: {...c.nmsh.styleProfiles,
+      minimal: {...c.nmsh.styleProfiles.minimal, spacing: 1}}},
+    transcript: {...c.transcript, historicalPrompt: false, divider: false},
+    presentation: {...c.presentation, preset: 'off', effectsOff: true, shimmer: 'off', autoEffects: false},
+    motion: structuredClone(MIGRATED_MOTION), cursor: structuredClone(DEFAULT_CURSOR),
+    liveActivity: {...c.liveActivity, style: 'classic'}, terminalTitle: 'off'});
+}
 
 const MODULE_IDS = new Set<ContextModuleId>(Object.keys(CONTEXT_MODULE_REGISTRY) as ContextModuleId[]);
 /** Built-in ids, and syntactically valid pack module ids whether or not that pack is installed right now (kept, shown as missing). */
@@ -812,6 +975,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // Existing configured installations keep their v0.3 appearance without a new wizard.
   const glyphChoiceComplete = value.glyphChoiceComplete === true || value.onboardingComplete === true;
   const toolsSetupComplete = typeof value.toolsSetupComplete === 'boolean' ? value.toolsSetupComplete : value.onboardingComplete === true;
+  const onboardingBackdrop: OnboardingBackdrop = value.onboardingBackdrop === 'off' || value.onboardingBackdrop === 'subtle' ? value.onboardingBackdrop : 'aurora';
   const sessionRetention: SessionRetention = value.sessionRetention === null
     ? null : [100, 500, 1000, 5000].includes(value.sessionRetention as number)
       ? value.sessionRetention as SessionRetention : 1000;
@@ -837,8 +1001,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+  const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',
@@ -865,7 +1029,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // A custom palette without a valid library theme falls back instead of rendering nothing.
   const storedPalette = normalizePaletteId(nativeValue.palette);
   const palette = storedPalette === 'custom' && !customTheme ? 'lavender' : storedPalette;
-  const themed = {...tooling, contextRail: normalizeContextRail(value.contextRail, library.themes), themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
+  const startingPoint = STARTING_POINT_IDS.includes(value.startingPoint as StartingPointId) ? value.startingPoint as StartingPointId : undefined;
+  const themed = {...tooling, ...(startingPoint ? {startingPoint} : {}), contextRail: normalizeContextRail(value.contextRail, library.themes), themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const notifications = normalizeNotificationSettings(value.notifications);
@@ -904,7 +1069,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -964,7 +1129,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

@@ -44,7 +44,7 @@ test('cd into a hostile repository: collection and repeated rendering execute no
     for (const directory of ['bin', 'node_modules/.bin', '.venv/bin']) {
       await mkdir(join(repo, directory), {recursive: true});
       for (const name of ['node', 'python3', 'python', 'go', 'rustc', 'cargo', 'java', 'kubectl', 'aws', 'terraform', 'tofu', 'helm', 'pulumi', 'git', 'mise',
-        'asdf', 'direnv', 'gcloud', 'az', 'docker', 'bun', 'deno', 'ruby', 'vm_stat', 'pmset']) {
+        'asdf', 'direnv', 'gcloud', 'az', 'docker', 'bun', 'deno', 'ruby', 'php', 'dotnet', 'swift', 'zig', 'vm_stat', 'pmset']) {
         await writeFile(join(repo, directory, name), bait);
         await chmod(join(repo, directory, name), 0o755);
       }
@@ -65,6 +65,14 @@ test('cd into a hostile repository: collection and repeated rendering execute no
     await writeFile(join(repo, '.terraform', 'environment'), `prod${evil}`);
     await writeFile(join(repo, 'composer.json'), JSON.stringify({name: 'huge', padding: 'x'.repeat(2 * 1024 * 1024)}));
     await symlink('/etc/passwd', join(repo, 'Cargo.toml'));
+    // Runtime manifests: control payloads in every value a runtime module could show, and a quadratic-backtracking bait.
+    await writeFile(join(repo, '.ruby-version'), `3.3.0${evil}\n`);
+    await writeFile(join(repo, 'Gemfile'), `${'\n \t'.repeat(20_000)}ruby "3.3${evil}"\n`);
+    await writeFile(join(repo, 'global.json'), JSON.stringify({sdk: {version: `8.0.100${evil}`, rollForward: 'disable'}}));
+    await writeFile(join(repo, 'Package.swift'), `// swift-tools-version:5.9${evil}\n`);
+    await writeFile(join(repo, 'build.zig.zon'), `.{ .minimum_zig_version = "0.13.0${evil.replace(/"/gu, '')}" }\n`);
+    await symlink('/etc/passwd', join(repo, '.dvmrc'));
+    await writeFile(join(repo, '.php-version'), `8.3\u001b[2J\n`);
     await writeFile(join(repo, 'deno.json'), '{"name": "unreadable"}'); await chmod(join(repo, 'deno.json'), 0o000);
     await mkdir(join(repo, 'fifo-dir'));
     try { execFileSync('/usr/bin/mkfifo', [join(repo, '.nvmrc')]); } catch { /* platforms without mkfifo still exercise the rest */ }
@@ -106,7 +114,9 @@ test('cd into a hostile repository: collection and repeated rendering execute no
       const facts = engine.facts();
       for (const text of strings(facts)) assert.ok(!CONTROL.test(text), `fact text is inert: ${JSON.stringify(text)}`);
       for (const secret of SECRETS) assert.ok(!JSON.stringify(facts).includes(secret), `secret never collected: ${secret}`);
-      assert.equal((facts['runtime.node']?.value as {active?: string} | undefined)?.active, undefined, 'workspace binaries are never asked for versions');
+      for (const runtime of ['node', 'python', 'go', 'rust', 'java', 'ruby', 'php', 'dotnet', 'swift', 'zig', 'deno']) {
+        assert.equal((facts[`runtime.${runtime}`]?.value as {active?: string} | undefined)?.active, undefined, `workspace binaries are never asked for versions (${runtime})`);
+      }
 
       // Every module visible, on every surface, with every trigger word typed, rendered many times.
       setIconStyle('nerd');

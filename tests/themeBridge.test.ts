@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
 import {addTheme, setActiveTheme} from '../src/appearance/themeLibraryActions.js';
 import {assetRef, builtinTheme} from '../src/appearance/themeRefs.js';
@@ -480,12 +480,17 @@ test('reports: factual statuses; bat needs a reviewed setup; delta is detected o
 
 test('reloadTmux reaches only the tmux server of its own environment (an isolated test server here), never the person\'s', async t => {
   const box = sandbox();
-  const tmux = resolveCommand('tmux', box.env.PATH);
+  const tmux = resolveCommand('tmux', process.env.PATH);
   if (!tmux) { box.done(); t.skip('tmux is not installed'); return; }
-  const env = {...box.env, TMUX: ''};
+  // Resolve the installed tool portably, but retain the isolated socket directory.
+  const env = {...box.env, PATH: dirname(tmux), TMUX: ''};
   const run = (...args: string[]) => execFileSync(tmux, ['-f', '/dev/null', ...args], {env: {...env, PATH: '/usr/bin:/bin'}, encoding: 'utf8', timeout: 5000});
+  let ownedPids: number[] = [];
   try {
-    run('new-session', '-d', '-s', 'nmsh-bridge-test');
+    // This checks server reload, not interactive shell startup/history. Keep every writer under test ownership.
+    run('new-session', '-d', '-s', 'nmsh-bridge-test', '/bin/sleep', '60');
+    ownedPids = run('display-message', '-p', '#{pid} #{pane_pid}').trim().split(/\s+/u).map(Number);
+    assert.ok(ownedPids.length === 2 && ownedPids.every(pid => Number.isSafeInteger(pid) && pid > 1));
     const fragment = join(box.root, 'owned.conf');
     writeFileSync(fragment, 'set -g @nmsh_bridge_test reloaded\n');
     const result = await reloadTmux(env, fragment);
@@ -493,6 +498,15 @@ test('reloadTmux reaches only the tmux server of its own environment (an isolate
     assert.equal(run('show', '-gv', '@nmsh_bridge_test').trim(), 'reloaded', 'the test-owned server loaded the file');
   } finally {
     try { run('kill-server'); } catch { /* already gone */ }
+    // kill-server acknowledges the request before every owner finishes. A completed process cannot write here.
+    const deadline = Date.now() + 5000;
+    while (ownedPids.some(pid => {
+      try { process.kill(pid, 0); return true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+    })) {
+      assert.ok(Date.now() < deadline, 'test-owned tmux server and pane did not exit');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
     box.done();
   }
 });

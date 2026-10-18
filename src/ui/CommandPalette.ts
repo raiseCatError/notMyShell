@@ -8,6 +8,7 @@ import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
 import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
+import {GLYPHS} from './glyphs.js';
 
 /**
  * Every palette entry is a declared NMSh action. Nothing here is a shell
@@ -24,7 +25,15 @@ export type PaletteAction =
   | {kind: 'latest'}
   | {kind: 'toggleDetails'}
   | {kind: 'toggleInspector'}
-  | {kind: 'block'; id: BlockActionId; startId: number};
+  | {kind: 'block'; id: BlockActionId; startId: number}
+  /** An action on one reference found in a block's output; resolved again from the block when it runs. */
+  | {kind: 'reference'; startId: number; refId: string; verb: 'open' | 'copy' | 'stage'}
+  | {kind: 'failure'; direction: 'previous' | 'next'}
+  | {kind: 'pinHistory'; id: string}
+  | {kind: 'keepComposerClip'}
+  | {kind: 'keepHistoryClip'; id: string}
+  | {kind: 'clip'; id: number; verb: 'review' | 'remove'}
+  | {kind: 'clearClips'};
 
 export interface PaletteItem {
   id: string;
@@ -158,7 +167,7 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
   visible.slice(start, start + budget).forEach((item, offset) => {
     const active = start + offset === selected;
     const label = state.query ? highlightMatches(item.label, state.query, focusForeground(active), SEARCH_MATCH) : item.label;
-    rows.push(`${active ? `${ACCENT}›` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
+    rows.push(`${active ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
   });
   rows.push('', renderActionHelp(paletteActions(visible.length)));
   return rows.map(row => truncateAnsi(row, columns));

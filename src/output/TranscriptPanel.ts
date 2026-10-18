@@ -134,23 +134,23 @@ export function renderTranscriptPanel(state: TranscriptPanelState, columns: numb
     if (row === 'presentation') out.push(`${PRIMARY}  Live presentation${RESET}`);
     if (row === 'divider' && state.presentation) out.push('', `${PRIMARY}  History${RESET}`);
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
 
   const gallery: string[] = [];
   if (available[state.selectedIndex] === 'dividerColors') {
     // Every choice through the real history-header renderer; history dividers never move.
-    gallery.push('', `${PRIMARY}Divider colors${RESET}  ${SUBTLE}● selected · history stays static${RESET}`);
+    gallery.push('', `${PRIMARY}Divider colors${RESET}  ${SUBTLE}${GLYPHS.chosen} selected · history stays static${RESET}`);
     for (const mode of DIVIDER_COLOR_MODES) {
       const row = renderHistoricalContext(sample, Math.max(1, width - 21), {...draft, dividerColors: mode}, treatment);
-      gallery.push(`${draft.dividerColors === mode ? `${ACCENT}●` : `${SUBTLE}○`} ${SECONDARY}${DIVIDER_COLOR_LABELS[mode].padEnd(18)}${RESET} ${row?.ansi ?? ''}${RESET}`);
+      gallery.push(`${draft.dividerColors === mode ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`} ${SECONDARY}${DIVIDER_COLOR_LABELS[mode].padEnd(18)}${RESET} ${row?.ansi ?? ''}${RESET}`);
     }
   }
   if (draft.historyColors === 'theme') {
-    gallery.push('', `${PRIMARY}History themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
+    gallery.push('', `${PRIMARY}History themes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved${RESET}`);
     for (const id of NATIVE_PALETTE_IDS) {
-      const marker = draft.historyTheme === id ? `${ACCENT}●` : `${SUBTLE}○`;
-      const savedMark = saved.historyColors === 'theme' && saved.historyTheme === id ? '✓' : ' ';
+      const marker = draft.historyTheme === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+      const savedMark = saved.historyColors === 'theme' && saved.historyTheme === id ? GLYPHS.saved : ' ';
       const row = renderHistoricalContext(sample, Math.max(1, width - 21),
         {...draft, historyTheme: id, historicalPrompt: true, divider: false});
       gallery.push(`${marker} ${SECONDARY}${NATIVE_PROMPT_THEMES[id].label.padEnd(17)}${ACCENT}${savedMark}${RESET} ${row?.ansi ?? ''}${RESET}`);

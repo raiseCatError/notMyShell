@@ -47,7 +47,7 @@ export type LavenderTint = 'off' | 'lavender';
 export const LAVENDER_TINTS: readonly LavenderTint[] = ['off', 'lavender'];
 export const LAVENDER_TINT_LABELS: Record<LavenderTint, string> = {off: 'Off', lavender: 'Lavender'};
 
-export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'off'};
+export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'lavender'};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 

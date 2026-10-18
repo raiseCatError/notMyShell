@@ -7,10 +7,12 @@ import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {TranscriptCut} from '../session/TerminalModes.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
+import {normalizeFirstRunSnapshot, type FirstRunSnapshot} from './FirstRunWelcome.js';
+import {foldHighlights, foldWindow, shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
+import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from '../session/QueueSummary.js';
 
 export {renderHistoricalContext} from './TranscriptPresenter.js';
 
@@ -39,31 +41,53 @@ export interface CompletedCommand {
   /** Only explicitly eligible commands enter command history; transcript retention is separate. */
   historyEligible?: boolean;
   startedAt?: number;
+  /** Wall-clock time from start to completion, waiting included. */
   durationMs?: number;
+  /** Of durationMs, the time the command spent waiting for input, and how many waits (see InputWatch). */
+  inputWaitMs?: number;
+  inputWaits?: number;
   command: string;
   output: string;
+  /** The output as the program wrote it for exact copies (tabs kept), stored only when it differs from `output`. */
+  copyText?: string;
+  /** The program's output ended at a line break: an exact copy ends with one too. */
+  outputNewline?: true;
   lifecycleText: string;
   exitCode: number;
   startId: number;
   outputStartId: number;
   endId?: number;
   expanded?: boolean;
+  /** Whether this command was started from the command queue. */
+  queued?: boolean;
   /** Live presentation observed while running; `FOLDED` only in older transcripts. */
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
   activities?: SecondaryActivity[];
   /** An NMSh-owned block rather than a shell command: never history, /copy or shell-output folding input. */
   frontend?: 'ask';
+  /**
+   * Some of this command's output was not kept (it finished while no window was attached and the session's
+   * retention limit dropped output). Its `output` is what remained; copies, reports and comparisons say so.
+   */
+  outputIncomplete?: true;
   /** A recorded Ask conversation: its visible turns as plain text (version 1). Older transcripts lack it. */
   ask?: {version: 1; turns: RecordedAskTurn[]};
 }
 
 export interface OutputTranscript {
   welcome?: WelcomeSnapshot;
+  /** The first-run welcome, when a genuine first run applied NMSh Recommended (version 1). */
+  firstRun?: FirstRunSnapshot;
   records: CompletedCommand[];
   lines: SerializedLine[];
   visualGaps: number[];
   lineTypes: Array<[number, 'command' | 'metadata']>;
+  /**
+   * The session's saved Queue Summaries, oldest first: typed metadata about observed chains, never output and never
+   * a record. Display surfaces draw it; /copy, compare, search and exports read only records and lines.
+   */
+  queueSummaries?: QueueSummary[];
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -75,7 +99,9 @@ export interface OutputTranscript {
  * command's and is kept.
  */
 export function serializeCopyPayload(record: CompletedCommand): string {
-  return record.output;
+  // As the program wrote it: its tabs, and its final line break when it ended with one.
+  const exact = record.copyText ?? record.output;
+  return exact && record.outputNewline ? `${exact}\n` : exact;
 }
 
 /** Stored line text, compared as the transcript draws it: trailing blanks are not content. */
@@ -117,7 +143,15 @@ export function placeableRecords(records: readonly CompletedCommand[], lines: re
 }
 
 export class OutputBuffer {
+  /** Changes whenever line/start IDs can be reused; selectors must not cross this boundary. */
+  private generation = 0;
+  get presentationGeneration(): number { return this.generation; }
   private welcome?: WelcomeSnapshot;
+  private firstRun?: FirstRunSnapshot;
+  private welcomeVisible = true;
+
+  /** Presentation preference only: archives retain their original welcome snapshot. */
+  setWelcomeVisible(visible: boolean): void { this.welcomeVisible = visible; }
   /** How rows look; presentation state here is never serialized into transcripts. */
   readonly presenter = new TranscriptPresenter();
   private outputFolding: OutputFoldingMode = 'smart';
@@ -133,13 +167,18 @@ export class OutputBuffer {
     activities: SecondaryActivity[];
     /** Its output cleared the screen: its header and earlier lines are gone. */
     cleared?: boolean;
+    /** The program's last text ended a line (see endsLine). */
+    endsLine?: boolean;
   };
   private classifier?: CommandClassifier;
   /** What of the active command's output is transcript text (see TranscriptCut). */
   private cut?: TranscriptCut;
+  /** The session's saved summaries, newest last; bounded by the owner's own limit. */
+  private queueSummaryList: QueueSummary[] = [];
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
+      this.generation++;
       this.visualGaps.clear();
       this.lineTypes.clear();
       this.historicalContexts.clear();
@@ -172,6 +211,7 @@ export class OutputBuffer {
   transcript(): OutputTranscript {
     return {
       ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
+      ...(this.firstRun ? {firstRun: {...this.firstRun}} : {}),
       records: this.completed.map(record => ({
         ...record,
         historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
@@ -181,11 +221,25 @@ export class OutputBuffer {
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
       lineTypes: [...this.lineTypes.entries()],
+      ...(this.queueSummaryList.length ? {queueSummaries: this.queueSummaryList.map(summary => structuredClone(summary))} : {}),
     };
   }
 
+  /** The session's saved summaries as this presentation holds them, newest last. */
+  get queueSummaries(): readonly QueueSummary[] {
+    return this.queueSummaryList;
+  }
+
+  /** Replace the presentation's summaries with the owner's exact list; nothing here is ever replayed or executed. */
+  setQueueSummaries(summaries: readonly QueueSummary[]): void {
+    this.queueSummaryList = summaries.slice(-SUMMARY_LIMIT).map(summary => structuredClone(summary));
+  }
+
   restoreTranscript(transcript: OutputTranscript): void {
+    this.generation++;
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
+    // An unknown version is refused, never guessed at.
+    this.firstRun = normalizeFirstRunSnapshot(transcript.firstRun);
     this.parser.restore(transcript.lines);
     const lines = Array.from({length: this.parser.completedCount()}, (_, index) => this.parser.plainLineAt(index) ?? '');
     this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, lines, new Map(transcript.lineTypes)).map(record => ({
@@ -206,10 +260,15 @@ export class OutputBuffer {
     this.active = undefined;
     this.classifier = undefined;
     this.cut = undefined;
+    // A restored transcript adopts its own summaries; malformed journal data is refused, never guessed.
+    this.queueSummaryList = (transcript.queueSummaries ?? []).slice(-SUMMARY_LIMIT)
+      .map(summary => queueSummaryFrom(summary)).filter((summary): summary is QueueSummary => summary !== undefined);
   }
 
   clearPresentation(): void {
+    this.generation++;
     this.welcome = undefined;
+    this.firstRun = undefined;
     this.parser.restore([]);
     this.completed.length = 0;
     this.visualGaps.clear();
@@ -218,6 +277,7 @@ export class OutputBuffer {
     this.active = undefined;
     this.classifier = undefined;
     this.cut = undefined;
+    this.queueSummaryList = [];
   }
 
   /** Applies to commands that finish from now on; existing blocks keep their state. */
@@ -235,6 +295,15 @@ export class OutputBuffer {
 
   setWelcomeFrame(frame: WelcomeCatFrame): void {
     this.presenter.setWelcomeFrame(frame);
+  }
+
+  /** The first-run welcome joins the transcript once; it is never replaced or added again. */
+  setFirstRunWelcome(snapshot: FirstRunSnapshot): void {
+    this.firstRun ??= {...snapshot};
+  }
+
+  get hasFirstRunWelcome(): boolean {
+    return Boolean(this.firstRun);
   }
 
   setWelcome(snapshot: WelcomeSnapshot): void {
@@ -317,16 +386,26 @@ export class OutputBuffer {
   write(data: string): void {
     this.classifier?.pushChunk(data);
     const text = this.cut ? this.cut.push(data) : data;
-    if (text) this.parser.write(text);
+    if (text) this.writeProgramText(text);
+  }
+
+  /** Program output (never NMSh's own lines): drawn, and whether it last ended a line is remembered for exact copies. */
+  private writeProgramText(text: string): void {
+    // The parser's own reading of the text: escapes (even split across writes) are not text. NMSh's lines don't count.
+    this.parser.takeEnding();
+    this.parser.write(text);
+    const ends = this.parser.takeEnding();
+    if (ends !== undefined && this.active) this.active.endsLine = ends;
   }
 
   tickActiveCommand(): void {
     this.classifier?.tick();
   }
 
-  complete(exitCode: number): CompletedCommand | undefined {
+  /** Options passed when a command block settles. Presentation only. */
+  complete(exitCode: number, options: {holdOpen?: boolean; queued?: boolean; foldQueued?: boolean; interrupted?: boolean} = {}): CompletedCommand | undefined {
     const held = this.cut?.flush();
-    if (held) this.parser.write(held);
+    if (held) this.writeProgramText(held);
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
     const endId = this.parser.completedCount();
@@ -334,22 +413,39 @@ export class OutputBuffer {
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
     const output = this.commandOutput(this.active.outputStart, endId);
-    // Activity-bearing parents keep their own disclosure; otherwise the fold
-    // policy decides from the finished output. Presentation only.
-    const autoFolded = this.active.activities.length === 0
-      && shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
-        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
+    const exact = this.commandOutput(this.active.outputStart, endId, true);
+    const lineCount = endId - this.active.outputStart;
+    const isInterrupted = Boolean(options.interrupted || exitCode === 130);
+    const isFailed = exitCode !== 0 || isInterrupted;
+
+    // Activity-bearing parents keep their own disclosure; otherwise the fold policy decides from the finished output.
+    // Queued commands: never fold failed or interrupted commands (critical failure facts stay visible).
+    // If foldQueued is set (outputDisplay === 'fold') and command succeeded with output, start folded.
+    let autoFolded = false;
+    if (this.active.activities.length === 0 && !options.holdOpen) {
+      if (options.queued) {
+        if (!isFailed && options.foldQueued && lineCount > 0) {
+          autoFolded = true;
+        }
+      } else {
+        autoFolded = shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount,
+          ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
+      }
+    }
     const expanded = this.active.activities.length === 0 && !autoFolded;
 
     const record: CompletedCommand = {
       command: this.active.command,
       output,
+      ...(exact !== output ? {copyText: exact} : {}),
+      ...(output && this.active.endsLine ? {outputNewline: true as const} : {}),
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
       outputStartId: this.active.outputStart,
       endId,
       expanded,
+      ...(options.queued ? {queued: true as const} : {}),
       mode,
       historicalContext: this.active.historicalContext ? structuredClone(this.active.historicalContext) : undefined,
       activities: this.active.activities.length > 0
@@ -367,10 +463,10 @@ export class OutputBuffer {
    * What a command wrote: its block's lines without the ones NMSh added while it ran (a /copy confirmation, an Ask
    * exchange, a notice). Those stay where they were shown, but they were never the command's output.
    */
-  private commandOutput(start: number, end: number): string {
+  private commandOutput(start: number, end: number, exact = false): string {
     const lines: string[] = [];
     for (let index = start; index < end; index += 1) {
-      if (this.lineTypes.get(index) !== 'metadata') lines.push(this.parser.plainLineAt(index) ?? '');
+      if (this.lineTypes.get(index) !== 'metadata') lines.push((exact ? this.parser.exactLineAt(index) : this.parser.plainLineAt(index)) ?? '');
     }
     return lines.join('\n');
   }
@@ -445,6 +541,11 @@ export class OutputBuffer {
       expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});
   }
 
+  /** Completed shell command records, newest first, as /copy numbers them (NMSh-owned blocks such as recorded Ask are skipped). */
+  recentShellCommands(): CompletedCommand[] {
+    return this.completed.filter(record => !record.frontend);
+  }
+
   /** The index-th newest shell command record (NMSh-owned blocks such as recorded Ask are skipped). */
   recentShell(index: number): CompletedCommand | undefined {
     return this.completed.filter(record => !record.frontend)[index - 1];
@@ -502,9 +603,31 @@ export class OutputBuffer {
       visualGaps: this.visualGaps,
       lineTypes: this.lineTypes,
       historicalContexts: this.historicalContexts,
-      welcome: this.welcome,
+      // The first-run welcome keeps Vespyr's block with it, whatever the recurring welcome preference.
+      welcome: this.welcomeVisible || this.firstRun ? this.welcome : undefined,
+      firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
+      foldHighlights: record => this.foldHighlightsFor(record),
     };
+  }
+
+  /** Important hidden lines of a collapsed block, by line id; computed on first draw and kept per block identity. */
+  private readonly highlightCache = new Map<string, readonly number[]>();
+  private foldHighlightsFor(record: CompletedCommand): readonly number[] {
+    if (record.endId === undefined) return [];
+    const key = `${record.startId}:${record.outputStartId}:${record.endId}`;
+    const cached = this.highlightCache.get(key);
+    if (cached) return cached;
+    const {head, tail} = foldWindow(record.endId - record.outputStartId);
+    const from = record.outputStartId + head;
+    const to = record.endId - tail;
+    // Only the command's own lines: NMSh's lines inside the block are never highlighted as its output.
+    const lines: string[] = [];
+    for (let id = from; id < to; id += 1) lines.push(this.lineTypes.get(id) !== 'metadata' ? this.parser.plainLineAt(id) ?? '' : '');
+    const picked = foldHighlights(lines, 0, lines.length).map(index => from + index);
+    if (this.highlightCache.size > 512) this.highlightCache.clear();
+    this.highlightCache.set(key, picked);
+    return picked;
   }
 
   /**
@@ -530,8 +653,8 @@ export class OutputBuffer {
   }
 
   /** The finished, aligned sticky row for a block. */
-  presentSticky(startId: number, width: number): string | undefined {
-    return this.presenter.presentSticky(this.view(), startId, width);
+  presentSticky(startId: number, width: number, trailing = '', trailingWidth = 0): string | undefined {
+    return this.presenter.presentSticky(this.view(), startId, width, trailing, trailingWidth);
   }
 
   /** One-row sticky rendering of a block's submitted command (see the presenter). */
@@ -544,6 +667,19 @@ export class OutputBuffer {
     if (cmd) {
       cmd.expanded = !cmd.expanded;
       this.userToggled.add(cmd.startId);
+    }
+  }
+
+  /**
+   * Unfold these blocks (by startId) as the person's own choice: hints never fold them again, and they can still be
+   * collapsed by hand. Unknown ids (a cleared or replaced block) are ignored; nothing else changes.
+   */
+  expandBlocks(startIds: readonly number[]): void {
+    for (const startId of startIds) {
+      const record = this.completed.find(item => item.startId === startId);
+      if (!record || record.expanded) continue;
+      record.expanded = true;
+      this.userToggled.add(startId);
     }
   }
 

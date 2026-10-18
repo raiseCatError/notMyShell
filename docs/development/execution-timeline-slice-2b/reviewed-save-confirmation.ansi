@@ -1,0 +1,8 @@
+            ─────────────── Save this Queue Summary?[0m ───────────────
+             ✔[0m npm run build[0m                          exit 0 · 8.2s[0m 
+             ✔[0m git status[0m                           exit 0 · 800 ms[0m 
+             ✘[0m deploy --token=[REDACTED][0m              exit 1 · 5.0s[0m 
+             3 executed[0m · [0m2 succeeded[0m · [0m1 failed[0m · [0mwall time 14.0s[0m  
+            ────────────────────────────────────────────────────────
+Queue Summary[0m · [0m3 executed[0m · [0m2 succeeded[0m · [0m1 failed[0m · [0mwall time 14.0s[0m
+[38;2;125;133;144mEnter saves this summary · Esc cancels[0m

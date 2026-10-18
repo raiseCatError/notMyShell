@@ -1,5 +1,6 @@
 import test, {mock} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -157,4 +158,41 @@ test('disposal observes an idle service that starts listening after its initial 
   } finally {
     child.kill(); await exited; await sandbox.dispose();
   }
+});
+
+test('suite runner honors explicit temporary storage without silently falling back', async () => {
+  const previous = process.env.NMSH_TEST_TMPDIR;
+  const requested = join(tmpdir(), 'external');
+  process.env.NMSH_TEST_TMPDIR = requested;
+  const sentinel = new Error('stop before filesystem writes');
+  const probe = mock.method(fs, 'mkdtempSync', (prefix: string) => {
+    assert.equal(prefix, join(requested, 'nt-'));
+    throw sentinel;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(runTestFiles(['unused.test.mjs']), error => error === sentinel);
+  } finally {
+    probe.mock.restore(); syncBuiltinESMExports();
+    if (previous === undefined) delete process.env.NMSH_TEST_TMPDIR; else process.env.NMSH_TEST_TMPDIR = previous;
+  }
+});
+
+
+test('suite runner confines home-directory caches to its private temporary storage', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'runner-home-'));
+  const file = join(fixture, 'home.test.mjs');
+  try {
+    writeFileSync(file, [
+      "import assert from 'node:assert/strict';",
+      "import {existsSync, writeFileSync} from 'node:fs';",
+      "import {join} from 'node:path';",
+      "assert.equal(process.env.HOME, join(process.env.TMPDIR, 'home'));",
+      "assert.ok(existsSync(process.env.HOME));",
+      "writeFileSync(join(process.env.HOME, '.owned-test-cache'), 'fixture');",
+    ].join('\n'));
+    const result = await runTestFiles([file], [], {stdio: 'ignore'});
+    assert.equal(result.code, 0, 'home caches stay inside the owned suite root');
+    assert.ok(!existsSync(result.root), 'home caches are removed with that root');
+  } finally { rmSync(fixture, {recursive: true, force: true}); }
 });

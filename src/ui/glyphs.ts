@@ -30,6 +30,11 @@ export const GLYPHS = {
   get failure() { return getCurrentGlyphMode() === 'nerd' ? '✘' : 'x'; },
   get info() { return getCurrentGlyphMode() === 'nerd' ? '⎿' : '>'; },
   get selection() { return getCurrentGlyphMode() === 'nerd' ? '›' : '>'; },
+  /** A single-choice list's chosen option (a radio) and the others; never shown by color alone. */
+  get chosen() { return getCurrentGlyphMode() === 'nerd' ? '●' : '*'; },
+  get unchosen() { return getCurrentGlyphMode() === 'nerd' ? '○' : 'o'; },
+  /** What is saved now, beside a list's draft choice; also the current item (shell, prompt). */
+  get saved() { return getCurrentGlyphMode() === 'nerd' ? '✓' : '+'; },
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
   get search() { return getCurrentGlyphMode() === 'nerd' ? '\uF002' : '/'; },
@@ -41,6 +46,15 @@ export const GLYPHS = {
   get powerlineFadeIn() { return getCurrentGlyphMode() === 'nerd' ? '░▒▓' : '==='; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
 };
+
+/**
+ * A choosable row's mark, so chosen never depends on color or on the cursor band: ✔ chosen, · choosable,
+ * blank otherwise; Safe glyphs use [x], [ ] and blanks of the same width.
+ */
+export function checkMark(chosen: boolean, choosable = true): string {
+  if (getCurrentGlyphMode() === 'nerd') return chosen ? '✔' : choosable ? '·' : ' ';
+  return chosen ? '[x]' : choosable ? '[ ]' : '   ';
+}
 
 export const SPINNER_FRAMES = {
   get frames() {

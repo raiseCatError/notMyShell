@@ -1,10 +1,11 @@
+import {FIRE_COLORS, FIRE_COLOR_LABELS, fireColorChoice, applyFireColor} from '../cursor/palette.js';
 import {SHELL_IDS} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -12,7 +13,11 @@ import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent} from '../appearance/themeFamilies.js';
 import {availabilityOf, availableValues, currentCursorHost, unavailableReason, type CursorFeature} from '../cursor/backends.js';
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
-import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
+import {renderControls} from './controls.js';
+import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
+import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -87,7 +92,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge';
+  | 'setup' | 'setupQuick' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
 
 interface SettingsRowBase {
   id: string;
@@ -170,6 +175,7 @@ const chromaMoving = (c: PromptConfiguration) => chromaOn(c) && c.presentation.m
 const nativePrompt = (c: PromptConfiguration) => c.provider === 'nmsh';
 const stripOn = (c: PromptConfiguration) => c.statusStrip.enabled;
 const withStrip = (c: PromptConfiguration, patch: Partial<StatusStripSettings>): PromptConfiguration => ({...c, statusStrip: {...c.statusStrip, ...patch}});
+const withQueue = (c: PromptConfiguration, patch: Partial<QueuePresentationSettings>): PromptConfiguration => ({...c, queue: {...c.queue, ...patch}});
 
 /** Theme family, then the family's variant and (Catppuccin) accent, as nested rows. */
 const THEME_ROWS: readonly SettingsRow[] = [
@@ -282,8 +288,22 @@ const CURSOR_ROWS: readonly SettingsRow[] = [
     feature: 'motion', values: CURSOR_MOTIONS, get: c => c.motion, set: (c, motion) => ({...c, motion: motion as CursorSettings['motion']})}),
   cursorFeatureRow({id: 'cursorEffect', label: 'Cursor effect', description: 'What movement sheds: Fire, Sparks, Ripple and more (off by default)', category: 'Cursor',
     feature: 'effect', values: CURSOR_EFFECTS, get: c => c.effect, set: (c, effect) => ({...c, effect: effect as CursorSettings['effect']})}),
+  {...enumRow({id: 'cursorFireColor', parent: 'cursorEffect', label: 'Fire / effect color', description: 'Hot-to-cool particle gradients; Custom is edited in /cursor', category: 'Cursor',
+    values: FIRE_COLORS, labels: FIRE_COLORS.map(value => FIRE_COLOR_LABELS[value]), get: c => fireColorChoice(c.cursor),
+    set: (c, value) => withCursor(c, applyFireColor(c.cursor, value))}), when: c => c.cursor.effect === 'fire'},
+  {id: 'cursorFireCustom', parent: 'cursorEffect', when: c => c.cursor.effect === 'fire', label: 'Custom Fire gradient', description: 'Edit particle colors in the shared /cursor gradient editor', category: 'Cursor', control: 'action', actionLabel: 'Edit ›', destination: 'cursor'},
   cursorFeatureRow({id: 'cursorIdle', label: 'Cursor idle effect', description: 'A slow effect while the caret rests (off by default)', category: 'Cursor',
     feature: 'idleEffect', values: CURSOR_IDLE_EFFECTS, get: c => c.idleEffect, set: (c, idleEffect) => ({...c, idleEffect: idleEffect as CursorSettings['idleEffect']})}),
+  {...enumRow({id: 'cursorIdleColor', parent: 'cursorIdle', label: 'Idle effect color', description: 'Follow cursor effect uses the movement effect\'s colors; or Follow theme, a preset, or your own gradient', category: 'Cursor',
+    values: CURSOR_IDLE_COLOR_SOURCES, labels: CURSOR_IDLE_COLOR_SOURCES.map(source => CURSOR_IDLE_COLOR_LABELS[source]), get: c => c.cursor.idleColors.source,
+    set: (c, source) => {
+      // Custom starts from the preset shown now (or Lavender), so choosing it never makes the color jump.
+      const from = c.cursor.idleColors.source;
+      const seed = from !== 'effect' && from !== 'theme' && from !== 'custom' ? COLOR_PRESET_STOPS[from] : COLOR_PRESET_STOPS.lavender;
+      return withCursor(c, {...c.cursor, idleColors: {source, colors: source === 'custom' && c.cursor.idleColors.colors.length < 2 ? [...seed] : c.cursor.idleColors.colors}});
+    }}), when: c => c.cursor.idleEffect !== 'off'},
+  {id: 'cursorIdleCustom', parent: 'cursorIdleColor', when: c => c.cursor.idleEffect !== 'off' && c.cursor.idleColors.source === 'custom', label: 'Edit idle effect colors',
+    description: 'Gradient stops in the shared /cursor editor, with presets and a live preview', category: 'Cursor', control: 'action', actionLabel: 'Edit ›', destination: 'cursor'},
   enumRow({id: 'cursorColor', label: 'Cursor color', description: 'Follow the prompt\'s theme, choose a theme for the cursor alone, use NMSh\'s accent, keep the host\'s color, or pick your own', category: 'Cursor',
     values: CURSOR_COLOR_SOURCES_UI, labels: ['Follow current theme', 'Choose theme', 'NMSh accent', 'Host', 'Custom'],
     get: c => c.cursor.color.source, set: (c, source) => withCursor(c, {...c.cursor, color: {...c.cursor.color, source,
@@ -319,6 +339,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
     get: config => config.glyphStyle, set: (config, glyphStyle) => ({...config, glyphStyle, glyphChoiceComplete: true})}),
+  enumRow({id: 'onboardingBackdrop', label: 'Starting point backdrop', description: 'The sky behind the starting-point selector (/startup): the real Aurora, subtle, or off. A cycles it there too', category: 'General',
+    values: ['aurora', 'subtle', 'off'] as const, labels: ['Aurora on', 'Subtle', 'Off'],
+    get: config => config.onboardingBackdrop, set: (config, onboardingBackdrop) => ({...config, onboardingBackdrop})}),
   enumRow({id: 'panelPosition', label: 'NMSh panel position', description: 'Where full-width NMSh panels (Setup, Settings, Tools, ...) sit: Bottom (default) or Top. Independent of the composer position', category: 'General',
     values: PANEL_POSITIONS, labels: ['Bottom', 'Top'],
     get: config => config.panelPosition, set: (config, panelPosition) => ({...config, panelPosition})}),
@@ -374,8 +397,17 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'transcriptPresentation', label: 'Transcript presentation', description: 'Normal rows, or Chat with commands on the right', category: 'Layout',
     values: TRANSCRIPT_PRESENTATIONS, labels: TRANSCRIPT_PRESENTATIONS.map(presentation => TRANSCRIPT_PRESENTATION_LABELS[presentation]),
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
+  {id: 'workspacePanels', label: 'Workspace sidebar & panel', description: 'Experimental, Off by default: /sidebar and /panel dock tmux panes, worktrees and details beside the transcript. Off, they never open; /worktrees, /sessions, /github and /background work either way', category: 'Layout',
+    control: 'boolean', get: config => config.workspacePanels, set: (config, workspacePanels) => ({...config, workspacePanels})},
   {id: 'composerDividers', label: 'Composer dividers', description: 'The horizontal lines around the composer; Off gives their rows back. Transcript dividers and prompt separators are separate', category: 'Layout',
     control: 'boolean', get: config => config.composerDividers, set: (config, composerDividers) => ({...config, composerDividers})},
+  enumRow({id: 'copyMode', label: '/copy without a number', description: 'Output navigation selects transcript blocks with Up/Down and Enter; Quick Copy copies the latest output at once; Interactive Picker chooses one or several. /copy N, -N, A-B and 1,3,5 always copy directly',
+    category: 'Copy', values: COPY_MODES, labels: COPY_MODES.map(mode => COPY_MODE_LABELS[mode]),
+    get: config => config.copy.mode, set: (config, mode) => ({...config, copy: {...config.copy, mode}})}),
+  {id: 'copyIncludeStatus', label: 'Include completion status', description: 'After each copied output, add the status NMSh showed when it finished (Completed or failed, exit code, time, waits for input). Off copies only the output. --status or --no-status overrides it once',
+    category: 'Copy', control: 'boolean', get: config => config.copy.includeStatus, set: (config, includeStatus) => ({...config, copy: {...config.copy, includeStatus}})},
+  {id: 'copyAutoExpand', label: 'Auto-expand copied output', description: 'After a successful copy, unfold the blocks whose output was copied. Off leaves folding as it was; what is copied is the same either way',
+    category: 'Copy', control: 'boolean', get: config => config.copy.autoExpand, set: (config, autoExpand) => ({...config, copy: {...config.copy, autoExpand}})},
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
@@ -396,6 +428,44 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'terminalTitle', label: 'Terminal title', description: 'Set the window/tab title while NMSh owns the screen; programs set their own while they run and NMSh restores its title after them. Off leaves the title to the terminal', category: 'Sessions',
     values: ['off', 'project', 'session'] as const, labels: ['Off', 'Project', 'Project and session'],
     get: config => config.terminalTitle, set: (config, terminalTitle) => ({...config, terminalTitle})}),
+  {id: 'commandQueue', label: 'Queue commands', description: 'While a command runs, Enter queues the next one to run after it (Ctrl+Q always queues, Ctrl+S sends to the program); a program waiting for input still gets your answer. Off: Enter sends to the program', category: 'Sessions',
+    control: 'boolean', get: config => config.commandQueue, set: (config, commandQueue) => ({...config, commandQueue})},
+  enumRow({id: 'queueFailurePolicy', label: 'On queued command failure', description: 'For new execution chains: pause remaining work (default), or continue after a nonzero exit. Ctrl+C always pauses; existing chains keep their reviewed policy', category: 'Sessions',
+    values: ['pause', 'continue'] as const, labels: ['Pause remaining queue', 'Continue remaining queue'],
+    get: config => config.queueFailurePolicy, set: (config, queueFailurePolicy) => ({...config, queueFailurePolicy})}),
+  {id: 'queueTimeline', label: 'Live timeline', description: 'Queued work as a chronological timeline above the composer: recent results, the running command and what runs next. Off keeps the one-line queue row and the pending list; the transcript is never touched', category: 'Queue',
+    control: 'boolean', get: config => config.queue.liveTimeline, set: (config, liveTimeline) => withQueue(config, {liveTimeline})},
+  {id: 'queueRecentResults', parent: 'queueTimeline', when: config => config.queue.liveTimeline, label: 'Recent results', description: 'How many finished commands stay visible above the running one; older results leave the timeline, and their output stays in the transcript', category: 'Queue',
+    control: 'stepper', steps: QUEUE_RECENT_RESULTS_STEPS, format: value => value === 0 ? 'None' : `${value}`,
+    get: config => config.queue.recentResults, set: (config, recentResults) => withQueue(config, {recentResults})},
+  {id: 'queueUpcoming', parent: 'queueTimeline', when: config => config.queue.liveTimeline, label: 'Upcoming entries', description: 'How many waiting commands the timeline lists below the running one; the rest stay behind a compact count, and the queue itself is never changed', category: 'Queue',
+    control: 'stepper', steps: QUEUE_UPCOMING_STEPS, format: value => `${value}`,
+    get: config => config.queue.upcoming, set: (config, upcoming) => withQueue(config, {upcoming})},
+  {id: 'queueTransient', label: 'Completed view', description: 'Keep the finished timeline visible briefly after a chain ends, then dismiss it; the transcript keeps every result', category: 'Queue',
+    control: 'boolean', get: config => config.queue.transient, set: (config, transient) => withQueue(config, {transient})},
+  {id: 'queueTransientSeconds', parent: 'queueTransient', when: config => config.queue.transient, label: 'Keep visible', description: 'How long the finished timeline stays before it dismisses (6–30 seconds)', category: 'Queue',
+    control: 'stepper', steps: QUEUE_TRANSIENT_SECONDS_STEPS, format: value => `${value}s`,
+    get: config => config.queue.transientSeconds, set: (config, transientSeconds) => withQueue(config, {transientSeconds})},
+  enumRow({id: 'queueOutputDisplay', label: 'Queued output display', description: 'Inline (default) keeps complete output visible; Fold queued output starts successful queued output collapsed behind a reversible fold hint. Failed commands never fold, and exact output is always preserved', category: 'Queue',
+    values: QUEUE_OUTPUT_DISPLAYS, labels: QUEUE_OUTPUT_DISPLAYS.map(value => QUEUE_OUTPUT_DISPLAY_LABELS[value]),
+    get: config => config.queue.outputDisplay, set: (config, outputDisplay) => withQueue(config, {outputDisplay})}),
+  {id: 'queueSummaryAutoSave', label: 'Save summaries', description: 'Save one typed summary when each execution chain ends: observed outcomes, durations and counts only — never output, prompts, hidden input or private paths. Off by default: explicit saves go through a review', category: 'Queue',
+    control: 'boolean', get: config => config.queue.autoSaveSummary, set: (config, autoSaveSummary) => withQueue(config, {autoSaveSummary})},
+  enumRow({id: 'queueSummaryDetail', label: 'Summary detail', description: 'Detailed lists each observed result under the totals; Compact keeps the totals container only. Presentation only: the saved artifact never changes', category: 'Queue',
+    values: QUEUE_SUMMARY_DETAILS, labels: QUEUE_SUMMARY_DETAILS.map(value => QUEUE_SUMMARY_DETAIL_LABELS[value]),
+    get: config => config.queue.summaryDetail, set: (config, summaryDetail) => withQueue(config, {summaryDetail})}),
+  enumRow({id: 'queueSummaryPlacement', label: 'Summary placement', description: 'Where the bounded summary container sits: left, centered (default) or right', category: 'Queue',
+    values: QUEUE_SUMMARY_PLACEMENTS, labels: QUEUE_SUMMARY_PLACEMENTS.map(value => QUEUE_SUMMARY_POSITION_LABELS[value]),
+    get: config => config.queue.summaryPlacement, set: (config, summaryPlacement) => withQueue(config, {summaryPlacement})}),
+  enumRow({id: 'queueSummaryAlign', label: 'Summary text alignment', description: 'How text inside the container aligns; status marks and observed facts keep their readable columns', category: 'Queue',
+    values: QUEUE_SUMMARY_ALIGNS, labels: QUEUE_SUMMARY_ALIGNS.map(value => QUEUE_SUMMARY_POSITION_LABELS[value]),
+    get: config => config.queue.summaryAlign, set: (config, summaryAlign) => withQueue(config, {summaryAlign})}),
+  {id: 'queueSummaryDurations', label: 'Summary durations', description: 'Show each observed command duration in saved summaries; a duration that was never observed stays absent', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryDurations, set: (config, summaryDurations) => withQueue(config, {summaryDurations})},
+  {id: 'queueSummaryExitCodes', label: 'Summary exit codes', description: 'Show each observed exit code in saved summaries; only codes the shell actually reported are ever shown', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryExitCodes, set: (config, summaryExitCodes) => withQueue(config, {summaryExitCodes})},
+  {id: 'queueSummaryInputWaits', label: 'Summary input waits', description: 'Show how long a command waited for your input when that wait was observed; Off by default, and nothing is ever guessed', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryInputWaits, set: (config, summaryInputWaits) => withQueue(config, {summaryInputWaits})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
@@ -497,13 +567,16 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: withIdleColorSource(c, colorSource)})}),
   {id: 'idleCustomColors', parent: 'idleColor', when: c => c.idleVisuals.colorSource === 'custom', label: 'Edit colors',
     description: 'The idle visuals\' own gradient stops, with a live preview', category: 'Idle visuals', control: 'action', actionLabel: 'Edit ›', destination: 'idleColors'},
+  enumRow({id: 'activityStyle', label: 'Activity wording', description: 'Expressive gives each command a playful working phrase and a matching finished one (Cooking… → Cooked for 18s). Classic says Running and Completed. Exit codes, failures, interrupts and waiting for input read the same in both', category: 'Live activity',
+    values: ACTIVITY_STYLES, labels: ACTIVITY_STYLES.map(style => ACTIVITY_STYLE_LABELS[style]),
+    get: c => c.liveActivity.style, set: (c, style) => ({...c, liveActivity: {...c.liveActivity, style}})}),
   enumRow({id: 'activityColors', label: 'Live activity colors', description: 'The running-command line. Follow appearance uses Chroma when it is on, otherwise the theme. Only live work moves; finished commands show their plain result', category: 'Live activity',
     values: LIVE_ACTIVITY_COLORS, labels: LIVE_ACTIVITY_COLORS.map(colors => LIVE_ACTIVITY_COLOR_LABELS[colors]),
     get: c => c.liveActivity.colors, set: (c, colors) => ({...c, liveActivity: {...c.liveActivity, colors,
       customStops: colors === 'custom' && c.liveActivity.customStops.length < 2 ? [...PRESET_STOPS.lavender] : c.liveActivity.customStops}})}),
   {id: 'activityCustomColors', parent: 'activityColors', when: c => c.liveActivity.colors === 'custom', label: 'Edit colors',
     description: 'Gradient stops for the live activity line', category: 'Live activity', control: 'action', actionLabel: 'Edit ›', destination: 'activityColors'},
-  {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
+  {id: 'tools', label: 'Tools', description: 'Discover, select and install optional tools; each install is reviewed and confirmed first', category: 'Tools', control: 'child', destination: 'tools'},
   enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.toolUpdateChecks, set: (config, toolUpdateChecks) => ({...config, toolUpdateChecks})}),
@@ -570,11 +643,21 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'welcome', label: 'Welcome', description: 'Native, optional external fetch provider, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
+  {id: 'queue', label: 'Queue', description: 'Execution timeline, queued-command behavior, results and motion', category: 'Sessions', control: 'child', destination: 'queue'},
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
   {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
+  {id: 'setupQuick', label: 'Starting point', description: 'Recommended, Minimal, Customize or Keep Existing · /startup', category: 'General', control: 'child', destination: 'setupQuick'},
   {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
+
+/**
+ * The rows behind the Queue destination (/settings queue, /queue settings): the same canonical rows Config and
+ * Setup edit, plus the shared motion controls the timeline follows. Never a second copy of the settings.
+ */
+export const QUEUE_SETTINGS_ROW_IDS = ['commandQueue', 'queueFailurePolicy', 'queueTimeline', 'queueRecentResults', 'queueUpcoming',
+  'queueTransient', 'queueTransientSeconds', 'queueOutputDisplay', 'queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign',
+  'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits', 'motion_rendering', 'motion_eventFeedback', 'reducedMotion'] as const;
 
 /** Text cue (not color) that a value differs from its default. */
 const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
@@ -602,9 +685,9 @@ export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   General: 'General', Updates: 'General',
   Appearance: 'Appearance', Presentation: 'Appearance', 'Idle visuals': 'Appearance', 'Live activity': 'Appearance',
   Prompt: 'Prompt & Composer', Layout: 'Prompt & Composer', 'Status strip': 'Prompt & Composer',
-  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor',
+  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor', Copy: 'Editor',
   Cursor: 'Cursor & Motion', Motion: 'Cursor & Motion',
-  Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts',
+  Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts', Queue: 'Sessions & Alerts',
   Tools: 'Shell & Providers', Welcome: 'Shell & Providers', History: 'Shell & Providers',
   Ask: 'Local Understanding', Transcript: 'Transcript & Privacy',
 };
@@ -624,7 +707,7 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
   'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
-  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
+  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',
@@ -723,6 +806,22 @@ export function resetSettingsRow(row: SettingsRow, config: PromptConfiguration):
 }
 
 /** Enter on a row that opens something. */
+/**
+ * The editor a Custom value opens at once (choosing Custom with Enter), or undefined. The cursor rows name the
+ * /cursor editor to start in.
+ */
+export function customColorEditor(rowId: string, config: PromptConfiguration): {destination: SettingsDestination; cursor?: 'fireEdit' | 'idleEdit' | 'colorCustom'} | undefined {
+  switch (rowId) {
+    case 'idleColor': return config.idleVisuals.colorSource === 'custom' ? {destination: 'idleColors'} : undefined;
+    case 'activityColors': return config.liveActivity.colors === 'custom' ? {destination: 'activityColors'} : undefined;
+    case 'uiChromePreset': return config.uiChrome.preset === 'custom' ? {destination: 'chromeColors'} : undefined;
+    case 'cursorFireColor': return fireColorChoice(config.cursor) === 'custom' ? {destination: 'cursor', cursor: 'fireEdit'} : undefined;
+    case 'cursorIdleColor': return config.cursor.idleColors.source === 'custom' ? {destination: 'cursor', cursor: 'idleEdit'} : undefined;
+    case 'cursorColor': return config.cursor.color.source === 'custom' ? {destination: 'cursor', cursor: 'colorCustom'} : undefined;
+    default: return undefined;
+  }
+}
+
 export function settingsRowDestination(row: SettingsRow): SettingsDestination | undefined {
   return row.control === 'child' || row.control === 'action' ? row.destination : undefined;
 }
@@ -844,18 +943,19 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
   return out;
 }
 
-function footerText(state: SettingsPanelState, row: SettingsRow | undefined, changedDefault?: string): string {
+/** The footer keys, in the shared key-hint style: what each key does on the focused control, and nothing else. */
+function footerControls(state: SettingsPanelState, row: SettingsRow | undefined, changedDefault?: string): Array<[string, string]> {
   const view = settingsView(state);
-  if (state.searchFocused) return '↑↓ results · Enter select · Esc clear';
-  if (view === 'status') return '←/→ to switch · ↑↓ to scroll · Esc to close';
-  if (state.focus === 'tabs') return '←/→ to switch · ↓ to select · Esc to close';
-  const search = view === 'config' ? ' · / to search' : '';
-  const escape = state.searchQuery?.trim() ? 'Esc to clear' : 'Esc to close';
-  const advanced = view === 'config' && !state.searchQuery?.trim() ? ` · A ${state.showAdvanced ? 'hide' : 'show'} advanced` : '';
-  const reset = changedDefault !== undefined ? ` · R reset to ${changedDefault}` : '';
-  if (isInlineEditable(row)) return `Enter/Space to change${reset}${search}${advanced} · ${escape}`;
-  if (row) return `Enter to open · ←/→ to switch${search}${advanced} · ${escape}`;
-  return `←/→ to switch${search}${advanced} · ${escape}`;
+  if (state.searchFocused) return [['↑↓', 'results'], ['Enter', 'select'], ['Esc', 'clear']];
+  if (view === 'status') return [['←→', 'views'], ['↑↓', 'scroll'], ['Esc', 'close']];
+  if (state.focus === 'tabs') return [['←→', 'views'], ['↓', 'rows'], ['Esc', 'close']];
+  const controls: Array<[string, string]> = isInlineEditable(row) ? [['Enter', 'change'], ['←→', 'change']]
+    : row ? [['Enter', 'open'], ['←→', 'views']] : [['←→', 'views']];
+  if (changedDefault !== undefined) controls.push(['R', `reset to ${changedDefault}`]);
+  if (view === 'config') controls.push(['/', 'search']);
+  if (view === 'config' && !state.searchQuery?.trim()) controls.push(['A', state.showAdvanced ? 'hide advanced' : 'advanced']);
+  controls.push(['Esc', state.searchQuery?.trim() ? 'clear search' : 'close']);
+  return controls;
 }
 
 function toneColor(tone: StatusItem['tone']): string {
@@ -912,7 +1012,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const selectedIndex = Math.min(state.contentIndex ?? 0, Math.max(0, rows.length - 1));
   const selectedRow = tabsFocused ? undefined : rows[selectedIndex];
   const changedDefault = view === 'config' && selectedRow && settingsRowChanged(selectedRow, config) ? settingsRowDefaultLabel(selectedRow) : undefined;
-  const footer = ['', `${MARGIN}${SUBTLE}${footerText(state, selectedRow, changedDefault)}${RESET}`];
+  const footer = ['', `${MARGIN}${renderControls(footerControls(state, selectedRow, changedDefault))}`];
   // Separator + header + footer; short terminals drop the footer first.
   const chrome = 1 + header.length + footer.length;
   const tight = maxRows - chrome < 3;

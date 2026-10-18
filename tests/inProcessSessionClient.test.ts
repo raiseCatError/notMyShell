@@ -101,3 +101,21 @@ test('InProcessSessionClient drives a real managed zsh end to end', async () => 
     rmSync(home, {recursive: true, force: true});
   }
 });
+
+
+test('manual submission invalidates idle review before its exec marker arrives', () => {
+  const shell = new FakeShell();
+  const client = new InProcessSessionClient({cwd: '/w', columns: 80, rows: 24}, () => shell as never);
+  const states: import('../src/session/CommandQueue.js').QueueState[] = [];
+  client.on('queueState', state => states.push(state));
+  shell.emit('prompt', {exitCode: 0, cwd: '/w'});
+  client.queue({op: 'pause'}); client.queue({op: 'add', text: 'echo QUEUED'});
+  const revision = states.at(-1)!.revision!;
+  client.submit('sleep 10');
+  client.queue({op: 'resume', expectedRevision: revision});
+  assert.deepEqual(shell.calls, [['submit', 'sleep 10']], 'delayed resume cannot dispatch beside a submitted foreground command');
+  assert.equal(states.at(-1)?.paused?.reason, 'user');
+  shell.emit('exec', 'sleep 10'); shell.emit('prompt', {exitCode: 7, cwd: '/w'});
+  assert.equal(states.at(-1)?.timeline?.executions.length, 0, 'manual command remains independent');
+  client.kill();
+});

@@ -4,6 +4,7 @@ import {framePanel} from '../ui/PanelShell.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {presetCommands, presetNeedsAcknowledgement, type SessionPreset} from './SessionPresets.js';
+import {GLYPHS} from '../ui/glyphs.js';
 
 export interface PresetPanel {
   presets: SessionPreset[]; selected: number; detail?: SessionPreset;
@@ -76,7 +77,7 @@ export function renderPresetPanel(state: PresetPanel, columns: number, height: n
   const body: string[] = [], footer: string[] = [];
   if (state.form) {
     header.push('  Explicit startup commands only; never put secrets here.');
-    body.push(...(['name','cwd','commands'] as const).map((field,i)=>`  ${state.form!.field === i ? '>' : ' '} ${field}: ${state.form![field].replace(/\n/gu, ' | ') || '_'}`));
+    body.push(...(['name','cwd','commands'] as const).map((field,i)=>`  ${state.form!.field === i ? GLYPHS.selection : ' '} ${field}: ${state.form![field].replace(/\n/gu, ' | ') || '_'}`));
     footer.push('  Tab fields; Ctrl+J adds command line; Enter create; Esc cancel', '  Commands: one shell command per line. Environment values are not captured.');
   } else if (state.detail) {
     header.push(`  ${state.detail.name} / ${state.detail.cwd}`);
@@ -90,7 +91,7 @@ export function renderPresetPanel(state: PresetPanel, columns: number, height: n
     else footer.push('  L launch NEW session; D delete; Up/Down review; Esc back');
     if (state.operation !== 'delete') footer.push('  Existing live session stays detached; reattach it with /resume.');
   } else {
-    body.push(...state.presets.map((preset,i)=>`  ${state.selected === i ? '>' : ' '} ${preset.name} / ${preset.cwd}`));
+    body.push(...state.presets.map((preset,i)=>`  ${state.selected === i ? GLYPHS.selection : ' '} ${preset.name} / ${preset.cwd}`));
     if (!state.presets.length) body.push('  No presets. N creates one.');
     footer.push('  N create; Up/Down choose; Enter inspect; Esc back');
   }

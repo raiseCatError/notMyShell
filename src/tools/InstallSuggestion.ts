@@ -103,7 +103,8 @@ export function renderInstallPrompt(state: InstallPromptState, columns: number):
   if (state.task?.state.status === 'running') {
     rows.push(...renderTaskProgress(state.task.state), '', renderControls([['Please wait', 'installation in progress']]));
   } else if (state.result) {
-    rows.push(`  ${state.result.ok ? foreground(UI_COLORS.success) : foreground(UI_COLORS.failure)}${state.result.message}${reset}`,
+    // The outcome reads without color too: a mark and the words.
+    rows.push(`  ${state.result.ok ? `${foreground(UI_COLORS.success)}${GLYPHS.success}` : `${foreground(UI_COLORS.failure)}${GLYPHS.failure}`} ${state.result.message}${reset}`,
       `  ${subtle}Your command is back in the composer; press Enter there to run it.${reset}`, '',
       renderControls([['Enter', 'close'], ['Esc', 'close']]));
   } else {

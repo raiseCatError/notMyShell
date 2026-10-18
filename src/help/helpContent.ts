@@ -31,7 +31,7 @@ When a submitted command is missing in your zsh and exactly names a curated tool
 
 ## Appearance
 
-Settings → Theme (and /setup appearance) picks a Built-in theme (NMSh themes and bundled families: Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark), an Imported theme or a Custom theme. Themes color NMSh-owned UI only; your terminal and editor keep their colors unless you opt a tool into Theme Bridge. /theme opens Theme Studio (Built-in · Imported · Custom · Import): set any theme active, duplicate a built-in, edit, rename, duplicate, export (NMSh Theme JSON) or delete library themes, and import a local file from NMSh Theme JSON, Base16, Base24, Windows Terminal, Oh My Posh (JSON, YAML, TOML), Kitty, Ghostty, iTerm2 (.itermcolors) or WezTerm TOML. Imports are parsed as data only (nothing is executed, sourced, templated, followed or fetched), previewed with their mapping and what was lost, and saved only when you confirm; once imported a theme is an ordinary Native theme that no longer needs the source app or file. Cursor shape and blink (/cursor), the prompt symbol and the optional status strip are in Settings. UI chrome (frames, rules, tabs, selection) follows the theme by default, or a Custom preset (Native Lavender, Grayscale, your colors). Chroma colors the Native prompt; Full Chroma is the default influence, and Semantic colors decides whether success, failure and Git state are recolored too. Shimmer (On by default) plays one soft sweep of light when you select or change something, submit, or confirm; Decorative effects Off or Reduced Motion turn it off. /motion (also /appearance → Motion) sets the general motion: context transitions, command launch, completion highlight, command completion and event feedback.
+Settings → Theme (and Setup's Look step, /setup look) picks a Built-in theme (NMSh themes and bundled families: Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark), an Imported theme or a Custom theme. Themes color NMSh-owned UI only; your terminal and editor keep their colors unless you opt a tool into Theme Bridge. /theme opens Theme Studio (Built-in · Imported · Custom · Import): set any theme active, duplicate a built-in, edit, rename, duplicate, export (NMSh Theme JSON) or delete library themes, and import a local file from NMSh Theme JSON, Base16, Base24, Windows Terminal, Oh My Posh (JSON, YAML, TOML), Kitty, Ghostty, iTerm2 (.itermcolors) or WezTerm TOML. Imports are parsed as data only (nothing is executed, sourced, templated, followed or fetched), previewed with their mapping and what was lost, and saved only when you confirm; once imported a theme is an ordinary Native theme that no longer needs the source app or file. Cursor shape and blink (/cursor), the prompt symbol and the optional status strip are in Settings. UI chrome (frames, rules, tabs, selection) follows the theme by default, or a Custom preset (Native Lavender, Grayscale, your colors). Chroma colors the Native prompt; Full Chroma is the default influence, and Semantic colors decides whether success, failure and Git state are recolored too. Shimmer (On by default) plays one soft sweep of light when you select or change something, submit, or confirm; Decorative effects Off or Reduced Motion turn it off. /motion (also /appearance → Motion) sets the general motion: context transitions, command launch, completion highlight, command completion and event feedback.
 
 ## Prompt None and history
 
@@ -73,6 +73,32 @@ Use /history with plain text or combine cwd:, project:, exit:, before:, after:, 
 
 Enter or Tab restores the selected command without executing it. Ctrl+X removes the selected record from NMSh search. Session transcripts and the original zsh/Atuin history remain intact; deletion is remembered locally.
 
+To keep the selected history command, open the palette (F1 or Ctrl+Shift+P) and choose **Pin selected history command**. It keeps the command and its recorded directory without executing it; /pins lists it later.
+
+At the prompt, F8 focuses the newest failed command, then walks to older failures. Shift+F8 returns to newer failures. These keys preserve your draft; the palette also offers Previous/Next failed command. Your terminal may reserve function keys.
+
+Use C in Paste Review to keep an ephemeral clip, or a block's Actions to keep its command or output. The palette can keep your composer draft or selected history command. /clips reviews kept text before insertion; B opens the existing batch review. No clip runs automatically or replaces a draft. Clips stay in this frontend's memory (up to 12 clips and 1 MiB total), can be discarded, and disappear when it exits, including detach.
+
+/clips suggestions on optionally checks macOS's native clipboard change counter while the composer is idle. It never reads clipboard contents. A changed counter suggests /ps; only that explicit command reads text for review. Suggestions default off, last only for this frontend, and stop with /clips suggestions off or if metadata fails. Linux clipboard tools have no supported metadata counter; background text polling is unsupported.
+
+## Workspace sidebar and detail panel (experimental)
+
+Experimental and Off by default: turn it on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). While it is Off, /sidebar and /panel say how to turn it on and open nothing, and keymap.json workspace keys take no key. /worktrees, /sessions, /github and /background never depend on it.
+
+When it is On, /sidebar opens a sidebar beside the transcript: tmux panes of the server NMSh runs inside, this repository's worktrees, and links to /github, /agents and /sessions. /panel opens a detail panel for the selected item. /sidebar focus and /panel focus give them the keyboard; Esc returns to the composer and Tab moves between regions. In the sidebar, arrows move, Right/Left expand or collapse, Enter opens and / filters; in the panel, arrows and Page Up/Down scroll and q closes it. A click focuses a region.
+
+On a wide terminal the regions dock beside the transcript and the shell is sized to the middle. On a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them. Opening a worktree stages its cd in an empty composer; it never runs by itself.
+
+The composer binds no workspace keys by default. keymap.json in NMSh's configuration directory can add them (for example Left with an empty draft to focus the sidebar, with "replaces": true); /keys lists the keys in effect, any problems in the file and notes about keys your terminal or tmux may take first. /keys reload reads the file again.
+
+## Background tasks
+
+/background run <command> (or /bg run) starts a long-running command such as adb logcat, tail -f or a dev server in its own terminal beside the shell. It runs in the shell's current directory with its PATH, but without this shell's aliases, functions or unexported variables. Its output never mixes with the transcript or the shell.
+
+The task bar above the composer shows running and recent tasks. Up from an empty, idle prompt (after the agent shelf, when one is shown) or Shift+Up focuses it: Enter opens a task's output, x stops it (pressed again later: terminate, then kill), Delete removes a finished task, Space expands the bar, Esc returns. /background lists every task with its details and preferences; /background t3 opens one task's output; /background stop|kill|remove t3 and /background clear act directly.
+
+Nothing runs in the background unless you ask. /background suggestions on makes NMSh offer it when you submit a recognized long-running command: b runs it in the background once, Enter runs it here as before, a always backgrounds that command family, n stops asking, Esc returns to your draft. Tasks keep running while the window is detached and end with the session.
+
 ## Directory navigation
 
 Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.
@@ -83,10 +109,25 @@ Config offers optional zoxide ranking and optional fzf/Television pickers. zoxid
 
 After an unambiguous simple command-not-found typo in zsh, Bash or Fish, NMSh may show a local executable correction (from the commands on your shell's PATH) below the composer. Tab places it in the editor; review and press Enter separately. Esc dismisses it. Complex expressions, ambiguous matches and destructive targets are suppressed. The suggestion is frontend UI and stays out of command output, copy and history.
 
+## Setup and community
+
+/startup (also /setup quick, or Settings → General → Starting point) chooses how NMSh
+feels: NMSh Recommended, Minimal Terminal (Two-line or One-line), Customize Everything
+(the guided setup) or Keep Existing (your own prompt and tools, detected read-only).
+Nothing changes until you review it and press Enter to apply; Esc goes back, and Esc
+from the choices asks before leaving. A cycles its Aurora backdrop: on, subtle or off.
+/setup opens the full Setup Cat wizard; everything can be changed later.
+
+[Docs](https://github.com/raiseCatError/notMyShell#readme) ·
+[Report a bug](https://github.com/raiseCatError/notMyShell/issues/new?template=bug_report.yml) ·
+[Request a feature](https://github.com/raiseCatError/notMyShell/issues/new?template=feature_request.yml)
+
 ## Tips
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.
 - Portable Select-All is Alt+A.
+- /copy and /cp select completed output by default for new configurations. Up selects older output, Down newer, Enter copies full stored output, Esc restores the previous view. Saved Quick Copy and Interactive Picker choices remain in effect; /copy latest copies directly and /copy ui always opens multi-selection.
+- /actions and /action use the same navigation; Enter opens the selected block’s Actions. Esc returns to that selection, then Esc restores the previous view. /actions N opens output N directly (1 is newest). These selectors require the idle composer.
 - Shift+Tab focuses a past command; Enter opens its actions. **Open in pager** shows the command and its complete stored output in less (or your PAGER) and returns to NMSh when you quit; the text goes to the pager only on its stdin, never through the shell.
 - VS Code Cmd+A keybinding JSON:
 

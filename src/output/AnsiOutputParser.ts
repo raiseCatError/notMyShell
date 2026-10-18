@@ -12,6 +12,12 @@ export interface StyledCell {
    * Raw PTY links never carry this mark.
    */
   authored?: true;
+  /**
+   * One cell of the spaces a tab character advanced over (drawn as spaces); `tabSpan` on the first says how many.
+   * exactLine writes the tab back when the whole span is still intact.
+   */
+  tab?: true;
+  tabSpan?: number;
 }
 
 /** Targets NMSh may author: http(s) without credentials, and local file URLs. */
@@ -62,6 +68,16 @@ export class AnsiOutputParser {
    * skip their parameter/intermediate bytes and swallow the final byte, so no parameter becomes text.
    */
   private discarding: false | 'osc' | 'string' | 'csi' | 'nf' = false;
+
+  /** Whether the last text written ended a line (see takeEnding); undefined until text arrives. */
+  private ending?: boolean;
+
+  /** Whether text written since the last call ended with a line break (true), other text (false), or none (undefined). */
+  takeEnding(): boolean | undefined {
+    const ending = this.ending;
+    this.ending = undefined;
+    return ending;
+  }
 
   /** Bytes retained for an unfinished sequence; never above MAX_CONTROL_SEQUENCE. */
   get retainedControlBytes(): number {
@@ -115,6 +131,7 @@ export class AnsiOutputParser {
         this.lines.push(this.current);
         this.current = [];
         this.column = 0;
+        this.ending = true;
         index += 1;
         continue;
       }
@@ -130,7 +147,12 @@ export class AnsiOutputParser {
       }
       if (character === '\t') {
         const spaces = 8 - (this.column % 8);
-        for (let count = 0; count < spaces; count += 1) this.put(' ', 1);
+        for (let count = 0; count < spaces; count += 1) {
+          this.put(' ', 1);
+          const cell = this.current[this.column - 1]!;
+          cell.tab = true;
+          if (count === 0) cell.tabSpan = spaces;
+        }
         index += 1;
         continue;
       }
@@ -142,7 +164,7 @@ export class AnsiOutputParser {
       const width = stringWidth(value);
       if (width === 0) {
         const previous = this.findPreviousCell();
-        if (previous) { previous.text += value; this.touch(); }
+        if (previous) { previous.text += value; this.touch(); this.ending = false; }
       } else {
         this.put(value, width);
       }
@@ -219,6 +241,12 @@ export class AnsiOutputParser {
   plainLineAt(index: number): string | undefined {
     const line = this.lines[index];
     return line ? plainLine(line) : undefined;
+  }
+
+  /** A finished line as the program wrote it, tabs included (see exactLine). */
+  exactLineAt(index: number): string | undefined {
+    const line = this.lines[index];
+    return line ? exactLine(line) : undefined;
   }
 
   plainCurrentLine(): string {
@@ -368,6 +396,7 @@ export class AnsiOutputParser {
   }
 
   private put(text: string, width: number): void {
+    this.ending = false;
     for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
     this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
     this.touch();
@@ -384,6 +413,24 @@ export class AnsiOutputParser {
     }
     return undefined;
   }
+}
+
+/**
+ * plainLine, except that a tab whose spaces are all still on the line is written as the tab the program printed.
+ * A span something later overwrote (even in part) stays the spaces now shown. Trailing whitespace is trimmed alike.
+ */
+export function exactLine(line: StyledLine): string {
+  let result = '';
+  for (let index = 0; index < line.length; index += 1) {
+    const cell = line[index];
+    const span = cell?.tabSpan ?? 0;
+    if (span && Array.from({length: span}, (_, offset) => line[index + offset]).every(item => item?.tab && item.text === ' ')) {
+      result += '\t';
+      index += span - 1;
+    } else if (cell === undefined) result += ' ';
+    else if (cell !== null) result += cell.text;
+  }
+  return result.replace(/\s+$/u, '');
 }
 
 export function plainLine(line: StyledLine): string {

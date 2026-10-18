@@ -135,6 +135,16 @@ export const systemRunner: CommandRunner = {
   },
 };
 
+/** The same runner for read-only facts (provenance for a notice): seconds, not the minutes a build may take. */
+export const quickRunner: CommandRunner = {
+  run(command, args, cwd) {
+    return new Promise((resolvePromise, reject) => {
+      execFile(command, [...args], {cwd, encoding: 'utf8', timeout: 5_000, maxBuffer: 256 * 1024, env: {...process.env, GIT_TERMINAL_PROMPT: '0'}},
+        (error, stdout, stderr) => { if (error) reject(new Error((stderr || error.message).trim().split('\n').slice(-1).join(' '))); else resolvePromise(stdout.trim()); });
+    });
+  },
+};
+
 /** The directory NMSh runs from: the package root above `dist/`. */
 export function installRoot(moduleUrl = import.meta.url): string {
   return resolve(dirname(fileURLToPath(moduleUrl)), '..', '..');

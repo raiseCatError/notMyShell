@@ -1,3 +1,5 @@
+import type {CellGrid} from './CellGrid.js';
+
 /**
  * The NMSh cat (Vespyr) as pixels: the approved Welcome/idle sprite, one
  * source for both the bouncing-Vespyr scene and raiseCatError. L is body, E an
@@ -19,6 +21,8 @@ export const CAT_CELL_WIDTH = 14;
 export const CAT_CELL_HEIGHT = 4;
 export const CAT_BODY = 0xac96e6;
 export const CAT_EYE = 0x161220;
+/** Whiskers, as the Welcome cat draws them. */
+export const CAT_WHISKER = 0x968eac;
 /** The plain-character cat for NO_COLOR / no-color terminals (7 × 3). */
 export const CAT_ASCII: readonly string[] = [' /\\_/\\ ', '( o.o )', ' > ^ < '];
 export const CAT_ASCII_BLINK: readonly string[] = [' /\\_/\\ ', '( -.- )', ' > ^ < '];
@@ -59,4 +63,20 @@ export function catCells(pose: CatPose, facingRight: boolean): CatCell[] {
     }
   }
   return cells;
+}
+
+/**
+ * Vespyr composited into a scene pixel by pixel: each sprite pixel replaces
+ * only its own half of a cell, the other half keeps its exact color, a
+ * transparent half stays transparent, and the whiskers sit on the mean of the
+ * pixels they cover. Cells the sprite does not cover are untouched, so there
+ * is no rectangle, halo or blended block around the silhouette over a moving
+ * sky, a still one or none at all. Callers redraw (or clear) the grid each frame.
+ */
+export function compositeCat(grid: CellGrid, x: number, y: number, pose: CatPose, facingRight: boolean): void {
+  for (const cell of catCells(pose, facingRight)) {
+    if (cell.glyph === '▀') grid.compositePixels(x + cell.dx, y + cell.dy, cell.fg, cell.bg);
+    else grid.compositePixels(x + cell.dx, y + cell.dy, undefined, cell.fg);
+  }
+  for (const source of [0, 6]) grid.stamp(x + (facingRight ? CAT_CELL_WIDTH - 1 - source : source), y + 1, '=', CAT_WHISKER);
 }
