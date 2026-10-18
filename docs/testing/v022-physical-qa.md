@@ -55,8 +55,9 @@ Make a long file first: `seq 1 500 > long.txt`.
 2.1 With `EDITOR=nvim` (or `vim`) exported in your shell startup or the launching window: `/view long.txt`, scroll to
 about line 200 (`:200` Enter), press `o`. The viewer closes and the composer holds `nvim +200 /…/long.txt` (nothing
 runs). Enter opens the editor at line 200; quitting it returns to NMSh's composer.
-2.2 Type a draft (`git status`), then `/view long.txt` via Actions or `/view`, press `o`: the viewer stays and says the
-composer has a draft; the draft is unchanged after Esc.
+2.2 While a command runs: `sleep 20`, then `/view long.txt`, `o`. The editor command is placed in the composer;
+Enter queues it (`≡ 1 queued`) and the editor opens after `sleep` ends. (A draft already in the composer is never
+replaced; that case is covered by automated tests, since opening `/view` empties the composer.)
 2.3 A name with spaces: `printf 'x\n' > 'my notes.txt'`, `/view my notes.txt` (the rest of the line is the path, no
 quotes), `o`: the composer command quotes the path as one argument.
 2.4 With `VISUAL` and `EDITOR` unset, outside any editor: `o` says no editor is known and how to set one.
