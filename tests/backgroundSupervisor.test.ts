@@ -109,6 +109,18 @@ test('a pipeline stops as a whole; a detached helper it started (like the adb se
   });
 });
 
+test('a task that leaves nothing behind is never reported as having processes left, even for a moment; it is removable once exited', async () => {
+  await withSupervisor(async (supervisor, cwd, changes) => {
+    for (let run = 0; run < 5; run += 1) {
+      const {task} = supervisor.start({command: `printf 'done ${run}\\n'`, cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+      await waitFor(() => supervisor.get(task.id)!.state === 'exited', 'exited');
+      assert.deepEqual(changes.filter(change => change.id === task.id && change.leftovers).map(change => change.state), [],
+        'the guard still being alive is not a process left behind');
+      assert.equal(supervisor.remove(task.id), true, 'exited with nothing left: removable at once');
+    }
+  });
+});
+
 test('processes left in the group after the leader exits are reported, and killed only on request', async () => {
   await withSupervisor(async (supervisor, cwd) => {
     const {task} = supervisor.start({command: afterSleeperReady(cwd, '60000', 'sleep 1; exit 0'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};

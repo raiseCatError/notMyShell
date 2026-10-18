@@ -35,6 +35,7 @@ const saveExit = (exitCode: number, signal?: number) => {
 child.on('error', () => saveExit(127));
 child.on('exit', (code, signal) => saveExit(code ?? 0, signal ? constants.signals[signal] : undefined));
 let lastProbe = -Infinity;
+let reported = false;
 const poll = setInterval(() => {
   // An orphaned guard owns its group, never the former parent's possibly recycled PID.
   if (process.ppid !== parent) { rmSync(directory, {recursive: true, force: true}); process.kill(0, 'SIGKILL'); }
@@ -49,4 +50,9 @@ const poll = setInterval(() => {
     return Number(pgid) === process.pid && Number(pid) !== process.pid && Number(ppid) !== process.pid && !state?.startsWith('Z');
   });
   if (!members) { clearInterval(poll); process.exit(0); }
+  // Say once that members remain, so the supervisor reports them now instead of waiting for this guard to exit.
+  if (!reported) {
+    reported = true;
+    try { writeFileSync(`${directory}/left-next`, '1', {mode: 0o600}); renameSync(`${directory}/left-next`, `${directory}/left`); } catch { /* The supervisor's bound applies. */ }
+  }
 }, 25);
