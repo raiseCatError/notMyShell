@@ -6,6 +6,9 @@ import {join} from 'node:path';
 import {clearProviderDetection} from '../src/providers/providers.js';
 import {stripAnsi} from '../src/util/text.js';
 import {executionFrameFixture} from './support/executionTimelineFrames.js';
+import {isolateConfig} from './support/isolatedConfig.js';
+import {TerminalApp} from '../src/app/TerminalApp.js';
+import {SETUP_SECTIONS, sectionIndex, setupKey, setupSelectedRow} from '../src/setup/SetupCat.js';
 
 /**
  * #366 (D3) through the real TerminalApp: Settings → Terminal editor lists the curated editors with what is installed
@@ -66,6 +69,51 @@ test('Terminal editor: choose an installed editor, refuse a missing one; /open c
   } finally {
     f.dispose();
     for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    clearProviderDetection();
+    rmSync(bin, {recursive: true, force: true});
+  }
+});
+
+test('Setup → Sessions → Terminal editor opens the chooser over Setup and comes back to the same step with the choice', async () => {
+  const saved = {PATH: process.env.PATH, VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR, ZED_TERM: process.env.ZED_TERM};
+  const bin = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-editors-')));
+  const isolation = isolateConfig();
+  const app = new TerminalApp();
+  try {
+    writeFileSync(join(bin, 'hx'), '#!/bin/sh\nexit 0\n'); chmodSync(join(bin, 'hx'), 0o755);
+    process.env.PATH = bin;
+    delete process.env.VISUAL; delete process.env.EDITOR; delete process.env.ZED_TERM;
+    clearProviderDetection();
+    app['render'] = () => {};
+    app['startSetup']('sessions');
+    const state = app['setupState']!;
+    const goTo = (row: string) => {
+      state.section = sectionIndex('sessions'); state.row = 0;
+      for (let guard = 0; guard < 80 && setupSelectedRow(state)?.row.id !== row; guard += 1) setupKey(state, {kind: 'down'});
+      assert.equal(setupSelectedRow(state)?.row.id, row);
+    };
+    // An unapplied edit elsewhere in the step waits in the draft.
+    goTo('terminalTitle');
+    app['handleKey']({kind: 'right'});
+    const pending = state.draft.terminalTitle;
+    assert.notEqual(pending, state.saved.terminalTitle);
+    goTo('setupTerminalEditor');
+    const row = state.row;
+    app['handleKey']({kind: 'enter'});
+    const panel = app['providerPanelState'];
+    assert.equal(panel?.family, 'editor', 'the real chooser opens over Setup');
+    assert.equal(app['setupState'], undefined);
+    await settled(() => Object.keys(panel!.statuses).length === panel!.providers.length, 'detection');
+    panel!.selectedIndex = panel!.providers.findIndex(provider => provider.id === 'hx');
+    await app['handleProviderPanelKey']({kind: 'enter'}, panel!);
+    assert.equal(app['setupState'], state, 'back in the same Setup');
+    assert.equal(SETUP_SECTIONS[state.section]!.id, 'sessions');
+    assert.equal(state.row, row, 'on the same row');
+    assert.equal(state.draft.terminalEditor, 'hx', 'the choice joins the draft');
+    assert.equal(state.draft.terminalTitle, pending, 'the other unapplied edit survives');
+  } finally {
+    app['stop'](0); app['session'].kill(); isolation.restore();
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     clearProviderDetection();
     rmSync(bin, {recursive: true, force: true});
   }
