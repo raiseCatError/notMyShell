@@ -16,7 +16,7 @@ Automated results here are not physical-terminal validation.
 | --- | --- | --- | --- | --- | --- |
 | 0 | Design and ledger | #410 | `docs/v021-design` / #411 | | PR open, CI green; awaiting merge |
 | 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` (stacked on #411) | | PR open |
-| 2 | `/view` | #397, #402 | | | |
+| 2 | `/view` | #397, #402 | `feature/v021-view` (stacked on slice 1) | | PR open |
 | 3 | `/edit` | #402 | | | |
 | 4 | Semantic Output | #386 | | | |
 | 5 | `/track` | #393 (#394) | | | |
@@ -34,7 +34,8 @@ Automated results here are not physical-terminal validation.
 ## Physical QA still required
 
 Checklist: [v0.21 physical QA](../testing/v021-physical-qa.md). Slice 1: section 1 (multi-row progress in Ghostty
-and Terminal.app, queued highlight colors).
+and Terminal.app, queued highlight colors). Slice 2: section 2 (`/view` keys, rendering, refusals, hostile text,
+NO_COLOR).
 
 ## Verification notes
 

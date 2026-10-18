@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`/view`, a native read-only viewer** for files and completed output ([#397](https://github.com/raiseCatError/notMyShell/issues/397)). `/view README.md` opens a file relative to the shell's directory (`~` for home): Markdown renders (`m` shows the source), source files get syntax colors and line numbers, `.diff`/`.patch` files and `git diff`/`git show` output read as diffs. `/view N` opens completed output N (numbered as `/copy` numbers it) and `/view` the latest; Actions → View output does the same for a block. Find with `/` and `n`/`N`, go to a line with `:`, `w` toggles wrapping (Left/Right scroll sideways), `l` line numbers, `c` copies the whole text, Esc closes. Viewing never changes the file or the transcript.
+  - Limits: regular files only (directories, devices and pipes are refused), at most 8 MiB and 200,000 lines (the rest is named, with `less` or an editor as the way to read it), binary and UTF-16 files are refused, invalid UTF-8 is shown with `�` and a note. Control characters, escape sequences and invisible format characters are shown as visible marks, never interpreted. Open in pager, `less`, `bat` and Glow are unchanged.
+
 ### Fixed
 
 - Multi-line progress displays that redraw their own rows (cursor up and erase line, as concurrent downloads and container pulls do) now update in place instead of leaving a copy of every frame in the transcript ([#388](https://github.com/raiseCatError/notMyShell/issues/388)). A program can redraw only its own recent rows, at most a screen height up, never NMSh's lines or earlier commands; `/copy` copies the final rows once. Absolute cursor positioning keeps the previous behavior.
