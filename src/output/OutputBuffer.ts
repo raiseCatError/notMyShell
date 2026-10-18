@@ -629,10 +629,11 @@ export class OutputBuffer {
       firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
-      liveRows: (line, width) => {
+      // Only a transcript with /track blocks pays for the per-line lookup.
+      ...(this.trackAnchors.size ? {liveRows: (line: number, width: number) => {
         const id = this.trackAnchors.get(line);
         return id === undefined ? undefined : this.liveRowsProvider?.(id, width);
-      },
+      }} : {}),
       semantic: record => {
         const result = this.semanticFor(record);
         return result ? {result, open: this.semanticDetailsOpen(record, result)} : undefined;
