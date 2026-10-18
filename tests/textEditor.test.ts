@@ -218,6 +218,31 @@ test('save: a changed, replaced or deleted original is a conflict; Overwrite is 
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
+test('save: a new file in a folder reached through a symlink saves again without a false conflict', async () => {
+  // macOS /tmp and /var are symlinks, and a shell's directory keeps the path as typed.
+  const root = scratch();
+  try {
+    mkdirSync(join(root, 'real'));
+    symlinkSync(join(root, 'real'), join(root, 'alias'));
+    let file = await opened(join(root, 'alias', 'notes.txt'));
+    assert.equal(file.identity, undefined, 'a new file');
+    const first = await saveFile(file, ['one']);
+    assert.ok(first.ok, first.ok ? '' : first.reason);
+    file = first.file;
+    const second = await saveFile(file, ['one', 'two']);
+    assert.ok(second.ok, second.ok ? '' : `second save: ${second.reason}`);
+    assert.equal(readFileSync(join(root, 'real', 'notes.txt'), 'utf8'), 'one\ntwo\n');
+    assert.ok(lstatSync(join(root, 'alias')).isSymbolicLink(), 'the folder link is kept');
+    // The resolved path is still checked: a file replaced after the first save is a conflict, not overwritten.
+    writeFileSync(join(root, 'real', 'other.txt'), 'theirs\n');
+    renameSync(join(root, 'real', 'other.txt'), join(root, 'real', 'notes.txt'));
+    const replaced = await saveFile(second.file, ['mine']);
+    assert.ok(!replaced.ok && replaced.conflict === 'replaced');
+    assert.equal(readFileSync(join(root, 'real', 'notes.txt'), 'utf8'), 'theirs\n');
+    assert.deepEqual(readdirSync(join(root, 'real')).filter(name => name.includes('.nmsh-')), [], 'no temporary files');
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
 test('save: a failure keeps the text and leaves nothing behind', {skip: process.getuid?.() === 0 && 'root ignores permissions'}, async () => {
   const root = scratch();
   try {
