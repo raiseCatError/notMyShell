@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
@@ -188,8 +188,38 @@ test('/track fails visibly when the command or working directory is unavailable'
       {kind: 'allowed', network: false, remote: false});
     await waitFor(() => missingCwd.runs === 1);
     assert.notEqual(missingCwd.current?.exitCode, 0, 'invalid cwd cannot be a successful refresh');
-    assert.match(missingCwd.current?.error ?? '', /ENOENT|spawn/u);
+    assert.equal(missingCwd.current?.error, `the directory ${join(cwd, 'not-here')} is no longer available`, 'names the directory, not the shell');
     assert.equal(engine.active().length, 2);
+  } finally {
+    engine.dispose();
+    rmSync(cwd, {recursive: true, force: true});
+  }
+});
+
+test('/track ends what a sample leaves in its process group: after stop, and after a sample that finished', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-orphans-'));
+  const engine = new WatchTasks('/bin/sh');
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // A child that ignores TERM and closes its output: the shell that started it can end while it keeps running.
+  const stubborn = (name: string) => `sh -c 'trap "" TERM; echo $$ > ${name}; exec >/dev/null 2>&1; exec sleep 30'`;
+  const pidOf = async (name: string) => {
+    let pid = 0;
+    await waitFor(() => { try { pid = Number(readFileSync(join(cwd, name), 'utf8').trim()); } catch { /* not yet */ } return pid > 0; });
+    return pid;
+  };
+  try {
+    const stopped = engine.start(`${stubborn('stopped.pid')}; echo done`, cwd, 5000, {kind: 'allowed', network: false, remote: false});
+    const stoppedPid = await pidOf('stopped.pid');
+    assert.ok(alive(stoppedPid));
+    assert.equal(engine.stop(stopped.id), true);
+    await waitFor(() => !alive(stoppedPid), 6000);
+
+    const finished = engine.start(`${stubborn('finished.pid')} & echo started`, cwd, 5000, {kind: 'allowed', network: false, remote: false});
+    await waitFor(() => finished.runs === 1, 6000);
+    assert.match(finished.current?.output ?? '', /started/u);
+    assert.equal(finished.current?.exitCode, 0, 'the sample itself finished normally');
+    const finishedPid = await pidOf('finished.pid');
+    await waitFor(() => !alive(finishedPid), 6000);
   } finally {
     engine.dispose();
     rmSync(cwd, {recursive: true, force: true});
