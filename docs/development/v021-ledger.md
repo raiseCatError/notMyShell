@@ -14,8 +14,8 @@ Automated results here are not physical-terminal validation.
 
 | # | Slice | Issues | Branch / PR | Merged commit | State |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Design and ledger | #410 | | | in progress |
-| 1 | Reliability gates | #403, #408, #388 | | | |
+| 0 | Design and ledger | #410 | `docs/v021-design` / #411 | | PR open, CI green; awaiting merge |
+| 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` (stacked on #411) | | PR open |
 | 2 | `/view` | #397, #402 | | | |
 | 3 | `/edit` | #402 | | | |
 | 4 | Semantic Output | #386 | | | |
@@ -33,8 +33,21 @@ Automated results here are not physical-terminal validation.
 
 ## Physical QA still required
 
-Recorded per slice when it merges.
+Checklist: [v0.21 physical QA](../testing/v021-physical-qa.md). Slice 1: section 1 (multi-row progress in Ghostty
+and Terminal.app, queued highlight colors).
+
+## Verification notes
+
+- Slice 1 evidence: each new regression fails on the unfixed code and passes on the fix (Fish generator present;
+  superseded lookup settled `unknown` and the stored line never recolored; 9 of 10 redraw tests fail on the old parser,
+  the tenth being the documented unchanged absolute-positioning case). #408 tests passed 16/16 in two concurrent loops.
+- Local full `npm run verify` on this 8 GB Mac: run with `NMSH_TEST_TMPDIR` at the T7 storage root
+  (`/Volumes/T7Tmp/ai-dev`), never a deeper directory: the runner requires test roots under 32 characters for Unix
+  sockets, and a longer root fails the runner self-test, tmux and session-socket tests for environmental reasons.
+  Live PTY tests can time out under full-suite load here and pass alone; exact-head CI is the independent gate.
 
 ## Open risks
 
-None recorded yet.
+- Merging into `dev` needs the maintainer (the agent's merge was refused by its permission policy). Slices are
+  stacked PRs; merge them in order, each squashed.
+- #388: programs that position rows absolutely inline (rare) still append; recorded in the design.
