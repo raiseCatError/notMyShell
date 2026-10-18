@@ -45,6 +45,7 @@ test('/track in the app: one block whose live result refreshes in place; /track 
     const text = stored(app).join('\n');
     assert.match(text, /Stopped · last result \d\d:\d\d:\d\d · exit 0 · \d+ runs?\n\s*two/u);
     assert.equal(text.split('Stopped · last result').length, 2, 'written once');
+    assert.equal(app['trackBlocks'].size, 0, 'a stopped tracker releases its live height bookkeeping');
     assert.match(live(app)[0] ?? '', /^■ stopped/u, 'the live rows end with the stopped state');
 
     app['handleWatch']('/watch ls', 'start', 'ls', false);
