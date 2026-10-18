@@ -51,7 +51,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
-  {name: '/modules', insertion: '/modules', description: 'Context modules, catalog and Context Packs: show, route to a surface, search; saved as you change them'},
+  {name: '/modules', insertion: '/modules', description: 'Context modules, catalog and Context Packs: show, route to a surface, search; saved as you change them (/modules explain · /modules timings)'},
   {name: '/cursor', insertion: '/cursor', description: 'Text caret shape and blink while NMSh owns the composer'},
   {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
   {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
@@ -178,7 +178,7 @@ export type ParsedSlashCommand =
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
-  | {kind: 'modules'}
+  | {kind: 'modules'; report?: 'explain' | 'timings'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
   | {kind: 'themeBridge'}
@@ -281,7 +281,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
-  if (/^\/modules\s*$/u.test(input)) return {kind: 'modules'};
+  const modules = /^\/modules(?:\s+(explain|timings))?\s*$/u.exec(input);
+  if (modules) return modules[1] ? {kind: 'modules', report: modules[1] as 'explain' | 'timings'} : {kind: 'modules'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
   if (/^\/theme-bridge\s*$/u.test(input)) return {kind: 'themeBridge'};

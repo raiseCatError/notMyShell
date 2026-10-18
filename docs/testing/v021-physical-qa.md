@@ -23,6 +23,7 @@
 | 4 Semantic Output | Ghostty | macOS | zsh | | Not run | |
 | 5 `/track` | Ghostty | macOS | zsh | | Not run | |
 | 5 `/track` | Terminal.app | macOS | Fish | | Not run | |
+| 6 Modules | Ghostty | macOS | zsh | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -103,3 +104,13 @@
 - [ ] 5.7 An unknown command asks for Yes first; `rm`, `sudo`, `cd`, `$(...)`, `&` and heredocs are refused.
 - [ ] 5.8 Close the window with a tracker running: no `sh` or command processes are left (`ps`). `/watch git status`
   still opens its manager.
+
+## 6. Native modules and diagnostics
+
+- [ ] 6.1 In a folder with `bun.lock` and `"packageManager": "bun@1.1.30"`, `/modules` recommends Bun; enabled, typing
+  `bun` shows its version (requested, and active when installed through Homebrew).
+- [ ] 6.2 `nix-shell -p hello` (or `nix develop`) with the Nix shell module enabled: it shows `impure`; it disappears
+  after `exit`.
+- [ ] 6.3 In a Docker or Podman container (or a Codespace), the container module names it; on the host it shows nothing.
+- [ ] 6.4 `/modules explain` lists every configured module with its surface and reason; `/modules timings` lists the
+  slowest collections; neither changes what is collected (the Status Strip CPU stays as it was).

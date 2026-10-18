@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["env.toolVersions", "env.direnv"],
+  "requires": ["env.toolVersions", "env.direnv", "env.nixShell"],
   "modules": [
     {
       "id": "tools", "label": "mise / asdf", "description": "Tools the nearest mise.toml or .tool-versions requests (never runs mise or asdf).",
@@ -26,10 +26,19 @@
         {"text": "direnv "},
         {"fact": "env.direnv", "field": "state"}
       ]}]
+    },
+    {
+      "id": "nix", "label": "Nix shell", "description": "Whether this shell is inside nix-shell or nix develop, from IN_NIX_SHELL (never runs nix).",
+      "category": "environment", "priority": 37, "role": "system", "icon": "cubes", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "nix", "parts": [
+        {"fact": "env.nixShell", "field": "state"}
+      ]}]
     }
   ],
   "recommend": [
     {"module": "tools", "evidence": [{"kind": "workspaceFile", "names": ["mise.toml", ".mise.toml", ".tool-versions"]}]},
-    {"module": "direnv", "evidence": [{"kind": "workspaceFile", "names": [".envrc"]}]}
+    {"module": "direnv", "evidence": [{"kind": "workspaceFile", "names": [".envrc"]}]},
+    {"module": "nix", "evidence": [{"kind": "workspaceFile", "names": ["flake.nix", "shell.nix"]}]}
   ]
 }

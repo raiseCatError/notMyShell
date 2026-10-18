@@ -293,7 +293,8 @@ export function parsePack(bytes: string | Uint8Array, capabilities: ReadonlyMap<
         ...(provenance.notes !== undefined ? {notes: str(provenance.notes, 'pack.provenance.notes', 240)} : {})},
       compatibility: {contextApi: bounded(compatibility.contextApi, 'pack.compatibility.contextApi', 1, 99),
         ...(compatibility.nmsh !== undefined ? {nmsh: str(compatibility.nmsh, 'pack.compatibility.nmsh', 32, NMSH_RANGE)} : {})},
-      requires: list(record.requires, 'pack.requires', 16, (entry, at) => str(entry, at, 64, /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*){1,3}$/u)),
+      // As many capabilities as modules: a pack's modules may each need a different one.
+      requires: list(record.requires, 'pack.requires', 24, (entry, at) => str(entry, at, 64, /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*){1,3}$/u)),
       modules: list(record.modules, 'pack.modules', 24, module, 1),
       ...(record.recommend !== undefined ? {recommend: list(record.recommend, 'pack.recommend', 24, (entry, at) => {
         const rule = obj(entry, at, ['module', 'evidence']);

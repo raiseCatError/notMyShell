@@ -271,6 +271,7 @@ import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
+import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
@@ -2944,6 +2945,8 @@ export class TerminalApp {
       if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
     }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'modules' && slash.report === 'explain') this.output.addFrontendBlock(command.trim(), explainModules(this.promptConfiguration.modules, this.modulesContext(), this.promptConfiguration));
+    else if (slash.kind === 'modules' && slash.report === 'timings') this.output.addFrontendBlock(command.trim(), moduleTimings(id => this.contextEngine.status(id)));
     else if (slash.kind === 'modules') { this.panelOrigin = undefined; this.openModulesManager(); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'screensaver') {

@@ -7,8 +7,16 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh; shares the Status Strip's OS readers."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["system.os", "session.user", "session.jobs", "session.duration", "system.time", "system.battery", "system.memory"],
+  "requires": ["system.os", "session.user", "session.jobs", "session.duration", "system.time", "system.battery", "system.memory", "system.container"],
   "modules": [
+    {
+      "id": "container", "label": "Container", "description": "Whether this shell runs in a container (Docker, Podman, a dev container or Codespaces), from marker files and host variables.",
+      "category": "system", "priority": 14, "role": "system", "icon": "cubes", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "container", "parts": [
+        {"fact": "system.container", "field": "kind"}
+      ]}]
+    },
     {
       "id": "os", "label": "Operating system", "description": "Operating system name and version.",
       "category": "system", "priority": 12, "role": "system", "condition": "always",
