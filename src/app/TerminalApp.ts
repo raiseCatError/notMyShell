@@ -10577,6 +10577,7 @@ export class TerminalApp {
       this.lastPtyColumns = columns;
       this.session.resize(columns, plan.ptyRows);
       this.output.setScreenRows(plan.ptyRows);
+      this.output.setScreenColumns(columns);
     }
 
     const wrapped = this.output.wrapped(columns);

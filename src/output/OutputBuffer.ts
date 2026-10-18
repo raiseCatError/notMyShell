@@ -376,6 +376,11 @@ export class OutputBuffer {
     this.parser.setScreenRows(rows);
   }
 
+  /** The PTY's columns: a program's long lines occupy rows at this width when it moves its cursor over them. */
+  setScreenColumns(columns: number): void {
+    this.parser.setScreenColumns(columns);
+  }
+
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
     for (let i = 0; i < formattedLines.length; i++) {
       this.parser.replaceLine(startId + i, formattedLines[i] ?? '');
