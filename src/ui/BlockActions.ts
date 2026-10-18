@@ -5,7 +5,7 @@ import {displayWidth} from '../util/text.js';
 import {recordCopyText} from '../clipboard/copySelection.js';
 import {findOutputReferences} from '../output/references.js';
 
-export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references' | 'pin' | 'clipCommand' | 'clipOutput';
+export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'view' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references' | 'pin' | 'clipCommand' | 'clipOutput';
 /** One registry for both pointer-opened and keyboard-opened block palettes. */
 export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: string}[] = [
   {id: 'copyCommand', label: 'Copy command', detail: 'Stored plain command'},
@@ -13,6 +13,7 @@ export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: 
   {id: 'copyBoth', label: 'Copy command + output', detail: 'Stored plain command and full output'},
   {id: 'copyReport', label: 'Copy as report…', detail: 'Command, status, exit code, duration and output as Markdown or plain text; reviewed first'},
   {id: 'compare', label: 'Compare output…', detail: 'With the previous run of this command, or another block you choose'},
+  {id: 'view', label: 'View output', detail: "Full stored output in NMSh's viewer: find, line numbers, wrap; read-only"},
   {id: 'pager', label: 'Open in pager', detail: 'Command and full stored output in your pager (less), read-only'},
   {id: 'rerun', label: 'Rerun command', detail: 'Explicitly submit a visible command in the current shell directory'},
   {id: 'edit', label: 'Edit & rerun', detail: 'Put command in composer; Enter executes it'},

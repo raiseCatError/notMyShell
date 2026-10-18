@@ -68,6 +68,8 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, typ
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
+import {loadFileDocument, outputDocument} from '../viewer/document.js';
+import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -1620,6 +1622,17 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.viewer) {
+      const viewer = this.viewer;
+      const {columns, rows} = this.dimensions();
+      const action = viewerKey(viewer, key, columns, rows - 4, this.viewerLook());
+      if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy') {
+        void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
+      }
+      this.render();
+      return;
+    }
     if (this.comparePanel) {
       const {columns, rows} = this.dimensions();
       const action = comparePanelKey(this.comparePanel, key, columns, rows - 4);
@@ -2873,6 +2886,7 @@ export class TerminalApp {
       else this.configureClipboardChanges(slash.suggestions);
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
+    else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -3230,6 +3244,7 @@ export class TerminalApp {
       try { await writeClipboard(record.command); this.noteClipboard(`Copied command · ${copyStats(record.command).characters.toLocaleString()} characters`, 'success'); }
       catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'view') this.openOutputViewer(record);
     else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
@@ -3551,6 +3566,50 @@ export class TerminalApp {
       if (code === 0 && this.reportReview === review) applyReportEdit(review, readFileSync(file, 'utf8'));
     } catch { /* The review keeps the text it had. */ }
     finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
+  }
+
+  private viewerLook(): ViewerLook {
+    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks};
+  }
+
+  /**
+   * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
+   * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
+   */
+  private openViewer(target: string, command: string): void {
+    this.viewerLoad?.abort();
+    this.viewerLoad = undefined;
+    if (!target || /^[1-9]\d{0,2}$/u.test(target)) {
+      const number = target ? Number(target) : 1;
+      const record = this.output.recentShellCommands()[number - 1];
+      if (!record) {
+        this.output.addFrontendInteraction(command, target ? `No completed command output at ${number}.` : 'No completed output yet. /view <file> opens a file.', target ? ERROR : INFO);
+        return;
+      }
+      this.openOutputViewer(record);
+      return;
+    }
+    const load = new AbortController();
+    this.viewerLoad = load;
+    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(result => {
+      if (this.viewerLoad !== load || this.stopped) return;
+      this.viewerLoad = undefined;
+      if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Another panel opened while the file was read: it keeps the keys; the file is not opened over it.
+      if (this.hasModalInput()) return;
+      this.panelOrigin = undefined;
+      this.viewer = createViewer(result.document);
+      this.render();
+    });
+  }
+
+  /** View output: the record's stored output, numbered as /copy numbers it. */
+  private openOutputViewer(record: CompletedCommand): void {
+    const number = this.output.recentShellCommands().indexOf(record) + 1;
+    this.panelOrigin = undefined;
+    // The text /copy copies (tabs as the program wrote them), without the optional completion status.
+    this.viewer = createViewer(outputDocument({command: record.command, output: recordCopyText(record, false), exitCode: record.exitCode}, Math.max(1, number)));
+    this.render();
   }
 
   /** Compare output…: straight to the difference when the other side is known, otherwise choose it (previous run first). */
@@ -4905,7 +4964,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.viewer || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4947,6 +5006,7 @@ export class TerminalApp {
     if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanelPreview(columns));
@@ -5875,6 +5935,10 @@ export class TerminalApp {
   private reportReview?: ReportReviewState;
   /** Compare output…: choosing the other block, then the difference. */
   private comparePanel?: ComparePanelState;
+  /** The native read-only viewer (/view, View output); owns keys while open. */
+  private viewer?: ViewerState;
+  /** A file /view is still reading; a newer request or Esc cancels it. */
+  private viewerLoad?: AbortController;
   private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
   private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
   /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */

@@ -16,6 +16,8 @@
 |---|---|---|---|---|---|---|
 | 1 Multi-row progress (#388) | Ghostty | macOS | zsh | | Not run | |
 | 1 Multi-row progress (#388) | Terminal.app | macOS | Bash or Fish | | Not run | |
+| 2 `/view` | Ghostty | macOS | zsh | | Not run | |
+| 2 `/view` | Terminal.app | macOS | zsh | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -29,3 +31,22 @@
 - [ ] 1.6 `vim`, `less` and `htop` still take the full screen and return to the composer.
 - [ ] 1.7 Queue two quick commands (`ls` then `pwd`) with Ctrl+Q while a short command runs: both stored command
   lines end with the known-command color (#408).
+
+## 2. Native viewer (`/view`, View output)
+
+- [ ] 2.1 `/view README.md` in this repository: Markdown is rendered (headings, lists, code, tables); `m` shows the
+  source with line numbers; `m` again returns.
+- [ ] 2.2 `/view src/viewer/ViewerPanel.ts`: syntax colors, line numbers, `w` turns wrapping off and Left/Right scroll
+  sideways with `‹`/`›` marks, `l` hides numbers.
+- [ ] 2.3 `/` finds text (lowercase ignores case), `n`/`N` step and wrap with a note, `:` + number goes to a line,
+  `G`/`g` end and start, PageUp/PageDown, mouse wheel scrolls.
+- [ ] 2.4 Run `seq 1 5000`, then `/view` (latest output) and Actions → View output on that block; `/view 2` opens the
+  previous output. The transcript is unchanged after closing.
+- [ ] 2.5 `c` copies the whole document; the clipboard has the exact text (tabs kept), and nothing else.
+- [ ] 2.6 Hostile content: `printf '\033]8;;https://example.com\a\033[31mred\033[2J\n' > /tmp/h.txt && /view /tmp/h.txt`
+  shows `␛` marks, no color change, no link, no screen clear.
+- [ ] 2.7 Refusals say why: a directory, a missing file, `/dev/zero`, a FIFO (`mkfifo /tmp/f && /view /tmp/f` returns
+  at once), a binary (`/view /bin/ls`), a 20 MB log (shows the first 8 MiB with a note).
+- [ ] 2.8 Esc closes, the composer draft and cursor are where they were, and a running command's output kept
+  arriving underneath. At 32×10 the viewer still fits and Esc is shown.
+- [ ] 2.9 `NO_COLOR=1` and Safe glyphs: matches and the current match are still visible (reverse video).
