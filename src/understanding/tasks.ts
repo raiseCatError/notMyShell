@@ -154,7 +154,8 @@ export function validateCommandSuggestion(raw: unknown): CommandSuggestion | nul
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const value = raw as Record<string, unknown>;
   if (!exactKeys(value, ['command', 'explanation'], ['command', 'explanation'])) return undefined;
-  if (typeof value.explanation !== 'string' || value.explanation.length > MAX_EXPLANATION || UNSAFE_TEXT.test(value.explanation)) return undefined;
+  // The explanation is the model's own words; it never speaks for NMSh (NMSh's verdict is shown beside it).
+  if (typeof value.explanation !== 'string' || value.explanation.length > MAX_EXPLANATION || UNSAFE_TEXT.test(value.explanation) || /nmsh/iu.test(value.explanation)) return undefined;
   if (value.command === null) return null;
   if (typeof value.command !== 'string' || value.command.length > MAX_COMMAND || UNSAFE_TEXT.test(value.command)) return undefined;
   const command = value.command.trim();

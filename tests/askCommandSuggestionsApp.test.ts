@@ -54,7 +54,7 @@ test('on: only what Ask cannot place reaches the model, with the request, shell 
     assert.equal(outcome.block.literal, 'find . -type f -size +100M');
     assert.equal(outcome.block.run, undefined, 'never runnable from Ask');
     assert.equal(outcome.block.risk, 'read', 'labelled by NMSh');
-    assert.match(outcome.block.note ?? '', /Suggested by your local model \(Qwen3 0\.6B\)/u);
+    assert.match(outcome.block.note ?? '', /^NMSh's check: reads only\. Your local model \(Qwen3 0\.6B\) says: “Files over 100 MB here\.”/u);
   } finally { f.dispose(); }
 });
 
