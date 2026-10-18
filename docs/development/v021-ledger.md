@@ -156,8 +156,12 @@ runs the maintainer's containers); `docker system df` stays the one Docker verb 
   agent sessions, a browser), with load averages of 35–167 and 4.6 GB of swap in use. One run (`bb210ce5`, load 35–67)
   had 3,127 of 3,142 passing, 2 skipped and 13 failures, all live tests timing out (tmux, screen, service lifecycle,
   per-frame budgets) plus two capture tests whose windows included the owner's cold `tsx` start (fixed in #422). All
-  seven failing files then passed 69/69 three times in a row at normal load. A clean local run on `dev` after
-  integration remains a gate.
+  seven failing files then passed 69/69 three times in a row at normal load. A second run on `e8411e1a` (load
+  3–13): 3,138 of 3,142 passing, 2 skipped, 2 failed, both timing bounds in code v0.21 does not change that pass
+  alone 5/5 (a Node stand-in for zoxide whose cold start exceeded the 1.5 s query limit, and a 4 s startup budget
+  for a 5,000-candidate compinit); both tests were hardened in #422. Typecheck of the benchmarks and the timing smoke
+  ran only in CI (verify stops at the first failing step). A clean local run on `dev` after integration remains a
+  gate.
 
 ## Ordered integration
 
