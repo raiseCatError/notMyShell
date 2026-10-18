@@ -20,6 +20,8 @@
 
 Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
 
+Release candidate: v0.21.0 (`/view`, `/edit`, Semantic Output, `/track`, more native modules and theme families) is on `release/v0.21.0` and is not published until its physical-terminal QA passes; see the [changelog](CHANGELOG.md).
+
 ## See notMyShell in motion
 
 https://github.com/user-attachments/assets/7f2cbe74-ad86-4d13-bbe3-04e334cff81b
@@ -171,6 +173,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
+| Files and output (v0.21 candidate) | `/view` (files and completed output), `/edit` (a small text file), `/track` (one live result of a command), `/copy --semantic` |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |

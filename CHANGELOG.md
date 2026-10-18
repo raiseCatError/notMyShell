@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.0] - Unreleased (release candidate)
+
+**Native viewing and editing, Semantic Output and `/track`.** NMSh still runs your real zsh, Bash or Fish in one persistent session. This release reads files and completed output without leaving it (`/view`) and makes a quick edit to a small text file (`/edit`). Semantic Output puts a test run's or a build's counts and failures in one row above its raw output, and `/track` keeps one live, refreshed result of a command in the transcript. Bun, Nix shell and container modules come with `/modules explain` and `/modules timings`, plus five more theme families. Multi-row progress displays now redraw in place.
+
+This is a release candidate: it is published only after its physical-terminal QA passes ([v0.21 physical QA](docs/testing/v021-physical-qa.md); state and evidence in the [v0.21 ledger](docs/development/v021-ledger.md)).
+
 ### Added
 
 - **`/view`, a native read-only viewer** for files and completed output ([#397](https://github.com/raiseCatError/notMyShell/issues/397)). `/view README.md` opens a file relative to the shell's directory (`~` for home): Markdown renders (`m` shows the source), source files get syntax colors and line numbers, `.diff`/`.patch` files and `git diff`/`git show` output read as diffs. `/view N` opens completed output N (numbered as `/copy` numbers it) and `/view` the latest; Actions → View output does the same for a block. Find with `/` and `n`/`N`, go to a line with `:`, `w` toggles wrapping (Left/Right scroll sideways), `l` line numbers, `c` copies the whole text, Esc closes. Viewing never changes the file or the transcript.
@@ -27,6 +33,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Paste review and `/track`: a redirect into a file is recognized wherever `>/dev/null` also appears (`echo x > ~/.zshrc 2>/dev/null` was labelled read-only), and `>|` is a redirection, not a pipe.
 - `/track` and `/watch` no longer start, without asking, commands that change things through the network or another command: `env <command>`, `NAME=value` prefixes, git's `-c`/`--ext-diff`, `npm publish`/`login`/`x`, `pnpm dlx`, `ssh`, `curl -X POST`/`-d`/`-o file`, plain `wget`; options that write files (`git … --output`, `sort -o`, `jest -u`, `--fix`) are refused. Read-only probes (`ping`, `dig`, `nc -z`, a curl GET) still start at once, and `npm test 2>&1` is no longer refused as a background job ([#393](https://github.com/raiseCatError/notMyShell/issues/393)).
 - `/track stop` and a closing window end every process a tracked command left in its process group, including one that ignored TERM; a tracker whose directory disappeared names it instead of reporting `spawn /bin/sh ENOENT`.
+- A background task that exits cleanly no longer shows "exited, processes left" (with Delete refused) while its own guard checks that the task's process group is empty; the task finishes on the guard's verdict.
+- Configured completion: a helper that times out at startup no longer leaves its private folder behind, or throws from a timer (`ENOTEMPTY` on macOS), when its shell writes late.
+
+### Compatibility
+- Node.js 22 or newer; zsh, Bash 4.4+ and Fish, as in v0.20.0. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- The session protocol is unchanged (version 2): a session service started by v0.20.0 keeps serving the sessions it owns, and new windows attach to it. `/view`, `/edit`, `/track`, Semantic Output, the new modules and themes work at once. The background-task fix above needs a session service from this release.
+- `/track` needs `sh` and POSIX process groups (macOS, Linux, WSL 2).
+
+### Upgrade notes
+- **From v0.20.0:** settings, themes, modules, sessions and history carry over; existing theme ids and saved choices are unchanged, and Lavender stays the default.
+- Semantic Output is on for every configuration that has not turned it off (Settings → Transcript → Semantic Output). The Bun, Nix shell and container modules are off until enabled in `/modules`.
+- End the sessions of a v0.20 session service (or restart it once they end) to get the background-task fix.
+- Homebrew: `brew upgrade raiseCatError/tap/nmsh` installs whatever version the tap's formula points to; check `nmsh --version`.
+
+### Known limitations
+- `/track` is window-owned: trackers stop with the window that started them, and a resumed session shows the last result, not a live one. Samples run `sh -c` with the shell's PATH, not its aliases or functions.
+- Semantic Output is a first phase: built-in recognizers only (no `jc`, `delta` or other external providers), the raw output is not fully collapsed behind the reading, and find searches the raw output only.
+- `/edit` does not carry over extended attributes or ACLs, and unsaved text is lost if the window itself closes; the size and file-kind limits are listed under Added.
+- Progress redraws: absolute cursor rows (`CSI H`/`f`/`d`) are not mapped and scroll regions are not emulated ([#388](https://github.com/raiseCatError/notMyShell/issues/388)).
+- `/modules explain` covers the Context Rail and Status Strip; the Main Prompt has no per-segment truncation trace ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Oxocarbon, GitHub Primer, Material/Palenight and Monokai are deferred, with reasons in `docs/design/theme-families.md` ([#401](https://github.com/raiseCatError/notMyShell/issues/401)).
+- Keys typed *during* a Fish `read` stay subject to Fish's own editor queries ([#356](https://github.com/raiseCatError/notMyShell/issues/356)).
+- On a heavily loaded machine, a reply typed within about a second of starting a command that reads without a prompt can be queued instead of answering it ([#426](https://github.com/raiseCatError/notMyShell/issues/426); also in v0.20.0).
+- Linux stays beta: automated CI on Ubuntu and Fedora, no physical pass. Everything listed under v0.20.0's known limitations still applies.
 
 ## [0.20.0] - 2026-10-18
 
