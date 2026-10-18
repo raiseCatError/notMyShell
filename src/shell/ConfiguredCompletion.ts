@@ -4,6 +4,7 @@ import {mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync} 
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {removeDirectoryNow} from '../util/removeDirectory.js';
 import {commandIdentity, completionLabel, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
 
 const MAX_BYTES = 1024 * 1024;
@@ -124,7 +125,8 @@ export class ConfiguredCompletionSource implements CompletionSource {
     }
     this.wait?.resolve(false);
     this.wait = undefined;
-    if (this.root) rmSync(this.root, {recursive: true, force: true});
+    // The helper's own cleanup may be removing it, and a shell may still write its pid file, at this moment.
+    if (this.root) removeDirectoryNow(this.root);
     this.root = undefined;
     this.output = '';
   }
