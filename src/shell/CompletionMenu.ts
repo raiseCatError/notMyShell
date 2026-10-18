@@ -1,3 +1,4 @@
+import {selectionBand} from '../ui/selectionBand.js';
 import type {CompletionCandidate} from './completion.js';
 export {filterCompletions} from './completion.js';
 import {completionLabel} from './completion.js';
@@ -95,11 +96,8 @@ export function renderCompletion(candidate: CompletionCandidate, selected: boole
     row = `${prefix}${labelColor}${shown}${RESET}${' '.repeat(Math.max(1, labelWidth - displayWidth(shown) + 1))}`
       + `${detailColor}${truncateText(detailText, room)}${RESET}`;
   }
-  const fitted = truncateAnsi(row, columns);
-  if (!selected) return fitted;
-  // A full-width band, so the selection does not rely on color of the text alone.
-  const fill = background(band);
-  return `${fill}${fitted.replaceAll(RESET, `${RESET}${fill}`)}${' '.repeat(Math.max(0, columns - displayWidth(fitted)))}${RESET}`;
+  // A full-width band, so the selection does not rely on color of the text alone (shared with every NMSh list).
+  return selected ? selectionBand(row, columns) : truncateAnsi(row, columns);
 }
 
 /** The cue under a scrolled list: how many candidates follow the window, or, at its end, how many precede it. */

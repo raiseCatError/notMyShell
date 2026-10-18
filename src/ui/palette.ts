@@ -1,4 +1,5 @@
 import {colorEscape} from '../chroma/escape.js';
+import type {ColorLevel} from '../presentation/capabilities.js';
 
 export interface RgbColor {
   red: number;
@@ -25,7 +26,14 @@ export const UI_COLORS = {
   workingPeak: {red: 211, green: 202, blue: 238},
   success: {red: 116, green: 181, blue: 154},
   failure: {red: 205, green: 115, blue: 123},
+  /** Existing semantic-motion warning; custom themes may supply their Warning role. */
+  warning: {red: 224, green: 176, blue: 72},
   selection: {red: 88, green: 96, blue: 145},
+  /**
+   * A command waiting for the person (input awareness): its own hue, apart from running (lavender shimmer), paused
+   * (amber), failed (red) and done (green), so a question never reads as more work in progress.
+   */
+  attention: {red: 108, green: 196, blue: 214},
 } as const satisfies Record<string, RgbColor>;
 
 /** Color escapes follow the terminal capability: none, 256-color or truecolor (see presentation/capabilities). */
@@ -35,6 +43,11 @@ export function foreground(color: RgbColor): string {
 
 export function background(color: RgbColor): string {
   return colorEscape(48, color);
+}
+
+/** Keyboard focus is accent + weight; the pointer still identifies it without color. */
+export function focusForeground(focused: boolean, resting: RgbColor = UI_COLORS.secondary, level?: ColorLevel): string {
+  return focused ? `\u001b[1m${colorEscape(38, UI_COLORS.accent, level)}` : colorEscape(38, resting, level);
 }
 
 /**

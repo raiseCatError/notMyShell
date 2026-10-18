@@ -3,7 +3,7 @@ import type {AskContext, AskOption, AskOutcome} from './types.js';
 
 /**
  * The interactive NMSh guide, built from the concept catalog (one source for
- * /guide, /ask guide, /ask help and Ask's feature answers). Each section says
+ * /guide, /btw guide, /btw help and Ask's feature answers). Each section says
  * what a feature is, why it exists, where it lives, and a few current facts;
  * its choices open the real surfaces, whose own confirmation rules apply.
  */
@@ -50,7 +50,7 @@ export function everythingOutcome(_context?: Pick<AskContext, 'nmsh'>): AskOutco
   return {kind: 'answer', capability: 'help.guide', text: lines.join('\n'), next: [{key: 'guide:back', label: 'Back to the guide', refine: 'guide'}]};
 }
 
-/** /ask help: what Ask itself does, with examples, and the way into the full guide. */
+/** /btw help: what Ask itself does, with examples, and the way into the full guide. */
 export function askHelpOutcome(): AskOutcome {
   return {kind: 'answer', capability: 'help.capabilities', text: [
     'Ask can help with:',

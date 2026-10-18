@@ -272,10 +272,30 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+  assert.deepEqual(config.modules.slice(0, 10).map(module => module.id), ['shell', 'project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
+  assert.deepEqual(config.modules.slice(10), DEFAULT_PROMPT_CONFIGURATION.modules.slice(10), 'first-party pack modules join after the built-ins with their defaults');
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
+  assert.equal(config.modules.find(module => module.id === 'discoveredTools')!.visible, false, 'the added module stays opt-in');
+  assert.equal(config.modules.find(module => module.id === 'project')!.visible, true, 'existing settings are preserved');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
+});
+
+test('discovered-tools Native module consumes supplied shared facts and deterministic previews', () => {
+  const context = {cwd: '/tmp/repo', project: 'repo', discovery: {pathKey: '', discoveredAt: 1,
+    measurements: {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, executables: [
+    {id: 'executable:one', name: 'one', path: '/bin/one', family: 'path' as const, evidence: 'PATH'},
+    {id: 'executable:two', name: 'two', path: '/bin/two', family: 'path' as const, evidence: 'PATH'},
+  ]}};
+  const hidden = normalizePromptConfiguration({});
+  assert.ok(!stripAnsi(buildContextLine(context, 100, hidden, 'composer')).includes('local tools'));
+  const enabled = normalizePromptConfiguration({modules: [{id: 'discoveredTools', visible: true, condition: 'always'}]});
+  const firstRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  const secondRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  assert.ok(firstRender.includes('2 local tools'));
+  assert.equal(secondRender, firstRender);
+  assert.deepEqual(context.discovery.measurements, {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, 'rendering consumes facts without repeating discovery');
+  assert.ok(stripAnsi(buildThemePreviewLine(enabled, 'brand', 100)).includes('2 local tools') === false, 'synthetic preview never depends on live PATH facts');
 });
 
 test('toolchains are detected from marker files in cwd and repository root', async () => {
@@ -319,7 +339,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         9 of 9 shown ›',
+    `Modules         ${state.draft.modules.filter(module => module.visible).length} of ${state.draft.modules.length} shown ›`,
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
@@ -335,12 +355,13 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
+    {id: 'shell', visible: true, condition: 'shellDiffers'},
   ]});
   const state = {onboarding: false, step: 'modules' as const, selectedIndex: 1, draft: structuredClone(saved), saved};
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+  assert.deepEqual(state.draft.modules.slice(0, 10).map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'shell', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');
@@ -359,7 +380,9 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
   assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
   assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · M mirror right: On · Enter/Esc done');
+  // The footer wraps at control boundaries rather than being cut at 120 columns.
+  assert.equal(rows.slice(-2).join(' · '), '↑↓ move · Space show/hide · ←→ option · S surface · Shift+↑↓ reorder · P side · M mirror: On · Enter details · / search · Tab tabs · A save modules now · Esc back to /prompt');
+  assert.ok(rows.some(row => /Catalog; Tab to switch/u.test(row)), 'the Catalog/Packs tabs are named on screen');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
   try {

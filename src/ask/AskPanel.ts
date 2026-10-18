@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
 import {displayWidth, repeatToWidth, truncateAnsi} from '../util/text.js';
@@ -22,6 +22,8 @@ export interface AskTurn {role: 'you' | 'ask'; text: string; block?: CommandBloc
 
 export interface AskState {
   /** The request being typed: a real editor (caret, selection, word movement), shared with the shell composer. */
+  /** The invoked spelling is retained for a recorded/parked conversation. */
+  command?: '/btw' | '/ask';
   editor: CommandEditor;
   /** The editor's text; assigning replaces it with the caret at the end. */
   input: string;
@@ -402,7 +404,7 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
       if (index < start || index >= end) return;
       const selected = index === state.selected;
       const number = option.key === 'none' ? ' ' : String(index + 1);
-      bottom.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number.padStart(String(choices.length).length)}${reset}  ${selected ? primary : secondary}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
+      bottom.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number.padStart(String(choices.length).length)}${reset}  ${focusForeground(selected)}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
     });
     if (end < choices.length) bottom.push(`    ${subtle}↓ ${choices.length - end} more · type to filter${reset}`);
   } else if (confirming) {

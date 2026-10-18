@@ -30,6 +30,7 @@ export function createOrdinaryShellEnvironment(env: NodeJS.ProcessEnv = process.
   const ordinaryEnv = {...env};
   delete ordinaryEnv[NMSH_ACTIVE_ENV];
   delete ordinaryEnv.NMSH_SESSION_MODE;
+  delete ordinaryEnv.NMSH_SESSION_ID;
   delete ordinaryEnv[RETURN_SESSION_ENV];
   delete ordinaryEnv[HANDOFF_SHELL_ENV];
   if (handoff && SESSION_ID.test(handoff.sessionId)) {

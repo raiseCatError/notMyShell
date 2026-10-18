@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {blockCopyPayload, blockPaletteItems, blockAffordance} from '../src/ui/BlockActions.js';
+import {BLOCK_ACTIONS, blockCopyPayload, blockPaletteItems, blockAffordance} from '../src/ui/BlockActions.js';
 import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {decodeKeys} from '../src/terminal/keys.js';
 import {regionOf} from '../src/app/screenPlan.js';
@@ -23,10 +23,14 @@ function dispose(app: TerminalApp) { app['stop'](0); app['session'].kill(); }
 test('one block registry supplies keyboard palette actions and copies authoritative full plain data', () => {
   const output = new OutputBuffer();
   const record = fixture(output);
-  assert.equal(blockPaletteItems(record).length, 6);
+  const passive = BLOCK_ACTIONS.filter(action => action.id !== 'explain' && action.id !== 'references');
+  assert.deepEqual(blockPaletteItems(record).map(item => item.action.kind === 'block' && item.action.id), passive.map(action => action.id));
+  assert.ok(passive.some(action => action.id === 'clipCommand'));
+  assert.ok(passive.some(action => action.id === 'clipOutput'));
   assert.equal(blockCopyPayload(record, 'copyCommand'), 'echo hello');
-  assert.equal(blockCopyPayload(record, 'copyOutput'), record.output);
-  assert.equal(blockCopyPayload(record, 'copyBoth'), record.command + '\n' + record.output);
+  // Copies are the bytes printed (its final line break included); record.output is the drawn text.
+  assert.equal(blockCopyPayload(record, 'copyOutput'), `${record.output}\n`);
+  assert.equal(blockCopyPayload(record, 'copyBoth'), `${record.command}\n${record.output}\n`);
   assert.ok(record.output.includes('full output'));
   assert.ok(!blockCopyPayload(record, 'copyBoth')!.includes('Actions'));
 });
@@ -53,7 +57,7 @@ test('keyboard focus opens actions; edit waits for Enter, rerun uses visible nor
     instance['handleKey']({kind: 'focusPrevious'});
     assert.equal(instance['focusedCommandIndex'], 0);
     instance['handleKey']({kind: 'enter'});
-    assert.equal(instance['paletteState']?.items.length, 6);
+    assert.deepEqual(instance['paletteState']?.items, blockPaletteItems(record));
     instance['paletteState'] = undefined;
     await instance['runBlockAction'](record.startId, 'edit');
     assert.equal(instance['editor'].text, record.command);

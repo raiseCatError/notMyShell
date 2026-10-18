@@ -1,174 +1,137 @@
 <div align="center">
   <picture>
-    <img alt="NMSh Logo" src="assets/brand/nmsh-logo.png" width="300">
+    <img alt="Vespyr beside the NMSh / notMyShell logo" src="assets/brand/nmsh-lockup.svg" width="500">
   </picture>
 
   <p><b>A terminal frontend for your real shell.</b></p>
 
   <p>
     <a href="https://github.com/raiseCatError/notMyShell/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-8B84B2.svg" alt="License"></a>
-    <img src="https://img.shields.io/badge/platform-macOS-B0B8C2.svg" alt="macOS">
-    <img src="https://img.shields.io/badge/node-%3E%3D%2022-C5B9E8.svg" alt="Node.js">
-    <img src="https://img.shields.io/badge/shell-zsh-F2F0EC.svg" alt="zsh">
+    <img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20(beta)%20%C2%B7%20WSL%202-B0B8C2.svg" alt="macOS, Linux (beta), WSL 2">
+    <img src="https://img.shields.io/badge/node-%3E%3D%2022-C5B9E8.svg" alt="Node.js 22+">
+    <img src="https://img.shields.io/badge/shell-zsh%20%C2%B7%20Bash%20%C2%B7%20Fish-F2F0EC.svg" alt="zsh, Bash, Fish">
     <a href="https://github.com/raiseCatError/notMyShell/actions/workflows/ci.yml"><img src="https://github.com/raiseCatError/notMyShell/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   </p>
 </div>
 
 <br>
 
-**notMyShell (NMSh)** is a terminal frontend for a real persistent zsh session. It adds a persistent bottom input editor, semantic syntax highlighting, autocomplete, scrollable history, and richer command feedback while preserving normal shell state, aliases, functions, environment, and PTY behavior.
+**notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0).
+Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
 
-Working on NMSh? See [AGENTS.md](AGENTS.md).
+## See notMyShell in motion
 
-## Visual demo
+https://github.com/user-attachments/assets/7f2cbe74-ad86-4d13-bbe3-04e334cff81b
 
-<div align="center">
-  <img alt="NMSh Demo" src="assets/readme/nmsh-demo.gif" width="700">
-  <p><em>NMSh showing semantic highlighting, the pinned input bar, and live activity feedback.</em></p>
-</div>
+[Watch the 4K reel fullscreen → YouTube](https://youtu.be/zIzq_88R5OI) · [View the X post → X](https://x.com/raiseCatError/status/2107187652181303325?s=20)
 
-<br>
-<div align="center">
-  <picture>
-    <img alt="Divider" src="assets/readme/divider.svg" width="600">
-  </picture>
-</div>
-<br>
+Explore the [demo gallery](docs/demos.md) by feature.
 
-## What is NMSh?
+## What NMSh is (and is not)
 
-NMSh is **NOT** a replacement shell implementation, and it is **NOT** a terminal emulator.
-
-It is a frontend that wraps your real zsh environment. NMSh owns the prompt, multiline input editor, syntax highlighting, and history presentation. Real zsh owns the parsing, command execution, aliases, and environment variables.
+NMSh is a **frontend**. Your shell stays underneath and does what it always did: parsing, execution, aliases, functions, environment, job control. NMSh owns what you see and type: the composer and editor, completion and suggestions, history and transcript, prompt and layout, sessions, themes and Chroma, tool panels, and local guidance. Fullscreen and raw interactive terminal applications use the passthrough path; their input and display remain with the real program.
 
 <div align="center">
   <picture>
-    <img alt="NMSh Architecture" src="assets/readme/architecture.svg" width="500">
+    <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="640">
   </picture>
+  <p><em>The short version.</em></p>
 </div>
-
-## Why NMSh?
-
-NMSh provides a richer interactive frontend without throwing away the proven robustness of a real shell parser. It brings a Claude Code-like interaction model to your daily shell:
-
-- **Fixed bottom input:** A stable workspace that never jumps around.
-- **Scrollable history:** Output history that doesn't disappear when you edit.
-- **Rich editor:** True multiline input that acts like a text editor.
-- **Preserved semantics:** Your real shell aliases, functions, and pipelines still work.
-
-<br>
-<div align="center">
-  <picture>
-    <img alt="Divider" src="assets/readme/divider.svg" width="600">
-  </picture>
-</div>
-<br>
-
-## Features
-
-### Shell
-- Real zsh execution and parsing
-- Real aliases, functions, and environment
-- `zoxide` integration
-- Completion bridge using real zsh completion data
-
-### Editor
-- Multiline input and selection
-- Predictive ghost suggestions (NMSh Native: fuzzy, frecency, directory, and sequence ranking; optional Deja provider): → accepts, Alt+→ accepts a word, Ctrl+N / Ctrl+P show alternatives, Esc dismisses
-- **Semantic syntax highlighting** (differentiates executables, builtins, aliases, and functions instantly)
-
-### Prompt
-- NMSh Native prompt (default) with Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale themes
-- Independent Start / Connector / Connector fade / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt` → Main Prompt
-- Rich Git state (staged, modified, untracked, conflicts, ahead/behind/diverged, operations, clean) with its own Enabled, Colors (Semantic default, Follow theme, Grayscale), Geometry, and Connector fade settings: `/prompt` → Rich Git
-- Right-side prompt context: any module can sit left or right (`/prompt` → Modules, `P`); the right side mirrors its geometry to face left by default (`M`) and is the first thing to go on narrow terminals
-- Show-on-command modules: Kubernetes and Docker context (and optionally toolchains) appear only while a relevant command such as `kubectl` or `docker` is typed; typed text is never executed to decide
-- Width-aware path shortening keeps the repository name and current directory whole while abbreviating parents as the terminal narrows
-- Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed in `/config` (Glyph style) or previewed under `/settings` → Settings → Glyph style. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
-- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
-- Native prompt styles: Powerline, Soft, Minimal, Outline (`/prompt` → Style)
-- One-line or two-line composer layouts
-
-### Interface
-- Command lifecycle rows with activity animation and nested Node TAP activity
-- Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
-- Output folding (Config → Output folding: Off / Smart / Always): long output collapses to its first and last lines around `› N lines hidden · Ctrl+O`; Smart keeps failures and useful output expanded; `/copy` and `/resume` always keep the full output
-- Composer position Bottom, Top, or Flow (Config → Composer position). Flow places the prompt and input right after the newest output, like a conventional terminal, and they scroll with it. Combine any position with Normal or Chat transcript presentation (Config → Transcript presentation). `/layout` (also Config → Layout) previews every combination with sample content before you choose.
-- Welcome providers: Vespyr (default), Fastfetch, Neofetch (legacy, if installed), or None (`/settings` → Welcome)
-- Command palette: `/palette`, F1, or Ctrl+Shift+P (Cmd+Shift+P where the terminal reports it) to search NMSh commands, settings, and actions
-- Sticky command headers keep the current command visible while scrolling
-- **Live sessions:** closing a window detaches its shell instead of ending it, and running commands keep going. Come back through the startup prompt (Config → Sessions: Ask, Always or Never), `/resume` (LIVE sessions with their status, above archived transcripts), or `nmsh --attach <id>` (`nmsh --sessions` lists them). `exit`, Ctrl+D and `/zsh` end a session.
-- NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
-- `/zsh` hands off to an ordinary interactive zsh
-- Rich paste atoms for large multiline pastes
-- `/copy` and `/copy N` for instant clipboard access
-- `/history` interactive search
-- `/version`, `/appearance`, and `/keyboard` integrations
-- `/settings` (alias `/config`) edits NMSh preferences and `/status` shows runtime status, while direct commands such as `/prompt` and `/transcript` remain available
-
-### Interactive Apps
-- Safe passthrough yielding for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
-
-<br>
-<div align="center">
-  <picture>
-    <img alt="Divider" src="assets/readme/divider.svg" width="600">
-  </picture>
-</div>
-<br>
-
-## Syntax Highlighting
-
-Highlighting is entirely NMSh-native and non-blocking. A fast lexical layer tokenizes the input, while an asynchronous semantic bridge queries your real zsh environment to classify command tokens.
-
-NMSh safely queries metadata (`whence -w`) and never executes partially typed input.
-
-`/syntax` (also under `/settings` → Syntax) turns highlighting on or off and picks its colors: follow the prompt theme (default; with Starship or Powerlevel10k this means the saved NMSh Native palette), choose any Native theme independently, or Grayscale, which keeps categories apart through lightness, weight, and underline. Live preview rows show the result before saving. Submitted commands keep the look they were entered with; raw command output is never recolored and `/copy` stays plain text.
 
 <div align="center">
-  <picture>
-    <img alt="Syntax highlighting demo" src="assets/readme/syntax-demo.svg" width="600">
-  </picture>
+  <img alt="NMSh runtime: input, rendering, ShellAdapter and the persistent shell session" src="assets/readme/architecture-detailed.svg" width="960">
+  <p><em>The runtime path in more detail.</em></p>
 </div>
 
-<br>
+- **Not a shell.** It does not reimplement zsh, Bash or Fish; it runs them.
+- **Not a terminal emulator.** Keep Ghostty, Terminal.app, VS Code, Zed or whatever you use.
+- **Not a prompt theme.** The Native prompt is optional; Starship, Oh My Posh or Powerlevel10k can supply the prompt instead, or none at all.
+- **Not an AI terminal.** `/btw` (legacy alias `/ask`) maps plain requests onto typed NMSh actions locally, with an optional local model; nothing needs an account.
+
+## Highlights
+
+- **A composer that stays where you want it** — Bottom, Top or Flow (right after the newest output), one-line or two-line, with true multiline editing.
+- **Semantic highlighting** — commands, builtins, aliases and functions are classified against your real shell as you type; partial input is never executed.
+- **A transcript you can use** — command blocks with status and timing, folding for long output, `/find` and `/filter`, exact `/copy` with keyboard output selection and `/actions`.
+- **A terminal workflow** — NMSh shows when a command is waiting for you, queues the next commands as a readable timeline with saved summaries, turns output into reviewed reports and comparisons, and runs long-lived commands as background tasks beside the shell (`/background`).
+- **Live sessions** — closing a window detaches the shell instead of killing it; running commands keep going. `/resume` or `nmsh --attach` brings them back.
+- **Prompt providers** — NMSh Native (Powerline, Soft, Minimal, Outline styles), Starship, Oh My Posh, Powerlevel10k or None.
+- **Theme Studio and Theme Bridge** — built-in, imported and custom themes in `/theme`; opt-in `/theme-bridge` carries the active theme to fzf, less/man, file listings, bat, tmux, Vim, Neovim and Helix through files NMSh owns and you review.
+- **Curated tools** — `/tools` finds, explains and (on request) installs a short list of shell tools; `/providers` picks the picker, history, navigation and suggestion providers; `/tmux` and `/dotfiles` import settings safely.
+- **Shell frameworks, handled carefully** — Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit and Antidote are detected; shell config is treated as code, never as harmless data.
+- **Keep Awake** — `/zoomies` (also `/caffeinate`, `/awake`) keeps the machine or display awake through the OS's own mechanism and shows that it is on, quietly.
+- **Personality, optional** — Chroma color treatments, motion, screensavers and Vespyr, the NMSh cat. All of it respects Reduced Motion, Safe glyphs and `NO_COLOR`.
+
 <div align="center">
-  <picture>
-    <img alt="Divider" src="assets/readme/divider.svg" width="600">
-  </picture>
+  <img alt="Vespyr, the NMSh cat, sitting on a divider" src="assets/readme/vespyr-divider.svg" width="600">
 </div>
-<br>
 
-## Shell Compatibility
+## Native modules and the Context Engine
 
-NMSh runs a real, persistent shell underneath and keeps it: zsh (default), Fish, or Bash 4.4+. The same composer, transcript, sessions, prompt UI, Settings, Chroma, history presentation and completion menu work over each. `/shell` lists what is installed and switches the current session in place (same session, cwd and transcript); Settings → Default shell chooses the shell for new sessions. NMSh never installs a shell. See [ShellAdapter](docs/architecture/shell-adapter.md) for exactly what differs (for example, Bash completion has no descriptions).
+The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-**What works naturally:**
-- Aliases, functions, PATH, and environment variables
-- `zoxide` integration, pipelines, redirects, and external commands
+v0.17.0 introduced fact metadata, native module routing and the Context Rail. v0.18.0 adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
-**No plugin manager required.** NMSh provides its editor, completion menu, prompt, transcript and sessions itself. Existing frameworks and plugin managers (Oh My Zsh, Antidote, Zinit, Fisher, …) can keep providing compatible shell-level functionality; `/status` and `nmsh doctor` show what is detected and how it relates to NMSh.
+Read the [Context Modules guide](docs/architecture/context-modules.md) for the surfaces, capabilities, Context Pack format and discovery boundaries, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
-**UI Plugin differences:**
-- Foreign prompt rendering in the managed shell (Powerlevel10k, RPROMPT, ZLE prompts, Fish prompts) is suppressed so it cannot fight NMSh. You can still choose Starship or Powerlevel10k as an NMSh prompt provider. Powerlevel10k's left prompt is rendered in an isolated helper, without its prompt character, gitstatus daemon, or right prompt.
-- `zsh-autosuggestions` and `zsh-syntax-highlighting` draw through ZLE, which NMSh keeps off; NMSh's own suggestions and highlighting are shown instead, and the plugins keep working in `/zsh` and ordinary zsh.
-- Native `fzf-tab` integration is not currently supported; safe zsh completion/widget interoperability remains unresolved in [issue #52](https://github.com/raiseCatError/notMyShell/issues/52).
+## Visual tour
 
-NMSh loads your own shell startup files in a controlled bootstrap and never edits them.
+A workspace that stays readable. A palette that feels like yours. Explore the full recordings by chapter, from first setup to returning to a running session.
 
-See [ROADMAP.md](ROADMAP.md) for planned work (Nushell and native Windows are later).
+<details>
+<summary>Composer and live feedback walkthrough</summary>
 
-## Installation
+<div align="center">
+  <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="960">
+  <p><em>Typing with semantic highlighting, live command feedback, and a theme change from <code>/theme</code>. Recorded from the real binary with <a href="scripts/demos/README.md">VHS</a>.</em></p>
+</div>
 
-**Prerequisites:**
-- macOS, or Linux (beta: tested in CI on Ubuntu and Fedora; not physically validated), or Windows through WSL 2 (see [platforms](docs/architecture/platforms.md))
-- Node.js (v22+)
-- zsh (Fish and Bash 4.4+ are optional additional backends)
-- A compatible terminal host: an integrated terminal (such as Zed or VS Code) or a standalone terminal (such as Ghostty or macOS Terminal)
+</details>
 
-Clone the repository and install dependencies:
+<p align="center">
+  <a href="docs/demos.md#theme-studio"><img alt="Preview: Theme Studio with live colors and custom themes" src="assets/readme/theme-studio.png" width="420"></a>
+</p>
+
+<p align="center"><a href="docs/demos.md#theme-studio"><b>Your palette</b> — Theme Studio</a></p>
+
+| Explore | What you’ll see |
+| --- | --- |
+| [Customization](docs/demos.md#customization) | Setup Cat, composer layouts, prompt styles, theme families and syntax previews |
+| [Color and motion](docs/demos.md#color-and-motion) | Chroma gradients, live feedback, every screensaver, Vespyr and raiseCatError |
+| [Tools and shells](docs/demos.md#tools-and-shells) | Ask, provider choices, checked tools, Theme Bridge, Fish and real Vim |
+| [Sessions](docs/demos.md#sessions) | Detach, reattach and Keep Awake |
+
+[Full demo gallery](docs/demos.md)
+
+The gallery uses wide, opaque recordings from the real NMSh build, with a disposable home and neutral demo identity. [Committed tapes](scripts/demos/README.md) reproduce every clip.
+
+## Install
+
+### Homebrew
+
+Homebrew is the recommended install method on macOS.
+
+```sh
+brew install raiseCatError/tap/nmsh
+nmsh
+```
+
+The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) updates its formula after each release through its own bump and test-bot workflows, so it can lag behind the newest release; `nmsh --version` shows what you have, and [building from source](#build-from-source) gets the current release from `master`. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
+
+To uninstall the Homebrew package:
+
+```sh
+brew uninstall nmsh
+```
+
+### Build from source
+
+You need:
+
+- macOS, Linux (beta: automated CI on Ubuntu and Fedora, not yet physically validated) or Windows through WSL 2 ([platforms](docs/architecture/platforms.md))
+- Node.js 22 or newer
+- zsh (default), and optionally Bash 4.4+ or Fish
 
 ```sh
 git clone https://github.com/raiseCatError/notMyShell.git
@@ -176,129 +139,112 @@ cd notMyShell
 npm install
 npm run build
 npm link
-```
-
-*(Note: Depending on your npm version, you may be prompted to allow lifecycle scripts required by `node-pty`. You can safely approve this or set `allowScripts` appropriately.)*
-
-After linking, run the CLI from anywhere:
-
-```sh
 nmsh
 ```
 
-### Moving settings and uninstalling
+npm may ask to allow `node-pty`'s install script; it is required. To start NMSh from Ghostty or another GUI terminal, use absolute paths so macOS `PATH` differences cannot break startup:
 
-- `nmsh config export` / `nmsh config import FILE` move your settings between machines, hosts and shells (versioned JSON, preview before apply, selectable categories; no history or secrets). See [portability](docs/design/v016-portability-uninstall-diagnostics.md).
-- `nmsh uninstall` previews and removes only NMSh's own launcher links; your settings are kept unless `--delete-data`, and your shell config is never touched.
-- `nmsh doctor` prints a short diagnostic for issue reports.
+```
+command = direct:/absolute/path/to/node /absolute/path/to/nmsh
+```
 
-### Updating
+Do not set `nmsh` as your system/login shell with `chsh`. Keep zsh, Bash or Fish as your real shell. If you want NMSh to open automatically, configure your terminal app (for example Ghostty or Zed) to launch `nmsh` instead.
 
-`/update` checks GitHub for the latest stable release and shows current → available, a short release summary, and the exact plan. `/update apply` then installs that release. NMSh updates a source checkout of this repository only when the checkout is clean, its `origin` is this repository, the fetched release tag matches the commit GitHub reports, and moving to the tag is a fast-forward. It then runs `npm install` and `npm run build` and verifies the new build identity. If anything fails, it restores the previous commit and rebuilds it. Otherwise it explains why and prints the manual steps. It never pulls arbitrary branches, discards changes, or touches your settings, transcripts, or shell profile. Restart NMSh afterwards to use the new version.
+**Updating:** For Homebrew installations, use `brew upgrade raiseCatError/tap/nmsh`; `/update` directs you to Homebrew rather than changing files in the Cellar. For source installations, `/update` shows the latest stable release and the exact plan; `/update apply` installs it into a clean official source checkout, verifies the build, and rolls back on failure. Automatic updates (Automatic / Notify only / Off) use the same checks.
 
-Config → Automatic updates is Automatic, Notify only or Off, with a Daily or Weekly check frequency. New installs default to Automatic / Daily; saved Daily/Weekly notification preferences migrate to Notify only, Off stays Off. Automatic only prepares a verified stable release on an official, clean source checkout (the same checks `/update apply` makes, with the same rollback); the running session keeps its version and the new one starts on the next launch. Anything that cannot be proven safe gets one quiet notice and the manual steps. No credentials or telemetry are involved.
+**Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); for source installations, `nmsh uninstall` removes only NMSh's own launcher links (use `brew uninstall nmsh` for Homebrew packages); `nmsh doctor` prints a diagnostic for bug reports.
 
-## Ghostty Setup
+On a fresh installation NMSh opens its starting point: four choices under a live aurora, with Vespyr on the horizon. **NMSh Recommended** is the full look; **Minimal Terminal** is NMSh's quiet one (Two-line or One-line); **Customize Everything** is a guided tour of every setting; **Keep Existing** keeps your own prompt (Starship, Powerlevel10k or Oh My Posh), colors and tools, after reading your setup without changing anything. Highlighting a choice changes the sky; nothing applies until you review it and press Enter, and Esc asks before leaving. `A` switches the backdrop between Aurora, Subtle and Off. Reduced Motion, Effects Off, NO_COLOR and 16-color terminals get a still or plain version, and every choice stays reachable down to 16 × 6.
 
-For the most robust startup experience in Ghostty, configure it to run NMSh using absolute paths. GUI applications on macOS sometimes have unpredictable `PATH` resolution.
+On that first run only, where NMSh can prove the window is its own (Terminal.app; kitty on macOS with a remote-control socket; Hyprland 0.55+ with a Lua configuration, as on Omarchy), it offers to maximize the window for setup and puts it back afterwards. Nothing about it is saved; elsewhere the offer simply never appears. See [first-run window maximization](docs/testing/first-run-window-maximization.md).
 
-1. Find your absolute paths:
-   ```sh
-   command -v node
-   command -v nmsh
-   ```
+`/startup` reopens the starting point anytime (so do `/setup quick` and Settings → Starting point). `/setup` opens the guided setup directly. Existing saved preferences keep their previous behavior. `/cursor` offers Purple, Blue, Green, Classic, Follow theme and Custom Fire colors; Auto uses the portable effect until a supported native integration is configured. The terminal still controls its physical caret color.
 
-2. Add the direct command to your Ghostty config (`~/.config/ghostty/config`):
-   ```
-   command = direct:/absolute/path/to/node /absolute/path/to/nmsh
-   ```
+## Core commands
 
-Do not instruct macOS to change your default login shell to NMSh. NMSh is a frontend; zsh remains the underlying shell.
+Type `/` in the composer for the full list, or `/help` for everything grouped by area. The ones you will reach for most:
 
-## Host Compatibility
+| Area | Commands |
+| --- | --- |
+| Settings and setup | `/settings` (`/config`), `/startup`, `/setup`, `/palette` (F1), `/help`, `/status` |
+| Composer and prompt | `/prompt`, `/modules`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
+| Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
+| Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
+| Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
+| Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
+| Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
+| Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
 
-Keep your terminal. Keep your shell. Upgrade the interaction layer. NMSh is intentionally terminal-host independent: you can move between integrated terminals, standalone terminals and different hosts and keep the same NMSh interaction layer. No host is required or preferred.
+### Keep Awake
 
-- **Integrated terminals** are a first-class NMSh use case. Integrated terminals such as Zed and VS Code are regularly used during development and receive frequent real-world testing.
-- **Standalone terminals** are equally first-class. Standalone terminals such as Ghostty and macOS Terminal are also regularly used and physically validated.
-- **Other compatible hosts** are supported where NMSh's terminal capabilities allow, but some have not yet received the same level of physical validation.
+`/caffeinate`, `/awake` and `/zoomies` are the same feature:
 
-*Supported* means NMSh is designed to work with the host's capability profile; *physically validated* means a real manual QA pass has been completed on that host.
+```text
+/zoomies                 open the panel (starts nothing by itself)
+/zoomies display         keep the display and the machine awake until stopped
+/zoomies system 2h       prevent system sleep for two hours
+/zoomies status          mode, backend, start time, timeout
+/zoomies stop            end it
+```
 
-| Host | Kind | Notes |
-|------|------|-------|
-| Zed | Integrated | Wheel/trackpad scrolling of the transcript through standard SGR mouse reporting; Shift keeps Zed's own text selection. Appearance is configured by Zed. Additional sessions use `/resume` or `nmsh --attach`. |
-| VS Code | Integrated | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
-| Ghostty | Standalone | `/keyboard` and `/appearance` integration, new windows for sessions. |
-| macOS Terminal | Standalone | Shift+Enter works out of the box; keyboard scrolling (PageUp/PageDown). |
-| Kitty | Capability profile (CI fixtures) | Kitty keyboard protocol, mouse reporting and graphics are assumed only from the profile plus protocol replies; new windows need `allow_remote_control`. Not physically validated. |
-| iTerm2 | Capability profile (CI fixtures) | Mouse, hyperlinks and image protocol from the profile; new windows through AppleScript. Not physically validated. |
-| WezTerm | Capability profile (CI fixtures) | Same as iTerm2 for images; new windows through `wezterm cli spawn`. Not physically validated. |
-| Windows Terminal (via WSL) | Capability profile (CI fixtures) | Detected from `WT_SESSION`; mouse, hyperlinks and truecolor only. Not physically validated. |
-| Unknown or embedded hosts | Generic | Baseline capabilities, upgraded only by protocol replies. |
+It uses the operating system's own mechanism: Apple `caffeinate` on macOS, a systemd inhibitor on Linux (idle and sleep only; the inhibitor is not a display API, so Display is shown as unavailable there), and the `SetThreadExecutionState` API on Windows. The assertion is an NMSh-owned background process, so the prompt comes straight back; it keeps running after the window closes and ends on `stop` or its timeout. Typing `caffeinate` yourself is still an ordinary shell command. While it is active, NMSh shows `Awake · <mode>` on a free composer edge (or a row next to the composer), in the Status Strip when that is on, and optionally on the screensaver; nothing shows while it is off. Power settings are never changed, and `/zoomies stop` only stops what NMSh can prove it started.
 
-NMSh owns terminal-native interaction; the editor around it owns editor-native interaction. `/find` and `/filter` search and filter the transcript; `/open path:line:col` and `/open-diff a b` hand files to Zed or VS Code (or `$VISUAL`/`$EDITOR`) instead of rebuilding an editor inside the terminal. See [product boundary and HostActions](docs/architecture/host-actions.md). Inline images (`/about`) appear only where the host implements Kitty graphics or iTerm2 images ([image surface](docs/architecture/image-surface.md)).
+## Compatibility
 
-Where a host differs, NMSh says so factually (for example, "Appearance is configured by Zed."). Host profiles only supply conservative capability hints, and optional protocols still come from the shared probe.
+**Shells.** zsh (default), Bash 4.4+ and Fish run behind one [ShellAdapter](docs/architecture/shell-adapter.md); the composer, transcript, sessions, prompt, themes and completion menu work over each, and `/shell` switches the current session in place. NMSh loads your startup files in a controlled bootstrap and never edits them. ZLE prompt and widget UI (Powerlevel10k's in-shell prompt, zsh-autosuggestions, zsh-syntax-highlighting) is kept off inside NMSh so it cannot fight the composer; those plugins keep working in `/zsh` and ordinary shells. Native `fzf-tab` is not supported ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
 
-## Keyboard Behavior
+**Shell frameworks and prompt providers.** They are different things, and NMSh treats them differently:
 
-- **Enter:** Submit command
-- **Ctrl+J:** Portable multiline newline fallback
-- **Shift+Enter (Ghostty/macOS Terminal):** Insert a newline in the editor
-- **Option+Left/Right:** Move cursor by word
-- **Option+Backspace:** Delete previous word (requires Ghostty forwarding setup)
-- **Ctrl+W:** Delete previous word
-- **Cmd+A:** Select all input (requires Ghostty forwarding setup)
-- **Cmd+Up/Down:** Jump to top/bottom of buffer (requires Ghostty forwarding setup)
-- **Shift+Left/Right:** Character selection
-- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first. A completion or slash-command menu is entered with Down; Up from its first row returns to history. Panels and /history, /dirs keep their own Up/Down.
-- **Ctrl+F:** Find in the transcript (adds a term; terms AND together). `/find` does the same; Cmd+F stays the host's own find.
-- **PageUp/PageDown, mouse wheel:** Scroll output history
+| | What it is | What NMSh does |
+| --- | --- | --- |
+| Oh My Zsh | Zsh framework | Detects it; guided install that keeps your `.zshrc` (you run the official installer); compares and can restore `.zshrc.pre-oh-my-zsh` after a backup and confirmation |
+| Powerlevel10k | Zsh prompt theme | Optional prompt provider rendered in an isolated helper; `p10k configure` on request |
+| Starship, Oh My Posh | Cross-shell prompt engines | Optional prompt providers run directly by NMSh, no rc changes |
+| Prezto, Zim, zinit, Antidote | Zsh ecosystem tools | Detected and shown, inspect-only |
 
-*(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*
+NMSh never sources or installs framework code on its own, and never merges shell configuration.
 
-### /keyboard & /appearance
+**Terminals.** NMSh is host-independent. Zed, VS Code, Ghostty and Terminal.app are used daily during development, and Ghostty and Terminal.app are physically validated; Kitty, iTerm2, WezTerm and Windows Terminal (through WSL) have capability profiles covered by CI fixtures but have not had the same physical QA. Hosts differ in keyboard and mouse reporting — see [terminal host](docs/architecture/terminal-host.md) and [HostActions](docs/architecture/host-actions.md) for details, and `/keyboard` for Ghostty key forwarding (Option+Backspace, Cmd+A).
 
-Some advanced shortcuts (like Option+Backspace, Cmd+A) are normally consumed by the terminal host before NMSh sees them. The `/keyboard` slash command installs managed, opt-in forwarding rules exclusively into your Ghostty configuration. It does not alter any macOS system keybindings.
+**Accessibility.** Safe/ASCII glyphs (`/glyphs`), `NO_COLOR`, 256-color terminals and Reduced Motion are first-class: meaning never depends on color or icons alone, and motion stops when you ask it to. See [accessibility](docs/accessibility/).
 
-The `/appearance` slash command provides an interactive UI to adjust Ghostty's window background opacity, blur mode, and blur radius.
+## Safety and ownership
 
-## Known Limitations
+- Everything runs locally. No account, no telemetry, no cloud backend ([privacy](docs/privacy.md)).
+- **Your shell config is code.** NMSh does not edit rc files behind your back. The few changes it can make on request (for example a Theme Bridge include, or restoring a backed-up `.zshrc`) are shown as an exact diff and wait for your confirmation.
+- **Imports are data.** Theme files are parsed with bounded data parsers; nothing is sourced, templated or fetched. `/dotfiles` never runs anything from a repository; it imports supported settings and leaves executable configs inspect-only.
+- **NMSh owns what it writes, and only that.** Generated files are recorded in an ownership ledger and are replaced or removed only while they still match what NMSh wrote. Keep Awake stops only the process it can prove it started.
+- **Installs are explicit.** `/tools` shows the exact package-manager command and asks first; nothing elevates silently.
 
-- **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
-- **Hosts without mouse reporting:** on baseline hosts (for example Terminal.app) scroll the transcript with PageUp/PageDown. A host setting that turns wheel scrolling into arrow keys on the alternate screen makes the wheel walk command history instead.
-- **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
-- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Highlighting colors are theme-aware via `/syntax`.
-- **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
-- **Nested activity:** Only directly observed Node TAP v13 streams produce nested activity rows.
-- **Powerlevel10k provider:** The right prompt, instant prompt, gitstatus daemon, and p10k settings defined only in `.zshrc` are not reproduced.
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## Known limitations
+
+- The completion bridge is close to, but not full parity with, a configured interactive zsh.
+- Highlighting covers common command structure, not the entire zsh grammar.
+- Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
+- Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours.
+- Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md) — how NMSh works end to end, in plain language; deeper docs live under `docs/architecture/` and `docs/design/`
+- [Context Modules](docs/architecture/context-modules.md) — facts, routing, Context Rail and declarative pack direction
+- [Demo gallery](docs/demos.md) — every feature clip in one place
+- [ShellAdapter](docs/architecture/shell-adapter.md), [platforms](docs/architecture/platforms.md), [terminal stack](docs/architecture/terminal-stack.md)
+- [Themes, imports and Theme Bridge](docs/design/theme-bridge.md), [Chroma and UI chrome](docs/design/chroma-and-ui-chrome.md), [idle visuals](docs/design/idle-visuals.md)
+- [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Support](SUPPORT.md)
 
 ## Development
 
 ```sh
-npm run build
-npm run typecheck
-npm test
-git diff --check
+npm run verify:fast   # build + core tests (iteration)
+npm run verify        # build + full suite
+npm run demos         # re-record the README clips with VHS (see scripts/demos/README.md)
 ```
 
-## Community & Documentation
-
-- **Contributing** → [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Security** → [SECURITY.md](SECURITY.md)
-- **Roadmap** → [ROADMAP.md](ROADMAP.md)
-- **Changelog** → [CHANGELOG.md](CHANGELOG.md)
-
-See [ROADMAP.md](ROADMAP.md) for future multi-shell architecture and extensibility plans.
-
-## Security & Privacy
-
-- Everything executes locally on your machine through your local shell.
-- No cloud backend or account is required.
-- No telemetry is collected; agent activity stats and session notices are local, optional and never contain prompts or output.
-- NMSh never edits your shell configuration. See [docs/privacy.md](docs/privacy.md).
+Contributor and agent guidance: [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). `NMSH_DETERMINISTIC=1` makes presentation repeatable for tests and recordings ([deterministic presentation](docs/testing/deterministic-presentation.md)).
 
 ## License
 
-NMSh is licensed under the **GNU General Public License v3.0** (GPL-3.0-only). See the `LICENSE` file for details.
+NMSh is licensed under the **GNU General Public License v3.0** (GPL-3.0-only). See [LICENSE](LICENSE).

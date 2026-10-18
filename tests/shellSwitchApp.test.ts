@@ -13,9 +13,11 @@ import {SemanticService} from '../src/shell/SemanticService.js';
 const available = ['fish', 'bash'].every(id => shellAdapter(id as 'fish' | 'bash').resolveExecutable(process.env));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+let diagnose: () => string = () => '';
+
 async function until(check: () => boolean, timeoutMs = 15000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!check()) { if (Date.now() > deadline) throw new Error('condition not reached'); await new Promise(resolve => setTimeout(resolve, 25)); }
+  while (!check()) { if (Date.now() > deadline) throw new Error(`condition not reached\n${diagnose()}`); await new Promise(resolve => setTimeout(resolve, 25)); }
 }
 
 function transcript(app: TerminalApp): string {
@@ -30,6 +32,12 @@ test('app hot swap: zsh → fish → bash → zsh keeps draft, transcript and cw
     const app = new TerminalApp({client, mode: 'in-process', shell: 'zsh'});
     Object.defineProperty(app, 'render', {value: () => {}});
     Object.defineProperty(app, 'dimensions', {value: () => ({columns: 100, rows: 30})});
+    diagnose = () => {
+      const shell = (client as unknown as {shell: {pid?: number; isReady?: boolean; startupRaw?: string}}).shell;
+      return JSON.stringify({shellId: app['shellId'], pid: shell.pid, alive: shell.pid ? alive(shell.pid) : false, isReady: shell.isReady,
+        switchedShellStarting: app['switchedShellStarting'], startupPending: app['startupPending'], running: Boolean(app['running']),
+        startupRaw: shell.startupRaw?.slice(-1500), transcript: transcript(app).slice(-1500)}, null, 1);
+    };
     try {
       client.start();
       await until(() => app['shellCwd'] === cwd && !app['running']);

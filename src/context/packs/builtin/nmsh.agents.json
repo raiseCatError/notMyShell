@@ -1,0 +1,39 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.agents",
+  "version": "1.0.0",
+  "name": "Agent context",
+  "description": "Claude Code model, effort, context window and rate limits from its official status-line interface, through NMSh's local bridge.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Uses the documented Claude Code status-line JSON; no terminal output is parsed."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["agent.claude"],
+  "modules": [
+    {
+      "id": "claude", "label": "Claude Code", "description": "Model, effort and context window of the Claude Code session in this NMSh session (last known when idle).",
+      "category": "agent", "priority": 88, "role": "agent", "icon": "agent", "condition": "onCommand",
+      "triggers": ["claude"],
+      "surfaces": {"preferred": "contextRail", "supported": ["contextRail", "rightContext", "mainPrompt", "statusStrip"]},
+      "segments": [{"label": "Claude", "emphasis": {"fact": "agent.claude", "field": "contextPercent", "atLeast": 85}, "parts": [
+        {"fact": "agent.claude", "field": "model", "optional": true},
+        {"fact": "agent.claude", "field": "effort", "format": "title", "join": " · ", "optional": true},
+        {"fact": "agent.claude", "field": "contextPercent", "format": "percent", "join": " · ", "prefix": "CTX ", "optional": true},
+        {"fact": "agent.claude", "field": "updatedAt", "format": "ago", "join": " · ", "optional": true, "minAgeMs": 120000}
+      ]}]
+    },
+    {
+      "id": "claude-limits", "label": "Claude limits", "description": "Claude plan usage in the current 5-hour and 7-day windows (hidden once a window resets).",
+      "category": "agent", "priority": 86, "role": "agent", "condition": "onCommand",
+      "triggers": ["claude"],
+      "surfaces": {"preferred": "contextRail", "supported": ["contextRail", "rightContext", "mainPrompt", "statusStrip"]},
+      "segments": [{"icon": false, "emphasis": {"fact": "agent.claude", "field": "fiveHourPercent", "atLeast": 90}, "parts": [
+        {"fact": "agent.claude", "field": "fiveHourPercent", "format": "percent", "prefix": "5H ", "optional": true, "until": "fiveHourResetsAt"},
+        {"fact": "agent.claude", "field": "sevenDayPercent", "format": "percent", "prefix": "7D ", "join": " · ", "optional": true, "until": "sevenDayResetsAt"}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "claude", "evidence": [{"kind": "executable", "names": ["claude"]}]},
+    {"module": "claude-limits", "evidence": [{"kind": "fact", "fact": "agent.claude"}]}
+  ]
+}

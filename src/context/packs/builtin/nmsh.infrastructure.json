@@ -1,0 +1,48 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.infrastructure",
+  "version": "1.0.0",
+  "name": "Infrastructure",
+  "description": "Terraform/OpenTofu workspace, Helm chart and Pulumi stack from local files. Nothing contacts a state backend, registry or cluster.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["infra.terraform", "infra.helm", "infra.pulumi"],
+  "modules": [
+    {
+      "id": "terraform", "label": "Terraform", "description": "Selected Terraform or OpenTofu workspace.",
+      "category": "infrastructure", "priority": 89, "role": "context", "icon": "cubes", "condition": "onCommand",
+      "triggers": ["terraform", "tofu", "terragrunt", "tflint", "atlantis", "cdktf"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "tf", "parts": [
+        {"fact": "infra.terraform", "field": "workspace"},
+        {"text": " · tofu", "optional": true, "when": {"fact": "infra.terraform", "field": "tool", "equals": "opentofu"}}
+      ]}]
+    },
+    {
+      "id": "helm", "label": "Helm chart", "description": "Chart name and version from the nearest Chart.yaml.",
+      "category": "infrastructure", "priority": 84, "role": "context", "icon": "helm", "condition": "onCommand",
+      "triggers": ["helm", "helmfile", "ct"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "chart", "parts": [
+        {"fact": "infra.helm", "field": "name"},
+        {"fact": "infra.helm", "field": "version", "prefix": " ", "optional": true}
+      ]}]
+    },
+    {
+      "id": "pulumi", "label": "Pulumi", "description": "Selected Pulumi stack (or project) from local Pulumi settings.",
+      "category": "infrastructure", "priority": 87, "role": "context", "icon": "cubes", "condition": "onCommand",
+      "triggers": ["pulumi"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "pulumi", "parts": [
+        {"fact": "infra.pulumi", "field": "stack", "optional": true},
+        {"fact": "infra.pulumi", "field": "project", "optional": true, "when": {"field": "stack", "present": false}}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "terraform", "evidence": [{"kind": "workspaceExtension", "extensions": [".tf", ".tofu"]}]},
+    {"module": "helm", "evidence": [{"kind": "workspaceFile", "names": ["Chart.yaml"]}]},
+    {"module": "pulumi", "evidence": [{"kind": "workspaceFile", "names": ["Pulumi.yaml", "Pulumi.yml"]}]}
+  ]
+}

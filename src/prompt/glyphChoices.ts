@@ -164,6 +164,8 @@ export const SEMANTIC_ICONS = {
   update: {nerd: '', unicode: '↻', ascii: '^'},
   sparkle: {nerd: '✦', unicode: '✦', ascii: '*'},
   moon: {nerd: '', unicode: '☾', ascii: ''},
+  /** Keep Awake: an open eye (no mascot, no cup); Safe/ASCII has none, so the text carries it. */
+  awake: {nerd: '\u{f06e}', unicode: '\u25c9', ascii: ''},
   palette: {nerd: '', unicode: '', ascii: ''},
 } as const satisfies Record<string, SemanticIcon>;
 export type SemanticIconId = keyof typeof SEMANTIC_ICONS;

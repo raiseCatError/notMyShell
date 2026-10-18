@@ -13,7 +13,7 @@ import type {Key} from '../terminal/keys.js';
 import {truncateAnsi, repeatToWidth} from '../util/text.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from './actions.js';
 import {GLYPHS} from './glyphs.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 
 export interface LayoutChoice {
   composerPosition: ComposerPosition;
@@ -103,6 +103,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     panel: [],
     inspector: [],
     suggestions: [],
+    queue: [],
     activity: plan.composerPosition === 'top'
       ? ['', `${SECONDARY}${activity.phrase}${SUBTLE}${activity.duration}${RESET}`]
       : [`${SECONDARY}${activity.phrase}${SUBTLE}${activity.duration}${RESET}`, ''],
@@ -113,6 +114,8 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     status: [],
     notices: [],
     find: [],
+    awake: [],
+    contextRail: [], railGap: [], railEdge: [],
   };
   const frame = new Array<string>(plan.rows).fill('');
   for (const region of plan.regions) {
@@ -161,7 +164,7 @@ export function renderLayoutPanel(state: LayoutPanelState, columns: number, rows
   const out = [`${PRIMARY}  Layout${RESET}`, ''];
   ROWS.forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${selected ? ACCENT : SECONDARY}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
   const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
   const header = ['', `${PRIMARY}Preview${RESET}  ${layoutDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}  ${SUBTLE}sample content; nothing runs${RESET}`,

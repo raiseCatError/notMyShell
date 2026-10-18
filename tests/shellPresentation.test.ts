@@ -47,7 +47,7 @@ test('/shell badges: current and default are text, distinct from the selection a
   panel.selected = 1;
   const rows = renderShellPanel(panel, 120).map(stripAnsi);
   assert.match(rows.find(row => row.includes('zsh 5.9'))!, /\[default\]$/u);
-  assert.match(rows.find(row => row.includes('GNU bash'))!, /\[current\]$/u);
+  assert.match(rows.find(row => row.includes('GNU bash'))!, /\[current\]\s*$/u);
   const fish = rows.find(row => row.includes('fish 4.0'))!;
   assert.doesNotMatch(fish, /\[current\]|\[default\]/u, 'the selected row is not marked current');
   assert.ok(rows.some(row => row.includes('[current] runs under this session · [default] starts new sessions')));

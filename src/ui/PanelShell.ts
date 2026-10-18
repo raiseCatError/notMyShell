@@ -3,6 +3,11 @@ import {background, foreground, UI_COLORS} from './palette.js';
 import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
 import {renderSurface} from './surface.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
+import {graphemes} from '../input/inputLayout.js';
+import {stripAnsi} from '../util/text.js';
+import type {RgbColor} from './palette.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
@@ -13,6 +18,21 @@ const INDENT = '  ';
  * The widest contiguous run of tabs around `selected` that fits `columns`,
  * with room reserved for the `‹` / `›` overflow markers it needs.
  */
+/**
+ * Tab / Shift+Tab over a visual tab bar: the step to take (+1 next, -1
+ * previous), or undefined when the key is not tab cycling. Callers do not ask
+ * while focus is in a text field where Tab edits or completes.
+ */
+export function tabCycleDelta(key: {kind: string}): 1 | -1 | undefined {
+  return key.kind === 'complete' ? 1 : key.kind === 'focusPrevious' ? -1 : undefined;
+}
+
+/** The neighbouring tab, wrapping around both ends. */
+export function cycleTab<T>(tabs: readonly T[], current: T, delta: number): T {
+  const index = Math.max(0, tabs.indexOf(current));
+  return tabs[(index + delta + tabs.length) % tabs.length]!;
+}
+
 export function tabWindow(widths: readonly number[], selected: number, columns: number): {start: number; end: number} {
   const fits = (start: number, end: number) => {
     let used = INDENT.length + (end < widths.length - 1 ? 2 : 0);
@@ -39,7 +59,9 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
   const labels = tabs.map(tab => ` ${tab} `);
   const {start, end} = tabWindow(labels.map(label => displayWidth(label)), selected, width);
   const muted = foreground(UI_COLORS.secondary);
-  const active = focused
+  // Without color the active tab is reverse video (as the selected row band is), so it never rests on weight alone;
+  // keyboard focus on the tab row adds weight.
+  const active = colorLevel() === 'none' ? `${focused ? BOLD : ''}\u001B[7m` : focused
     ? `${BOLD}${background(UI_COLORS.accent)}${foreground(UI_COLORS.projectBackground)}`
     : `${BOLD}${background(UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
   let line = start > 0 ? `${foreground(UI_COLORS.subtle)}‹ ${RESET}` : INDENT;
@@ -49,6 +71,47 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
   }
   if (end < tabs.length - 1) line += `${foreground(UI_COLORS.subtle)} ›${RESET}`;
   return truncateAnsi(line, width);
+}
+
+/**
+ * The strong selected-row treatment, shared with the active tab: one
+ * full-width deep-lavender band with the theme's project foreground. Without
+ * color it is reverse video, so the selection never depends on color alone.
+ * Every reset inside the row re-opens the band, so styled parts stay on it.
+ */
+export function selectedRowBand(row: string, columns: number, chosenColor?: RgbColor): string {
+  const none = colorLevel() === 'none';
+  const band = none ? '\u001B[7m' : `${background(chosenColor ?? UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  if (none) {
+    // Reverse remains active through empty/compound resets and an embedded inverse-off.
+    const body = truncateAnsi(row, columns).replace(/\u001B\[([\d;]*)m/gu, (escape, codes: string) =>
+      codes.split(';').some(code => code === '' || code === '0' || code === '27') ? `${escape}\u001B[7m` : escape);
+    return fullWidthRowBand(body, columns, band);
+  }
+  const fill = chosenColor ?? UI_COLORS.projectBackground;
+  const body = truncateAnsi(row, columns);
+  const padded = `${body}${RESET}${' '.repeat(Math.max(0, columns - displayWidth(body)))}`;
+  // Paint each terminal cell after its own SGR, so 49, 0, compound resets and
+  // explicit prompt backgrounds cannot punch through the selected surface.
+  const paints = new Map<number, CellPaint>();
+  let column = 0;
+  for (const glyph of graphemes(stripAnsi(padded))) {
+    const connector = /^[\ue0b0-\ue0d7]$/u.test(glyph);
+    paints.set(column, connector ? {normalVideo: true, fill, tint: {color: fill, amount: 1}} : {normalVideo: true, fill, contrast: 4.5});
+    column += Math.max(1, displayWidth(glyph));
+  }
+  return `${band}${overlayRow(padded, paints, columns)}${RESET}`;
+}
+
+/** Keep a full-width surface active across embedded style resets and trailing padding. */
+export function fullWidthRowBand(row: string, columns: number, band: string): string {
+  const body = truncateAnsi(row, columns).replaceAll(RESET, `${RESET}${band}`);
+  return `${band}${body}${band}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}`;
+}
+
+/** Foreground for quiet text on the selected band: readable on it, never the dim muted gray. */
+export function onSelectedBand(): string {
+  return colorLevel() === 'none' ? '' : foreground(UI_COLORS.projectForeground);
 }
 
 /** Framing belongs to the live overlay, never to OutputBuffer or an archive. */

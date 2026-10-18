@@ -4,13 +4,30 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
-| **Next development milestone** | [v0.17.0 — Compatibility & Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Current release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); physical QA partial ([record](docs/testing/v020-physical-qa.md)) |
+| **Not released separately** | v0.19.0 — Terminal workflow candidate; never tagged or published, its work first ships in v0.20.0 |
+| **Previous release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
+| **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
+| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and further Theme Bridge work released in v0.18.0 |
+| **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is 0.16.0; v0.17 is the next development milestone.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.20.0.
+
+## Current engineering focus — native modules and Context Engine
+
+The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model and the [Context Engine design](docs/design/context-engine.md) its architecture. The foundation shipped in v0.17.0 and the module platform below in v0.18.0.
+
+| State | Scope |
+|---|---|
+| Implemented in the v0.17.0 release | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
+| Preserved | Existing Native module order, visibility and left/right placement; real zsh/Bash/Fish sessions; prompt snapshots and fullscreen passthrough |
+| Implemented in the v0.18.0 release | Demand-driven capability scheduling (concurrency caps, timeouts and backoff, cancellation, staged scopes, stale-while-revalidate); shell-reported allowlisted environment; the first-party catalog (project, runtimes, environment managers, infrastructure, cloud, system, Git extras) as bundled declarative packs; `nmsh.context-pack/v1` with `nmsh packs` install/remove/enable/disable, integrity and recommendations; Claude Code agent context through its status line; Status Strip routing and Status Strip 2.0; `/prompt` Catalog, Packs and module details; hostile-workspace coverage and Context Engine budgets |
+| Deferred | Remote pack registry, download and signature trust; any executable extension tier (it would need a real sandbox); agents without a stable structured interface |
+
+Repository entry must never grant authority to execute arbitrary repository-controlled code. Discovery is parser-only; executables found on PATH are never run for context, and only fixed system tools and trusted Git are spawned.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -129,7 +146,7 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
 | Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
 
-## Next development — v0.17 Compatibility & Discovery
+## Released — v0.17 Context Engine, Themes & Discovery
 
 [Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15). Code and automated coverage for `Relevant here`, package-manager plans with bulk install, activation detection, host profiles, Linux/WSL hardening, automatic update staging and startup session kill. Physical validation in iTerm2, Kitty, WezTerm, Linux and WSL 2 is tracked as a separate `needs-human-test` follow-up and does not block the release.
 
@@ -141,12 +158,28 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
 
+## Released — v0.20.0 Terminal workflow, first-run setup, background tasks & native modules
+
+Released on 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392), built cumulatively on the unpublished v0.19 candidate: the standalone module work merged through
+`integration/v020-modules` (#370 → #372 → #373, #374, #369, #381, #379, #380, #375 → #376/#377/#378, #383 → #384), then
+#347 and #349, then the frontend wiring of the workspace regions, background tasks and related PRs. Executable
+Portable Mods stay disabled (#379); the Codex app-server adapter ships unwired (#380). Physical-QA stabilization of both
+candidates (#395, #396) and the post-v0.20 slices then followed on one linear line: the execution timeline, Queue
+settings, queue history and summaries, queued output folding and paste choices, output selection and Actions, the
+first-run starting point, guided Setup, shared Tools flow, update notice and color editor. See CHANGELOG → 0.20.0;
+physical QA is partial ([record](docs/testing/v020-physical-qa.md)).
+
+## Not released separately — v0.19 Terminal workflow candidate
+
+Integrated on `release/v0.19.0` from `v0.18.0` with merge commits, preserving history: the frozen workflow stack ([#348](https://github.com/raiseCatError/notMyShell/pull/348) → [#357](https://github.com/raiseCatError/notMyShell/pull/357) → [#358](https://github.com/raiseCatError/notMyShell/pull/358) → [#360](https://github.com/raiseCatError/notMyShell/pull/360) → [#361](https://github.com/raiseCatError/notMyShell/pull/361) → [#368](https://github.com/raiseCatError/notMyShell/pull/368)) and its independent sibling [#367](https://github.com/raiseCatError/notMyShell/pull/367), tracked by [#359](https://github.com/raiseCatError/notMyShell/issues/359). Automated gates are recorded in the release PR; it was never published on its own and first ships in v0.20.0. Deferred to v0.20 or later: exact last-frame module compaction explanations and dedicated external source previews ([#365](https://github.com/raiseCatError/notMyShell/issues/365)), and the full native runtime set ([#364](https://github.com/raiseCatError/notMyShell/issues/364)).
+
+## Released — v0.18 Context Engine, Managed Agents & Workspaces
+
+Released on 2026-10-13 through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345). Physical QA was not performed before publication and remains a follow-up ([checklist](docs/testing/v018-physical-qa.md)). Brings together the module ecosystem previously planned for v0.19.0 ([#305](https://github.com/raiseCatError/notMyShell/issues/305), [#316](https://github.com/raiseCatError/notMyShell/issues/316)–[#321](https://github.com/raiseCatError/notMyShell/issues/321)) together with managed Claude Code targets and `/mods` ([PR #329](https://github.com/raiseCatError/notMyShell/pull/329)), the first slice of the worktree manager ([#337](https://github.com/raiseCatError/notMyShell/issues/337), [PR #342](https://github.com/raiseCatError/notMyShell/pull/342)), the read-only GitHub workspace (first slice of [#338](https://github.com/raiseCatError/notMyShell/issues/338), [PR #343](https://github.com/raiseCatError/notMyShell/pull/343)) and the Theme Bridge work planned for v0.18.0 ([#304](https://github.com/raiseCatError/notMyShell/issues/304)): terminal title ownership (OSC 0/2), host-marker lifecycle refinements, Open in pager, truthful delta status, 16/8-color correctness and Bash/Fish typo correction. Still deferred from #304: delta diff styles (git config), terminal emulator and editor base-theme takeover; physical host QA. See CHANGELOG → 0.18.0.
+
 ## Planned releases
 
-| Release | Theme | Tracker |
-|---|---|---|
-| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices |
-| v0.19.0 | NMSh Native module ecosystem: architecture, lazy probes, caching and provenance first, then a bounded high-value module set (not the whole catalog) | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
+No release is scheduled yet; remaining work lives in the issues and the backlog below.
 
 ## Backlog — future, unscheduled
 
@@ -154,7 +187,6 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Issue | Title |
 |---|---|
-| [#305](https://github.com/raiseCatError/notMyShell/issues/305) | (planned v0.19) NMSh Native module ecosystem and upstream module ports (also carries the user-defined prompt modules direction from the closed research issue #73) |
 | [#304](https://github.com/raiseCatError/notMyShell/issues/304) | (planned v0.18) Theme Bridge and semantic terminal integration |
 | [#296](https://github.com/raiseCatError/notMyShell/issues/296) | Hosted SSH demo (post-1.0) |
 | [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish triage index |

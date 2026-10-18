@@ -33,6 +33,8 @@ export interface LaunchContext {
   stateDir: string;
   /** Where the shell writes its bounded name snapshot each cycle. */
   knowledgePath: string;
+  /** NMSh Theme Bridge environment file for this shell syntax, applied from the prompt hook when present. */
+  bridgeEnvPath?: string;
 }
 
 export interface ShellLaunch {
@@ -80,6 +82,14 @@ export interface ShellAdapter {
    * that shell's terminal, so it answers minimally. Undefined: never answer.
    */
   answerQueries?(chrome: string): string;
+  /**
+   * The queries the shell's own editor sends (global pattern). The editor also runs while the shell itself owns the
+   * terminal for a command (Fish's `read` builtin); NMSh answers those there too and they never reach the host, so
+   * the editor sees the same terminal at its prompt and in `read`.
+   */
+  readonly editorQueries?: RegExp;
+  /** The mark the shell's editor writes once it has drawn its prompt (see QueryOrder): input waits for it after NMSh answers the editor. */
+  readonly editorSettled?: RegExp;
   /**
    * Terminal-mode bytes the shell's own editor emits as it hands the terminal
    * to a command (Fish turns bracketed paste off). They are editor chrome and

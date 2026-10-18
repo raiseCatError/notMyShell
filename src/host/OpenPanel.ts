@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
 import {truncateAnsi} from '../util/text.js';
@@ -35,7 +35,7 @@ export function renderOpenPanel(state: OpenPanelState, columns: number, height: 
   const start = Math.max(0, Math.min(state.selected - Math.floor(budget / 2), state.references.length - budget));
   state.references.slice(start, start + budget).forEach((reference, offset) => {
     const selected = start + offset === state.selected;
-    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${reference.text}${reset}  ${subtle}from ${reference.command.slice(0, 40)}${reset}`);
+    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${reference.text}${reset}  ${subtle}from ${reference.command.slice(0, 40)}${reset}`);
   });
   if (state.message) rows.push('', `  ${secondary}${state.message}${reset}`);
   rows.push('', renderControls([['↑↓', 'select'], ['Enter', 'open'], ['Esc', 'close']]));

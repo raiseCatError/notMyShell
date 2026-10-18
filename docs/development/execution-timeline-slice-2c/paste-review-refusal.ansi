@@ -1,0 +1,14 @@
+  Review commands[0m  1 command · 1 verified statement, in this order[0m
+  ! Separation refused: Unclosed heredoc construct[0m
+  › [1 Run as block · 1 outer execution][0m  [2 Queue · refused][0m  [3 Edit][0m  [4 Can…[0m
+
+›[0m 1[0m  read-only                   [0m[1mcat <<EOF  ⏎ +2[0m
+
+  Entire block, exactly as it will run as 1 outer execution[0m
+    cat <<EOF[0m
+    line1[0m
+    line2[0m
+
+  Nothing runs until you press Enter. The shell runs 1 outer execution.[0m
+  ↑↓ select · ←→/Tab choice · Enter run as block · e edit as text[0m
+  t original text · Esc back[0m

@@ -1,0 +1,16 @@
+  Queue history[0m  recent 5 chains[0m
+  Observed facts from this se…[0m
+
+›[0m ✘ Finished · chain 5[0m  3 res…[0m
+  ✘ Cleared · chain 4[0m  1 resu…[0m
+  ✘ Finished · chain 3[0m  2 res…[0m
+  ✘ Finished · chain 2[0m  3 r…[0m  ·…[0m
+  ✔ Finished · chain 1[0m  2 r…[0m  ·…[0m
+
+  Retained results (redacted re…[0m
+  ✔[0m npm run bu…[0m  exit 0 · 8.2s[0m
+  ✔[0m git stat…[0m  exit 0 · 800 ms[0m
+  ✘[0m deploy --t…[0m  exit 1 · 5.0s[0m
+
+  /queue save-summary saves t…[0m
+↑↓ select · Enter hide results …[0m

@@ -14,7 +14,10 @@ adds `typecheck:bench` and `bench:smoke`. No aggregate recompiles the same sourc
 twice. The test runner caps default file workers at four (or the lower Node default
 on small runners), since each PTY worker also owns helper processes. Explicit
 Node `--test-concurrency` arguments override the cap. Assertions and budgets
-remain unchanged. Local commands reuse node_modules. Clean CI/release environments use
+remain unchanged. For a busy local host, `NMSH_TEST_CONCURRENCY=1 npm run verify:release`
+uses the same complete suite serially; the optional environment value must be 1–4.
+This changes resource fan-out, not test selection or timeouts.
+Local commands reuse node_modules. Clean CI/release environments use
 `npm ci`; setup-node caches npm downloads, never node_modules.
 
 ## Canonical suite and sharding
@@ -97,3 +100,17 @@ Final shard runs passed in 52.2s and 79.9s with four workers. Every shard and re
 all assertions and budgets. Higher local fan-out exposed intermittent existing
 completion, resume-browser latency and terminal-mode timing failures; focused
 reruns and final bounded-worker verification passed without assertion changes.
+
+### Explicit temporary storage
+
+For verification on another disk, set `NMSH_TEST_TMPDIR` to an existing short
+absolute directory on a filesystem supporting Unix sockets and permissions.
+The runner creates and cleans its private `nt-*` directories there. Test children
+receive a private home inside that root so shell completion caches and other
+home-relative test artifacts cannot write to the host home. An invalid
+directory fails instead of falling back to the system disk. Keep paths short:
+nested PTY/session socket names still have the operating system's length limit.
+
+Set `TMPDIR`, `TMP` and `TEMP` to that directory too for launchers and benchmark
+helpers. Point npm and tool caches at the same disk when needed. Default CI
+storage and all verification gates remain unchanged.

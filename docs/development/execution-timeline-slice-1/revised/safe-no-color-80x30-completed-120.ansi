@@ -1,0 +1,30 @@
+> npm run build[0m                                                 [Copy] [Actions][0m[K[0m
+Compiling project...[0m
+[0m
++ Hopped for 8.2s · done 12:00[0m
+[0m
+────────────────────────────────────────────────────────────────────────────────[0m
+> npm test[0m[K[0m
+Running test suite...[0m
+[0m
++ Jumped for 3.1s · from queue · done 12:00[0m
+[0m
+────────────────────────────────────────────────────────────────────────────────[0m
+> git status[0m[K[0m
+On branch feature/example[0m
+[0m
++ Mended for 200 ms · from queue · done 12:00[0m
+[0m
+────────────────────────────────────────────────────────────────────────────────[0m
+> echo done[0m[K[0m
+done[0m
+[0m
++ Sculpted for 100 ms · from queue · done 12:00[0m
+- Queue finished · 4 commands[0m --------------------------------------------------[0m
++[0m git status[0m                                                              200 ms[0m
++[0m echo done[0m                                                               100 ms[0m
+Queue finished[0m · [0m11.6s elapsed[0m · [0m4 succeeded[0m
+[0m
+--------------------------------------------------------------------------------[0m
+>[0m 
+--------------------------------------------------------------------------------[0m

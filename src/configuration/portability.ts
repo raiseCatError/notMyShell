@@ -16,14 +16,17 @@ export const PORTABLE_VERSION = 1;
 
 /** Category id → dotted configuration paths it owns. Order is the export order. */
 export const PORTABLE_CATEGORIES = {
-  prompt: ['provider', 'promptSymbol', 'promptSymbolCustom', 'modules', 'separator', 'gap', 'spacing', 'placement',
+  prompt: ['provider', 'promptSymbol', 'promptSymbolCustom', 'modules', 'contextRail', 'separator', 'gap', 'spacing', 'placement',
     'nmsh.gapEnabled', 'nmsh.startStyle', 'nmsh.connector', 'nmsh.endStyle', 'nmsh.icons', 'nmsh.style', 'nmsh.connectorFade',
     'nmsh.connectorFadeColors', 'nmsh.gitEnabled', 'nmsh.gitColors', 'nmsh.gitGeometry', 'nmsh.gitConnectorFade', 'nmsh.mirrorRight', 'nmsh.styleProfiles'],
-  theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'customTheme'],
+  theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'nmsh.themeId', 'themes', 'customTheme'],
+  themeBridge: ['themeBridge'],
   chroma: ['presentation'],
+  motion: ['motion'],
   chrome: ['uiChrome', 'glyphStyle', 'cursor'],
   syntax: ['syntax'],
   transcript: ['transcript', 'outputFolding'],
+  copy: ['copy'],
   layout: ['composerLayout', 'composerPosition', 'transcriptPresentation'],
   suggestions: ['suggestions', 'suggestionsOnEmpty'],
   providers: ['history', 'picker', 'navigation', 'welcome'],
@@ -31,7 +34,7 @@ export const PORTABLE_CATEGORIES = {
   idle: ['idleVisuals', 'liveActivity'],
   notifications: ['notifications', 'sessionNotices'],
   tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateMode', 'updateFrequency'],
-  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention'],
+  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention', 'terminalTitle', 'commandQueue', 'queueFailurePolicy', 'queue'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],
   editor: ['openWith'],
@@ -45,7 +48,7 @@ export const CATEGORY_IDS = Object.keys(PORTABLE_CATEGORIES) as PortableCategory
  * provider config files (Starship, Powerlevel10k), which rarely exist at the
  * same place elsewhere and can reveal a home directory layout.
  */
-export const NEVER_EXPORTED = ['onboardingComplete', 'toolsSetupComplete', 'glyphChoiceComplete', 'starship', 'powerlevel10k'] as const;
+export const NEVER_EXPORTED = ['introSeen', 'onboardingComplete', 'toolsSetupComplete', 'glyphChoiceComplete', 'onboardingBackdrop', 'startingPoint', 'starship', 'powerlevel10k', 'ohMyPosh'] as const;
 
 export interface PortableDocument {
   format: typeof PORTABLE_FORMAT;
@@ -75,6 +78,15 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
   current[keys.at(-1)!] = structuredClone(value);
 }
 
+function portableThemes(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map(asset => {
+    const copy = structuredClone(asset) as {origin?: {sourcePath?: string}};
+    if (copy.origin) delete copy.origin.sourcePath;
+    return copy;
+  });
+}
+
 export function parseCategories(text: string | undefined): PortableCategory[] {
   if (!text || text === 'all') return [...CATEGORY_IDS];
   const requested = text.split(',').map(item => item.trim()).filter(Boolean);
@@ -92,7 +104,8 @@ export function exportSettings(configuration: PromptConfiguration, categories: r
     const values: Record<string, unknown> = {};
     for (const path of PORTABLE_CATEGORIES[category]) {
       const value = getPath(normalized, path);
-      if (value !== undefined) values[path] = structuredClone(value);
+      // Imported themes keep their source path on this machine only; a transfer never carries it.
+      if (value !== undefined) values[path] = path === 'themes' ? portableThemes(value) : structuredClone(value);
     }
     document.categories[category] = values;
   }
@@ -170,7 +183,11 @@ export function planImport(current: PromptConfiguration, document: PortableDocum
   }
   const next = normalizePromptConfiguration(draft);
   // Onboarding state and machine-local paths always stay as they are here.
-  for (const key of NEVER_EXPORTED) (next as unknown as Record<string, unknown>)[key] = structuredClone((base as unknown as Record<string, unknown>)[key]);
+  for (const key of NEVER_EXPORTED) {
+    const target = next as unknown as Record<string, unknown>, source = base as unknown as Record<string, unknown>;
+    // Optional local labels (the starting point) stay absent when this machine has none.
+    if (key in source) target[key] = structuredClone(source[key]); else delete target[key];
+  }
   const changes: ImportChange[] = [];
   for (const {category, path} of accepted) {
     const before = getPath(base, path);

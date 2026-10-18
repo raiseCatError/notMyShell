@@ -51,7 +51,7 @@ drag past the top with the wheel, release, paste.
 
 ## Ask
 
-`/ask` opens "Ask NMSh — What can I help you with?"; `/ask <request>` opens
+`/btw` opens "Ask NMSh — What can I help you with?"; `/btw <request>` opens
 the same surface and submits the request at once. Ask is not an agent and has
 no shell:
 

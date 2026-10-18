@@ -42,6 +42,22 @@ test('only a simple exit-127 command-not-found diagnostic and executable files c
   } finally { await rm(directory, {recursive: true, force: true}); }
 });
 
+test('Bash and Fish diagnostics correct too, and the live shell\'s PATH is where commands are found', async () => {
+  const shellBin = await mkdtemp(join(tmpdir(), 'nmsh-correction-shell-'));
+  try {
+    await writeFile(join(shellBin, 'kubectl'), '#!/bin/sh\nexit 0\n', {mode: 0o700});
+    const service = new CommandCorrectionService({PATH: '/nonexistent-nmsh-path'});
+    assert.equal(await service.suggest('kubectk get pods', 127, 'bash: kubectk: command not found\n'), undefined, 'not on NMSh\'s own PATH');
+    service.usePath(shellBin);
+    assert.equal((await service.suggest('kubectk get pods', 127, 'bash: kubectk: command not found\n'))?.insertion, 'kubectl get pods');
+    assert.equal((await service.suggest('kubectk get pods', 127, 'fish: Unknown command: kubectk\n'))?.insertion, 'kubectl get pods');
+    assert.equal(await service.suggest('kubectk get pods', 127, 'bash: kubectl: command not found\n'), undefined, 'the diagnostic must name the typed word');
+    assert.equal(await service.suggest('kubectk get pods', 1, 'bash: kubectk: command not found\n'), undefined);
+    service.usePath(undefined);
+    assert.equal(await service.suggest('kubectk get pods', 127, 'bash: kubectk: command not found\n'), undefined, 'back to NMSh\'s own PATH');
+  } finally { await rm(shellBin, {recursive: true, force: true}); }
+});
+
 test('Tab edits, Escape dismisses, and Enter never executes a suggestion automatically', async () => {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});

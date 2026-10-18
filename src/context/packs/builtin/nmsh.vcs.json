@@ -1,0 +1,48 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.vcs",
+  "version": "1.0.0",
+  "name": "Version control extras",
+  "description": "Git stash depth and upstream from the repository's Git files alongside Rich Git; Mercurial branch or bookmark and Jujutsu repository state from their own directories.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["vcs.git", "vcs.hg", "vcs.jj"],
+  "modules": [
+    {
+      "id": "stash", "label": "Git stash", "description": "Number of stashed changes.",
+      "category": "vcs", "priority": 30, "role": "vcs", "icon": "archive", "condition": "inRepository",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "stash", "parts": [{"fact": "vcs.git", "field": "stash", "format": "count"}]}]
+    },
+    {
+      "id": "upstream", "label": "Git upstream", "description": "The branch's configured upstream.",
+      "category": "vcs", "priority": 28, "role": "vcs", "icon": "upstream", "condition": "inRepository",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "up", "parts": [{"fact": "vcs.git", "field": "upstream"}]}]
+    },
+    {
+      "id": "hg", "label": "Mercurial", "description": "Mercurial bookmark, or the branch when no bookmark is active, from the .hg directory; hg is never run.",
+      "category": "vcs", "priority": 31, "role": "vcs", "icon": "gitBranch", "condition": "always",
+      "surfaces": {"preferred": "mainPrompt"},
+      "segments": [{"label": "hg", "parts": [
+        {"fact": "vcs.hg", "field": "bookmark", "optional": true},
+        {"fact": "vcs.hg", "field": "branch", "optional": true, "when": {"field": "bookmark", "present": false}}
+      ]}]
+    },
+    {
+      "id": "jj", "label": "Jujutsu", "description": "Marks a Jujutsu repository: colocated with Git or not, main or secondary workspace; jj is never run.",
+      "category": "vcs", "priority": 31, "role": "vcs", "condition": "always",
+      "surfaces": {"preferred": "mainPrompt"},
+      "segments": [{"icon": false, "parts": [
+        {"text": "jj", "when": {"fact": "vcs.jj", "field": "repository", "equals": true}},
+        {"text": "colocated", "join": " · ", "optional": true, "when": {"fact": "vcs.jj", "field": "colocated", "equals": true}},
+        {"text": "secondary workspace", "join": " · ", "optional": true, "when": {"fact": "vcs.jj", "field": "workspace", "equals": "secondary"}}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "hg", "evidence": [{"kind": "workspaceFile", "names": [".hg"]}]},
+    {"module": "jj", "evidence": [{"kind": "workspaceFile", "names": [".jj"]}]}
+  ]
+}

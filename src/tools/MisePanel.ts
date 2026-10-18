@@ -4,6 +4,7 @@ import {framePanel} from '../ui/PanelShell.js';
 import {truncateAnsi} from '../util/text.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {miseTaskCommand, type MiseProject, type MiseResult} from './MiseProject.js';
+import {GLYPHS} from '../ui/glyphs.js';
 
 export interface MisePanel {project: MiseProject; result?: MiseResult; selected: number; confirm?: ConfirmState; busy?: boolean}
 export function misePanelKey(state: MisePanel, key: Key): 'close' | 'inspect' | {command: string} | undefined {
@@ -38,7 +39,7 @@ export function renderMisePanel(state: MisePanel, columns: number, height: numbe
       const tasks = state.result.metadata.tasks;
       rows.push('  Tasks may run project actions/install tools.', '  Enter fills composer only; separate Enter runs in real zsh.');
       const budget = Math.max(1, height - 11), start = Math.max(0, state.selected - budget + 1);
-      rows.push(...tasks.slice(start, start + budget).map((name, i) => `  ${start + i === state.selected ? '>' : ' '} ${name}`));
+      rows.push(...tasks.slice(start, start + budget).map((name, i) => `  ${start + i === state.selected ? GLYPHS.selection : ' '} ${name}`));
       if (!tasks.length) rows.push('  No tasks reported.');
     }
     rows.push('  I inspect / R refresh (requires consent); Up/Down tasks; Esc back');

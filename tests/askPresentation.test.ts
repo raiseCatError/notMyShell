@@ -113,7 +113,7 @@ test('recorded Ask: structured turns only, folded by Output folding, Ctrl+O and 
   assert.equal(record!.expanded, false);
   assert.deepEqual(record!.ask, {version: 1, turns: long});
   let rows = output.wrapped(100).map(row => row.plain);
-  assert.ok(rows.some(row => row.includes('/ask resume yesterday')), 'the request identifies the block');
+  assert.ok(rows.some(row => row.includes('/btw resume yesterday')), 'the request identifies the block');
   assert.ok(rows.some(row => /Ask · 7 turns · sessions · Ctrl\+O/u.test(row)), 'a deterministic topic summary from the requests');
   assert.ok(!rows.some(row => row.includes('Opening /resume')));
   output.toggleExpanded(0);

@@ -40,6 +40,7 @@ test('catalog integrity: destinations are real NMSh commands; no hallucinated su
 
 // Representative phrases per concept: canonical words and natural aliases (concept → expected destination or kind).
 const MATRIX: Array<[string, string]> = [
+  ['open output actions', '/actions'],
   ['change chroma', '/chroma'], ['turn animated prompt colors off', 'answer:/chroma'], ['what is chroma', 'answer'],
   ['change my ghost text', '/providers'], ['autosuggestion settings', '/providers'], ['turn suggestions off', 'setting:none'], ['enable suggestions', 'setting:nmsh'],
   ['tab completion', 'answer'], ['completion settings', 'answer'],
@@ -51,7 +52,7 @@ const MATRIX: Array<[string, string]> = [
   ['change cursor blink', '/cursor'], ['change syntax highlighting', '/syntax'], ['change transcript layout', '/layout'],
   ['open the screensaver', '/screensaver'], ['show agent activity', '/agents'], ['what version am i running', '/version'], ['check for updates', '/update'],
   ['change keyboard shortcuts', '/keyboard'], ['open session presets', '/presets'], ['change live activity colors', '/activity'],
-  ['change the welcome screen', '/providers'], ['configure the status strip', 'answer:/settings'], ['change nerd font icons', 'answer:/settings'],
+  ['change the welcome screen', '/providers'], ['configure the status strip', '/strip'], ['change nerd font icons', '/glyphs'],
   ['use nushell', 'unsupported'], ['open a new tab', 'unsupported'],
 ];
 

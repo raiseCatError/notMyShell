@@ -6,6 +6,11 @@ and, for dark variants, text tiers). They never recolor the terminal window,
 editor, tab chrome, desktop appearance or any host configuration. Zed's
 `/appearance` still says "Appearance is configured by Zed."
 
+Custom and imported themes now live in a Native theme library, and the
+opt-in Theme Bridge can extend a theme to selected terminal tools; see
+[theme-bridge.md](theme-bridge.md). With Theme Bridge Off (the default)
+the statement above holds unchanged.
+
 ## Model
 
 The configuration stores one palette id (`nmsh.palette`). Family and variant
@@ -104,3 +109,9 @@ until the user saves.
 
 Arrow keys adjust, Shift moves faster, Tab moves between controls, `#` types a
 hex value, Enter keeps and Esc cancels. Nothing depends on the mouse.
+
+## Syntax selection
+
+`/syntax` uses the same family/variant registry as `/theme` and Settings. Follow prompt uses the saved NMSh palette even when an external provider supplies the prompt. Choose theme selects a family, then its variant; Custom is available when a custom theme exists. Catppuccin uses the shared theme accent. Grayscale and Highlighting Off remain separate simple choices.
+
+Previews use the real Highlighter with fixed example semantics and execute nothing. Palette and accent changes affect NMSh-owned input and new submitted commands, never raw PTY output or external artifacts.

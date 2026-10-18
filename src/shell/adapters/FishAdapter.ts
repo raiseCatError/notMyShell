@@ -7,6 +7,8 @@ import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
 import {fishQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
+import {bridgeBootstrap} from '../../themeBridge/environment.js';
+import {fishEnvironmentSnapshot} from '../../context/shellEnvironment.js';
 
 /**
  * Fish backend.
@@ -27,7 +29,8 @@ const FISH_BUILTINS = new Set(['and', 'begin', 'bg', 'bind', 'block', 'break', '
   'math', 'not', 'or', 'path', 'printf', 'pwd', 'random', 'read', 'realpath', 'return', 'set', 'set_color', 'source', 'status', 'string', 'switch', 'test',
   'time', 'true', 'type', 'ulimit', 'wait', 'while', 'abbr', 'argparse']);
 
-function bootstrap({token, knowledgePath}: LaunchContext, originalTerm: string | undefined): string {
+function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
+  const sync = bridgeEnvPath ? '\n    nmsh_bridge_sync' : '';
   const marker = (body: string) => `printf '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed fish session bootstrap (private, per session)
 ${originalTerm ? `set -gx TERM ${fishQuote(originalTerm)}` : ''}
@@ -37,16 +40,24 @@ set -g fish_autosuggestion_enabled 0
 function fish_prompt
   if not set -q __nmsh_ready
     set -g __nmsh_ready 1
-    __nmsh_knowledge
+    __nmsh_knowledge${sync}
     ${marker("0;%s")} "$PWD"
   end
 end
+${bridgeEnvPath ? bridgeBootstrap('fish', bridgeEnvPath) : ''}
 function fish_right_prompt; end
 function fish_mode_prompt; end
 function fish_title; end
+# Fish 3's read editor does not advertise bracketed paste. Report its real
+# reader event before it draws or accepts input; never infer ownership from
+# command text, a prompt's appearance, or a delayed process probe.
+function __nmsh_reader --on-event fish_read
+  ${marker('reader')}
+end
 function __nmsh_knowledge
   begin
     printf 'jobs %d\\n' (count (jobs -p 2>/dev/null))
+    # The allowlisted context environment (context/shellEnvironment.ts), before names.${fishEnvironmentSnapshot()}
     set -l nmsh_count 0
     for nmsh_name in (functions -n) (abbr --list 2>/dev/null) (builtin -n)
       set nmsh_count (math $nmsh_count + 1)
@@ -75,7 +86,7 @@ function __nmsh_preexec --on-event fish_preexec
 end
 function __nmsh_postexec --on-event fish_postexec
   set -l nmsh_status $status
-  __nmsh_knowledge
+  __nmsh_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} $nmsh_status "$PWD"
 end
 `;
@@ -179,6 +190,10 @@ export const fishAdapter: ShellAdapter = {
   scrubCommandStart(data) {
     return data.replace(/^(?:\u001b\[\?2004l|\u001b\[\?1004l|\u001b\[<1u|\u001b\[=0;1u|\u001b\[>4;0m)+/u, '');
   },
+  // Background colour, cursor position and primary device attributes: fish 4's reader sends them each time it starts.
+  // Fish ends each prompt draw with OSC 133;B (prompt end).
+  editorSettled: /\u001b\]133;B/u,
+  editorQueries: /\u001b\]11;\?(?:\u001b\\|\u0007)|\u001b\[6n|\u001b\[0?c/gu,
   answerQueries(chrome) {
     // Primary device attributes: Fish 4 waits for this reply. Answer as a VT220-class terminal; nothing else is claimed.
     return /\u001b\[0?c/u.test(chrome) ? '\u001b[?62;22c' : '';

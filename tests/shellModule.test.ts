@@ -8,6 +8,17 @@ import {SETUP_SECTIONS} from '../src/setup/SetupCat.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 
 const config = (): PromptConfiguration => structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+test('a differing shell leads the default prompt while an explicit module order is respected', () => {
+  const context = {cwd: '/w', project: 'w', exitStatus: 0, shell: {current: 'fish', differs: true}};
+  assert.equal(renderedModules(context, config())[0]?.id, 'shell');
+  const custom = config();
+  custom.modules = [custom.modules.find(module => module.id === 'cwd')!, custom.modules.find(module => module.id === 'shell')!];
+  assert.equal(renderedModules(context, custom)[0]?.id, 'cwd');
+  const oldDefault = config();
+  const shell = oldDefault.modules.shift()!;
+  oldDefault.modules.push(shell);
+  assert.equal(renderedModules(context, normalizePromptConfiguration(oldDefault))[0]?.id, 'shell', 'the former default order upgrades too');
+});
 const shellText = (configuration: PromptConfiguration, current: string, differs: boolean) => renderedModules({cwd: '/w', project: 'w', exitStatus: 0,
   shell: {current, differs}}, configuration).filter(module => module.id === 'shell').map(module => module.text).join(' ');
 
@@ -42,7 +53,7 @@ test('normalization: older configs gain the module at its default; invalid condi
 
 test('Settings and Setup Cat share the same Default shell and Show current shell rows', () => {
   const row = SETTINGS_ROWS.find(item => item.id === 'showShell')!;
-  assert.equal(settingsRowValue(row, config()), 'When different');
+  assert.equal(settingsRowValue(row, config()), 'When not default');
   const next = row.control === 'enum' ? row.select(config(), 1) : config();
   assert.equal(shellModuleVisibility(next), 'always');
   const shell = SETUP_SECTIONS.find(section => section.id === 'shell')!;

@@ -35,8 +35,25 @@ export interface CustomTheme {
   dark: boolean;
   prompt: Record<PromptThemeRole, string>;
   ui: Record<UiThemeRole, string>;
+  /**
+   * Optional terminal palette facts kept from an imported terminal scheme
+   * (background, foreground, the 16 ANSI colors, selection, cursor). NMSh's
+   * own UI never paints a background from it; Theme Bridge adapters use it
+   * when present instead of deriving ANSI colors from the semantic roles.
+   */
+  terminal?: TerminalPalette;
   /** Unknown fields from a newer schema, preserved verbatim on export. */
   extra?: Record<string, unknown>;
+}
+
+export interface TerminalPalette {
+  background: string;
+  foreground: string;
+  /** black, red, green, yellow, blue, magenta, cyan, white, then the bright eight. */
+  ansi: string[];
+  selectionBackground?: string;
+  selectionForeground?: string;
+  cursor?: string;
 }
 
 const HEX = /^#[0-9a-f]{6}$/iu;
@@ -83,7 +100,9 @@ export function validateTheme(value: unknown): ThemeValidation {
   for (const role of PROMPT_THEME_ROLES) if (!validHex(prompt[role])) errors.push(`prompt.${role} must be a #rrggbb color.`);
   for (const role of UI_THEME_ROLES) if (!validHex(ui[role])) errors.push(`ui.${role} must be a #rrggbb color.`);
   if (errors.length) return {ok: false, errors};
-  const known = new Set(['schema', 'version', 'name', 'basedOn', 'dark', 'prompt', 'ui', 'extra']);
+  const terminal = value.terminal === undefined ? undefined : normalizeTerminalPalette(value.terminal);
+  if (value.terminal !== undefined && !terminal) warnings.push('The terminal palette is incomplete or invalid and was not kept.');
+  const known = new Set(['schema', 'version', 'name', 'basedOn', 'dark', 'prompt', 'ui', 'terminal', 'extra']);
   const extra = Object.fromEntries(Object.entries(value).filter(([key]) => !known.has(key)));
   const basedOn = typeof value.basedOn === 'string' && NAME.test(value.basedOn) ? value.basedOn : undefined;
   return {ok: true, warnings, theme: {
@@ -91,8 +110,18 @@ export function validateTheme(value: unknown): ThemeValidation {
     ...(basedOn ? {basedOn} : {}),
     prompt: Object.fromEntries(PROMPT_THEME_ROLES.map(role => [role, (prompt[role] as string).toLowerCase()])) as CustomTheme['prompt'],
     ui: Object.fromEntries(UI_THEME_ROLES.map(role => [role, (ui[role] as string).toLowerCase()])) as CustomTheme['ui'],
+    ...(terminal ? {terminal} : {}),
     ...(Object.keys(extra).length ? {extra} : {}),
   }};
+}
+
+/** A complete terminal palette (16 valid ANSI colors, background, foreground) or nothing. */
+export function normalizeTerminalPalette(value: unknown): TerminalPalette | undefined {
+  if (!isRecord(value) || !validHex(value.background) || !validHex(value.foreground) || !Array.isArray(value.ansi)
+    || value.ansi.length !== 16 || !value.ansi.every(validHex)) return undefined;
+  const optional = (key: 'selectionBackground' | 'selectionForeground' | 'cursor') => validHex(value[key]) ? {[key]: (value[key] as string).toLowerCase()} : {};
+  return {background: value.background.toLowerCase(), foreground: value.foreground.toLowerCase(), ansi: (value.ansi as string[]).map(hex => hex.toLowerCase()),
+    ...optional('selectionBackground'), ...optional('selectionForeground'), ...optional('cursor')};
 }
 
 /** Configuration copies of a theme survive only if valid. */

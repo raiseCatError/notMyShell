@@ -1,5 +1,7 @@
 # notMyShell (NMSh)
 
+Latest published stable release: v0.18.0 (see CHANGELOG.md). Homebrew is the recommended macOS install: brew install raiseCatError/tap/nmsh. Source installation remains available.
+
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
 Shell backends (real persistent shells, via ShellAdapter):
@@ -32,35 +34,58 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 
 ## Core capabilities
 
-- fixed/persistent bottom input editor
-- scrollable command and output history
-- semantic syntax highlighting
-- submitted commands retain semantic highlighting in history
-- multiline editing
-- shell-aware autocomplete/completion
-- ghost/history suggestions
+- persistent composer: Bottom, Top or Flow; one-line or two-line; multiline editing
+- semantic syntax highlighting (classified against the real shell; partial input never runs)
+- shell-aware completion menu and ghost suggestions
 - real aliases, functions, environment, cwd and shell state
-- command lifecycle/activity UI
-- passthrough for fullscreen/interactive terminal programs
-- /copy
-- /history
-- /appearance
-- /keyboard
-- zoxide integration
-- Atuin/history bridge where accurate
-- fzf/fullscreen passthrough where accurate
-- cross-session notices and the /resume session viewer
-- local-only agent activity stats (/agents) for Claude Code and Codex CLI
-- /find and /filter over the transcript
-- /open and /open-diff delegation to Zed, VS Code or $VISUAL/$EDITOR
+- transcript with command blocks, folding, /find and /filter, plain-text /copy
+- command lifecycle and live activity feedback
+- passthrough for fullscreen/interactive programs
+- live sessions: windows detach instead of killing the shell; /resume, nmsh --attach
+- prompt providers: NMSh Native (default), Starship, Oh My Posh, Powerlevel10k, None
+- Theme Studio (/theme): built-in, imported (data-only parsers) and custom themes
+- Theme Bridge (/theme-bridge, opt-in): fzf, less/man, file listing colors, bat,
+  tmux, Vim, Neovim, Helix; delta never managed (syntax follows bat via BAT_THEME unless git config pins it); ownership ledger, reviewed includes
+- curated tools and providers (/tools, /providers), tool configuration (/configure,
+  /tmux), integration health (/integrations), safe dotfiles import (/dotfiles)
+- shell frameworks detected (Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit, Antidote);
+  shell config is treated as executable, never as plain data
+- Keep Awake (/caffeinate, /awake, /zoomies): OS mechanism, NMSh-owned background process
+- Chroma, motion, screensavers and Vespyr (the NMSh cat); Safe glyphs, NO_COLOR, Reduced Motion
+- /btw (compatibility alias /ask): plain requests mapped onto typed NMSh actions (optional local model)
+- cross-session notices, agent activity stats (/agents), /open and /open-diff
 - nmsh config export/import, nmsh uninstall, nmsh doctor
-- capability-driven inline images (/about) with text fallback
-- no plugin manager required; read-only framework/plugin diagnostics
+- NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
+
+## Native modules / Context Engine
+
+Capability → immutable Fact → Module → Surface Router → Main Prompt / Right
+Context / Context Rail / Status Strip. Core capabilities own bounded collection;
+modules and renderers consume resolved facts without I/O. Facts carry provenance,
+freshness, trust, sensitivity and persistence policy. The Rail is live frontend
+geometry, separate from transcript snapshots and the right-context anchor.
+
+Released in v0.17.0: fact metadata, the module registry, surface routing and the
+Context Rail. Released in v0.18.0: a demand-driven capability
+scheduler (caps, timeouts, cancellation, stale-while-revalidate) fed by the live
+shell's allowlisted environment; a first-party catalog (project, Node/Python/Go/
+Rust/Java, mise/asdf, direnv, Terraform/Helm/Pulumi, AWS/GCP/Azure from local
+non-secret config, OS/user/jobs/time/memory/battery, Git stash/upstream);
+declarative Context Packs (nmsh.context-pack/v1; `nmsh packs` install/remove/
+enable/disable with sha256 integrity; recommendations never auto-install);
+Claude Code agent context through its official status line (`nmsh agent-status`);
+Status Strip routing. Packs are data: no commands, code, paths, templates or
+hooks. Repository entry never executes repo-controlled code; versions come from
+install layouts, never from running discovered binaries.
+Guide: docs/architecture/context-modules.md; design: docs/design/context-engine.md.
+
+Reel: https://youtu.be/zIzq_88R5OI (preview: assets/promo/nmsh-promo.png)
 
 ## NMSh is NOT
 
 - not a shell replacement
 - not a terminal emulator
+- not a prompt theme
 - not an AI shell
 - not a command-by-command subprocess wrapper
 - not a Warp clone
@@ -81,10 +106,16 @@ src/output/OutputBuffer.ts
 src/output/AnsiOutputParser.ts
 src/output/viewport.ts
 src/terminal/TerminalRenderer.ts
+src/app/screenPlan.ts (one geometry plan per frame)
+src/context/ (facts, trusted services, surface router)
+src/prompt/configuration.ts, src/prompt/railLayout.ts, src/prompt/railComposition.ts
+src/keepAwake/ (controller, panel, presentation)
+src/themeBridge/ (targets, ownership ledger)
 
 ## Documentation
 
 README.md
+ARCHITECTURE.md
 ROADMAP.md
 AGENTS.md
 CONTRIBUTING.md
@@ -92,10 +123,14 @@ SECURITY.md
 CHANGELOG.md
 SUPPORT.md
 LICENSE
+docs/architecture/context-modules.md
 docs/architecture/shell-adapter.md
 docs/architecture/platforms.md
 docs/architecture/host-actions.md
 docs/architecture/image-surface.md
+docs/design/theme-bridge.md
+docs/demos.md
+docs/testing/deterministic-presentation.md
 docs/privacy.md
 
 ## Repository

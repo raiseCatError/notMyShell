@@ -157,7 +157,7 @@ function harness(patch: Partial<PromptConfiguration['idleVisuals']> = {timeout: 
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['startupPending'] = false;
-  app['configuration'] = {...app['configuration'], idleVisuals: {...app['configuration'].idleVisuals, ...patch}};
+  app['configuration'] = {...app['configuration'], cursor: {...app['configuration'].cursor, effect: 'none', motion: 'off'}, motion: {...app['configuration'].motion, contextTransitions: 'off'}, idleVisuals: {...app['configuration'].idleVisuals, ...patch}};
   return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); isolation.restore(); }};
 }
 

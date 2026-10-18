@@ -7,7 +7,7 @@ import {dirname, join} from 'node:path';
 import {SessionService} from '../src/session/SessionService.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {connectSession, listLiveSessions} from '../src/session/connectSession.js';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage} from '../src/session/SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, CLIENT_FEATURES, queueStateFrom, encodeMessage, type ServerMessage} from '../src/session/SessionProtocol.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
 import type {SessionClient} from '../src/session/SessionClient.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
@@ -266,4 +266,60 @@ test('the service remembers a fullscreen app\'s input modes so a reattaching ter
   assert.equal(screen.restoreSequence(), '\u001b[?1000h\u001b[?1006h\u001b[?25l\u001b[?1h\u001b=');
   screen.reset();
   assert.equal(screen.restoreSequence(), '', 'the app ending clears its modes');
+});
+
+test('a shell from an older session service is called out, because the service builds every shell\'s startup', async () => {
+  const {serviceBuildNotice} = await import('../src/session/SocketSessionClient.js');
+  const own = {version: '0.16.0', commit: '964f5e9'};
+  assert.equal(serviceBuildNotice('0.16.0 964f5e9', own), undefined, 'same build: nothing to say');
+  assert.equal(serviceBuildNotice('0.16.0 abc1234', {version: 'unknown', commit: 'unknown'}), undefined, 'unknown own build: no guess');
+  assert.match(serviceBuildNotice('0.16.0 1234567', own) ?? '', /older NMSh session service \(0\.16\.0 1234567; this window is 0\.16\.0 964f5e9\)/u);
+  assert.match(serviceBuildNotice(undefined, own) ?? '', /build not reported/u, 'a service too old to report its build');
+});
+
+
+test('transported queue reviews expire at manual submission and controller reattachment', async () => {
+  const runtimeDir = scratch('nmsh-queue-review-');
+  const home = scratch('nmsh-queue-home-');
+  const service = new SessionService({runtimeDir, startupIdleMs: 60_000});
+  await service.start();
+  const peers: RawPeer[] = [];
+  const peer = () => { const next = new RawPeer(service.socketPath); peers.push(next); return next; };
+  const hello = encodeMessage({type: 'hello', version: PROTOCOL_VERSION, client: 'test', features: CLIENT_FEATURES.join(',')});
+  const change = (value: unknown) => encodeMessage({type: 'queue', change: JSON.stringify(value)});
+  const state = (owner: RawPeer) => {
+    const message = owner.messages.filter(message => message.type === 'queue-state').at(-1);
+    return message?.type === 'queue-state' ? queueStateFrom(message.state) : undefined;
+  };
+  try {
+    const first = peer();
+    first.socket.write(hello + encodeMessage({type: 'create', cwd: home, env: {HOME: home, PATH: process.env.PATH ?? ''}, columns: 80, rows: 24}));
+    await first.waitFor('created'); await first.waitFor('prompt');
+    first.socket.write(change({op: 'pause'}) + change({op: 'add', text: 'echo QUEUED'}));
+    await until(() => state(first)?.entries.length === 1);
+    const revision = state(first)!.revision!;
+    first.socket.write(encodeMessage({type: 'input', data: 'sleep 0.2\r', submission: 1}) + change({op: 'resume', expectedRevision: revision}));
+    await until(() => first.messages.some(message => message.type === 'queue-state' && Boolean(message.refused)));
+    assert.equal(state(first)?.paused?.reason, 'user');
+    assert.equal(state(first)?.entries.length, 1);
+    assert.ok(!first.messages.some(message => message.type === 'queue-state' && message.dispatched !== undefined));
+    const beforeDetach = state(first)!.revision!;
+    const id = service.registry[0]!.id;
+    first.socket.destroy();
+    await until(() => service.registry[0]?.state === 'detached');
+    const second = peer();
+    second.socket.write(hello + encodeMessage({type: 'attach', sessionId: id, columns: 80, rows: 24}));
+    await second.waitFor('attached');
+    second.socket.write(change({op: 'resume', expectedRevision: beforeDetach}));
+    await until(() => second.messages.some(message => message.type === 'queue-state' && Boolean(message.refused)));
+    assert.equal(state(second)?.entries.length, 1);
+    assert.equal(state(second)?.paused?.reason, 'user');
+    assert.ok(!second.messages.some(message => message.type === 'queue-state' && message.dispatched !== undefined));
+  } finally {
+    for (const owner of peers) owner.socket.destroy();
+    await service.close();
+    await service.done;
+    rmSync(runtimeDir, {recursive: true, force: true});
+    rmSync(home, {recursive: true, force: true});
+  }
 });

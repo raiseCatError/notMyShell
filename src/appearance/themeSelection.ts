@@ -4,6 +4,7 @@ import {hexColor} from '../chroma/color.js';
 import {accentedVariant, familyVariants, THEME_FAMILIES, themeVariant, type ThemeFamilyId} from './themeFamilies.js';
 import {cloneTheme, PROMPT_THEME_ROLES, type CustomTheme, type PromptThemeRole, type UiThemeRole} from './customTheme.js';
 import {defaultUiColors, uiThemeInput} from './uiTheme.js';
+import {categoryOf, findTheme, libraryCounts} from './themeLibrary.js';
 
 /**
  * Theme family / variant selection over the one stored palette id. NMSh's own
@@ -67,4 +68,51 @@ export const FAMILY_LABELS: readonly string[] = THEME_FAMILIES.map(family => fam
 
 export function variantLabel(config: PromptConfiguration): string {
   return THEME_FAMILIES.find(family => family.id === familyOf(config.nmsh.palette))?.variantLabel ?? 'Variant';
+}
+
+// ---- Library-aware selection (Setup and Settings) -----------------------------
+
+/** Built-in families, then Imported and Custom library themes as their own groups. */
+export type SelectionFamily = Exclude<ThemeFamilyId, 'custom'> | 'imported' | 'custom';
+
+export function currentSelectionFamily(config: PromptConfiguration): SelectionFamily {
+  if (config.nmsh.palette !== 'custom') return familyOf(config.nmsh.palette) as SelectionFamily;
+  const asset = findTheme(config.themes, config.nmsh.themeId);
+  return asset ? categoryOf(asset) : 'custom';
+}
+
+/** Families offered: every built-in family, plus Imported/Custom when the library has such themes. */
+export function selectionFamilies(config: PromptConfiguration): SelectionFamily[] {
+  const builtins = FAMILY_IDS.filter((id): id is Exclude<ThemeFamilyId, 'custom'> => id !== 'custom');
+  const {imported, custom} = libraryCounts(config.themes);
+  return [...builtins, ...(imported ? ['imported' as const] : []), ...(custom ? ['custom' as const] : [])];
+}
+
+export function selectionFamilyLabel(family: SelectionFamily): string {
+  if (family === 'imported') return 'Imported';
+  if (family === 'custom') return 'Custom';
+  return THEME_FAMILIES.find(item => item.id === family)?.label ?? family;
+}
+
+export interface SelectionVariant {label: string; apply: (config: PromptConfiguration) => PromptConfiguration; current: (config: PromptConfiguration) => boolean}
+
+/** Variants within a family: palette variants for built-ins, library themes (by stable id) for Imported/Custom. */
+export function selectionVariants(config: PromptConfiguration, family: SelectionFamily): SelectionVariant[] {
+  if (family === 'imported' || family === 'custom') {
+    return config.themes.filter(asset => categoryOf(asset) === family).map(asset => ({label: asset.theme.name,
+      apply: c => ({...c, nmsh: {...c.nmsh, palette: 'custom', themeId: asset.id}, customTheme: structuredClone(asset.theme)}),
+      current: c => c.nmsh.palette === 'custom' && c.nmsh.themeId === asset.id}));
+  }
+  return variantOptions(family).map(option => ({label: option.label,
+    apply: c => ({...c, nmsh: {...c.nmsh, palette: option.id}}), current: c => c.nmsh.palette === option.id}));
+}
+
+/** Choosing a family moves to its default variant, or the first library theme of that category. */
+export function selectSelectionFamily(config: PromptConfiguration, family: SelectionFamily): PromptConfiguration {
+  if (currentSelectionFamily(config) === family) return config;
+  if (family === 'imported' || family === 'custom') {
+    const first = selectionVariants(config, family)[0];
+    return first ? first.apply(config) : config;
+  }
+  return {...config, nmsh: {...config.nmsh, palette: DEFAULT_VARIANT[family]}};
 }

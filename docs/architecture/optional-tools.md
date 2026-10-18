@@ -21,10 +21,12 @@ credential, zsh hook or environment is healthy. Configured means an installed
 tool is selected in NMSh settings, not that its shell hooks are active. Hook
 inspection/setup is deferred and never inferred. Direct shell tools work normally.
 
-Conservative Recommended tools: zoxide, fzf, ripgrep, fd and jq. Other entries are
-optional/specialized. First-run discovery follows glyph/prompt setup, defaults
-to Skip, and offers Recommended or Choose individually. Both choices only browse;
-Recommended filters Discover. No bulk installation or shell-hook modification.
+Recommended tools: ripgrep, fd, fzf, jq, bat, zoxide and tealdeer. Enhanced
+tools are optional improvements; other entries (Fastfetch, frameworks, prompt
+engines, environment tools) stay curated and supported without a tier. Discover
+shows Recommended, Recommended + Enhanced (the default) or all curated tools (V).
+Installs are explicit: tools are selected (Space, or the R/E presets), reviewed
+with their exact commands, and confirmed once. Shell hooks are never modified.
 Legacy completed onboarding remains complete. The additive `toolsSetupComplete`
 boolean uses the existing normalizer/atomic NMSh preference writer.
 

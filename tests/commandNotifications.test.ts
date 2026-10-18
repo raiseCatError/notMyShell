@@ -125,6 +125,7 @@ test('backend rejection and throw cannot prevent shell completion; passthrough a
   Object.defineProperty(instance, 'renderer', {value: new TerminalRenderer(data => writes.push(data))});
   try {
     instance['renderer'].enter();
+    instance['rendererEntered'] = true; // Match run()'s entered-renderer phase before exercising handoff.
     instance['terminalFocus'] = 'focused';
     instance['onActiveModeChange']('PASSTHROUGH');
     assert.equal(instance['terminalFocus'], 'unknown');

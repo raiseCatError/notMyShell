@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-ignore standalone runner outside product tsconfig
-import {discoverTestFiles, selectTestGroups, parseTestOptions} from '../scripts/test-selection.mjs';
+import {discoverTestFiles, selectTestGroups, parseTestOptions, testConcurrency} from '../scripts/test-selection.mjs';
+
+test('verification concurrency can be reduced explicitly without changing suite selection', () => {
+  assert.equal(testConcurrency(undefined, 8), 4);
+  assert.equal(testConcurrency(undefined, 1), 1);
+  assert.equal(testConcurrency('1', 8), 1);
+  assert.equal(testConcurrency('2', 8), 2);
+  for (const value of ['', '0', '5', '1.5', 'auto']) assert.throws(() => testConcurrency(value, 8));
+});
 
 test('shards are deterministic, disjoint and cover the exact canonical suite', () => {
   const files = discoverTestFiles();

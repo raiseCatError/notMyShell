@@ -83,7 +83,7 @@ test('narrow widths degrade to the caption at the same height, never past the wi
 
 test('the Motion screen shows the preview for the selected row; selecting, changing and R restart it', () => {
   const hub = createAppearanceHub('Zed');
-  hub.selected = 4;
+  hub.selected = 5; // Motion
   appearanceHubKey(hub, {kind: 'enter'}, DEFAULT_PROMPT_CONFIGURATION, 100);
   assert.equal(hub.previewStart, 100);
   appearanceHubKey(hub, {kind: 'down'}, DEFAULT_PROMPT_CONFIGURATION, 120); // Rendering → Context transitions

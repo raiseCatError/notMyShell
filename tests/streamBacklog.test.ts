@@ -4,6 +4,7 @@ import {appendFileSync, existsSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {StreamBacklog, readSpool, type BacklogEvent} from '../src/session/StreamBacklog.js';
+import {MAX_SHELL_KNOWLEDGE_BYTES} from '../src/shell/ShellKnowledge.js';
 import {AlternateScreenTracker} from '../src/session/SessionService.js';
 
 const output = (seq: number, data: string): BacklogEvent => ({kind: 'output', seq, at: seq, data});
@@ -54,6 +55,37 @@ test('past the spool limit output is dropped with a count; command boundaries ar
   const kept = events.filter(event => event.kind === 'output').reduce((total, event) => total + (event.kind === 'output' ? event.data.length : 0), 0);
   assert.ok(kept <= 200);
   assert.equal(backlog.truncatedBytes, 2000 - kept);
+  rmSync(dir, {recursive: true, force: true});
+});
+
+test('prompt metadata (a large alias/function list) never consumes the output budget', () => {
+  const dir = scratch();
+  const backlog = new StreamBacklog(join(dir, 's.jsonl'), {memoryBytes: 10, spoolBytes: 200});
+  // Ubuntu's global compinit puts hundreds of autoload names in each prompt's knowledge.
+  const knowledge = 'function _x\n'.repeat(1000);
+  backlog.append({kind: 'prompt', seq: 1, at: 1, exitCode: 0, cwd: '/w', knowledge});
+  backlog.append({kind: 'exec', seq: 2, at: 2, command: 'seq 1 50'});
+  backlog.append(output(3, 'o'.repeat(200)));
+  backlog.append({kind: 'prompt', seq: 4, at: 4, exitCode: 0, cwd: '/w', knowledge});
+  assert.equal(backlog.truncatedBytes, 0, 'output within the limit is complete');
+  assert.deepEqual(backlog.events().map(event => event.kind), ['prompt', 'exec', 'output', 'prompt']);
+  backlog.append(output(5, 'z'.repeat(20)));
+  assert.equal(backlog.truncatedBytes, 20, 'the output cap still holds');
+  rmSync(dir, {recursive: true, force: true});
+});
+
+test('a spooled prompt keeps knowledge up to the shell-side bound (names plus the context environment)', () => {
+  const dir = scratch();
+  const path = join(dir, 's.jsonl');
+  const backlog = new StreamBacklog(path, {memoryBytes: 1, spoolBytes: 1_000_000});
+  // Over the old 64 KiB spool bound, within what ShellSession reads: an environment snapshot plus a large name set.
+  const knowledge = `jobs 0\nenvsnapshot 1\nenv PATH=${'/opt/tool/bin:'.repeat(500)}\n${'function _completion_name\n'.repeat(3500)}complete\n`;
+  assert.ok(Buffer.byteLength(knowledge) > 65536 && Buffer.byteLength(knowledge) <= MAX_SHELL_KNOWLEDGE_BYTES);
+  backlog.append({kind: 'prompt', seq: 1, at: 1, exitCode: 0, cwd: '/w', knowledge});
+  assert.ok(backlog.spooling);
+  const prompt = readSpool(path).events[0];
+  assert.equal(prompt?.kind, 'prompt', 'replay after a reattach still sees the prompt');
+  assert.equal(prompt?.kind === 'prompt' ? prompt.knowledge : undefined, knowledge);
   rmSync(dir, {recursive: true, force: true});
 });
 

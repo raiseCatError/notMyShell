@@ -16,12 +16,25 @@ import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
 import {ConfiguredCompletionSource, parseConfiguredCompletions} from '../src/shell/ConfiguredCompletion.js';
 import {NativeCompletionSource, ShellCompletionSource} from '../src/shell/CompletionService.js';
 import {parseShellKnowledge} from '../src/shell/ShellKnowledge.js';
-import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {ContextEngine, type ContextDemand} from '../src/context/engine.js';
+import {CORE_CAPABILITIES} from '../src/context/registry.js';
+import type {CapabilityScopeInput} from '../src/context/capability.js';
+import {parseShellEnvironment} from '../src/context/shellEnvironment.js';
+import {resetServiceCaches} from '../src/context/services.js';
+import {contextDemand} from '../src/context/demand.js';
+import {allModuleDefinitions} from '../src/context/modules.js';
+import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {moduleShowcaseContext, renderedModules} from '../src/prompt/prompt.js';
+import {resolvePromptContext} from '../src/shell/ShellContext.js';
+import {spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
-type Benchmark = {name: string; run: () => unknown; prepare?: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string};
+type Benchmark = {name: string; run: () => unknown; prepare?: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string;
+  /** p95 ceiling (ms) enforced when NMSH_BENCH_ENFORCE=1 (the timing smoke): generous, it catches gross regressions such as a synchronous probe, not noise. */
+  budgetP95Ms?: number};
 
 const args = new Set(process.argv.slice(2));
 const memory = args.has('--memory');
@@ -113,6 +126,77 @@ let configuredSource: ConfiguredCompletionSource | undefined;
 let configuredBigResults: number | undefined;
 let configuredBigHits = 0;
 let configuredBigMisses = 0;
+// ---- Context Engine ------------------------------------------------------------------
+// A realistic workspace: a repository with manifests and version pins, a cwd 24
+// levels deep inside it, and kube/aws/docker configuration in a private home.
+let contextRoot: string | undefined;
+let contextScopes: CapabilityScopeInput[] = [];
+let contextEngine: ContextEngine | undefined;
+const allDemand = (): ContextDemand => new Map(CORE_CAPABILITIES.map(capability => [capability.id, new Set(capability.fields)]));
+
+function contextFixture(): CapabilityScopeInput[] {
+  if (contextScopes.length) return contextScopes;
+  contextRoot = mkdtempSync(join(tmpdir(), 'nmsh-bench-context-'));
+  const home = join(contextRoot, 'home');
+  const repo = join(home, 'src', 'shop');
+  const files: Record<string, string> = {
+    '.git/HEAD': 'ref: refs/heads/main\n', '.git/config': '[core]\n\trepositoryformatversion = 0\n[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n',
+    'package.json': JSON.stringify({name: 'shop', version: '2.4.0', packageManager: 'pnpm@9.12.0', engines: {node: '>=20'}}),
+    '.nvmrc': 'v22.11.0\n', 'pyproject.toml': '[project]\nname = "shop-tools"\nversion = "0.3.1"\nrequires-python = ">=3.12"\n',
+    'go.mod': 'module example.com/shop\n\ngo 1.23\n', 'Cargo.toml': '[package]\nname = "shop-core"\nversion = "0.9.0"\nedition = "2021"\n',
+    'rust-toolchain.toml': '[toolchain]\nchannel = "1.82.0"\n', '.tool-versions': 'nodejs 22.11.0\npython 3.12.7\n', 'mise.toml': '[tools]\nnode = "22"\n',
+    'Chart.yaml': 'apiVersion: v2\nname: shop\nversion: 1.2.3\n', 'Pulumi.yaml': 'name: shop-infra\nruntime: nodejs\n', '.terraform/environment': 'staging',
+  };
+  for (const [path, text] of Object.entries(files)) { mkdirSync(join(repo, path, '..'), {recursive: true}); writeFileSync(join(repo, path), text); }
+  for (const [path, text] of Object.entries({'.kube/config': 'apiVersion: v1\ncurrent-context: prod\ncontexts:\n- name: prod\n  context:\n    cluster: prod\n    namespace: shop\n',
+    '.aws/config': '[profile dev]\nregion = eu-west-1\n', '.docker/config.json': '{"currentContext":"colima"}'})) {
+    mkdirSync(join(home, path, '..'), {recursive: true}); writeFileSync(join(home, path), text);
+  }
+  const env = parseShellEnvironment(`envsnapshot 1\nenv PATH=${process.env.PATH ?? '/usr/bin:/bin'}\nenv AWS_PROFILE=dev\n`)!;
+  let cwd = repo;
+  for (let level = 0; level < 24; level += 1) {
+    cwd = join(cwd, `level${level}`);
+    mkdirSync(cwd, {recursive: true});
+    contextScopes.push({cwd, home, root: repo, session: 'bench', env, live: {jobs: 0, startedAt: Date.UTC(2026, 0, 1)}});
+  }
+  return contextScopes;
+}
+
+/** Stage, demand every core capability's fields, settle, commit: what a prompt in a new directory pays off the typing path. */
+async function collectContext(engine: ContextEngine, scope: CapabilityScopeInput) {
+  const generation = engine.stage(scope);
+  engine.demand(allDemand());
+  await engine.settle(10_000);
+  engine.commit(generation);
+  const facts = engine.facts();
+  if (!facts['project.package'] || !facts['runtime.node']) throw new Error(`Context benchmark collected no project facts: ${Object.keys(facts).join(', ')} ${JSON.stringify(engine.status('project.package'))}`);
+  return facts;
+}
+
+/** A large repository: ~3,000 tracked files in nested directories, a few edits and untracked files. Informational: setup takes seconds. */
+let largeRepo: string | undefined;
+function largeRepository(): string {
+  if (largeRepo) return largeRepo;
+  largeRepo = join(mkdtempSync(join(tmpdir(), 'nmsh-bench-git-')), 'repo');
+  for (let directory = 0; directory < 60; directory += 1) {
+    const path = join(largeRepo, `pkg${directory}`, 'src', 'lib');
+    mkdirSync(path, {recursive: true});
+    for (let file = 0; file < 50; file += 1) writeFileSync(join(path, `module${file}.ts`), `export const value${file} = ${directory * 50 + file};\n`);
+  }
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-c', 'user.name=bench', '-c', 'user.email=bench@example.invalid', '-c', 'commit.gpgsign=false', ...args], {cwd: largeRepo, encoding: 'utf8'});
+    if (result.status !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr}`);
+  };
+  git('init', '-q', '-b', 'main'); git('add', '-A'); git('commit', '-q', '-m', 'bench');
+  for (let file = 0; file < 20; file += 1) writeFileSync(join(largeRepo, `pkg${file}`, 'src', 'lib', 'module0.ts'), `export const edited = ${file};\n`);
+  for (let file = 0; file < 10; file += 1) writeFileSync(join(largeRepo, `untracked${file}.txt`), 'new\n');
+  return largeRepo;
+}
+
+const everyModule = () => normalizePromptConfiguration({modules: allModuleDefinitions().map(definition => ({id: definition.id, visible: true}))});
+const noModule = () => normalizePromptConfiguration({modules: allModuleDefinitions().map(definition => ({id: definition.id, visible: false}))});
+const showcase = moduleShowcaseContext('/home/bench');
+
 function configuredFixture(): {home: string; source: ConfiguredCompletionSource} {
   if (!completionHome) {
     completionHome = mkdtempSync(join(tmpdir(), 'nmsh-completion-bench-'));
@@ -125,6 +209,43 @@ function configuredFixture(): {home: string; source: ConfiguredCompletionSource}
 
 const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
+  {name: 'context/collect-cold', samples: 8, warmup: 1, budgetP95Ms: 2500, prepare: () => {
+    resetServiceCaches(); contextEngine?.dispose();
+    contextEngine = new ContextEngine({capabilities: CORE_CAPABILITIES});
+  }, run: () => collectContext(contextEngine!, contextFixture()[23]!)},
+  {name: 'context/collect-warm', budgetP95Ms: 60, prepare: async () => {
+    if (contextEngine) return;
+    contextEngine = new ContextEngine({capabilities: CORE_CAPABILITIES});
+    await collectContext(contextEngine, contextFixture()[23]!);
+  }, run: () => collectContext(contextEngine!, contextFixture()[23]!)},
+  // Twenty directory changes before the first settles: superseded work is cancelled, only the last scope commits.
+  {name: 'context/rapid-cwd-20', samples: 8, warmup: 1, budgetP95Ms: 4000, prepare: () => {
+    resetServiceCaches(); contextEngine?.dispose();
+    contextEngine = new ContextEngine({capabilities: CORE_CAPABILITIES});
+  }, run: async () => {
+    const scopes = contextFixture();
+    for (const scope of scopes.slice(0, 19)) { contextEngine!.stage(scope); contextEngine!.demand(allDemand()); }
+    return collectContext(contextEngine!, scopes[19]!);
+  }},
+  // Rendering is pure: every module on every surface from facts already in memory, as each keystroke's frame does.
+  {name: 'context/render-every-module-100', budgetP95Ms: 1500, run: () => {
+    const configuration = everyModule();
+    let segments = 0;
+    for (let frame = 0; frame < 100; frame += 1) {
+      for (const surface of ['prompt', 'contextRail', 'statusStrip'] as const) segments += renderedModules(showcase, configuration, 0, surface).length;
+    }
+    if (segments === 0) throw new Error('Render benchmark produced no segments');
+  }, units: 300, unitName: 'surface renders'},
+  // Disabled modules cost nothing: no demand, so nothing is ever scheduled.
+  {name: 'context/demand-every-module-hidden', budgetP95Ms: 25, run: () => {
+    const demand = contextDemand(noModule(), {commandWords: ['kubectl', 'terraform', 'aws'], nativePrompt: true, railVisible: true, statusStripVisible: true, inRepository: true});
+    if (demand.size !== 0) throw new Error('Hidden modules demanded facts');
+  }},
+  // Git context in a large repository, deep inside it: branch plus porcelain status (the prompt's Rich Git), off the typing path.
+  {name: 'context/git-status-large-repo', samples: 10, warmup: 2, budgetP95Ms: 2000, prepare: () => { largeRepository(); }, run: async () => {
+    const context = await resolvePromptContext(join(largeRepository(), 'pkg42', 'src', 'lib'), undefined, tmpdir(), {status: true});
+    if (context.branch !== 'main' || !context.git) throw new Error('Large repository benchmark found no Git status');
+  }, units: 3000, unitName: 'tracked files'},
   {name: 'shell/name-snapshot-4096', run: () => parseShellKnowledge(shellNamesFixture), units: 4096, unitName: 'names'},
   {name: 'hyperlinks/recognize-1000', run: () => {
     const presenter = new HyperlinkPresenter();
@@ -297,13 +418,21 @@ async function report(benchmark: Benchmark): Promise<void> {
   const median = percentile(times, 0.5);
   const mean = times.reduce((sum, item) => sum + item, 0) / times.length;
   const rate = benchmark.units === undefined ? '' : `, ${((benchmark.units * 1000) / mean).toFixed(0)} ${benchmark.unitName}/s`;
-  console.log(`${benchmark.name}: samples=${samples}, warmup=${warmup}, p50=${median.toFixed(2)}ms, p95=${percentile(times, 0.95).toFixed(2)}ms, min=${times[0]!.toFixed(2)}ms, max=${times.at(-1)!.toFixed(2)}ms, mean=${mean.toFixed(2)}ms${rate}`);
+  const p95 = percentile(times, 0.95);
+  const over = benchmark.budgetP95Ms !== undefined && p95 > benchmark.budgetP95Ms;
+  console.log(`${benchmark.name}: samples=${samples}, warmup=${warmup}, p50=${median.toFixed(2)}ms, p95=${p95.toFixed(2)}ms, min=${times[0]!.toFixed(2)}ms, max=${times.at(-1)!.toFixed(2)}ms, mean=${mean.toFixed(2)}ms${rate}${benchmark.budgetP95Ms === undefined ? '' : `, budget p95<=${benchmark.budgetP95Ms}ms${over ? ' EXCEEDED' : ''}`}`);
+  if (over && process.env.NMSH_BENCH_ENFORCE === '1') process.exitCode = 1;
 }
 
 console.log(`NMSh benchmark harness | Node ${process.version} | ${platform()} ${arch()} | ${totalmem()} bytes RAM`);
 console.log('Fixtures: seeded command histories, generated ANSI and Unicode lines; timings are informational.');
 setup();
-process.on('exit', () => { configuredSource?.dispose(); if (completionHome) rmSync(completionHome, {recursive: true, force: true}); });
+process.on('exit', () => {
+  configuredSource?.dispose(); contextEngine?.dispose();
+  if (completionHome) rmSync(completionHome, {recursive: true, force: true});
+  if (contextRoot) rmSync(contextRoot, {recursive: true, force: true});
+  if (largeRepo) rmSync(join(largeRepo, '..'), {recursive: true, force: true});
+});
 const runnable = benchmarks.filter(benchmark => selected.length === 0 || selected.some(name => benchmark.name.includes(name)));
 if (runnable.length === 0) {
   console.error(`No benchmarks matched: ${selected.join(', ')}`);

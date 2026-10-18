@@ -1,3 +1,7 @@
+import {queueHistoryRecordFrom, queueTimelineFrom, TIMELINE_HISTORY_LIMIT, type QueueHistoryRecord} from './ExecutionTimeline.js';
+import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from './QueueSummary.js';
+import {ENTRY_LIMIT, QUEUE_LIMIT, type QueueCondition, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
+import type {QueueEvent} from './QueueDispatcher.js';
 /**
  * Versioned wire protocol between an NMSh frontend and whatever owns the
  * PTY + managed zsh (in-process today, a local session service later).
@@ -10,6 +14,7 @@
  */
 
 import {NOTICE_KINDS, type SessionNotice} from './SessionNotices.js';
+import {INPUT_CONFIDENCES, INPUT_MODES, type InputState} from './inputState.js';
 
 // v2: a frontend going away detaches its session instead of ending it.
 export const PROTOCOL_VERSION = 2;
@@ -21,15 +26,28 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
+
+/**
+ * What a frontend understands beyond the base protocol, sent in its hello. A service sends a feature's messages or
+ * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
+ * attached to a newer service never receives a frame it would reject.
+ */
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
+export type ClientFeature = typeof CLIENT_FEATURES[number];
+
+export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
+  return new Set((text ?? '').split(',').map(item => item.trim()).filter((item): item is ClientFeature => (CLIENT_FEATURES as readonly string[]).includes(item)));
+}
 
 export function parseFeatures(text: string | undefined): Set<ServiceFeature> {
   return new Set((text ?? '').split(',').map(item => item.trim()).filter((item): item is ServiceFeature => (SERVICE_FEATURES as readonly string[]).includes(item)));
 }
 
 export type ClientMessage =
-  | {type: 'hello'; version: number; client: string}
+  /** features: comma-separated CLIENT_FEATURES this frontend understands; absent from older frontends. */
+  | {type: 'hello'; version: number; client: string; features?: string}
   /** shell: backend id (zsh, fish, bash); absent means zsh (older frontends). */
   | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number; shell?: string}
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
@@ -48,6 +66,15 @@ export type ClientMessage =
   | {type: 'switch-shell'; shell: string; cwd: string}
   /** Rename a live session (display only; its id never changes). An empty name returns to its signature. */
   | {type: 'rename'; sessionId: string; name: string}
+  /** One change to this session's command queue (QueueOp as JSON); only from frontends that listed 'queue'. */
+  | {type: 'queue'; change: string}
+  /** One background task request (TaskOp as JSON); only from frontends that listed 'background-tasks'. */
+  | {type: 'task'; change: string}
+  /**
+   * Look at the running command's input state now (a key is about to be routed); answered by input-looked with the
+   * same id, after any input-state the look produced. Only to services that advertised 'input-look'.
+   */
+  | {type: 'input-look'; id: number}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -62,7 +89,7 @@ export type ServerMessage =
   /** shell: the backend actually started (absent from older services: zsh). */
   | {type: 'created'; sessionId: string; pid: number; shell?: string}
   | {type: 'shell-switched'; shell: string; pid: number}
-  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
+  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number; runningQueued?: string;
     journalId?: string; ackedSeq: number; knowledge?: string; shell?: string;
     /** Present only while the shell has not reached its first prompt: the sanitized, bounded tail of its startup output. */
     startup?: string}
@@ -79,8 +106,21 @@ export type ServerMessage =
    * missed exactly once with the original timing.
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
-  | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number}
-  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number}
+  | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number; queued?: string}
+  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number; inputWaitMs?: number; inputWaits?: number}
+  /**
+   * The running command's input state (see InputWatch), sent on every change to frontends that support it: a
+   * request (since/confidence/mode, with the open prompt and program when known) or none, plus waiting time so far.
+   */
+  /** The session's command queue (QueueState as JSON) and what just happened to it. */
+  | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
+  /** The look asked for by input-look id is done; only to frontends that listed 'input-look'. */
+  | {type: 'input-looked'; id: number}
+  | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
+  /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
+  | {type: 'tasks'; state: string}
+  /** New output of one task (TaskUpdate as JSON). */
+  | {type: 'task-output'; taskId: string; update: string}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -124,6 +164,14 @@ export interface SessionInfo {
   name?: string;
   /** The session's current cross-session notice, until it is focused (#v0.16; absent from older services). */
   notice?: SessionNotice;
+  /** While the running command credibly waits for input: since when, how sure, how it reads, and the prompt shown. */
+  inputSince?: number;
+  inputConfidence?: string;
+  inputMode?: string;
+  inputPrompt?: string;
+  /** Commands queued in this session, and why they wait, if paused (only to frontends that listed 'queue'). */
+  queued?: number;
+  queuePaused?: string;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -140,7 +188,7 @@ type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions' | 'notice
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
-  hello: {version: 'int', client: 'string'},
+  hello: {version: 'int', client: 'string', features: 'string?'},
   create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int', shell: 'string?'},
   'switch-shell': {shell: 'string', cwd: 'string'},
   rename: {sessionId: 'string', name: 'string'},
@@ -153,11 +201,18 @@ const SHAPES: Record<string, Shape> = {
   ack: {seq: 'int', journalId: 'string'},
   kill: {sessionId: 'string'},
   dismiss: {sessionId: 'string'},
+  queue: {change: 'string'},
+  'input-look': {id: 'int'},
+  'input-looked': {id: 'int'},
+  'queue-state': {state: 'string', dispatched: 'int?', refused: 'string?', dropped: 'int?'},
+  task: {change: 'string'},
+  tasks: {state: 'string'},
+  'task-output': {taskId: 'string', update: 'string'},
   terminate: {},
   welcome: {version: 'int', service: 'string', startupSafety: 'int?', features: 'string?', build: 'string?'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int', shell: 'string?'},
-  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
+  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?', runningQueued: 'string?',
     journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?', shell: 'string?'},
   startup: {output: 'string'},
   'input-rejected': {data: 'string', submission: 'int?'},
@@ -165,8 +220,9 @@ const SHAPES: Record<string, Shape> = {
   sessions: {sessions: 'sessions', ended: 'notices?'},
   dismissed: {sessionId: 'string'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
-  exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
-  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?'},
+  exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?', queued: 'string?'},
+  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
+  'input-state': {terminalOwner: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -179,10 +235,11 @@ function isEnv(value: unknown): value is Record<string, string> {
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
-  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?'};
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?',
+  inputSince: 'int?', inputConfidence: 'string?', inputMode: 'string?', inputPrompt: 'string?', queued: 'int?', queuePaused: 'string?'};
 
 const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
-  durationMs: 'int?', cwd: 'string?'};
+  durationMs: 'int?', cwd: 'string?', confidence: 'string?'};
 
 function decodeNotice(raw: unknown): SessionNotice | undefined {
   const decoded = decodeShape(NOTICE_SHAPE, raw) as SessionNotice | undefined;
@@ -256,4 +313,158 @@ export class FrameDecoder {
     }
     return results;
   }
+}
+
+/** The input-state message for a state; bounded prompt text. */
+export function inputStateMessage(state: InputState): Extract<ServerMessage, {type: 'input-state'}> {
+  const request = state.request;
+  return {type: 'input-state', waitedMs: Math.round(state.timing.waitedMs), waits: state.timing.waits,
+    ...(state.terminalOwner ? {terminalOwner: 1} : {}),
+    ...(request ? {since: request.since, confidence: request.confidence, mode: request.mode,
+      ...(request.prompt ? {prompt: request.prompt.slice(0, 200)} : {}), ...(request.program ? {program: request.program.slice(0, 64)} : {})} : {})};
+}
+
+/** The state an input-state message describes; an unknown confidence or mode is dropped, never guessed. */
+export function inputStateFrom(message: Extract<ServerMessage, {type: 'input-state'}>): InputState {
+  const confidence = INPUT_CONFIDENCES.find(item => item === message.confidence);
+  const mode = INPUT_MODES.find(item => item === message.mode);
+  const timing = {waitedMs: message.waitedMs, waits: message.waits};
+  if (message.terminalOwner === 1) return {terminalOwner: true, timing};
+  if (message.since === undefined || !confidence || !mode) return {timing};
+  return {request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
+}
+
+/** A queue change from a frontend, or undefined when it is not one: every field checked, nothing guessed. */
+export function queueOpFrom(text: string): QueueOp | undefined {
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return undefined; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.expectedRevision !== undefined && (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0)) return undefined;
+  const change = queueOpFieldsFrom(value);
+  return change ? {...change, ...(value.expectedRevision === undefined ? {} : {expectedRevision: value.expectedRevision as number})} : undefined;
+}
+
+function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined {
+  const id = Number.isSafeInteger(value.id) ? value.id as number : undefined;
+  const chainId = Number.isSafeInteger(value.chainId) && (value.chainId as number) >= 1 ? value.chainId as number : undefined;
+  const text_ = typeof value.text === 'string' ? value.text : undefined;
+  switch (value.op) {
+    case 'failure-policy': return value.policy === 'pause' || value.policy === 'continue' ? {op: 'failure-policy', policy: value.policy} : undefined;
+    case 'add': {
+      if (text_ === undefined) return undefined;
+      const condition = queueConditionFrom(value.condition);
+      return value.condition !== undefined && !condition ? undefined : {op: 'add', text: text_, ...(condition ? {condition} : {})};
+    }
+    case 'condition': {
+      const condition = queueConditionFrom(value.condition);
+      return id === undefined || (value.condition !== undefined && !condition) ? undefined : {op: 'condition', id, ...(condition ? {condition} : {})};
+    }
+    case 'approve': return id === undefined ? undefined : {op: 'approve', id};
+    case 'edit': return id === undefined || text_ === undefined ? undefined : {op: 'edit', id, text: text_};
+    case 'edit-begin': case 'edit-cancel': case 'remove': return id === undefined ? undefined : {op: value.op, id};
+    case 'move': return id === undefined || !Number.isSafeInteger(value.to) ? undefined : {op: 'move', id, to: value.to as number};
+    case 'clear': case 'pause': case 'resume': return {op: value.op};
+    case 'history-detail': return value.chainId === undefined ? {op: 'history-detail'} : chainId === undefined ? undefined : {op: 'history-detail', chainId};
+    case 'save-summary': {
+      if (chainId === undefined) return undefined;
+      if (value.reviewed === undefined) return {op: 'save-summary', chainId};
+      const reviewed = value.reviewed as Record<string, unknown>;
+      if (!reviewed || typeof reviewed !== 'object' || Array.isArray(reviewed) || !Array.isArray(reviewed.text)
+        || !reviewed.text.every(item => item === null || typeof item === 'string')) return undefined;
+      return {op: 'save-summary', chainId, reviewed: {text: (reviewed.text as (string | null)[])}};
+    }
+    case 'summaries-auto': return typeof value.enabled === 'boolean' ? {op: 'summaries-auto', enabled: value.enabled} : undefined;
+    default: return undefined;
+  }
+}
+
+const queueConditionFrom = (value: unknown): QueueCondition | undefined => value === 'always' || value === 'approve' ? value : undefined;
+
+const PAUSE_REASONS = ['user', 'failed', 'interrupted', 'shell-switched', 'restored'] as const;
+
+function queueEntryFrom(raw: unknown): QueueEntry | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const item = raw as Record<string, unknown>;
+  if (!Number.isSafeInteger(item.id) || typeof item.text !== 'string' || item.text.length > ENTRY_LIMIT || !Number.isSafeInteger(item.addedAt)) return undefined;
+  const condition = queueConditionFrom(item.condition);
+  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})};
+}
+
+/** The queue a queue-state message describes; anything malformed is dropped, never guessed. */
+export function queueStateFrom(text: string): QueueState | undefined {
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return undefined; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (!Array.isArray(value.entries) || value.entries.length > QUEUE_LIMIT) return undefined;
+  const entries: QueueEntry[] = [];
+  for (const rawEntry of value.entries as unknown[]) {
+    const entry = queueEntryFrom(rawEntry);
+    if (!entry) return undefined;
+    entries.push(entry);
+  }
+  const dispatching = value.dispatching === undefined ? undefined : queueEntryFrom(value.dispatching);
+  if (value.dispatching !== undefined && !dispatching) return undefined;
+  const pause = value.paused as Record<string, unknown> | undefined;
+  let paused: QueuePause | undefined;
+  if (pause && typeof pause === 'object' && (PAUSE_REASONS as readonly unknown[]).includes(pause.reason) && Number.isSafeInteger(pause.at)) {
+    const at = pause.at as number;
+    const command = typeof pause.command === 'string' ? pause.command.slice(0, 400) : '';
+    paused = pause.reason === 'failed' ? {reason: 'failed', at, command, exitCode: Number.isSafeInteger(pause.exitCode) ? pause.exitCode as number : 1}
+      : pause.reason === 'interrupted' ? {reason: 'interrupted', at, command}
+        : {reason: pause.reason as 'user' | 'shell-switched' | 'restored', at};
+  }
+  const editing = Number.isSafeInteger(value.editing) ? value.editing as number : undefined;
+  const revision = value.revision;
+  if (revision !== undefined && (!Number.isSafeInteger(revision) || (revision as number) < 0)) return undefined;
+  const timeline = value.timeline === undefined ? undefined : queueTimelineFrom(value.timeline);
+  if (value.timeline !== undefined && !timeline) return undefined;
+  const history = value.history === undefined ? undefined : queueHistoryFrom(value.history);
+  if (value.history !== undefined && !history) return undefined;
+  const historyDetail = value.historyDetail === undefined ? undefined : queueTimelineFrom(value.historyDetail);
+  if (value.historyDetail !== undefined && !historyDetail) return undefined;
+  const summaries = value.summaries === undefined ? undefined : queueSummariesFrom(value.summaries);
+  if (value.summaries !== undefined && !summaries) return undefined;
+  return {entries, ...(dispatching ? {dispatching} : {}), ...(revision === undefined ? {} : {revision: revision as number}), ...(timeline ? {timeline} : {}),
+    ...(history ? {history} : {}), ...(historyDetail ? {historyDetail} : {}), ...(summaries ? {summaries} : {}),
+    ...(paused ? {paused} : {}), ...(editing === undefined ? {} : {editing})};
+}
+
+/** History is chronological, bounded and identity-unique; anything else is not a history. */
+function queueHistoryFrom(raw: unknown): QueueHistoryRecord[] | undefined {
+  if (!Array.isArray(raw) || raw.length > TIMELINE_HISTORY_LIMIT) return undefined;
+  const records: QueueHistoryRecord[] = [];
+  for (const item of raw as unknown[]) {
+    const record = queueHistoryRecordFrom(item);
+    if (!record || (records.length && records[records.length - 1]!.id >= record.id)) return undefined;
+    records.push(record);
+  }
+  return records;
+}
+
+/** One artifact per chain; a duplicated identity is refused rather than deduplicated silently. */
+function queueSummariesFrom(raw: unknown): QueueSummary[] | undefined {
+  if (!Array.isArray(raw) || raw.length > SUMMARY_LIMIT) return undefined;
+  const summaries: QueueSummary[] = [];
+  const ids = new Set<string>();
+  for (const item of raw as unknown[]) {
+    const summary = queueSummaryFrom(item);
+    if (!summary || ids.has(summary.id)) return undefined;
+    ids.add(summary.id);
+    summaries.push(summary);
+  }
+  return summaries;
+}
+
+/** The queue-state message for a state and its event; features gate what an older frontend receives. */
+export function queueStateMessage(state: QueueState, event: QueueEvent, supported: {timeline?: boolean; history?: boolean} = {}): Extract<ServerMessage, {type: 'queue-state'}> {
+  const {timeline, history, historyDetail, summaries, revision, dispatching, ...legacy} = state;
+  const value = (supported.timeline ?? true) || (supported.history ?? true)
+    ? {...legacy, revision, ...(dispatching ? {dispatching} : {}), ...((supported.timeline ?? true) && timeline ? {timeline} : {}),
+      ...((supported.history ?? true) && history ? {history} : {}), ...((supported.history ?? true) && historyDetail ? {historyDetail} : {}),
+      ...((supported.history ?? true) && summaries ? {summaries} : {})}
+    : legacy;
+  return {type: 'queue-state', state: JSON.stringify(value), ...(event.dispatched ? {dispatched: event.dispatched.id} : {}),
+    ...(event.refused ? {refused: event.refused.slice(0, 200)} : {}), ...(event.dropped?.length ? {dropped: event.dropped.length} : {})};
 }

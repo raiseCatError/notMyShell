@@ -6,7 +6,7 @@ import {TerminalRenderer} from '../src/terminal/TerminalRenderer.js';
 import {KeyDecoder} from '../src/terminal/keys.js';
 
 test('unknown and Terminal.app attachments use a complete keyboard-only baseline', () => {
-  for (const env of [{}, {TERM_PROGRAM: 'Apple_Terminal'}, {TERM_PROGRAM: 'ghostty', TMUX: 'socket'}]) {
+  for (const env of [{}, {TERM_PROGRAM: 'Apple_Terminal'}, {TERM_PROGRAM: 'ghostty', STY: 'screen'}]) {
     assert.deepEqual(resolveHostCapabilities(env), BASELINE_CAPABILITIES);
     const writes: string[] = [];
     const renderer = new TerminalRenderer(data => writes.push(data), resolveHostCapabilities(env));

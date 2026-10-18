@@ -39,9 +39,21 @@ export interface DoctorEnvironment {
   understanding: {mode: string; model?: {label: string; runtime: string; path?: string; owned: boolean}; runtimeAvailable: boolean; state?: string};
   agents: Array<{label: string; installed: boolean}>;
   virtualEnv?: string;
+  /** The Context Engine's own counters since NMSh started (nothing is collected to read them). */
+  contextEngine?: {started: number; completed: number; cancelled: number; timedOut: number; failed: number; cacheHits: number; coalesced: number};
 }
 
 const join = (directory: string, name: string) => `${directory.replace(/\/$/u, '')}/${name}`;
+
+/** Prompt data health: how often collection ran, was served from cache, timed out or failed. A few timeouts are normal on a cold disk. */
+export function contextEngineCheck(stats: NonNullable<DoctorEnvironment['contextEngine']>): DoctorCheck {
+  const section = 'NMSh';
+  const total = stats.completed + stats.timedOut + stats.failed;
+  const detail = `${stats.started} collections started · ${stats.cacheHits} served from cache · ${stats.coalesced} merged · ${stats.cancelled} cancelled · ${stats.timedOut} timed out · ${stats.failed} failed. /modules shows each module's own timing`;
+  const bad = total >= 20 && (stats.timedOut + stats.failed) / total > 0.2;
+  return bad ? {section, label: 'Prompt data often times out or fails', state: 'attention', detail, action: {label: 'Review modules', kind: 'slash', command: '/modules'}}
+    : {section, label: 'Prompt data collection healthy', state: stats.started ? 'ok' : 'info', detail};
+}
 
 function nmshChecks(env: DoctorEnvironment): DoctorCheck[] {
   const section = 'NMSh';
@@ -54,6 +66,7 @@ function nmshChecks(env: DoctorEnvironment): DoctorCheck[] {
   } else checks.push({section, label: 'Running in-process (no session service)', state: 'info'});
   checks.push(env.writable(env.nmsh.transcriptDirectory) ? {section, label: 'Transcript store writable', state: 'ok'}
     : {section, label: 'Transcript store is not writable', state: 'failure', detail: env.nmsh.transcriptDirectory});
+  if (env.contextEngine) checks.push(contextEngineCheck(env.contextEngine));
   return checks;
 }
 

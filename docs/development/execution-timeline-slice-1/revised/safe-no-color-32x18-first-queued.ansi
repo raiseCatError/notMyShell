@@ -1,0 +1,18 @@
+────────────────────────────────[0m
+> npm run build[0m[K[0m
+> nmsh build[0m
+Compiling project...[0m
+
+
+
+
+
+
+- Queue · 2 commands[0m -----------[0m
+·[0m npm run build[0m          Running[0m
+>[0m npm test[0m                  Next[0m
+Running[0m · [0m500 ms[0m · [0m1 pending[0m
+Hopping…[0m · 500 ms[0m
+--------------------------------[0m
+>[0m Enter queues the next command…[0m
+--------------------------------[0m

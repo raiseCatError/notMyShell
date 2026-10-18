@@ -42,7 +42,10 @@ export function lookFor(motion: MotionSettings): MotionLook & {speed: number} {
   return {rendering, intensity: INTENSITY[tuning?.intensity ?? 'medium'], speed: SPEED[tuning?.speed ?? 'normal']};
 }
 
+export type RowTransitionPhase = 'completion' | 'launch' | 'event';
+
 export type Transition =
+  | {kind: 'row'; target: string; tone: Tone; style: 'sweep' | 'pulse'; start: number; duration: number; look: MotionLook}
   | {kind: 'launch'; style: 'sweep' | 'pulse'; start: number; duration: number; look: MotionLook}
   | {kind: 'materialize'; from: number; to: number; text: string; vivid: boolean; start: number; duration: number; look: MotionLook}
   | {kind: 'travel'; from: number; to: number; row: number; start: number; duration: number; look: MotionLook}
@@ -120,6 +123,23 @@ export class Transitions {
     this.replace('morph', {kind: 'morph', changes, expressive: level === 'expressive', start: now, ...this.tuned(level === 'expressive' ? DURATIONS.morphExpressive : DURATIONS.morphSubtle)});
   }
 
+  /** A visible identity-owned surface uses the same finite effects, timing and motion tuning as command chrome. */
+  highlight(target: string, tone: Tone, now: number, phase: RowTransitionPhase): void {
+    const settings = this.settings();
+    const setting = phase === 'completion' ? settings.completionEffect : phase === 'launch' ? settings.commandLaunch : settings.eventFeedback;
+    if (setting === 'off' || !this.allowed()) return;
+    const duration = phase === 'completion' ? DURATIONS.seal : phase === 'launch' ? DURATIONS.launch
+      : settings.eventFeedback === 'expressive' ? DURATIONS.echoExpressive : DURATIONS.echoSubtle;
+    const style = phase === 'completion' || setting === 'sweep' || setting === 'expressive' ? 'sweep' : 'pulse';
+    this.active = [...this.active.filter(item => item.kind !== 'row' || item.target !== target),
+      {kind: 'row', target, tone, style, start: now, ...this.tuned(duration)}];
+  }
+
+  /** Hidden surfaces settle immediately; returning them to view cannot replay old feedback. */
+  retainRows(visible: ReadonlySet<string>): void {
+    this.active = this.active.filter(item => item.kind !== 'row' || visible.has(item.target));
+  }
+
   private replace(kind: Transition['kind'], transition: Transition): void {
     this.active = [...this.active.filter(item => item.kind !== kind), transition];
   }
@@ -137,11 +157,10 @@ export class Transitions {
 }
 
 export function toneColor(tone: Tone): RgbColor {
-  return tone === 'success' ? UI_COLORS.success : tone === 'failure' ? UI_COLORS.failure : tone === 'warning' ? WARNING
+  return tone === 'success' ? UI_COLORS.success : tone === 'failure' ? UI_COLORS.failure : tone === 'warning' ? UI_COLORS.warning
     : tone === 'muted' ? UI_COLORS.subtle : UI_COLORS.accent;
 }
 
-const WARNING: RgbColor = {red: 224, green: 176, blue: 72};
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
 /** A luminance band travelling left → right across [0, width) at progress t: a foreground tint, strongest at the band's center. */
@@ -273,6 +292,14 @@ const gain = (look: MotionLook, value: number) => Math.min(1, value * look.inten
  * (Clean or Rich) at its own intensity.
  */
 export const transitionPaint = {
+  /** Identity-targeted semantic row feedback: the existing sweep or pulse painter, with the existing look. */
+  row: (tone: Tone, columns: number, t: number, style: 'sweep' | 'pulse', look: MotionLook = CLEAN_LOOK) => {
+    const cells = style === 'sweep'
+      ? (rich(look) ? richSweepCells : sweepCells)(columns, t, toneColor(tone), gain(look, 0.55), 10)
+      : (rich(look) ? richDecayCells : decayCells)(0, columns, t, toneColor(tone), gain(look, 0.35));
+    for (const paint of cells.values()) paint.contrast = 4.5;
+    return cells;
+  },
   /** Command launch over a composer row; `rule` rows (separator, border) take a stronger band. */
   launch: (style: 'sweep' | 'pulse', columns: number, t: number, rule: boolean, look: MotionLook = CLEAN_LOOK) => {
     if (rich(look)) return style === 'sweep' ? richSweepCells(columns, t, UI_COLORS.accent, gain(look, rule ? 0.8 : 0.5)) : richDecayCells(0, columns, t, UI_COLORS.accent, gain(look, 0.35));

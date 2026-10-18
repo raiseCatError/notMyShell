@@ -1,3 +1,4 @@
+import {resolveConfigRequest} from './configActions.js';
 import {basename, relative} from 'node:path';
 import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -209,6 +210,9 @@ function resolveExact(raw: string, context: AskContext, state: ResolveState = {}
   // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
   // "how do i X" still lets a strong typed capability act ("how do i open package.json").
   // One guide: /guide, "guide me through nmsh", and /ask help all come from the concept catalog.
+  // NMSh surfaces and supported configuration: deterministic, typed actions only.
+  const configured = resolveConfigRequest(text);
+  if (configured) return configured;
   if (GUIDE_REQUEST.test(text)) return guideOutcome(context);
   if (HELP_REQUEST.test(text)) return askHelpOutcome();
   // "why did that fail": the failed block's own evidence, read deterministically.

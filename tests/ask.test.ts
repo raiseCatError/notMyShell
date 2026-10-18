@@ -220,3 +220,25 @@ test('safety: every capability is typed; read actions are fixed argv; request te
     assert.ok(!argv.some(part => /^(?:-c|sh|bash|zsh)$/u.test(part) || /[|;&$`<>]/u.test(part)));
   }
 });
+
+
+test('/btw is canonical discovery and /ask parses to the same action', () => {
+  for (const request of ['', 'how do I push this branch?', 'explain that error', 'git push syntax?']) {
+    assert.deepEqual(parseSlashCommand('/btw' + (request ? ' ' + request : '')), {kind: 'ask', request});
+    assert.deepEqual(parseSlashCommand('/ask' + (request ? ' ' + request : '')), {kind: 'ask', request});
+  }
+  assert.ok(slashSuggestions('/bt').some(item => item.name === '/btw'));
+  assert.ok(!slashSuggestions('/').some(item => item.name === '/ask'), 'Primary discovery excludes compatibility alias');
+});
+
+
+test('help, palette and guide advertise /btw once and retain the subtle alias', async () => {
+  const {helpMarkdown} = await import('../src/help/helpContent.js');
+  const {paletteItems} = await import('../src/ui/CommandPalette.js');
+  const {CONCEPTS} = await import('../src/ask/concepts.js');
+  assert.match(String(helpMarkdown()), /\| `\/btw` \(also `\/ask`\)/u);
+  assert.doesNotMatch(String(helpMarkdown()), /\| `\/ask` \|/u);
+  assert.equal(paletteItems().filter(item => item.id === 'slash:/btw').length, 1);
+  assert.equal(paletteItems().filter(item => item.id === 'slash:/ask').length, 0);
+  assert.match(CONCEPTS.find(concept => concept.id === 'ask')!.description, /\/btw/u);
+});

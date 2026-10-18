@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtempSync, rmSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -16,6 +17,10 @@ import {displayWidth} from '../src/util/text.js';
 const identity = {version: '0.2.0', commit: 'abcdef0', branch: 'dev'};
 
 test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and one divider', () => {
+  // A controlled cwd under the private test home keeps this identity test independent of checkout-path truncation.
+  const previousCwd = process.cwd();
+  const directory = mkdtempSync(join(homedir(), 'welcome-'));
+  process.chdir(directory);
   const app = new TerminalApp();
   try {
     const transcript = app['output'].transcript();
@@ -35,6 +40,8 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
   } finally {
     app['stop'](0);
     app['session'].kill();
+    process.chdir(previousCwd);
+    rmSync(directory, {recursive: true, force: true});
   }
 });
 
@@ -93,7 +100,7 @@ test('welcome scrolls with ordinary history and stays outside command copy', () 
   const viewport = new HistoryViewport();
   assert.ok(viewport.resolve(rows.length, 3) > 0);
   assert.ok(!rows.slice(viewport.start, viewport.start + 3).some(row => row.plain.includes('notMyShell')));
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello\nCompleted');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello\n', 'the output as printed; never the welcome');
   assert.ok(!output.transcript().lines.flat().some(cell => cell && 'text' in cell && cell.text.includes('notMyShell')));
 });
 

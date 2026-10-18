@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {liveLine} from '../status/liveLine.js';
 import {doctorSummary, type DoctorAction, type DoctorCheck, type DoctorState} from './doctor.js';
@@ -52,7 +52,7 @@ export function renderDoctorPanel(state: DoctorPanelState, columns: number, now:
   state.checks.forEach((check, index) => {
     if (check.section !== section) { rows.push('', `  ${secondary}${check.section}${reset}`); section = check.section; }
     const selected = index === state.selected;
-    rows.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '}   ${color(check.state)}${stateGlyph(check.state)}${reset} ${selected ? primary : secondary}${check.label}${reset}`
+    rows.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '}   ${color(check.state)}${stateGlyph(check.state)}${reset} ${focusForeground(selected)}${check.label}${reset}`
       + `${check.detail ? `  ${subtle}${check.detail}${reset}` : ''}${check.action ? `  ${selected ? accent : subtle}${check.action.label} ›${reset}` : ''}`);
   });
   rows.push('', renderControls([['↑↓', 'select'], ['Enter', 'action'], ['R', 'check again'], ['Esc', 'close']]));

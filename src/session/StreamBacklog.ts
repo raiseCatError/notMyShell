@@ -1,11 +1,12 @@
 import {appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync} from 'node:fs';
 import {dirname} from 'node:path';
+import {MAX_SHELL_KNOWLEDGE_BYTES} from '../shell/ShellKnowledge.js';
 
 /** One shell stream event as retained for replay. */
 export type BacklogEvent =
   | {kind: 'output'; seq: number; at: number; data: string}
-  | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number}
-  | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string; knowledge?: string};
+  | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number; queued?: string}
+  | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string; knowledge?: string; inputWaitMs?: number; inputWaits?: number};
 
 /** Non-event spool records: journal acknowledgements, truncation and the shell's end. */
 type SpoolRecord = BacklogEvent
@@ -16,7 +17,12 @@ type SpoolRecord = BacklogEvent
 export interface BacklogLimits {
   /** Unacknowledged bytes kept in memory before spilling to the spool file. */
   memoryBytes: number;
-  /** Spool size after which output payloads are dropped (with a counted marker). */
+  /**
+   * Output bytes in the spool after which output payloads are dropped (with a
+   * counted marker). Command boundaries and prompt metadata are always kept
+   * and do not consume this budget, so a large alias/function list cannot make
+   * in-limit output look truncated.
+   */
   spoolBytes: number;
 }
 
@@ -34,7 +40,8 @@ function validEvent(value: unknown): value is SpoolRecord {
     case 'output': return int('seq') && int('at') && typeof record.data === 'string';
     case 'exec': return int('seq') && int('at') && typeof record.command === 'string';
     case 'prompt': return int('seq') && int('at') && int('exitCode') && typeof record.cwd === 'string'
-      && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= 65536);
+      // The same bound the shell side reads with: a spooled prompt is never dropped for knowledge the live path accepted.
+      && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= MAX_SHELL_KNOWLEDGE_BYTES);
     case 'ack': return int('seq') && typeof record.journalId === 'string';
     case 'truncated': return int('bytes');
     case 'exit': return int('exitCode') && int('at');
@@ -85,7 +92,7 @@ export class StreamBacklog {
   private memory: BacklogEvent[] = [];
   private memoryBytes = 0;
   private spooled = false;
-  private spoolSize = 0;
+  private spoolOutput = 0;
   private acked = 0;
   private journal?: string;
   private truncated = 0;
@@ -146,18 +153,18 @@ export class StreamBacklog {
       // The runtime directory is private (0700); the spool directory is too.
       mkdirSync(dirname(this.spoolPath), {recursive: true, mode: 0o700});
       this.spooled = true;
-      this.spoolSize = 0;
+      this.spoolOutput = 0;
       if (this.acked > 0) records.push({kind: 'ack', seq: this.acked, journalId: this.journal ?? ''});
     }
     let dropped = 0;
     for (const event of this.memory) {
-      if (event.kind === 'output' && this.spoolSize + event.data.length > this.limits.spoolBytes) {
+      if (event.kind === 'output' && this.spoolOutput + event.data.length > this.limits.spoolBytes) {
         dropped += event.data.length;
         continue;
       }
       if (dropped > 0) { records.push({kind: 'truncated', bytes: dropped}); this.truncated += dropped; dropped = 0; }
       records.push(event);
-      this.spoolSize += eventBytes(event);
+      if (event.kind === 'output') this.spoolOutput += event.data.length;
       this.lastSpooledSeq = event.seq;
     }
     if (dropped > 0) { records.push({kind: 'truncated', bytes: dropped}); this.truncated += dropped; }
@@ -175,7 +182,7 @@ export class StreamBacklog {
   private removeSpool(): void {
     try { unlinkSync(this.spoolPath); } catch { /* already gone */ }
     this.spooled = false;
-    this.spoolSize = 0;
+    this.spoolOutput = 0;
   }
 
   /** Bytes currently on disk; for tests and diagnostics. */

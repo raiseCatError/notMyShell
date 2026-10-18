@@ -134,3 +134,15 @@ test('history picker ignores a query result if typing or command execution moved
     assert.equal(app['externalPassthrough'], false);
   } finally { app['stop'](0); app['session'].kill(); }
 });
+
+test('app: Apply themes Follow NMSh themes NMSh-owned fzf launches even when fzf\'s own Manual setting is Independent', async () => {
+  const app = new TerminalApp();
+  try {
+    app['promptConfiguration'].picker = 'fzf';
+    app['promptConfiguration'].themeBridge = {...app['promptConfiguration'].themeBridge, enabled: true, policy: 'follow'};
+    assert.equal(app['promptConfiguration'].themeBridge.targets.fzf.mode, 'independent');
+    assert.ok((await app['fzfThemeArgs']()).some(arg => arg.startsWith('--color')), 'the effective mode decides, not the Manual one');
+    app['promptConfiguration'].themeBridge = {...app['promptConfiguration'].themeBridge, enabled: false};
+    assert.deepEqual(await app['fzfThemeArgs'](), []);
+  } finally { app['stop'](0); app['session'].kill(); }
+});

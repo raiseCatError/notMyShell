@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import type {LocalUnderstandingSettings} from '../prompt/configuration.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {liveLine} from '../status/liveLine.js';
 import {proposeSetup, recommendModel, type FoundModel, type FoundRuntime} from './discovery.js';
@@ -171,7 +171,7 @@ export function renderUnderstandingPanel(state: UnderstandingPanelState, facts: 
   const label = (text: string) => padCells(text, 20);
   const line = (index: number, text: string, value: string) => {
     const selected = index === state.selected;
-    return `${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${selected ? primary : secondary}${label(text)}${reset}${value}`;
+    return `${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${focusForeground(selected)}${label(text)}${reset}${value}`;
   };
   const onOff = (on: boolean) => on ? `${success}On${reset}` : `${subtle}Off${reset}`;
   let section: string | undefined;

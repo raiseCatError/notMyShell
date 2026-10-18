@@ -5,6 +5,7 @@ import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderActionHelp, type UiAction} from '../ui/actions.js';
+import {classifyShellFailure} from './ShellKnowledge.js';
 
 export interface CommandCorrection {correction: true; name: string; insertion: string; original: string; description: string}
 export const CORRECTION_ACTIONS: readonly UiAction[] = [
@@ -40,14 +41,20 @@ export function correctionTarget(input: string, names: readonly string[]): strin
 
 export class CommandCorrectionService {
   private cache?: {path: string; at: number; files: Map<string, string[]>};
+  private shellPath?: string;
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+
+  /** The PATH the live shell reports (rc files often extend NMSh's own); undefined falls back to NMSh's. */
+  usePath(path: string | undefined): void { this.shellPath = path; }
 
   async suggest(command: string, exitCode: number, output: string, signal?: AbortSignal): Promise<CommandCorrection | undefined> {
     // No quotes, substitutions, redirections, pipelines, assignments, multiline or leading-space private input.
     const match = /^([a-zA-Z][a-zA-Z0-9_-]{2,31})(?:[ \t]+[a-zA-Z0-9_./:@%+=,-]+)*[ \t]*$/u.exec(command);
     if (exitCode !== 127 || !match || signal?.aborted) return;
     const typed = match[1]!;
-    const diagnostic = stripAnsi(output).split('\n').some(line => new RegExp(`^(?:zsh(?::[^:]+)*: |nmsh: )?command not found: ${typed}\\s*$`, 'u').test(line.trim()));
+    // The shell's own diagnostic for exactly this word: zsh, Bash ("bash: gti: command not found") or Fish ("fish: Unknown command: gti").
+    const diagnostic = stripAnsi(output).split('\n').some(line => new RegExp(`^(?:zsh(?::[^:]+)*: |nmsh: )?command not found: ${typed}\\s*$`, 'u').test(line.trim()))
+      || classifyShellFailure(command, exitCode, output) === 'command-not-found';
     if (!diagnostic) return;
     const files = await this.commandFiles(signal);
     if (signal?.aborted) return;
@@ -71,7 +78,7 @@ export class CommandCorrectionService {
   }
 
   private async commandFiles(signal?: AbortSignal): Promise<Map<string, string[]>> {
-    const path = this.env.PATH ?? '';
+    const path = this.shellPath ?? this.env.PATH ?? '';
     if (this.cache?.path === path && Date.now() - this.cache.at < 60_000) return this.cache.files;
     const files = new Map<string, string[]>();
     let count = 0;

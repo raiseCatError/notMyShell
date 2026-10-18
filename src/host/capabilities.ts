@@ -12,6 +12,13 @@ export interface TerminalCapabilities {
   synchronizedOutput: boolean;
   hyperlinks: boolean;
   truecolor: boolean;
+  /**
+   * The host is a multiplexer that already draws to the real terminal in its own synchronized
+   * updates (tmux). NMSh then never wraps frames in DEC 2026 itself, whatever the probe says: measured
+   * with tmux 3.7, an application's own 2026 block made tmux emit intermediate cursor positions after
+   * its sync block, visibly, which cursor shaders and trails on the outer terminal animate.
+   */
+  hostSynchronizes?: true;
 }
 
 export const BASELINE_CAPABILITIES: Readonly<TerminalCapabilities> = Object.freeze({
@@ -80,6 +87,19 @@ export function shouldProbeGraphics(env: NodeJS.ProcessEnv): boolean {
   return !nested && env.NMSH_IMAGES !== '0' && ['kitty', 'ghostty', 'wezterm'].includes(terminalProfile(env));
 }
 
+/**
+ * Inside tmux the outer host is hidden, but tmux itself speaks xterm button and
+ * SGR mouse to its panes: when the pane asks, tmux enables mouse on the outer
+ * terminal and forwards wheel reports whether its own `mouse` option is on or
+ * off (copy mode and tmux's own bindings still come first). Without asking,
+ * the outer terminal turns the wheel into Up/Down keys (alternate scroll),
+ * which NMSh cannot tell from the keyboard and which walked composer history.
+ * No movement tracking; Shift keeps the terminal's own selection.
+ */
+const TMUX_PROFILE = {
+  mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const, hostSynchronizes: true as const,
+};
+
 /** Adapter hints are subordinate to protocol evidence. Multiplexers hide outer hints. */
 export function resolveHostCapabilities(env: NodeJS.ProcessEnv = process.env): TerminalCapabilities {
   const result = {...BASELINE_CAPABILITIES};
@@ -94,6 +114,7 @@ export function resolveHostCapabilities(env: NodeJS.ProcessEnv = process.env): T
     if (profile === 'kitty') Object.assign(result, {enhancedKeyboard: true, kittyKeyboard: true, graphicsProtocol: 'kitty'});
     if (profile === 'iterm2' || profile === 'wezterm') result.graphicsProtocol = 'iterm2';
   }
+  else if (env.TMUX && !env.STY && !env.ZELLIJ && env.TERM !== 'dumb') Object.assign(result, TMUX_PROFILE);
   if (env.COLORTERM === 'truecolor' || env.COLORTERM === '24bit' || /(?:direct|truecolor)/u.test(env.TERM ?? '')) result.truecolor = true;
   if (env.NMSH_HYPERLINKS === '1') result.hyperlinks = true;
   if (env.NMSH_HYPERLINKS === '0' || env.TERM === 'dumb') result.hyperlinks = false;

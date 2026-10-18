@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 import {once} from 'node:events';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {ShellSession} from '../src/shell/ShellSession.js';
@@ -110,6 +110,16 @@ import {LiveSandbox, until, processAlive, strip} from './helpers/liveFrontend.js
 const NOTICE = {NMSH_STARTUP_NOTICE_MS: '300'};
 const zshrc = (sandbox: LiveSandbox, body: string) => writeFileSync(join(sandbox.home, '.zshrc'), body);
 
+/** Release only the fixture gate, then retain strict ownership cleanup and both failure causes. */
+async function disposeStartupGate(sandbox: LiveSandbox, gate: string, primary: unknown): Promise<void> {
+  const errors: unknown[] = [];
+  try { writeFileSync(gate, ''); } catch (error) { errors.push(error); }
+  try { await sandbox.dispose(); } catch (error) { errors.push(error); }
+  if (errors.length) throw new AggregateError(primary === undefined ? errors : [primary, ...errors],
+    'startup fixture cleanup failed');
+}
+
+
 test('frontend: a blocked startup read shows an explicit state with its prompt, swallows no answer, and Ctrl+C aborts', async () => {
   const sandbox = new LiveSandbox({}, NOTICE);
   try {
@@ -136,25 +146,34 @@ test('frontend: a blocked startup read shows an explicit state with its prompt, 
   } finally { await sandbox.dispose(); }
 });
 
-test('frontend: slow startup shows the state, keeps typed text, then becomes an ordinary ready composer', async () => {
-  const sandbox = new LiveSandbox({}, NOTICE);
-  try {
+for (const delayedJournal of [false, true]) {
+  test(`frontend: slow startup shows the state, keeps typed text, then becomes an ordinary ready composer${delayedJournal ? ' when the notice overtakes journal startup' : ''}`, async () => {
+    const sandbox = new LiveSandbox({}, NOTICE);
     const gate = join(sandbox.home, 'gate');
-    zshrc(sandbox, `while [ ! -f ${gate} ]; do sleep 0.05; done\n`);
-    const app = sandbox.launch();
-    await app.waitFor(/Shell startup is still running/);
-    app.pty.write('echo KEPT-$((20+22))');
-    app.pty.write('\r'); // held: Enter does nothing while startup is pending
-    await new Promise(resolve => setTimeout(resolve, 400));
-    assert.doesNotMatch(strip(app.output), /KEPT-42/);
-    writeFileSync(gate, '');
-    await app.waitFor(/❯ echo KEPT-\$\(\(20\+22\)\)/, app.output.indexOf('Shell startup'));
-    app.pty.write('\r');
-    await app.waitFor(/KEPT-42/, app.output.indexOf('Shell startup'));
-    app.pty.write('\u0004');
-    await app.waitExit();
-  } finally { await sandbox.dispose(); }
-});
+    let primary: unknown;
+    try {
+      zshrc(sandbox, `if [[ -t 0 ]]; then while [ ! -f ${gate} ]; do sleep 0.05; done; fi\n`);
+      const entry = delayedJournal ? resolve('tests/fixtures/slowJournalAttach.ts') : undefined;
+      const app = sandbox.launch([], {cols: 100, rows: 30}, {}, entry);
+      await app.waitFor(/Shell startup is still running/);
+      if (delayedJournal) {
+        assert.match(strip(app.output), /TEST-JOURNAL-WAIT/);
+        assert.doesNotMatch(strip(app.output), /❯/, 'a delayed first frame must show the blocked state');
+      }
+      app.pty.write('echo KEPT-$((20+22))');
+      app.pty.write('\r'); // held: Enter does nothing while startup is pending
+      await new Promise(resolve => setTimeout(resolve, 400));
+      assert.doesNotMatch(strip(app.output), /KEPT-42/);
+      writeFileSync(gate, '');
+      await app.waitFor(/❯ echo KEPT-\$\(\(20\+22\)\)/, app.output.indexOf('Shell startup'));
+      app.pty.write('\r');
+      await app.waitFor(/KEPT-42/, app.output.indexOf('Shell startup'));
+      app.pty.write('\u0004');
+      await app.waitExit();
+    } catch (error) { primary = error; throw error; }
+    finally { await disposeStartupGate(sandbox, gate, primary); }
+  });
+}
 
 test('frontend: clean startup never shows the startup state', async () => {
   const sandbox = new LiveSandbox();
@@ -183,14 +202,16 @@ test('frontend: a command submitted early during a slow bootstrap still runs exa
 
 test('service: detach and reattach during a blocked startup keep the state, the held input and the prompt text', async () => {
   const sandbox = new LiveSandbox({}, {NMSH_STARTUP_NOTICE_MS: '1500'});
+  const gate = join(sandbox.home, 'gate');
+  let primary: unknown;
   try {
-    const gate = join(sandbox.home, 'gate');
-    zshrc(sandbox, `print -n "Waiting for gate> "\nwhile [ ! -f ${gate} ]; do sleep 0.05; done\n`);
-    const first = sandbox.launch();
-    await first.waitFor(/❯/);
+    zshrc(sandbox, `if [[ -t 0 ]]; then print -n "Waiting for gate> "; while [ ! -f ${gate} ]; do sleep 0.05; done; fi\n`);
+    // Actual editor/submit pipeline, deterministically before the notice;
+    // physical early typing remains covered by the separate frontend case.
+    const first = sandbox.launch([], {cols: 100, rows: 30}, {}, resolve('tests/fixtures/earlyStartupSubmission.ts'));
+    await first.waitFor(/TEST-EARLY-SUBMISSION/);
     await until(async () => (await sandbox.sessions()).length === 1, 15000, 'live session listed');
     const {id, pid} = (await sandbox.sessions())[0]!;
-    first.pty.write('echo HELD-$((1+1))\r'); // submitted before notice, held by service queue
     await first.waitFor(/Shell startup is still running/);
     await until(async () => (await sandbox.transcripts().list()).some(j => j.live?.running?.command === 'echo HELD-$((1+1))'), 15000, 'submission checkpoint');
     first.pty.kill('SIGHUP');
@@ -208,7 +229,8 @@ test('service: detach and reattach during a blocked startup keep the state, the 
     second.pty.write('\u0004');
     await second.waitExit();
     await until(async () => (await sandbox.sessions()).length === 0, 15000, 'session ended');
-  } finally { await sandbox.dispose(); }
+  } catch (error) { primary = error; throw error; }
+  finally { await disposeStartupGate(sandbox, gate, primary); }
 });
 
 test('service: shutting down the shell during a blocked startup leaves no session or process behind', async () => {
@@ -227,25 +249,33 @@ test('service: shutting down the shell during a blocked startup leaves no sessio
 });
 
 for (const command of ['less', 'vim']) {
-  test(`frontend: early ${command} cannot steal ownership from SIGINT-ignoring startup`, async () => {
-    const sandbox = new LiveSandbox({}, {NMSH_STARTUP_NOTICE_MS: '1500'});
-    try {
-      const answered = join(sandbox.home, 'answered');
-      zshrc(sandbox, `if [[ -t 0 ]]; then trap '' INT; read -k1 "?Blocked> "; print "$REPLY" > ${answered}; fi\n`);
-      const app = sandbox.launch();
-      await app.waitFor(/❯/);
-      app.pty.write(`${command}\r`);
-      await app.waitFor(/Shell startup is still running/);
-      assert.equal(existsSync(answered), false);
-      const [{pid}] = await sandbox.sessions();
-      app.pty.write('q');
-      app.pty.write('\u0003');
-      assert.equal(await app.waitExit(), 130);
-      await until(async () => (await sandbox.sessions()).length === 0, 15000, 'aborted session removed');
-      await until(() => !processAlive(pid), 15000, 'shell exited');
-      assert.equal(existsSync(answered), false);
-    } finally { await sandbox.dispose(); }
-  });
+  for (const delayedJournal of [false, true]) {
+    test(`frontend: early ${command} cannot steal ownership from SIGINT-ignoring startup${delayedJournal ? ' with delayed journal' : ''}`, async () => {
+      const sandbox = new LiveSandbox({}, {
+        NMSH_STARTUP_NOTICE_MS: delayedJournal ? '300' : '1500',
+        NMSH_TEST_EARLY_COMMAND: command,
+        NMSH_TEST_DELAY_EARLY_JOURNAL: delayedJournal ? '1' : '0',
+      });
+      try {
+        const answered = join(sandbox.home, 'answered');
+        zshrc(sandbox, `if [[ -t 0 ]]; then trap '' INT; read -k1 "?Blocked> "; print "$REPLY" > ${answered}; fi\n`);
+        // Submit through the actual composer pipeline before the notice, even
+        // when journaling prevents a transient composer from ever being drawn.
+        const app = sandbox.launch([], {cols: 100, rows: 30}, {}, resolve('tests/fixtures/earlyStartupSubmission.ts'));
+        await app.waitFor(/TEST-EARLY-SUBMISSION/);
+        await app.waitFor(/Shell startup is still running/);
+        if (delayedJournal) assert.match(strip(app.output), /TEST-JOURNAL-WAIT/);
+        assert.equal(existsSync(answered), false);
+        const [{pid}] = await sandbox.sessions();
+        app.pty.write('q');
+        app.pty.write('\u0003');
+        assert.equal(await app.waitExit(), 130);
+        await until(async () => (await sandbox.sessions()).length === 0, 15000, 'aborted session removed');
+        await until(() => !processAlive(pid), 15000, 'shell exited');
+        assert.equal(existsSync(answered), false);
+      } finally { await sandbox.dispose(); }
+    });
+  }
 }
 
 import {TerminalApp} from '../src/app/TerminalApp.js';

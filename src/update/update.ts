@@ -135,6 +135,16 @@ export const systemRunner: CommandRunner = {
   },
 };
 
+/** The same runner for read-only facts (provenance for a notice): seconds, not the minutes a build may take. */
+export const quickRunner: CommandRunner = {
+  run(command, args, cwd) {
+    return new Promise((resolvePromise, reject) => {
+      execFile(command, [...args], {cwd, encoding: 'utf8', timeout: 5_000, maxBuffer: 256 * 1024, env: {...process.env, GIT_TERMINAL_PROMPT: '0'}},
+        (error, stdout, stderr) => { if (error) reject(new Error((stderr || error.message).trim().split('\n').slice(-1).join(' '))); else resolvePromise(stdout.trim()); });
+    });
+  },
+};
+
 /** The directory NMSh runs from: the package root above `dist/`. */
 export function installRoot(moduleUrl = import.meta.url): string {
   return resolve(dirname(fileURLToPath(moduleUrl)), '..', '..');
@@ -142,10 +152,41 @@ export function installRoot(moduleUrl = import.meta.url): string {
 
 export type InstallInfo =
   | {kind: 'checkout'; root: string; branch?: string; head: string}
+  /** Installed with Homebrew: the keg owns these files; updates go through `brew upgrade nmsh`. */
+  | {kind: 'homebrew'; root: string; version: string; prefix: string; tap?: string}
   | {kind: 'unsupported'; root: string; reason: string};
+
+/**
+ * A Homebrew keg, from Homebrew's own metadata: NMSh's libexec inside
+ * <prefix>/Cellar/nmsh/<version>/ next to the INSTALL_RECEIPT.json Homebrew
+ * writes for every installed keg (it names the tap). No brew process is run.
+ */
+export function detectHomebrewInstall(root: string): Extract<InstallInfo, {kind: 'homebrew'}> | undefined {
+  let real: string;
+  try { real = realpathSync(root); } catch { return undefined; }
+  const match = /^(.+)\/Cellar\/nmsh\/([^/]+)\/libexec$/u.exec(real);
+  if (!match) return undefined;
+  const [, prefix, version] = match;
+  try {
+    const receipt = JSON.parse(readFileSync(join(prefix!, 'Cellar', 'nmsh', version!, 'INSTALL_RECEIPT.json'), 'utf8')) as {source?: {tap?: unknown}};
+    const tap = typeof receipt.source?.tap === 'string' ? receipt.source.tap : undefined;
+    return {kind: 'homebrew', root: real, version: version!, prefix: prefix!, ...(tap ? {tap} : {})};
+  } catch { return undefined; }
+}
+
+/** One factual provenance line for /version, /status and diagnostics (no network, no brew process). */
+export function installProvenanceLabel(root: string = installRoot()): string {
+  const homebrew = detectHomebrewInstall(root);
+  if (homebrew) return `Homebrew${homebrew.tap ? ` (${homebrew.tap})` : ''} · update with brew upgrade nmsh`;
+  return existsSync(join(root, '.git')) ? `source checkout · ${root}` : `other/manual installation · ${root}`;
+}
+
+export const HOMEBREW_UPDATE_STEPS = ['brew update', 'brew upgrade nmsh'] as const;
 
 /** Provenance from facts only: an official, clean git checkout, or unsupported with the reason. */
 export async function detectInstall(root: string, runner: CommandRunner = systemRunner): Promise<InstallInfo> {
+  const homebrew = detectHomebrewInstall(root);
+  if (homebrew) return homebrew;
   if (!existsSync(join(root, '.git'))) {
     return {kind: 'unsupported', root, reason: `${root} is not a git checkout, so NMSh cannot tell how it was installed.`};
   }
@@ -187,6 +228,9 @@ export function manualSteps(root: string, tag: string): string[] {
 export async function planUpdate(install: InstallInfo, release: ReleaseInfo, runner: CommandRunner = systemRunner,
   tagCommit: (tag: string) => Promise<string> = tag => fetchTagCommit(tag)): Promise<PlanResult> {
   const manual = manualSteps(install.root, release.tag);
+  if (install.kind === 'homebrew') {
+    return {ok: false, reason: `Installed with Homebrew${install.tap ? ` (${install.tap})` : ''}; Homebrew owns these files, so NMSh does not change them.`, manual: [...HOMEBREW_UPDATE_STEPS]};
+  }
   if (install.kind !== 'checkout') return {ok: false, reason: install.reason, manual: [`Download ${release.url}`, 'and reinstall it the way you installed NMSh.']};
   const {root} = install;
   const dirty = await runner.run('git', ['status', '--porcelain', '--untracked-files=no'], root);

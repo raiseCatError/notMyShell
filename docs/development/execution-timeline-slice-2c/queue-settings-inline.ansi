@@ -1,0 +1,23 @@
+────────────────────────────────────────────────────────────────────────────────[0m
+  Queue[0m  /queue · /settings queue[0m
+
+›[0m [1mQueue commands               [0m‹ On ›[0m
+  On queued command failure    [0mPause remaining queue
+  Live timeline                [0mOn
+    Recent results             [0m2
+    Upcoming entries           [0m2
+  Completed view               [0mOn
+    Keep visible               [0m8s
+  Queued output display        [0mInline
+  Save summaries               [0mOff
+  Summary detail               [0mDetailed
+  Summary placement            [0mCentered
+  Summary text alignment       [0mLeft
+  Summary durations            [0mOn
+  Summary exit codes           [0mOn
+  Summary input waits          [0mOff
+  Rendering                    [0mClean
+  Event feedback               [0mSubtle
+  Reduced Motion               [0mOff
+
+↑↓ select · ←→ change · Esc close[0m

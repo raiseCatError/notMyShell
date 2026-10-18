@@ -1,8 +1,10 @@
+import {colorLevel} from '../presentation/capabilities.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
-import {wrapStyledLine, type WrappedRow} from './viewport.js';
+import {wrapStyledLine, wrapStyledWords, type WrappedRow} from './viewport.js';
 import {background, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {mixRgb} from '../chroma/chroma.js';
 import {GLYPHS} from '../ui/glyphs.js';
@@ -13,6 +15,7 @@ import {homedir} from 'node:os';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizePromptStyle, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {normalizeStyleProfiles} from '../prompt/styles.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
+import {renderFirstRunWelcome, type FirstRunSnapshot} from './FirstRunWelcome.js';
 import {foldWindow} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
@@ -29,7 +32,6 @@ const shippedChrome = () => UI_COLORS.separator.red === SHIPPED_SEPARATOR.red &&
   && UI_COLORS.separator.blue === SHIPPED_SEPARATOR.blue;
 /** History divider tones of the UI separator role (Follow UI theme); Chroma dividers use the shared divider source. */
 const archiveDividerRgb = () => shippedChrome() ? {red: 162, green: 151, blue: 190} : mixRgb(UI_COLORS.separator, UI_COLORS.primary, 0.22);
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
@@ -69,8 +71,12 @@ export interface TranscriptView {
   lineTypes: ReadonlyMap<number, 'command' | 'metadata'>;
   historicalContexts: ReadonlyMap<number, HistoricalContextSnapshot>;
   welcome?: WelcomeSnapshot;
+  /** The first-run welcome, drawn right after Vespyr's welcome block. */
+  firstRun?: FirstRunSnapshot;
   /** Structural block ownership from command records (never from text). */
   ownerOf: (lineIndex: number) => number | undefined;
+  /** Line ids worth keeping in view inside a collapsed block's hidden middle (failures, diagnostics). */
+  foldHighlights?: (record: CompletedCommand) => readonly number[];
 }
 
 /** Transient interaction state the app tracks; the presenter decides how it looks. */
@@ -96,8 +102,15 @@ export class TranscriptPresenter {
   private wrap(view: TranscriptView, index: number, width: number): WrappedRow[] {
     const owner = view.ownerOf(index);
     const context = owner === undefined ? undefined : view.historicalContexts.get(owner);
-    const line = view.lines[index] ?? [];
-    return wrapStyledLine(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
+    const stored = view.lines[index] ?? [];
+    // Saved NMSh chrome belongs to the current frontend's presentation policy.
+    // Program cells keep their original SGR, including across reattach.
+    const line = view.lineTypes.has(index) && colorLevel() === 'none'
+      ? stored.map(cell => cell ? {...cell, style: ''} : cell)
+      : stored;
+    // NMSh's own lines wrap at words; shell output wraps by column, as a terminal does.
+    const wrap = view.lineTypes.get(index) === 'metadata' ? wrapStyledWords : wrapStyledLine;
+    return wrap(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
   }
 
   private treatment = DEFAULT_TREATMENT_SETTINGS;
@@ -125,7 +138,7 @@ export class TranscriptPresenter {
   }
 
   rows(view: TranscriptView, width: number): WrappedRow[] {
-    const {lines, completed, active, visualGaps, historicalContexts, welcome, ownerOf} = view;
+    const {lines, completed, active, visualGaps, historicalContexts, welcome, firstRun, ownerOf} = view;
     const column = this.layout === 'chat' ? chatColumn(width) : undefined;
     // A chat command block is right-aligned as a whole: its widest wrapped row sets the left edge.
     const blockWidths = new Map<number, number>();
@@ -140,7 +153,9 @@ export class TranscriptPresenter {
       blockWidths.set(start, widest);
       return widest;
     };
-        const result: WrappedRow[] = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
+    const welcomeRows = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
+    // The first-run welcome follows Vespyr's block (line 0); its rows carry line numbers so it can arrive line by line.
+    const result: WrappedRow[] = firstRun ? [...welcomeRows.map(row => ({...row, firstRunLine: 0})), ...renderFirstRunWelcome(width)] : welcomeRows;
     let skipUntil = -1;
     const activitiesByStart = new Map<number, SecondaryActivity>();
     for (const activity of [
@@ -173,7 +188,7 @@ export class TranscriptPresenter {
         if (cmd.frontend === 'ask') {
           // A recorded Ask conversation folds whole: the /ask request line above stays as its identity.
           const turns = cmd.ask?.turns.length ?? hiddenLines;
-          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/ask\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
+          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/(?:btw|ask)\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
           const commandIndex = completed.indexOf(cmd);
           if (!cmd.expanded) {
             const plain = foldHint(label, '›', width);
@@ -204,7 +219,11 @@ export class TranscriptPresenter {
                 }
               };
               pushLines(cmd.outputStartId, cmd.outputStartId + head);
-              const plain = foldHint(`${hiddenLines - head - tail} lines hidden · Ctrl+O`, '›', width);
+              // The block's important lines stay in view, in order, after the head (real output rows, unchanged).
+              const highlights = head ? view.foldHighlights?.(cmd) ?? [] : [];
+              for (const line of highlights) pushLines(line, line + 1);
+              const shown = highlights.length ? ` · ${highlights.length} important line${highlights.length === 1 ? '' : 's'} shown` : '';
+              const plain = foldHint(`${hiddenLines - head - tail - highlights.length} lines hidden${shown} · Ctrl+O`, '›', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
               result.push({ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
               pushLines(cmd.endId - tail, cmd.endId);
@@ -294,12 +313,20 @@ export class TranscriptPresenter {
     return `${' '.repeat(indent)}${COMMAND_SURFACE}${row.replaceAll(RESET, `${RESET}${COMMAND_SURFACE}`)}\u001B[K${RESET}`;
   }
 
-  /** The finished sticky row for a block, aligned like the block's command rows. */
-  presentSticky(view: TranscriptView, startId: number, width: number): string | undefined {
-    const column = this.layout === 'chat' ? chatColumn(width) : undefined;
-    const row = this.stickyHeaderRow(view, startId, column ?? width);
+  /**
+   * The finished sticky row for a block, aligned like the block's command rows. `trailing` (the block's controls,
+   * `trailingWidth` cells, ending in a reset) sits at the right edge on the same surface; the header is cut to leave
+   * room for it, so neither covers the other.
+   */
+  presentSticky(view: TranscriptView, startId: number, width: number, trailing = '', trailingWidth = 0): string | undefined {
+    const available = Math.max(0, width - trailingWidth);
+    const chat = this.layout === 'chat' ? chatColumn(width) : undefined;
+    const column = chat === undefined ? undefined : Math.min(chat, available);
+    const row = this.stickyHeaderRow(view, startId, column ?? available);
     if (row === undefined) return undefined;
-    return this.stickyHeaderSurface(row, column === undefined ? 0 : Math.max(0, width - displayWidth(row)));
+    const indent = column === undefined ? 0 : Math.max(0, available - displayWidth(row));
+    if (!trailingWidth) return this.stickyHeaderSurface(row, indent);
+    return this.stickyHeaderSurface(`${row}${' '.repeat(Math.max(0, available - indent - displayWidth(row)))}${trailing}`, indent);
   }
 
   /** Final ANSI for a visible row: live shimmer, command surface, hover and focus treatment. */
@@ -426,16 +453,34 @@ function historyColor(color: Rgb | undefined, fallback: Rgb, part: 'foreground' 
 }
 
 function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[] {
-  const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
+  const cwd = stripTerminalControls(context.cwd);
   const home = homedir().replace(/\/$/u, '');
   const cwdLabel = cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
-  const project = context.project?.replace(CONTROL_CHARACTERS, '�');
+  const project = context.project === undefined ? undefined : stripTerminalControls(context.project);
   const segments: HistoricalSegment[] = [];
   if (project) segments.push({text: project, role: 'project'});
   if (!project || project !== cwdLabel) segments.push({text: cwdLabel, role: 'cwd'});
-  const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
+  const branch = context.branch === undefined ? undefined : stripTerminalControls(context.branch);
   if (branch) segments.push({text: `${GLYPHS.branch} ${branch}`, role: 'gitBranch'});
   return segments.map(segment => ({...segment, foreground: LEGACY_FOREGROUND, background: LEGACY_BACKGROUNDS[segment.role!], preMuted: true}));
+}
+
+/**
+ * Compact and Minimal historical prompts: a quiet view of the stored facts
+ * (project or short cwd, branch, marker). Presentation only; the snapshot and
+ * /copy are unchanged, and nothing is invented that was not recorded.
+ */
+function condensedPrompt(context: HistoricalContextSnapshot, level: 'compact' | 'minimal', width: number): string {
+  const marker = `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}\u001B[0m`;
+  if (level === 'minimal') return truncateAnsi(marker, width);
+  // Stored snapshots are hostile data: whole escape sequences go, not just their control bytes.
+  const clean = (text: string) => stripTerminalControls(text);
+  const cwd = clean(context.cwd);
+  const home = homedir().replace(/\/$/u, '');
+  const place = context.project ? clean(context.project) : cwd === home ? '~' : cwd.split('/').filter(Boolean).pop() ?? cwd;
+  const subtle = foreground(UI_COLORS.secondary);
+  const branch = context.branch ? ` ${foreground(UI_COLORS.subtle)}${GLYPHS.branch} ${clean(context.branch)}` : '';
+  return truncateAnsi(`${subtle}${place}${branch}\u001B[0m ${marker}`, width);
 }
 
 /** The prompt part of a historical header, colored per the transcript appearance. */
@@ -524,13 +569,17 @@ function historicalDivider(text: string, context: HistoricalContextSnapshot, app
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
   appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
   treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
-  if (!appearance.divider && !appearance.historicalPrompt) return undefined;
+  // Prompt None submissions had no prompt: they render like the Off presentation, never a substituted one.
+  const promptShown = appearance.historicalPrompt && !context.promptless;
+  if (!appearance.divider && !promptShown) return undefined;
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
-  if (!appearance.historicalPrompt) {
+  if (!promptShown) {
     const line = repeatToWidth(divider.glyph, width);
     return {ansi: `${historicalDivider(line, context, appearance, treatment, divider.color)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
-  const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
+  const level = appearance.historicalPromptLevel ?? 'full';
+  const parts = level === 'full' ? historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance)
+    : condensedPrompt(context, level, Math.max(0, width - (appearance.divider ? 1 : 0)));
   const prompt = typeof parts === 'string' ? parts : parts.left;
   const right = typeof parts === 'string' || !parts.right ? '' : parts.right;
   const rightWidth = right ? displayWidth(right) + 1 : 0;

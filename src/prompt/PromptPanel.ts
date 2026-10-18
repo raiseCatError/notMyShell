@@ -1,7 +1,11 @@
+import {moduleDefinition} from '../context/modules.js';
+import {handleModulesManagerKey, modulesItemCount, modulesManagerControls, renderModulesManager, type ModulesManagerState} from './ModulesPanel.js';
+import {railNeedsPromptConversion} from './railLayout.js';
+import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
 import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
-import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import {getCurrentGlyphMode, GLYPHS} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, THEME_FAMILIES} from '../appearance/themeFamilies.js';
 import {FAMILY_IDS, familyOf, selectFamily, variantLabel, variantOptions} from '../appearance/themeSelection.js';
@@ -18,10 +22,11 @@ import {
   type GitColorMode,
   nativeGapChoice,
   type NativeGapChoice,
-  type PromptConfiguration,
+  type PromptConfiguration, type ContextRailSettings, DEFAULT_CONTEXT_RAIL,
   type NativePaletteId,
   type PromptProviderId,
-  modulePlacement,
+  modulePlacement, applyModulePlacement,
+  MODULE_SURFACES, MODULE_SURFACE_LABELS, THEME_PALETTE_IDS,
   ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
@@ -35,21 +40,21 @@ import {
 } from '../chroma/treatment.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {colorEscape} from '../chroma/escape.js';
-import {renderControls} from '../ui/controls.js';
-import {renderTabStrip} from '../ui/PanelShell.js';
+import {renderControlRows} from '../ui/controls.js';
+import {cycleTab, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
 import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAdapter.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
 import {displayWidth, labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
+export type PromptPanelStep = 'railInsideConfirm' | 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 
-export interface PromptPanelState {
+export interface PromptPanelState extends ModulesManagerState {
   onboarding: boolean;
   step: PromptPanelStep;
   selectedIndex: number;
@@ -61,6 +66,7 @@ export interface PromptPanelState {
   p10kPreparation?: ConfiguratorPreparation;
   p10kResult?: string[];
   message?: string;
+  railConfirmReturn?: {step: PromptPanelStep; selectedIndex: number};
   task?: TaskProgress;
   starshipModules?: boolean[];
   starshipProposal?: StarshipConfigProposal;
@@ -75,9 +81,9 @@ export interface PromptPanelState {
   glyphEdit?: {rowId: string; buffer: string; note?: string};
 }
 
-export type PromptView = 'main' | 'git' | 'chroma';
-export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git', 'Chroma'] as const;
-const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma'];
+export type PromptView = 'main' | 'git' | 'chroma' | 'rail';
+export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git', 'Chroma', 'Context Rail'] as const;
+const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma', 'rail'];
 
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
@@ -93,6 +99,8 @@ export const PROMPT_PROVIDERS: readonly ProviderDescriptor<PromptProviderId>[] =
   {id: 'nmsh', family: 'prompt', label: 'NMSh Native', kind: 'native', description: 'built-in themes, geometry, and modules'},
   {id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', executable: 'starship', description: 'use its themes/configuration'},
   {id: 'powerlevel10k', family: 'prompt', label: 'Powerlevel10k', kind: 'external', description: 'use your ~/.p10k.zsh left prompt'},
+  {id: 'ohMyPosh', family: 'prompt', label: 'Oh My Posh', kind: 'external', executable: 'oh-my-posh', description: 'render with oh-my-posh; no shell rc change'},
+  {id: 'none', family: 'prompt', label: 'None', kind: 'none', description: 'composer only: no prompt row or modules; the input marker stays'},
 ];
 export const PROVIDER_ORDER: readonly PromptProviderId[] = PROMPT_PROVIDERS.map(provider => provider.id);
 
@@ -219,6 +227,8 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
 
 /** Main Prompt rows: theme, style and vibrance, the style's own controls, then icons and modules. */
 export function appearanceRows(configuration: PromptConfiguration): AppearanceRow[] {
+  // Prompt None keeps only the input marker (plus the theme, which still styles NMSh UI).
+  if (configuration.provider === 'none') return [...themeRows(configuration), PROMPT_SYMBOL_ROW, ...(configuration.promptSymbol === 'custom' ? [PROMPT_SYMBOL_GLYPH_ROW] : [])];
   return [
     ...themeRows(configuration),
     {id: 'textColors', label: 'Text colors', value: c => c.nmsh.textColors === 'neutral' ? 'Neutral' : 'Theme',
@@ -291,8 +301,56 @@ export function chromaRows(configuration: PromptConfiguration): AppearanceRow[] 
   return rows;
 }
 
+/** Deliberately bounded Rail controls over the existing theme library and style painter. */
+type RailChoice = 'relation' | 'direction' | 'integration' | 'spacing' | 'dividerAnchor';
+function railChoice<K extends RailChoice>(id: string, label: string, field: K,
+  choices: readonly (readonly [NonNullable<ContextRailSettings[K]>, string])[]): AppearanceRow {
+  return {id, label,
+    value: c => choices.find(([value]) => value === (c.contextRail[field] ?? DEFAULT_CONTEXT_RAIL[field]))?.[1] ?? choices[0]![1],
+    change: (c, d) => {
+      const values = choices.map(([value]) => value);
+      c.contextRail[field] = cycle(values, c.contextRail[field] ?? DEFAULT_CONTEXT_RAIL[field]!, d);
+    }};
+}
+
+export function contextRailRows(configuration: PromptConfiguration): AppearanceRow[] {
+  const rows: AppearanceRow[] = [
+    {id: 'railMode', label: 'Mode', value: c => ({auto: 'Auto', always: 'Always', off: 'Off'})[c.contextRail.mode],
+      change: (c, d) => { c.contextRail.mode = cycle(['auto', 'always', 'off'], c.contextRail.mode, d); }},
+    {id: 'railRows', label: 'Rows', value: c => String(c.contextRail.rows), change: c => { c.contextRail.rows = c.contextRail.rows === 1 ? 2 : 1; }},
+    railChoice('railRelation', 'Relation', 'relation', [['vertical','Vertical'],['right','Right of Prompt']]),
+    railChoice('railDirection', 'Direction', 'direction', [['followMain','Follow Main'],['forward','Forward'],['mirrored','Mirrored']]),
+    {...railChoice('railIntegration', 'Integration', 'integration', [['auto','Auto'],['outside','Outside'],['inside','Inside']]),
+      note: c => railNeedsPromptConversion(c) ? 'Requires Main Prompt: Inside; confirm on save' : 'horizontal dividers only'},
+    railChoice('railSpacing', 'Spacing', 'spacing', [['attached','Attached'],['gap','Gap'],['spacious','Spacious']]),
+    {...railChoice('railAnchor', 'Divider Anchor', 'dividerAnchor', [['prompt','Prompt Level'],['rail','Rail Level'],['above','Above Group']]),
+      note: c => !c.composerDividers ? 'no dividers: effective Prompt Level'
+        : c.contextRail.integration === 'outside' ? 'used with Inside integration'
+        : c.composerPosition === 'top' && c.contextRail.relation !== 'right' ? 'horizontal outer boundary faces below the Top group' : 'independent of spacing'},
+    {id: 'railTheme', label: 'Theme', value: c => c.contextRail.theme === 'followMain' ? 'Follow Main' : 'Choose theme',
+      change: c => { c.contextRail.theme = c.contextRail.theme === 'followMain' ? 'choose' : 'followMain'; c.contextRail.palette ??= c.nmsh.palette; c.contextRail.themeId ??= c.nmsh.themeId; }},
+  ];
+  if (configuration.contextRail.theme === 'choose') {
+    const choices = [...THEME_PALETTE_IDS.filter(id => id !== 'custom').map(palette => ({palette, themeId: undefined as string | undefined, label: NATIVE_PROMPT_THEMES[palette].label})),
+      ...configuration.themes.map(asset => ({palette: 'custom' as const, themeId: asset.id, label: asset.theme.name}))];
+    rows.push({id: 'railPalette', label: '  Chosen theme',
+      value: c => choices.find(choice => choice.palette === c.contextRail.palette && (choice.palette !== 'custom' || choice.themeId === c.contextRail.themeId))?.label ?? 'Lavender Native',
+      change: (c, d) => {
+        const current = choices.findIndex(choice => choice.palette === c.contextRail.palette && (choice.palette !== 'custom' || choice.themeId === c.contextRail.themeId));
+        const next = choices[(Math.max(0, current) + d + choices.length) % choices.length]!;
+        c.contextRail.palette = next.palette;
+        if (next.themeId) c.contextRail.themeId = next.themeId; else delete c.contextRail.themeId;
+      }});
+  }
+  rows.push({id: 'railStyle', label: 'Style', value: c => c.contextRail.style === 'followMain' ? 'Follow Main' : PROMPT_STYLE_LABELS[c.contextRail.style],
+    change: (c, d) => { c.contextRail.style = cycle(['followMain', 'soft', 'minimal', 'compact'], c.contextRail.style, d); }},
+  {id: 'railOverflow', label: 'Overflow', value: () => 'Priority', note: () => 'compact, then drop lower-priority context'});
+  if (configuration.provider !== 'nmsh') rows[0]!.note = () => 'available with NMSh Native; settings are retained';
+  return rows;
+}
+
 function viewRows(state: PromptPanelState): AppearanceRow[] {
-  return (state.view ?? 'main') === 'chroma' ? chromaRows(state.draft) : appearanceRows(state.draft);
+  return state.view === 'rail' ? contextRailRows(state.draft) : state.view === 'chroma' ? chromaRows(state.draft) : appearanceRows(state.draft);
 }
 
 /** Rich Git's own settings; each edits inline with ←/→ (Space also toggles Enabled). */
@@ -371,10 +429,10 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
   }
 }
 
-const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
-  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell',
-};
+/** Catalog label; a module whose pack is not installed keeps its row (and settings) and says so. */
+export function moduleLabel(id: PromptConfiguration['modules'][number]['id']): string {
+  return moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`;
+}
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
   const index = Math.max(0, values.indexOf(current));
@@ -414,6 +472,7 @@ export function layoutLabel(configuration: PromptConfiguration): string {
 
 /** One-line summary of an effective configuration. */
 export function describePromptConfiguration(configuration: PromptConfiguration): string {
+  if (configuration.provider === 'none') return 'None · composer only';
   if (configuration.provider !== 'nmsh') return `${providerLabel(configuration.provider)} · ${layoutLabel(configuration)}`;
   const nmsh = configuration.nmsh;
   // Powerline geometry describes only Powerline; other styles name their own look.
@@ -439,45 +498,8 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
   return comparable(state.draft) !== comparable(state.saved);
 }
 
-function moduleOption(module: PromptConfiguration['modules'][number]): string {
-  switch (module.id) {
-    case 'gitBranch': case 'gitStatus': return 'in repositories';
-    case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
-    case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
-    case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
-    case 'shell': return module.condition === 'always' ? 'always' : 'when different';
-    default: return 'always';
-  }
-}
-
-/** Space toggles, ←→ changes the module's option, Shift+↑↓ reorders. */
-function handleModulesKey(key: Key, state: PromptPanelState): boolean {
-  const modules = state.draft.modules;
-  const index = state.selectedIndex;
-  const module = modules[index];
-  if (!module) return false;
-  if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
-  else if (key.kind === 'text' && (key.value === 'm' || key.value === 'M')) state.draft.nmsh.mirrorRight = !state.draft.nmsh.mirrorRight;
-  else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
-    if (modulePlacement(module) === 'right') delete module.placement;
-    else module.placement = 'right';
-  }
-  else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
-    module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
-  } else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'shell') {
-    module.condition = module.condition === 'always' ? 'shellDiffers' : 'always';
-  } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
-    module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
-  } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
-    const target = index + (key.kind === 'selectUp' ? -1 : 1);
-    if (target < 0 || target >= modules.length) return true;
-    [modules[index], modules[target]] = [modules[target]!, modules[index]!];
-    state.selectedIndex = target;
-  } else return false;
-  return true;
-}
-
 export function promptPanelControls(state: PromptPanelState): Array<[string, string]> {
+  if (state.step === 'railInsideConfirm') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'keep current']];
   if (state.step === 'installProgress') return [['Please wait', 'installation in progress']];
   if (state.step === 'installResult') return [['Enter', state.task?.state.status === 'failed' ? 'details' : 'continue'], ['D', 'details'], ['Esc', 'back']];
   if (state.step === 'installDetails') return [['Enter/Esc', 'back']];
@@ -486,10 +508,7 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kResult') return [['Enter/Esc', 'back']];
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
-  if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'],
-      ['M', `mirror right: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
-  }
+  if (state.step === 'modules') return modulesManagerControls(state);
   if (state.step === 'gradient') {
     return state.gradient ? gradientEditorControls(state.gradient) : [['Esc', 'done']];
   }
@@ -508,11 +527,11 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'p10kResult': return 1;
     case 'starship': return state.starshipStatus?.installed ? 5 : 3;
     case 'starshipModules': return STARSHIP_MODULES.length;
-    case 'starshipConfirm': return 2;
+    case 'railInsideConfirm': case 'starshipConfirm': return 2;
     case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return (state.view ?? 'main') === 'git' ? RICH_GIT_ROWS.length : viewRows(state).length;
     case 'gradient': return state.gradient?.stops.length ?? 1;
-    case 'modules': return state.draft.modules.length;
+    case 'modules': return modulesItemCount(state);
     case 'installConfirm': return 2;
     case 'installProgress': case 'installResult': case 'installDetails': return 1;
   }
@@ -522,6 +541,8 @@ export function promptPanelItemCount(state: PromptPanelState): number {
 /** Whether the panel itself handles this key (glyph typing owns Enter and Esc). */
 export function promptPanelOwnsKey(state: PromptPanelState, key: Key): boolean {
   if (state.glyphEdit) return true;
+  // The module manager owns Enter (details, confirmations) and Esc while a detail or confirmation is open.
+  if (state.step === 'modules') return key.kind === 'enter' || ((key.kind === 'escape' || key.kind === 'interrupt') && Boolean(state.detail || state.confirm || state.search));
   return key.kind === 'enter' && state.step === 'appearance' && state.focus !== 'tabs' && Boolean(viewRows(state)[state.selectedIndex]?.edit);
 }
 
@@ -587,7 +608,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     toggleChromaPreview(state);
     return true;
   }
-  if (key.kind === 'enter' && promptPanelOwnsKey(state, key)) {
+  if (key.kind === 'enter' && state.step === 'appearance' && promptPanelOwnsKey(state, key)) {
     const row = viewRows(state)[state.selectedIndex]!;
     state.glyphEdit = {rowId: row.id, buffer: row.edit!.get(state.draft) ?? ''};
     return true;
@@ -603,14 +624,22 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     if (handled) state.message = undefined;
     return handled;
   }
-  if (state.step === 'modules' && handleModulesKey(key, state)) {
+  if (state.step === 'modules') {
+    const before = state.message;
+    const handled = handleModulesManagerKey(key, state);
+    if (handled && state.message === before) state.message = undefined;
+    if (handled || key.kind === 'enter') return handled;
+  }
+  // Tab / Shift+Tab switch the Main · Git · Chroma · Rail views from anywhere in them (a glyph being typed returned above).
+  if (state.step === 'appearance' && tabCycleDelta(key)) {
+    state.view = cycleTab(PROMPT_VIEW_IDS, state.view ?? 'main', tabCycleDelta(key)!);
+    state.selectedIndex = 0;
     state.message = undefined;
     return true;
   }
   if (state.step === 'appearance' && state.focus === 'tabs') {
     if (key.kind === 'left' || key.kind === 'right') {
-      const index = PROMPT_VIEW_IDS.indexOf(state.view ?? 'main');
-      state.view = PROMPT_VIEW_IDS[(index + (key.kind === 'left' ? -1 : 1) + PROMPT_VIEW_IDS.length) % PROMPT_VIEW_IDS.length];
+      state.view = cycleTab(PROMPT_VIEW_IDS, state.view ?? 'main', key.kind === 'left' ? -1 : 1);
       state.selectedIndex = 0;
     } else if (key.kind === 'down') state.focus = 'rows';
     else return false;
@@ -653,12 +682,18 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
  */
 export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = [], rowsAvailable = Infinity,
   gitShowcase: string[] = [], chromaThemeStops?: readonly RgbColor[]): string[] {
-  const title = state.onboarding ? 'Prompt setup' : 'Prompt settings';
+  const title = state.standalone ? 'Modules' : state.onboarding ? 'Prompt setup' : 'Prompt settings';
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
   rows.push('');
-  const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
-  if (state.step === 'provider') {
+  const item = (index: number, text: string) => `${focusForeground(index === state.selectedIndex)}${index === state.selectedIndex ? GLYPHS.selection : ' '} ${text}${RESET}`;
+  if (railNeedsPromptConversion(state.draft)) rows.push(`${SECONDARY}  Requires Main Prompt: Inside · preview only${RESET}`, '');
+  if (state.step === 'railInsideConfirm') {
+    rows.push(`${PRIMARY}Context Rail Inside requires Main Prompt Inside geometry.${RESET}`);
+    rows.push(`${SECONDARY}Change Main Prompt to two-line Inside with horizontal dividers?${RESET}`);
+    rows.push(item(0, 'Change & Save'));
+    rows.push(item(1, 'Cancel / Keep Current'));
+  } else if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
     // Prompt providers report detection in their own steps, so the list carries no badge.
     PROMPT_PROVIDERS.forEach((provider, index) => rows.push(item(index,
@@ -748,20 +783,14 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const draftChoice = layoutChoiceIndex(state.draft);
     const savedChoice = state.saved ? layoutChoiceIndex(state.saved) : -1;
     LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
-      `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
+      `${choice.label}${index === draftChoice ? `  ${GLYPHS.chosen}` : ''}${index === savedChoice ? `  ${GLYPHS.saved} saved` : ''}`)));
   } else if (state.step === 'gradient' && state.gradient) {
     const gradient = state.gradient;
     rows.push(...renderGradientEditorRows(gradient, 'Custom gradient'));
     const stops = gradient.stops.length >= MIN_CUSTOM_STOPS ? gradient.stops : state.draft.presentation.customStops;
     rows.push(`  ${SUBTLE}Gradient  ${RESET}${treatmentSwatch({...state.draft.presentation, preset: 'custom', customStops: stops}, Math.max(8, Math.min(40, columns - 14)))}${RESET}`);
   } else if (state.step === 'modules') {
-    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · Mirror right side: ${RESET}${state.draft.nmsh.mirrorRight ? `${ACCENT}On` : `${SECONDARY}Off`}${RESET}`);
-    state.draft.modules.forEach((module, index) => {
-      const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
-      const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      const side = modulePlacement(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
-    });
+    rows.push(...renderModulesManager(state, columns, undefined, Math.max(8, rowsAvailable - rows.length - preview.length - 6)));
   } else {
     const saved = state.saved?.nmsh;
     const value = (text: string, savedText: string | undefined) => savedText === undefined || savedText === text
@@ -810,21 +839,21 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     }
     if (themePreviews.length && view === 'chroma') {
       rows.push('');
-      rows.push(`${PRIMARY}Palettes${RESET}  ${SUBTLE}● selected  ✓ saved · the showcase prompt in each${RESET}`);
+      rows.push(`${PRIMARY}Palettes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved · the showcase prompt in each${RESET}`);
       TREATMENT_PRESETS.forEach((id, index) => {
-        const marker = state.draft.presentation.preset === id ? `${ACCENT}●` : `${SUBTLE}○`;
-        const savedMark = state.saved?.presentation.preset === id ? '✓' : ' ';
+        const marker = state.draft.presentation.preset === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+        const savedMark = state.saved?.presentation.preset === id ? GLYPHS.saved : ' ';
         rows.push(`${marker} ${SECONDARY}${padCells(TREATMENT_PRESET_LABELS[id], labelColumnWidth(Object.values(TREATMENT_PRESET_LABELS), columns, 2, 20), 1)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }
     if (themePreviews.length && view === 'main') {
       rows.push('');
-      rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns));
+      rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}${GLYPHS.chosen} selected  ${GLYPHS.saved} saved${RESET}`);
+      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns), `${SUBTLE}${chromaPreviewNote(state.draft.presentation.preset !== 'off')}${RESET}`);
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
-        const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
-        const savedMark = saved?.palette === id ? '✓' : ' ';
+        const marker = state.draft.nmsh.palette === id ? `${ACCENT}${GLYPHS.chosen}` : `${SUBTLE}${GLYPHS.unchosen}`;
+        const savedMark = saved?.palette === id ? GLYPHS.saved : ' ';
         const label = padCells(theme.label, labelColumnWidth(galleryPalettes(state.draft).map(palette => NATIVE_PROMPT_THEMES[palette].label), columns, 2, 20), 1);
         rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
@@ -838,10 +867,10 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       : state.draft.composerLayout;
     const status = promptDraftChanged(state) ? `${ACCENT}unsaved preview` : state.saved ? `${SUBTLE}matches current` : '';
     const chromaPreview = state.step === 'gradient' || (state.step === 'appearance' && state.view === 'chroma');
-    rows.push(`${PRIMARY}${chromaPreview ? 'Chroma preview' : selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
+    rows.push(`${PRIMARY}${state.view === 'rail' ? 'Context Rail preview' : chromaPreview ? 'Chroma preview' : selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
     rows.push(...preview);
   }
   rows.push('');
-  rows.push(renderControls(promptPanelControls(state)));
+  rows.push(...renderControlRows(promptPanelControls(state), columns));
   return rows.map(row => truncateAnsi(row, columns));
 }

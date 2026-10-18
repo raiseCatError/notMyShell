@@ -11,6 +11,19 @@ preset of the others, and each persists separately in `config.json`.
 | Chroma | `presentation.*` | Optional color or gradient treatment |
 | Motion | `presentation.motion/speed/curve/direction` | Optional animation of Chroma |
 
+## Modules and surfaces
+
+`/prompt` manages native modules and their routing to Main Prompt, Right Context,
+Context Rail or Hidden; Auto uses each module's preferred surface. Existing saved
+left/right placement remains valid. The Rail has its own presentation controls
+and uses the shared native painter. See [Context Modules](context-modules.md) for
+facts, discovery safety and the distinction between these surfaces.
+
+`/shell` edits the same shell module's visibility and Left/Right placement as
+`/prompt`. Hidden, When not default and Always control display only; they do not
+switch shells. Changing Side preserves Hidden. When not default compares the
+current session backend with the configured default for new sessions.
+
 ## Styles and their settings
 
 Every style renders the same semantic modules through one cell painter

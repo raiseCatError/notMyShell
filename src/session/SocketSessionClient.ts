@@ -1,6 +1,10 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
+import {dirname} from 'node:path';
+import {ensurePrivateRuntimeDir} from './runtimeDir.js';
+import type {QueueOp} from './CommandQueue.js';
+import {taskUpdateFrom, tasksFrom, type TaskOp} from '../backgroundTasks/protocol.js';
+import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -33,6 +37,9 @@ interface Established<T> {
 function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage | undefined,
   onMessage: (message: ServerMessage) => T | undefined): Promise<Established<T>> {
   return new Promise((resolve, reject) => {
+    // Every request, including listings and best-effort notices, crosses the
+    // same ownership boundary as create/attach before any handshake is sent.
+    ensurePrivateRuntimeDir(dirname(socketPath));
     const socket = connect(socketPath);
     socket.setEncoding('utf8');
     const decoder = new FrameDecoder();
@@ -78,7 +85,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     };
     const onError = (error: NodeJS.ErrnoException) => fail(`session service unreachable (${error.code ?? 'error'})`, error.code ?? 'error');
     const onClose = () => fail('session service closed the connection', 'closed');
-    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh'}));
+    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.join(',')}));
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.on('data', onData);
@@ -121,6 +128,19 @@ export async function dismissNotice(socketPath: string, sessionId: string, timeo
   const {socket} = await request(socketPath, timeoutMs, {type: 'dismiss', sessionId},
     message => (message.type === 'dismissed' ? true : undefined));
   socket.end();
+}
+
+/**
+ * The session service creates every shell, including its bootstrap, with the
+ * code it loaded when it started. It outlives frontends (it exits only once
+ * no sessions or frontends remain), so after NMSh is updated an older service
+ * keeps creating shells the old way. Restarting it would end live sessions,
+ * so NMSh says so instead. Undefined when the builds match or are unknown.
+ */
+export function serviceBuildNotice(serviceBuild: string | undefined, own: {version: string; commit: string}): string | undefined {
+  if (own.commit === 'unknown' || serviceBuild === `${own.version} ${own.commit}`) return undefined;
+  return `This shell was started by an older NMSh session service (${serviceBuild ?? 'build not reported'}; this window is ${own.version} ${own.commit}), `
+    + 'so fixes to how shells start are not in it yet. The service restarts by itself once every NMSh window and live session has ended.';
 }
 
 export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '
@@ -199,6 +219,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   features: ReadonlySet<ServiceFeature> = new Set();
   serviceBuild?: string;
   private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
+  private looks = new Map<number, (looked: boolean) => void>();
+  private nextLook = 1;
 
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
     // Never send a message the service did not advertise.
@@ -211,6 +233,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   }
 
   private receive(message: ServerMessage): void {
+    // A refused task request is the task owner's answer, never a reply to a pending shell switch.
+    if (message.type === 'error' && message.code === 'task') { this.emit('taskRefused', message.message); return; }
+    if (message.type === 'tasks') { const tasks = tasksFrom(message.state); if (tasks) this.emit('tasks', tasks); return; }
+    if (message.type === 'task-output') { const update = taskUpdateFrom(message.update); if (update) this.emit('taskOutput', message.taskId, update); return; }
     if (message.type === 'shell-switched' || (message.type === 'error' && this.pendingSwitch)) {
       const pending = this.pendingSwitch;
       this.pendingSwitch = undefined;
@@ -220,8 +246,16 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     }
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
-      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
-    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
+      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
+      ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
+    else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
+    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(true); this.looks.delete(message.id); }
+    else if (message.type === 'queue-state') {
+      const state = queueStateFrom(message.state);
+      if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
+        ...(message.refused ? {refused: message.refused} : {}), ...(message.dropped ? {dropped: message.dropped} : {})});
+    }
+    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed, ...(message.queued === undefined ? {} : {queued: message.queued})});
     else if (message.type === 'input-rejected') this.emit('inputRejected', message.data, message.submission === 1);
     else if (message.type === 'startup') this.emit('startup', message.output);
     else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
@@ -236,6 +270,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.exited = true;
     this.pendingSwitch?.reject(new Error('The session ended.'));
     this.pendingSwitch = undefined;
+    for (const done of this.looks.values()) done(false);
+    this.looks.clear();
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
 
@@ -246,17 +282,36 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
 
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
+  queue(change: QueueOp): void { if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !this.features.has('queue-timeline')) return; if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
+  task(change: TaskOp): void { if (this.features.has('background-tasks')) this.send({type: 'task', change: JSON.stringify(change)}); }
+  lookInput(): Promise<boolean> {
+    // Never send a message the service did not advertise.
+    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(false);
+    const id = this.nextLook++;
+    return new Promise(resolve => { this.looks.set(id, resolve); this.send({type: 'input-look', id}); });
+  }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }
+  private endStream(): void {
+    // Before start(), discard withheld output rather than exposing it during
+    // cancellation. Drain the paused readable half so peer EOF closes it.
+    if (this.pending) {
+      this.pending = undefined;
+      this.socket.removeAllListeners('data');
+    }
+    this.socket.end();
+    this.socket.resume();
+  }
+
   kill(): void {
     this.send({type: 'terminate'});
-    this.socket.end();
+    this.endStream();
   }
   ack(seq: number, journalId: string): void { this.send({type: 'ack', seq, journalId}); }
   detach(): void {
     this.detaching = true;
     this.send({type: 'detach'});
-    this.socket.end();
+    this.endStream();
   }
 }

@@ -70,7 +70,7 @@ test('app: ← on a truly idle composer opens sessions; with text it moves the c
   } finally { instance['stop'](0); instance['session'].kill(); }
 });
 
-test('app: ↓ at the newest empty composer reveals the shelf, a second ↓ focuses it, ↑ returns; history navigation still wins', async () => {
+test('app: ↓ reveals the shelf; ↑ from an idle composer focuses a visible shelf; ↓ and Esc return; history navigation still wins', async () => {
   const instance = app();
   try {
     const agents = instance['agents'];
@@ -79,9 +79,14 @@ test('app: ↓ at the newest empty composer reveals the shelf, a second ↓ focu
     assert.equal(instance['shelf'].visible, true);
     assert.ok(instance['noticeRows'](120).some((row: string) => stripAnsi(row).startsWith('✻ Claude')), 'shelf row is part of the planned chrome');
     await instance['handleKey']({kind: 'down'});
-    assert.equal(instance['shelf'].focused, true);
+    assert.equal(instance['shelf'].focused, false, '↓ only reveals; it never focuses');
     await instance['handleKey']({kind: 'up'});
-    assert.equal(instance['shelf'].focused, false);
+    assert.equal(instance['shelf'].focused, true, 'one ↑ from the idle composer focuses the visible shelf');
+    await instance['handleKey']({kind: 'down'});
+    assert.equal(instance['shelf'].focused, false, '↓ returns to the composer');
+    await instance['handleKey']({kind: 'up'});
+    await instance['handleKey']({kind: 'escape'});
+    assert.equal(instance['shelf'].focused, false, 'Esc returns to the composer');
     // Walking history: ↓ restores newer entries before the shelf is involved.
     instance['composerHistory'].previous('', () => ['echo one']);
     instance['editor'].replaceText('echo one');

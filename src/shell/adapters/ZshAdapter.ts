@@ -8,6 +8,7 @@ import {resolveZsh} from '../zshExecutable.js';
 import {parseZshHistoryInChunks} from '../HistoryService.js';
 import {ShellCompletionSource} from '../CompletionService.js';
 import type {LaunchContext, ShellAdapter, ShellLaunch} from './ShellAdapter.js';
+import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 const ZSH_BUILTINS = new Set(['alias', 'autoload', 'bg', 'bindkey', 'builtin', 'cd', 'command', 'echo', 'emulate', 'eval', 'exec', 'exit', 'export', 'fc', 'fg',
   'functions', 'hash', 'history', 'jobs', 'kill', 'let', 'local', 'print', 'printf', 'pushd', 'popd', 'pwd', 'read', 'return', 'set', 'setopt', 'shift', 'source',
@@ -32,7 +33,7 @@ export const zshAdapter: ShellAdapter = {
   unavailableReason(env) {
     try { resolveZsh(env); return undefined; } catch (error) { return error instanceof Error ? error.message : 'zsh was not found'; }
   },
-  launch({home, env, token, stateDir, knowledgePath}: LaunchContext): ShellLaunch {
+  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath}: LaunchContext): ShellLaunch {
     // Proxy .zshenv
     writeFileSync(join(stateDir, '.zshenv'), `
 if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
@@ -52,7 +53,9 @@ fi
 # Prevent UI plugins from fighting during bootstrap
 unsetopt zle
 export POWERLEVEL9K_DISABLE_PROMPT=true
+typeset -g nmsh_had_cache=\${+XDG_CACHE_HOME} nmsh_orig_cache=\$XDG_CACHE_HOME
 export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}/nmsh-disabled"
+typeset -g nmsh_disabled_cache=\$XDG_CACHE_HOME
 
 # Suppress fastfetch via TERM
 local nmsh_orig_term=\$TERM
@@ -78,9 +81,10 @@ function nmsh_tty_echo {
   stty \$1 2>/dev/null
 }
 
+${bridgeEnvPath ? bridgeBootstrap('zsh', bridgeEnvPath) : ''}
 function nmsh_precmd {
   local nmsh_status=$?
-  nmsh_capture_knowledge
+  nmsh_capture_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
   # may run before us in precmd_functions and repaint PROMPT/RPROMPT. NMSh
   # owns prompt rendering, so it always has the last word here.
@@ -112,6 +116,19 @@ ${shellKnowledgeBootstrap(join(stateDir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
+
+# Startup is over: this shell has read its files. A zsh started from it (a tmux
+# pane, a nested shell) must be an ordinary zsh, not a second copy of this
+# bootstrap, which blanks the prompt and turns off ZLE and echo. Give children
+# the person's own ZDOTDIR back and stop exporting the prompt override.
+${env.ZDOTDIR ? `export ZDOTDIR=${shellQuote(env.ZDOTDIR)}` : 'unset ZDOTDIR'}
+typeset +x POWERLEVEL9K_DISABLE_PROMPT
+# The cache redirect only kept prompt themes' instant prompt out of this shell's startup; programs started
+# from it use the person's own cache again, unless their own startup files chose another one.
+if [[ \$XDG_CACHE_HOME == "\$nmsh_disabled_cache" ]]; then
+  if (( nmsh_had_cache )); then export XDG_CACHE_HOME=\$nmsh_orig_cache; else unset XDG_CACHE_HOME; fi
+fi
+unset nmsh_had_cache nmsh_orig_cache nmsh_disabled_cache
 
 # Background cleanup handled by Node.js
 `);

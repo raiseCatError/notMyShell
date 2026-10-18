@@ -1,0 +1,6 @@
+                        ──────────────────── Queue Summary[0m ─────────────────────
+                         ✔[0m                                   git[0m  exit 0 · 1.4s[0m 
+                         ✔[0m                                  make[0m  exit 0 · 9.2s[0m 
+                         ✘[0m                                   npm[0m  exit 2 · 2.4s[0m 
+                          3 executed[0m · [0m2 succeeded[0m · [0m1 failed[0m · [0mwall time 13.0s[0m 
+                        ────────────────────────────────────────────────────────

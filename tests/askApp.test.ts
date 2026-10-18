@@ -143,3 +143,24 @@ test('app: with local understanding Off, a finished command never requests a fol
     assert.equal(hints, 0);
   } finally { instance['stop'](0); instance['session'].kill(); }
 });
+
+
+test('/btw and /ask share resolver, parked state and transcript identity', async () => {
+  const instance = app(true);
+  try {
+    instance['editor'].insert('/btw what shell am i using');
+    await instance['submit']();
+    assert.ok(instance['askState'], 'Canonical command opens existing Ask state');
+    await until(() => !instance['askState']?.busy);
+    assert.match(instance['askState']!.turns.at(-1)!.text, /This session runs zsh/u);
+    const state = instance['askState']!;
+    instance['parkedAsk'] = state;
+    instance['askState'] = undefined;
+    instance['editor'].insert('/ask');
+    await instance['submit']();
+    assert.equal(instance['askState'], state, 'Alias resumes same parked conversation');
+    instance['handleKey']({kind: 'escape'});
+    assert.match(transcriptText(instance), /\/btw what shell am i using/u);
+    assert.equal(instance['output'].transcript().records.filter(record => record.frontend === 'ask').length, 1);
+  } finally { instance['stop'](0); instance['session'].kill(); }
+});

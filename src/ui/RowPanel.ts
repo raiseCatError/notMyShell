@@ -1,0 +1,72 @@
+import type {Key} from '../terminal/keys.js';
+import type {PromptConfiguration} from '../prompt/configuration.js';
+import {adjustSettingsRow, settingsRowValue, SETTINGS_ROWS, toggleSettingsRow, type SettingsRow} from './SettingsPanel.js';
+import {framePanel} from './PanelShell.js';
+import {renderControls} from './controls.js';
+import {focusForeground, foreground, UI_COLORS} from './palette.js';
+import {GLYPHS} from './glyphs.js';
+import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
+
+/**
+ * A focused panel over a fixed set of the canonical Settings rows (for
+ * example the Status Strip). It holds no settings of its own: every change
+ * is the Settings row's own `select`, applied through the normal
+ * configuration path by the caller.
+ */
+export interface RowPanelState {
+  title: string;
+  subtitle: string;
+  rowIds: readonly string[];
+  selected: number;
+  /** How the caller draws the preview area (the caller owns the renderer); missing draws no preview. */
+  preview?: 'statusStrip' | 'queue';
+}
+
+export function createRowPanel(title: string, subtitle: string, rowIds: readonly string[], preview?: RowPanelState['preview']): RowPanelState {
+  return {title, subtitle, rowIds, selected: 0, ...(preview ? {preview} : {})};
+}
+
+function rows(state: RowPanelState, config: PromptConfiguration): SettingsRow[] {
+  return state.rowIds.map(id => SETTINGS_ROWS.find(row => row.id === id)).filter((row): row is SettingsRow => Boolean(row) && (row!.when?.(config) ?? true));
+}
+
+export type RowPanelAction = {kind: 'close'} | {kind: 'change'; configuration: PromptConfiguration};
+
+export function rowPanelKey(state: RowPanelState, key: Key, config: PromptConfiguration): RowPanelAction | undefined {
+  const visible = rows(state, config);
+  state.selected = Math.max(0, Math.min(state.selected, visible.length - 1));
+  if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
+  if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + visible.length) % visible.length; return undefined; }
+  const row = visible[state.selected];
+  if (!row) return undefined;
+  const next = key.kind === 'left' || key.kind === 'right' ? adjustSettingsRow(row, config, key.kind === 'left' ? -1 : 1)
+    : key.kind === 'enter' || (key.kind === 'text' && key.value === ' ') ? toggleSettingsRow(row, config) : undefined;
+  return next ? {kind: 'change', configuration: next} : undefined;
+}
+
+export function renderRowPanel(state: RowPanelState, config: PromptConfiguration, columns: number, height: number, preview: readonly string[]): string[] {
+  const primary = foreground(UI_COLORS.primary);
+  const secondary = foreground(UI_COLORS.secondary);
+  const subtle = foreground(UI_COLORS.subtle);
+  const accent = foreground(UI_COLORS.accent);
+  const reset = '\u001B[0m';
+  const visible = rows(state, config);
+  const out = [`  ${primary}${state.title}${reset}  ${subtle}${state.subtitle}${reset}`, ''];
+  // Labels get the room the longest one needs (at most half the panel), so none is cut where there is space.
+  const labelWidth = Math.max(22, Math.min(Math.floor(columns / 2), Math.max(0, ...visible.map(row => displayWidth(row.label.trim()) + (row.parent ? 2 : 0) + 2))));
+  visible.forEach((row, index) => {
+    const selected = index === state.selected;
+    const raw = settingsRowValue(row, config) ?? '';
+    const value = row.control === 'boolean' ? (raw === 'true' ? 'On' : 'Off') : raw;
+    const indent = row.parent ? '  ' : '';
+    out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${indent}${focusForeground(selected)}${padCells(row.label.trim(), labelWidth - indent.length)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : value}`);
+  });
+  const description = visible[state.selected]?.description;
+  // Fit exactly: the frame's top line, the controls and the preview stay visible; nothing is cut from the tail.
+  const footer = 3;
+  const previewCost = preview.length ? preview.length + 2 : 0;
+  if (description && height >= out.length + 2 + previewCost + footer) out.push('', `  ${subtle}${description}${reset}`);
+  if (preview.length && height >= out.length + previewCost + footer) out.push('', `  ${subtle}Preview${reset}`, ...preview);
+  out.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ['Esc', 'close']]));
+  return framePanel(out.map(line => truncateAnsi(line, columns)), columns).slice(0, Math.max(1, height));
+}

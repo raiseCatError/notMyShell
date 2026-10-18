@@ -1,14 +1,15 @@
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
-import {formatAge, tildePath} from './sessionList.js';
+import {formatAge, sessionText, tildePath} from './sessionList.js';
+import {GLYPHS, checkMark} from '../ui/glyphs.js';
 
 // Launch-time restore screens, shown before any session is attached. Each has
 // one destructive key, X, which only opens a confirmation; the kill itself is
 // the same confirmed termination path /resume uses (killAndArchive), and the
 // transcript is archived, never discarded.
 
-const clipTo = (columns: number) => (text: string) => (text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text);
-const activity = (session: SessionInfo) => session.running?.replace(/\s+/gu, ' ').slice(0, 60) ?? 'zsh';
+const clipTo = (columns: number) => (raw: string) => { const text = sessionText(raw); return text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text; };
+const activity = (session: SessionInfo) => (session.running === undefined ? undefined : sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 60)) ?? 'zsh';
 const age = (session: SessionInfo, now: number) => formatAge(now - (session.runningSince ?? session.idleSince ?? session.createdAt));
 
 // ── One detached session ─────────────────────────────────────────────────────
@@ -82,8 +83,8 @@ export function renderMultiPicker(state: MultiPickerState, columns: number, now:
   if (confirming) return renderKillConfirm(confirming, columns, now);
   const rows = [`NMSh · ${state.sessions.length} detached live session${state.sessions.length === 1 ? '' : 's'}`, ''];
   state.sessions.forEach((session, index) => {
-    const mark = state.selected.has(session.id) ? '[x]' : '[ ]';
-    rows.push(clip(`${index === state.cursor ? '›' : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
+    const mark = checkMark(state.selected.has(session.id));
+    rows.push(clip(`${index === state.cursor ? GLYPHS.selection : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
   });
   const count = state.selected.size;
   rows.push('', clip(`↑↓ move · Space select · A all · X kill · Enter resume ${count === 0 ? 'none' : count} · Esc none`),

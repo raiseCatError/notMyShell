@@ -11,7 +11,7 @@ import {HARNESSES} from '../src/agents/harnesses.js';
 
 const HELP = 'Usage: claude [options]\n  -p, --print  Print response\n  --input-format <format>  "text" (default), or "stream-json"\n  --output-format <format>  "stream-json" (realtime)\n  --permission-prompts <target>  Who answers: "host" (the SDK host) or "none"\n  -r, --resume [value]\n  --session-id <uuid>\n';
 const root = mkdtempSync(join(tmpdir(), 'nmsh-agents-'));
-test.after(() => rmSync(root, {recursive: true, force: true}));
+test.after(() => rmSync(root, {recursive: true, force: true, maxRetries: 10, retryDelay: 50}));
 
 /** A stand-in harness speaking stream-json: it records stdin and answers like the real protocol. */
 const fake = join(root, 'claude');
@@ -33,6 +33,7 @@ process.stdin.on('data', chunk => {
       out({type: 'control_request', request_id: 'r1', request: {subtype: 'can_use_tool', tool_name: 'Edit', input: {file_path: '/p/src/TerminalApp.ts'}}});
       out({type: 'control_request', request_id: 'r2', request: {subtype: 'something_new'}});
     }
+    if (line.type === 'control_request' && line.request.subtype === 'initialize') out({type: 'control_response', response: {subtype: 'success', request_id: line.request_id, response: {}}});
     if (line.type === 'control_response' && line.response.request_id === 'r1') out({type: 'result', subtype: 'success', is_error: false, session_id: 'sess-1'});
   }
 });
@@ -50,8 +51,8 @@ test('capabilities come from the installed help text only', () => {
 test('event normalization: text, tools with factual targets, results, approvals; junk ignored', () => {
   assert.deepEqual(claudeEvents('{"type":"system","subtype":"init","session_id":"s"}').events, [{kind: 'started', harnessSessionId: 's'}]);
   assert.deepEqual(claudeEvents(JSON.stringify({type: 'assistant', message: {content: [{type: 'tool_use', id: 'a', name: 'Bash', input: {command: 'npm test\nmore'}}]}})).events,
-    [{kind: 'tool', id: 'a', name: 'Bash', target: 'npm test', status: 'started'}]);
-  assert.deepEqual(claudeEvents('{"type":"result","subtype":"error_max_turns","is_error":true}').events, [{kind: 'settled', ok: false, message: 'error_max_turns'}]);
+    [{kind: 'tool', id: 'a', name: 'Bash', target: 'npm test', status: 'started', input: {command: 'npm test\nmore'}}]);
+  assert.deepEqual(claudeEvents('{"type":"result","subtype":"error_max_turns","is_error":true}').events, [{kind: 'settled', ok: false, message: 'turn limit reached'}]);
   assert.deepEqual(claudeEvents('not json').events, []);
   assert.deepEqual(claudeEvents('{"type":"mystery"}').events, []);
 });
@@ -66,8 +67,8 @@ test('managed session: background launch, structured events, approval waits for 
     assert.equal(session.title, 'Ask chat viewport', 'deterministic title from the first prompt');
     await until(() => session.state === 'approval');
     assert.equal(session.harnessSessionId, 'sess-1');
-    assert.equal(session.activity, 'Read AskPanel.ts', 'activity only from a real tool event');
-    assert.deepEqual(session.pendingApproval, {requestId: 'r1', tool: 'Edit', target: '/p/src/TerminalApp.ts'});
+    assert.equal(session.activity, undefined, 'completed Read activity clears instead of remaining stale');
+    assert.deepEqual(session.pendingApproval, {requestId: 'r1', tool: 'Edit', target: '/p/src/TerminalApp.ts', input: {file_path: '/p/src/TerminalApp.ts'}});
     assert.equal(session.attention, true, 'needs attention');
     await new Promise(resolve => setTimeout(resolve, 100));
     const sent = readFileSync(join(root, 'stdin.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -75,6 +76,8 @@ test('managed session: background launch, structured events, approval waits for 
     assert.ok(sent.some(line => line.type === 'control_response' && line.response.request_id === 'r2' && line.response.subtype === 'error'), 'unknown requests are refused, not left hanging');
     const argv = JSON.parse(readFileSync(join(root, 'argv.json'), 'utf8')) as string[];
     assert.deepEqual(argv.slice(0, 8), ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'host']);
+    assert.ok(argv.includes('--permission-prompt-tool'), 'uses the official SDK stdio permission channel');
+    assert.equal(sent[0].request?.subtype, 'initialize', 'initializes before user messages');
     assert.ok(sessions.answer(session.id, false));
     await until(() => session.state === 'waiting');
     const answer = readFileSync(join(root, 'stdin.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(line => line.response?.request_id === 'r1');
@@ -120,4 +123,22 @@ test('registry: more than three harnesses; launch is truthful for uncontrolled o
   assert.match(gemini.ok ? '' : gemini.reason, /no supported control channel/u);
   assert.match((sessions.launch('pi', root) as {reason: string}).reason, /not installed/u);
   assert.equal(titleFromPrompt('please fix the flaky test', 'proj · Claude 1'), 'Flaky test');
+});
+
+test('named profiles remain distinct and resume retains target identity, source and profile', async () => {
+  const sessions = new AgentSessions({resolve: name => name === 'claude' ? fake : undefined, scan: async () => [], now: () => Date.now(), claudeHelp: HELP});
+  try {
+    const a = sessions.launch('claude', root, {profile: {name: 'profile-a', harness: 'claude', configDir: root}});
+    const b = sessions.launch('claude', root, {profile: {name: 'profile-b', harness: 'claude', configDir: root}});
+    assert.ok(a.ok && b.ok); if (!a.ok || !b.ok) return;
+    assert.notEqual(a.session.id, b.session.id);
+    assert.equal(a.session.profileId, 'profile-a'); assert.equal(b.session.profileId, 'profile-b');
+    await until(() => Boolean(a.session.harnessSessionId));
+    const source = a.session.transcript;
+    sessions.close(a.session.id); await until(() => a.session.state === 'exited');
+    assert.ok(sessions.resume(a.session.id).ok);
+    await until(() => a.session.state === 'starting' && a.session.pid !== undefined);
+    assert.equal(a.session.transcript, source);
+    assert.equal(a.session.profileId, 'profile-a');
+  } finally {sessions.dispose();}
 });

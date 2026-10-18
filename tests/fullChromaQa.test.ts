@@ -27,13 +27,19 @@ const colors = (ansi: string) => [...ansi.matchAll(/\u001B\[38;2;(\d+);(\d+);(\d
 
 function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; cleanup: () => void} {
   const isolation = isolateConfig();
+  // Divider geometry must not depend on the checkout path or branch filling the prompt.
+  const previousCwd = process.cwd();
+  process.chdir(isolation.directory);
   const app = new TerminalApp();
   const frames: TerminalFrame[] = [];
   app['renderer'].render = (frame: TerminalFrame) => { frames.push(frame); };
   app['fetchSuggestions'] = async () => {};
   app['presentationStarted'] = true;
   app['configuration'] = normalizePromptConfiguration({...DEFAULT_PROMPT_CONFIGURATION, ...config});
-  return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); isolation.restore(); }};
+  return {app, frames, cleanup: () => {
+    try { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); }
+    finally { process.chdir(previousCwd); isolation.restore(); }
+  }};
 }
 
 // ---- A. Defaults, layouts and copy ---------------------------------------------------
@@ -108,8 +114,18 @@ test('C/H: Setup Cat Appearance says when previews include Chroma, and its Chrom
     state.draft = normalizePromptConfiguration({presentation: {preset: 'off'}});
     assert.doesNotMatch(plain(app['setupPreview'](state, 100)), /previews include Chroma/u);
     state.draft = normalizePromptConfiguration({presentation: {preset: 'aurora', motion: 'comet'}});
+    // Choosing a Chroma shows it in the preview at once (physical QA: a choice with no visible result confused);
+    // P compares with the base theme (the setting itself is unchanged), and a new choice follows the setting again.
+    assert.match(plain(app['setupPreview'](state, 100)), /Chroma setting  Aurora  ·  preview shows it  ·  P compares with the base theme/u);
     assert.ok(plain(app['setupPreview'](state, 100)).includes(CHROMA_PREVIEW_NOTE));
-    const chromaRow = (rows: string[]) => rows.find(item => stripAnsi(item).trimStart().startsWith('Chroma'))!;
+    state.previewChroma = false;
+    assert.match(plain(app['setupPreview'](state, 100)), /preview shows the base theme  ·  P shows Chroma again/u);
+    assert.ok(!plain(app['setupPreview'](state, 100)).includes(CHROMA_PREVIEW_NOTE));
+    state.draft = normalizePromptConfiguration({presentation: {preset: 'nebula', motion: 'comet'}});
+    assert.match(plain(app['setupPreview'](state, 100)), /Chroma setting  Nebula  ·  preview shows it/u, 'a new choice is shown at once again');
+    state.draft = normalizePromptConfiguration({presentation: {preset: 'aurora', motion: 'comet'}});
+    // The swatch row (the header above it names the setting).
+    const chromaRow = (rows: string[]) => rows.find(item => stripAnsi(item).trimStart().startsWith('Chroma') && !stripAnsi(item).trimStart().startsWith('Chroma setting'))!;
     const realNow = Date.now;
     try {
       Date.now = () => 1_000; const first = chromaRow(app['setupPreview'](state, 100));
@@ -241,8 +257,9 @@ test('J: the Setup Cat footer advertises Tab and Shift+Tab', () => {
     const state = createSetup(normalizePromptConfiguration({}));
     state.section = sectionIndex(id);
     const screen = plain(renderSetup(state, 120, 40));
-    assert.match(screen, /Tab next/u);
-    assert.match(screen, /Shift\+Tab previous section/u);
+    // Keycaps: the key on its plate, then what it does.
+    assert.match(screen, /Tab\s+next step/u);
+    assert.match(screen, /(?:⇧Tab|Shift\+Tab)\s+previous step/u);
   }
 });
 
@@ -361,4 +378,29 @@ test('Q: every completion row shows its description, muted; names keep priority 
   const selected = renderCompletion(items[1]!, true, 80);
   assert.match(stripAnsi(selected), /run a command/u, 'the selected row keeps its description');
   assert.match(selected, /\u001B\[1m/u, 'the name is the strongest element');
+});
+
+test('Setup Idle & activity: the activity rows show the real running, finished and failed wording, Expressive by default', () => {
+  const {app, cleanup} = harness({});
+  try {
+    app['render'] = () => {};
+    app['startSetup']();
+    const state = app['setupState']!;
+    state.section = sectionIndex('idle');
+    const rows = SETUP_SECTIONS[state.section]!.rows;
+    state.row = rows.findIndex(item => item.row.id === 'activityStyle');
+    assert.ok(state.row >= 0);
+    const expressive = plain(app['setupPreview'](state, 100));
+    assert.match(expressive, /Expressive {2}a phrase while it runs, its past tense when done/u);
+    assert.match(expressive, /Running {4}\S Cooking… · 4\.2s/u);
+    assert.match(expressive, /Completed {2}✔ Cooked for 18\.0s · done 14:46/u);
+    assert.match(expressive, /Failed {5}✘ Command failed · exit 1 · 2\.0s · 14:46/u, 'a failure stays factual');
+    state.draft = normalizePromptConfiguration({...state.draft, liveActivity: {...state.draft.liveActivity, style: 'classic'}});
+    const classic = plain(app['setupPreview'](state, 100));
+    assert.match(classic, /Running {4}\S Running npm run build · 4\.2s/u);
+    assert.match(classic, /Completed {2}✔ Completed · 18\.0s · 14:46/u);
+    // Another row of the step keeps the screen saver preview.
+    state.row = rows.findIndex(item => item.row.id === 'idleMode');
+    assert.doesNotMatch(plain(app['setupPreview'](state, 100)), /Cooked for/u);
+  } finally { cleanup(); }
 });

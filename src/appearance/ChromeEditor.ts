@@ -5,7 +5,7 @@ import {hexColor, parseHexColor} from '../chroma/color.js';
 import {colorPickerKey, createColorPicker, renderColorPicker, type ColorPickerState} from '../ui/ColorPicker.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {ROLE_LABELS, UI_THEME_ROLES, type UiThemeRole} from './customTheme.js';
@@ -62,7 +62,7 @@ export function renderChromeEditor(state: ChromeEditorState, columns: number, he
     UI_THEME_ROLES.forEach((role, index) => {
       const selected = index === state.selected;
       const swatch = level === 'none' ? '' : `${colorEscape(48, parseHexColor(state.colors[role])!, level)}  ${reset} `;
-      out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${selected ? primary : secondary}${padCells(ROLE_LABELS[role], 14)}${reset}${swatch}${state.colors[role]}`);
+      out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${focusForeground(selected)}${padCells(ROLE_LABELS[role], 14)}${reset}${swatch}${state.colors[role]}`);
     });
     const onSave = state.selected === UI_THEME_ROLES.length;
     out.push(`${onSave ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${onSave ? primary : secondary}Save & use${reset}  ${subtle}applies to NMSh chrome now${reset}`);

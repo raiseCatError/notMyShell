@@ -12,7 +12,7 @@ import {UI_COLORS, foreground} from '../src/ui/palette.js';
 import {applyUiTheme, defaultUiColors, uiColorsFor} from '../src/appearance/uiTheme.js';
 import {chromeFromColors, LAVENDER_ACCENT, LAVENDER_SURFACE, LAVENDER_TEXT, lavenderChrome, nativeThemeChrome, normalizeUiChrome, resolveChrome} from '../src/appearance/uiChrome.js';
 import {createChromeEditor, chromeEditorKey} from '../src/appearance/ChromeEditor.js';
-import {createThemeStudio, draftDiffersFromBase, STUDIO_ROWS, studioKey} from '../src/appearance/ThemeStudio.js';
+import {createThemeEditor, draftDiffersFromBase, editorKey, STUDIO_ROWS} from '../src/appearance/ThemeStudio.js';
 import {cloneFromPalette} from '../src/appearance/themeSelection.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {createSetup, renderSetup, sectionIndex, SETUP_SECTIONS, setupKey} from '../src/setup/SetupCat.js';
@@ -173,39 +173,39 @@ test('Travel loops seamlessly; motion choices lead with Breathe; Breathe, Comet 
 test('Theme Studio: Reset to base resets the draft only; cancel after reset and save after reset', () => {
   const saved = cloneFromPalette('nord', 'mauve', 'Mine');
   saved.prompt.project = '#123456';
-  const state = createThemeStudio(saved, 'custom');
+  const state = createThemeEditor(saved, 'custom');
   assert.equal(state.base, 'nord', 'the recorded Based on theme is the reset target');
   state.selected = STUDIO_ROWS.findIndex(item => item.kind === 'reset');
-  studioKey(state, {kind: 'enter'}, 'truecolor', '/');
+  editorKey(state, {kind: 'enter'}, 'truecolor');
   assert.equal(state.confirmReset, true, 'edits relative to base are confirmed first');
-  studioKey(state, {kind: 'escape'}, 'truecolor', '/');
+  editorKey(state, {kind: 'escape'}, 'truecolor');
   assert.equal(state.draft.prompt.project, '#123456', 'Esc keeps editing, nothing reset');
-  studioKey(state, {kind: 'enter'}, 'truecolor', '/');
-  studioKey(state, {kind: 'enter'}, 'truecolor', '/');
+  editorKey(state, {kind: 'enter'}, 'truecolor');
+  editorKey(state, {kind: 'enter'}, 'truecolor');
   assert.equal(state.draft.prompt.project, '#88c0d0');
   assert.equal(state.draft.name, 'Mine', 'the draft keeps its name');
   assert.equal(saved.prompt.project, '#123456', 'the saved theme is untouched by a reset');
-  assert.deepEqual(studioKey(state, {kind: 'escape'}, 'truecolor', '/'), {kind: 'cancel'}, 'Esc after reset abandons the draft');
+  assert.deepEqual(editorKey(state, {kind: 'escape'}, 'truecolor'), {kind: 'cancel'}, 'Esc after reset abandons the draft');
   // Save after reset returns the reset colors.
-  const again = createThemeStudio(saved, 'custom');
+  const again = createThemeEditor(saved, 'custom');
   again.selected = STUDIO_ROWS.findIndex(item => item.kind === 'reset');
-  studioKey(again, {kind: 'enter'}, 'truecolor', '/'); studioKey(again, {kind: 'enter'}, 'truecolor', '/');
+  editorKey(again, {kind: 'enter'}, 'truecolor'); editorKey(again, {kind: 'enter'}, 'truecolor');
   again.selected = STUDIO_ROWS.findIndex(item => item.kind === 'save');
-  const result = studioKey(again, {kind: 'enter'}, 'truecolor', '/');
+  const result = editorKey(again, {kind: 'enter'}, 'truecolor');
   assert.equal(result?.kind === 'save' && result.theme.prompt.project, '#88c0d0');
   // Changing Based on, then resetting, uses the new base; a clean draft resets without asking.
-  const based = createThemeStudio(undefined, 'nord');
+  const based = createThemeEditor(undefined, 'nord');
   based.selected = STUDIO_ROWS.findIndex(item => item.kind === 'basedOn');
-  studioKey(based, {kind: 'right'}, 'truecolor', '/');
+  editorKey(based, {kind: 'right'}, 'truecolor');
   const target = based.base;
   based.selected = STUDIO_ROWS.findIndex(item => item.kind === 'reset');
-  studioKey(based, {kind: 'enter'}, 'truecolor', '/');
-  studioKey(based, {kind: 'enter'}, 'truecolor', '/');
+  editorKey(based, {kind: 'enter'}, 'truecolor');
+  editorKey(based, {kind: 'enter'}, 'truecolor');
   assert.equal(draftDiffersFromBase(based), false, `draft now equals ${target}`);
   // Per-role reset with R.
-  const role = createThemeStudio(saved, 'custom');
+  const role = createThemeEditor(saved, 'custom');
   role.selected = STUDIO_ROWS.findIndex(item => item.kind === 'role' && item.role === 'project');
-  studioKey(role, {kind: 'text', value: 'r'}, 'truecolor', '/');
+  editorKey(role, {kind: 'text', value: 'r'}, 'truecolor');
   assert.equal(role.draft.prompt.project, '#88c0d0');
   assert.equal(role.draft.prompt.cwd, saved.prompt.cwd, 'other roles untouched');
 });
@@ -256,14 +256,20 @@ test('Setup Cat: controls stay on top, the preview sits below and gives way firs
   const state = createSetup(normalizePromptConfiguration({}));
   state.section = sectionIndex('history');
   state.context.preview = ['PREVIEW-A', 'PREVIEW-B', 'PREVIEW-C'];
-  const tall = renderSetup(state, 100, 40).map(stripAnsi);
-  const controls = tall.findIndex(item => /History\s+‹ NMSh Native ›/u.test(item));
+  // One column (under 96 columns, as in the selector): the preview below the controls, clipping first.
+  const tall = renderSetup(state, 90, 40).map(stripAnsi);
+  const controls = tall.findIndex(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item));
   const preview = tall.findIndex(item => item.includes('PREVIEW-A'));
   assert.ok(controls > 0 && preview > controls, 'preview below the controls');
-  const short = renderSetup(state, 100, 16).map(stripAnsi);
-  assert.ok(short.some(item => /History\s+‹ NMSh Native ›/u.test(item)), 'controls survive');
+  const short = renderSetup(state, 90, 16).map(stripAnsi);
+  assert.ok(short.some(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item)), 'controls survive');
   assert.ok(!short.some(item => item.includes('PREVIEW-C')), 'preview clips first');
-  assert.ok(short.length <= 16 && short.every(item => displayWidth(item) <= 100));
+  assert.ok(short.length <= 16 && short.every(item => displayWidth(item) <= 90));
+  // Two columns from 96: the preview beside the controls, which keep their rows.
+  const wide = renderSetup(state, 100, 16).map(stripAnsi);
+  assert.ok(wide.some(item => /History\s*\S?\s+‹ NMSh Native ›/u.test(item)), 'controls survive beside it');
+  assert.ok(wide.findIndex(item => item.includes('Live preview')) <= wide.findIndex(item => /History\s*\S?\s+‹/u.test(item)), 'the preview starts beside the rows');
+  assert.ok(wide.length <= 16 && wide.every(item => displayWidth(item) <= 100));
 });
 
 test('Setup Cat: providers explain themselves; Native says no installation; externals never claim to be better', () => {

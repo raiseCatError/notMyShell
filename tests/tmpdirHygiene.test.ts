@@ -1,11 +1,14 @@
-import test from 'node:test';
+import test, {mock} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 import {tmpdir} from 'node:os';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {LiveSandbox, until} from './helpers/liveFrontend.js';
+import {LiveSandbox, TSX, until} from './helpers/liveFrontend.js';
 // @ts-ignore standalone Node runner, intentionally outside the product tsconfig
 import {runTestFiles} from '../scripts/test.mjs';
 
@@ -73,4 +76,123 @@ test('sandbox disposal waits for an untracked late writer whose cwd still owns t
     child.kill(); await exited;
     await sandbox.dispose();
   }
+});
+
+test('a transient ownership scan timeout cannot delete a sandbox before its late writer exits', async () => {
+  const sandbox = new LiveSandbox();
+  const child = spawn(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync('late-journal.txt', 'done'), 400)"],
+    {cwd: sandbox.home, stdio: 'ignore'});
+  const exited = new Promise<number | null>(resolve => child.once('close', resolve));
+  const realSpawnSync = childProcess.spawnSync;
+  let probes = 0;
+  const spy = mock.method(childProcess, 'spawnSync', (...args) => {
+    if (args[0] === 'lsof' && probes++ === 0) return {pid: 0, output: [], stdout: '', stderr: '', status: null, signal: 'SIGTERM',
+      error: Object.assign(new Error('ownership scan timed out'), {code: 'ETIMEDOUT'})};
+    return Reflect.apply(realSpawnSync, childProcess, args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await sandbox.dispose();
+    assert.equal(await exited, 0, 'the real writer must finish while its sandbox still exists');
+    assert.ok(probes > 1, 'a successful ownership scan is required after the timeout');
+    assert.equal(existsSync(sandbox.root), false);
+  } finally {
+    spy.mock.restore(); syncBuiltinESMExports();
+    child.kill(); await exited; await sandbox.dispose();
+  }
+});
+
+test('unknown ownership still fails at the existing cleanup deadline', async () => {
+  const sandbox = new LiveSandbox();
+  const realNow = Date.now;
+  let elapsed = 0;
+  const clock = mock.method(Date, 'now', () => realNow() + elapsed);
+  const realSpawnSync = childProcess.spawnSync;
+  const probe = mock.method(childProcess, 'spawnSync', (...args) => {
+    if (args[0] !== 'lsof') return Reflect.apply(realSpawnSync, childProcess, args);
+    // Advance only the fixture clock beyond its unchanged ten-second budget.
+    elapsed += 10001;
+    return {pid: 0, output: [], stdout: '', stderr: '', status: null, signal: 'SIGTERM',
+      error: Object.assign(new Error('ownership scan timed out'), {code: 'ETIMEDOUT'})};
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(sandbox.dispose(), /timed out waiting for sandbox frontends and helpers/u);
+  } finally {
+    clock.mock.restore(); probe.mock.restore(); syncBuiltinESMExports();
+    await sandbox.dispose();
+  }
+});
+
+
+test('disposal observes an idle service that starts listening after its initial socket check', async () => {
+  const sandbox = new LiveSandbox();
+  const serviceUrl = new URL('../src/session/SessionService.ts', import.meta.url).href;
+  const gate = join(sandbox.home, 'start-service');
+  // Keep the fixture alive long enough that automatic idle exit cannot hide
+  // disposal's ordering race. Production and disposal deadlines are unchanged.
+  const program = `import {runSessionService} from ${JSON.stringify(serviceUrl)};
+    process.stdout.write('IMPORTED\\n');
+    const {existsSync} = await import('node:fs');
+    while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 20));
+    await runSessionService({runtimeDir: ${JSON.stringify(sandbox.runtime)}, startupIdleMs: 60_000});`;
+  const child = spawn(process.execPath, [`--import=${TSX}`, '--input-type=module', '-e', program],
+    {cwd: sandbox.home, env: sandbox.env, stdio: ['ignore', 'pipe', 'pipe']});
+  const inspect = sandbox['anyServiceListening'].bind(sandbox);
+  let released = false;
+  let output = '';
+  child.stdout.on('data', data => { output += data.toString(); });
+  const exited = new Promise<number | null>(resolve => child.once('close', resolve));
+  try {
+    await until(() => output.includes('IMPORTED'), 5000, 'service module imported');
+    assert.deepEqual(readdirSync(sandbox.runtime), [], 'the initial socket check sees no service');
+    sandbox['anyServiceListening'] = async () => {
+      const listening = await inspect();
+      // Release the real service only after disposal has completed its first probe.
+      if (!released) { writeFileSync(gate, 'start'); released = true; }
+      return listening;
+    };
+    await sandbox.dispose();
+    assert.equal(await exited, 0, 'the late idle service exits through its normal lifecycle');
+    assert.equal(existsSync(sandbox.root), false);
+  } finally {
+    child.kill(); await exited; await sandbox.dispose();
+  }
+});
+
+test('suite runner honors explicit temporary storage without silently falling back', async () => {
+  const previous = process.env.NMSH_TEST_TMPDIR;
+  const requested = join(tmpdir(), 'external');
+  process.env.NMSH_TEST_TMPDIR = requested;
+  const sentinel = new Error('stop before filesystem writes');
+  const probe = mock.method(fs, 'mkdtempSync', (prefix: string) => {
+    assert.equal(prefix, join(requested, 'nt-'));
+    throw sentinel;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(runTestFiles(['unused.test.mjs']), error => error === sentinel);
+  } finally {
+    probe.mock.restore(); syncBuiltinESMExports();
+    if (previous === undefined) delete process.env.NMSH_TEST_TMPDIR; else process.env.NMSH_TEST_TMPDIR = previous;
+  }
+});
+
+
+test('suite runner confines home-directory caches to its private temporary storage', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'runner-home-'));
+  const file = join(fixture, 'home.test.mjs');
+  try {
+    writeFileSync(file, [
+      "import assert from 'node:assert/strict';",
+      "import {existsSync, writeFileSync} from 'node:fs';",
+      "import {join} from 'node:path';",
+      "assert.equal(process.env.HOME, join(process.env.TMPDIR, 'home'));",
+      "assert.ok(existsSync(process.env.HOME));",
+      "writeFileSync(join(process.env.HOME, '.owned-test-cache'), 'fixture');",
+    ].join('\n'));
+    const result = await runTestFiles([file], [], {stdio: 'ignore'});
+    assert.equal(result.code, 0, 'home caches stay inside the owned suite root');
+    assert.ok(!existsSync(result.root), 'home caches are removed with that root');
+  } finally { rmSync(fixture, {recursive: true, force: true}); }
 });

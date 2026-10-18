@@ -1,23 +1,25 @@
 import {spawn} from 'node:child_process';
-import {mkdtempSync, readdirSync, realpathSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync} from 'node:fs';
 import {availableParallelism, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {discoverTestFiles, parseTestOptions, selectTestGroups} from './test-selection.mjs';
+import {discoverTestFiles, parseTestOptions, selectTestGroups, testConcurrency} from './test-selection.mjs';
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
-  const root = realpathSync(mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'nt-')));
+  const root = realpathSync(mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? (process.platform === 'win32' ? tmpdir() : '/tmp'), 'nt-')));
   let leftovers = [];
   try {
+    const testHome = join(root, 'home');
+    mkdirSync(testHome, {mode: 0o700});
     // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.
     // Tests never see the user's real NMSh settings: configuration lives under this run's private root.
-    const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
+    const env = {...process.env, HOME: testHome, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
     // PTY workers also own shell/helper processes. Bound fan-out on larger
     // development hosts; explicit Node --test-concurrency options still win.
-    const concurrency = Math.max(1, Math.min(4, availableParallelism() - 1));
+    const concurrency = testConcurrency(process.env.NMSH_TEST_CONCURRENCY, availableParallelism());
     const child = spawn(process.execPath, ['--import=tsx', '--test', `--test-concurrency=${concurrency}`, ...args, ...files], {
       cwd, stdio, env,
     });
@@ -37,7 +39,7 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
     }
     // Crash fixtures own their nested TMPDIR. Ordinary lifecycle leaks at the
     // suite root are a failure, reported BEFORE cleanup rather than hidden.
-    leftovers = readdirSync(root).filter(name => /^nmsh-(?:semantic|zdotdir|shell|completion|capture)-/u.test(name));
+    leftovers = readdirSync(root).filter(name => /^nmsh-(?:semantic|zdotdir|shell|completion|capture|task)-/u.test(name));
     if (leftovers.length) report(`Test lifecycle leaked ${leftovers.length} semantic/zsh temp directories: ${leftovers.join(', ')}`);
     return {code: leftovers.length || interrupted ? 1 : code, root, leftovers};
   } finally {

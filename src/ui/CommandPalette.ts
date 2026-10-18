@@ -5,9 +5,10 @@ import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {fuzzyMatch} from '../suggestions/NativeSuggestions.js';
 import type {Key} from '../terminal/keys.js';
 import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
+import {GLYPHS} from './glyphs.js';
 
 /**
  * Every palette entry is a declared NMSh action. Nothing here is a shell
@@ -24,7 +25,15 @@ export type PaletteAction =
   | {kind: 'latest'}
   | {kind: 'toggleDetails'}
   | {kind: 'toggleInspector'}
-  | {kind: 'block'; id: BlockActionId; startId: number};
+  | {kind: 'block'; id: BlockActionId; startId: number}
+  /** An action on one reference found in a block's output; resolved again from the block when it runs. */
+  | {kind: 'reference'; startId: number; refId: string; verb: 'open' | 'copy' | 'stage'}
+  | {kind: 'failure'; direction: 'previous' | 'next'}
+  | {kind: 'pinHistory'; id: string}
+  | {kind: 'keepComposerClip'}
+  | {kind: 'keepHistoryClip'; id: string}
+  | {kind: 'clip'; id: number; verb: 'review' | 'remove'}
+  | {kind: 'clearClips'};
 
 export interface PaletteItem {
   id: string;
@@ -41,8 +50,9 @@ const ARGUMENT_COMMANDS = new Set(['/copy N']);
 export function paletteItems(): PaletteItem[] {
   const items: PaletteItem[] = [{id: 'inspector:toggle', label: 'Toggle command inspector', detail: 'Local token knowledge at the composer cursor', category: 'Command', action: {kind: 'toggleInspector'}}];
   for (const command of slashCommands) {
-    if (ARGUMENT_COMMANDS.has(command.name)) continue;
-    items.push({id: `slash:${command.name}`, label: command.name, detail: command.description, category: 'Command',
+    // Aliases resolve to the same surface as their canonical command: one palette entry each.
+    if (ARGUMENT_COMMANDS.has(command.name) || command.alias) continue;
+    items.push({id: `slash:${command.name}`, label: command.title ? `${command.title} · ${command.name}` : command.name, detail: command.description, category: 'Command',
       action: {kind: 'slash', command: command.insertion.trim()}});
   }
   for (const entry of SETTINGS_ENTRIES) {
@@ -63,6 +73,10 @@ export function paletteItems(): PaletteItem[] {
       action: {kind: 'cycleOutputFolding'}},
     {id: 'transcript:details', label: 'Expand or collapse output', detail: 'Same as Ctrl+O on the latest block', category: 'Transcript',
       action: {kind: 'toggleDetails'}},
+    {id: 'awake:idle', label: 'Keep computer awake', detail: '/caffeinate idle · Keep Awake (awake, zoomies): prevent idle sleep', category: 'Command', action: {kind: 'slash', command: '/caffeinate idle'}},
+    {id: 'awake:display', label: 'Keep display awake', detail: '/caffeinate display · Keep Awake: display and machine stay awake (sleep)', category: 'Command', action: {kind: 'slash', command: '/caffeinate display'}},
+    {id: 'awake:status', label: 'Keep-awake status', detail: '/caffeinate status · caffeinate, awake, zoomies', category: 'Command', action: {kind: 'slash', command: '/caffeinate status'}},
+    {id: 'awake:stop', label: 'Stop keep-awake', detail: '/caffeinate stop · normal sleep returns', category: 'Command', action: {kind: 'slash', command: '/caffeinate stop'}},
     {id: 'transcript:latest', label: 'Jump to latest output', detail: 'Same as Ctrl+End', category: 'Transcript', action: {kind: 'latest'}},
   );
   for (const palette of NATIVE_PALETTE_IDS) {
@@ -152,8 +166,8 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
   if (visible.length === 0) rows.push(`${SUBTLE}  No matching NMSh action${RESET}`);
   visible.slice(start, start + budget).forEach((item, offset) => {
     const active = start + offset === selected;
-    const label = state.query ? highlightMatches(item.label, state.query, active ? ACCENT : SECONDARY, SEARCH_MATCH) : item.label;
-    rows.push(`${active ? `${ACCENT}›` : ' '} ${active ? ACCENT : SECONDARY}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
+    const label = state.query ? highlightMatches(item.label, state.query, focusForeground(active), SEARCH_MATCH) : item.label;
+    rows.push(`${active ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
   });
   rows.push('', renderActionHelp(paletteActions(visible.length)));
   return rows.map(row => truncateAnsi(row, columns));

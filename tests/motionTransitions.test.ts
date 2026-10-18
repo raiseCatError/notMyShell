@@ -13,10 +13,10 @@ import {stripAnsi} from '../src/util/text.js';
 const gate = {reducedMotion: false, effectsOff: false, color: true};
 const make = (motion: Partial<MotionSettings> = {}, current = gate) => new Transitions(() => ({...DEFAULT_MOTION, ...motion}), () => current);
 
-test('motion registry: fresh installs restrained, existing configs migrate to Off', () => {
+test('motion registry: fresh installs expressive, existing configs migrate to Off', () => {
   assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.motion, DEFAULT_MOTION);
   assert.equal(DEFAULT_MOTION.commandLaunch, 'sweep');
-  assert.equal(DEFAULT_MOTION.contextTransitions, 'subtle');
+  assert.equal(DEFAULT_MOTION.contextTransitions, 'expressive');
   assert.deepEqual(normalizeMotion(undefined), MIGRATED_MOTION, 'an older config without a motion group sees nothing new move');
   assert.deepEqual(normalizePromptConfiguration({nmsh: {}}).motion, MIGRATED_MOTION);
   assert.equal(normalizeMotion({commandLaunch: 'pulse', contextTransitions: 'bogus'}).commandLaunch, 'pulse');
@@ -79,7 +79,7 @@ test('completion highlight touches only the inserted range', () => {
 });
 
 test('context preview: the unchanged module gets no effect, at every frame, and the panel height is fixed', () => {
-  const motion = {...DEFAULT_MOTION, contextTransitions: 'expressive' as const};
+  const motion = {...DEFAULT_MOTION, rendering: 'clean' as const, contextTransitions: 'expressive' as const};
   const columns = 100;
   let sawChangedPainted = false;
   for (let now = 0; now <= 400; now += 20) {
@@ -98,8 +98,8 @@ test('context preview: the unchanged module gets no effect, at every frame, and 
   assert.equal(settled.rows.length, PREVIEW_HEIGHT);
 });
 
-test('every Motion preview paints no background on any frame and keeps a fixed height', () => {
-  const motion = {...DEFAULT_MOTION, contextTransitions: 'expressive' as const, commandLaunch: 'pulse' as const, completionHighlight: 'vivid' as const, completionEffect: 'seal' as const, eventFeedback: 'expressive' as const};
+test('every Clean Motion preview paints no background on any frame and keeps a fixed height', () => {
+  const motion = {...DEFAULT_MOTION, rendering: 'clean' as const, contextTransitions: 'expressive' as const, commandLaunch: 'pulse' as const, completionHighlight: 'vivid' as const, completionEffect: 'seal' as const, eventFeedback: 'expressive' as const};
   for (const row of ['contextTransitions', 'commandLaunch', 'completionHighlight', 'completionEffect', 'eventFeedback'] as const) {
     for (let now = 0; now <= 800; now += 25) {
       const preview = renderMotionPreview(row, motion, gate, 90, 0, now);

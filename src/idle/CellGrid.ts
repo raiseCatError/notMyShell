@@ -57,6 +57,51 @@ export class CellGrid {
     return this.bg[y * this.width + x] ?? NO_COLOR_VALUE;
   }
 
+  /**
+   * The two vertical pixels a cell shows: `▀` is the upper pixel in the
+   * foreground over the lower in the background, `▄` the reverse, `█` one
+   * color, and any other glyph (a space, a star) shows its background in both.
+   * Transparent is NO_COLOR_VALUE; outside the grid is transparent.
+   */
+  halves(x: number, y: number): [upper: number, lower: number] {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    if (cx < 0 || cy < 0 || cx >= this.width || cy >= this.height) return [NO_COLOR_VALUE, NO_COLOR_VALUE];
+    const index = cy * this.width + cx;
+    const glyph = this.glyphs[index], fg = this.fg[index]!, bg = this.bg[index]!;
+    if (glyph === '▀') return [fg, bg];
+    if (glyph === '▄') return [bg, fg];
+    if (glyph === '█') return [fg, fg];
+    return [bg, bg];
+  }
+
+  /**
+   * Sprite pixels over a cell: a given half replaces only that half and the
+   * cell is re-encoded, so the other half keeps its exact color and a
+   * transparent half stays transparent (no background is invented). Cells a
+   * sprite does not cover are never touched.
+   */
+  compositePixels(x: number, y: number, upper?: number, lower?: number): void {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    if (cx < 0 || cy < 0 || cx >= this.width || cy >= this.height) return;
+    const [previousUpper, previousLower] = this.halves(cx, cy);
+    const top = upper ?? previousUpper, bottom = lower ?? previousLower;
+    const index = cy * this.width + cx;
+    if (top === bottom) { this.glyphs[index] = ' '; this.fg[index] = NO_COLOR_VALUE; this.bg[index] = top; }
+    else if (top === NO_COLOR_VALUE) { this.glyphs[index] = '▄'; this.fg[index] = bottom; this.bg[index] = NO_COLOR_VALUE; }
+    else { this.glyphs[index] = '▀'; this.fg[index] = top; this.bg[index] = bottom; }
+  }
+
+  /** A glyph over a cell's pixels (whiskers): its background is the mean of the two halves, or transparent when either is. */
+  stamp(x: number, y: number, glyph: string, fg: number): void {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    if (cx < 0 || cy < 0 || cx >= this.width || cy >= this.height) return;
+    const [upper, lower] = this.halves(cx, cy);
+    const index = cy * this.width + cx;
+    this.glyphs[index] = glyph;
+    this.fg[index] = fg;
+    this.bg[index] = upper === NO_COLOR_VALUE || lower === NO_COLOR_VALUE ? NO_COLOR_VALUE : mixPacked(upper, lower, 0.5);
+  }
+
   toRows(level: ColorLevel): string[] {
     const rows: string[] = [];
     for (let y = 0; y < this.height; y++) {

@@ -8,7 +8,7 @@ NMSH_DETERMINISTIC=1 npm run dev
 ```
 
 This is a developer/testing aid for visual snapshots, integration tests, and
-later VHS/demo tooling. It is opt-in and does not change the normal runtime.
+the VHS demo recordings. It is opt-in and does not change the normal runtime.
 
 ## Stabilized today
 
@@ -24,6 +24,14 @@ later VHS/demo tooling. It is opt-in and does not change the normal runtime.
 The fixed completion clock uses the local-time formatter, so it stabilizes the
 displayed hour and minute across runs on a host. It does not normalize locale,
 terminal width, colors, or other host presentation settings.
+
+- Keep Awake can run against an inert backend: with `NMSH_DETERMINISTIC=1`,
+  `NMSH_KEEP_AWAKE_BACKEND=inert` starts the same detached NMSh-owned wait
+  helper without any inhibitor, and `NMSH_DEMO_AWAKE_IDLE_MS` shortens the idle
+  reminder delay. Both are ignored without `NMSH_DETERMINISTIC=1`.
+
+The VHS demo pipeline (`npm run demos`, [scripts/demos](../../scripts/demos/README.md))
+records with this mode on.
 
 ## Deliberately unchanged
 

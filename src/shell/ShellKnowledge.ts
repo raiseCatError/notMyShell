@@ -1,13 +1,20 @@
 import type {CommandType} from './SemanticService.js';
 import {stripAnsi} from '../util/text.js';
+import {zshEnvironmentSnapshot} from '../context/shellEnvironment.js';
 
-export const MAX_SHELL_KNOWLEDGE_BYTES = 65536;
+/**
+ * Names stay within their own ~64 KiB budget in each bootstrap; the allowlisted
+ * environment snapshot (shellEnvironment.ts) comes first and is bounded per
+ * variable, so the whole file stays well below this limit.
+ */
+export const MAX_SHELL_KNOWLEDGE_BYTES = 256 * 1024;
 
-/** Names only: no alias expansion, function body, environment value or evaluation. */
+/** Names only: no alias expansion, function body or evaluation; environment lines are parsed separately (context/shellEnvironment.ts). */
 export function parseShellKnowledge(text: string): Map<string, CommandType> {
   const result = new Map<string, CommandType>();
   if (Buffer.byteLength(text) > MAX_SHELL_KNOWLEDGE_BYTES) return result;
-  for (const line of text.split('\n').slice(0, 4097)) {
+  // Up to 4096 names plus the job count and the bounded environment snapshot lines before them.
+  for (const line of text.split('\n').slice(0, 4097 + 512)) {
     const match = /^(alias|function|builtin) ([\p{L}\p{N}_.+\-]{1,128})$/u.exec(line);
     // Precedence follows what a shell runs: alias, then function, then builtin.
     if (!match) continue;
@@ -29,6 +36,7 @@ function nmsh_capture_knowledge {
   {
     # Background and stopped jobs, so NMSh can refuse to end them by switching shells.
     builtin printf 'jobs %d\\n' \${#jobstates}
+    # The allowlisted context environment (context/shellEnvironment.ts), before names so it is never cut.${zshEnvironmentSnapshot()}
     for nmsh_type in alias function; do
       local -a nmsh_names
       if [[ $nmsh_type == alias ]]; then nmsh_names=(\${(ok)aliases}); else nmsh_names=(\${(ok)functions}); fi

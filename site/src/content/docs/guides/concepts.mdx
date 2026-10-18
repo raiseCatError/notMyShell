@@ -1,0 +1,39 @@
+---
+title: Fundamental Concepts
+description: Core architectural concepts of notMyShell.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+## What NMSh is (and is not)
+
+NMSh is a **frontend**. Your shell stays underneath and does what it always did: parsing, execution, aliases, functions, environment, and job control.
+
+NMSh owns what you see and type: the composer and editor, completion and suggestions, history and transcript, prompt and layout, sessions, themes and Chroma, tool panels, and local guidance.
+
+- **Not a shell.** It does not reimplement zsh, Bash or Fish; it runs them.
+- **Not a terminal emulator.** Keep Ghostty, Terminal.app, VS Code, Zed or whatever you use.
+- **Not a prompt theme.** The Native prompt is optional; Starship, Oh My Posh or Powerlevel10k can supply the prompt instead, or none at all.
+- **Not an AI terminal.** NMSh's core experience uses deterministic local logic without cloud inference or model API calls. Integrations are opt-in.
+
+## The ShellAdapter
+
+The ShellAdapter is the boundary between the NMSh frontend and your real shell. It handles the low-level communication with the pseudo-terminal (PTY) where your shell actually lives. NMSh supports:
+- **zsh** (default)
+- **Bash 4.4+**
+- **Fish**
+
+All three run behind a unified ShellAdapter interface. NMSh loads your startup files in a controlled bootstrap and never edits them. ZLE prompt and widget UI (like Powerlevel10k's in-shell prompt or zsh-autosuggestions) is kept off inside NMSh so it cannot fight the composer. They continue to work if you drop into an ordinary shell via `/zsh`.
+
+## Composer vs Transcript
+
+- **The Composer:** The persistent editor where you write commands. It can be docked to the Bottom, Top, or flow naturally after the newest output. It supports full multiline editing and provides semantic syntax highlighting before execution.
+- **The Transcript:** The scrollable record of your past commands and their output. Commands in the transcript are structured blocks with status, timing, and an attached prompt snapshot.
+
+## Passthrough Behavior
+
+Fullscreen and raw interactive terminal applications use the passthrough path. Their input and display remain with the real program. When a fullscreen app takes over, NMSh steps aside, ensuring raw PTY output remains raw and is not semantically recolored by NMSh.
+
+## Sessions and Detachment
+
+NMSh sessions are persistent. Closing a terminal window **detaches** the shell instead of ending it. Running commands continue executing in the background. You can `/resume` them later or attach to them with `nmsh --attach <id>`.

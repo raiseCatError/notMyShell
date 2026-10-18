@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {accessSync, constants} from 'node:fs';
 import {delimiter, join} from 'node:path';
+import {GLYPHS} from '../ui/glyphs.js';
 
 /**
  * Shared provider metadata, status and fallback. Each family keeps its own
@@ -68,7 +69,8 @@ export function lifecycleNote(descriptor: Pick<ProviderDescriptor, 'legacy' | 'l
   return `${LIFECYCLE_LABELS[lifecycle]}${successor}`;
 }
 
-export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy';
+/** `unknown`: the check failed or did not finish, so neither installed nor missing is claimed (shown as Unable to verify). */
+export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy' | 'unknown';
 
 export interface ProviderStatus {
   state: ProviderState;
@@ -211,6 +213,25 @@ export function detectProvider(descriptor: ProviderDescriptor, pathValue = proce
   return pending;
 }
 
+/**
+ * A detection that never throws or hangs: one that fails or does not finish in time is `unknown`
+ * (Unable to verify), never `missing`, so nothing is selected or installed on a guess.
+ */
+export async function verified(detect: () => Promise<ProviderStatus>, timeoutMs = 4000): Promise<ProviderStatus> {
+  let timer: NodeJS.Timeout | undefined;
+  // Kept referenced: the timeout must fire to settle a check that never finishes (cleared as soon as one does).
+  const late = new Promise<ProviderStatus>(resolve => {
+    timer = setTimeout(() => resolve({state: 'unknown', detail: 'the check did not finish'}), timeoutMs);
+  });
+  try {
+    return await Promise.race([detect(), late]);
+  } catch (error) {
+    return {state: 'unknown', detail: error instanceof Error ? error.message : String(error)};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Forget cached detection, e.g. after an install completes. */
 export function clearProviderDetection(): void {
   detectionCache.clear();
@@ -225,6 +246,7 @@ export function providerStatusLabel(descriptor: ProviderDescriptor, status: Prov
     case 'installed': return `${status.version ?? 'Installed'}${legacy}`;
     case 'missing': return `Not installed${legacy}`;
     case 'unhealthy': return `Unavailable${status.detail ? ` · ${status.detail}` : ''}`;
+    case 'unknown': return 'Unable to verify';
     default: return 'Built in';
   }
 }
@@ -243,7 +265,7 @@ export function resolveProvider<Id extends string>(providers: readonly ProviderD
   if (!descriptor) return {id: fallback};
   if (providerUsable(descriptor, status)) return {id: selected};
   const fallbackLabel = providers.find(provider => provider.id === fallback)?.label ?? fallback;
-  const reason = status?.state === 'unhealthy' ? `unavailable${status.detail ? ` (${status.detail})` : ''}` : 'not installed';
+  const reason = status?.state === 'unhealthy' ? `unavailable${status.detail ? ` (${status.detail})` : ''}` : status?.state === 'unknown' ? 'not verified' : 'not installed';
   return {id: fallback, notice: `${descriptor.label} is ${reason}; using ${fallbackLabel}.`};
 }
 
@@ -251,7 +273,7 @@ export function resolveProvider<Id extends string>(providers: readonly ProviderD
 export function providerRowText(descriptor: ProviderDescriptor, options: {draft?: string; saved?: string; status?: ProviderStatus | 'none'}): string {
   const badge = options.status === 'none' ? '' : `  [${providerStatusLabel(descriptor, options.status)}]`;
   return `${descriptor.label} · ${descriptor.description}${badge}`
-    + `${options.draft === descriptor.id ? '  ●' : ''}${options.saved === descriptor.id ? '  ✓ saved' : ''}`;
+    + `${options.draft === descriptor.id ? `  ${GLYPHS.chosen}` : ''}${options.saved === descriptor.id ? `  ${GLYPHS.saved} saved` : ''}`;
 }
 
 /** The install this platform supports for a provider, or undefined. Pure apart from the brew lookup. */
