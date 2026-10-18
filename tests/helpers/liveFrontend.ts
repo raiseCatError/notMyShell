@@ -8,6 +8,7 @@ import nodePty, {type IPty} from 'node-pty';
 import {listLiveSessions} from '../../src/session/connectSession.js';
 import {parseSlashCommand} from '../../src/commands/slashCommands.js';
 import {TranscriptStore} from '../../src/sessions/TranscriptStore.js';
+import {markFishCompletionsGenerated} from '../../scripts/test-shell-home.mjs';
 
 export const TSX = import.meta.resolve('tsx');
 export const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
@@ -37,6 +38,8 @@ export class LiveSandbox {
 
   constructor(config: Record<string, unknown> = {}, private readonly extraEnv: Record<string, string> = {}) {
     mkdirSync(this.home);
+    // Fish's detached man-page generator would otherwise outlive the sandbox's shells and race disposal (#403).
+    markFishCompletionsGenerated(this.home);
     mkdirSync(this.temp);
     mkdirSync(join(this.config, 'nmsh'), {recursive: true});
     mkdirSync(this.runtime, {mode: 0o700});

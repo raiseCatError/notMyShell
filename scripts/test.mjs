@@ -4,6 +4,7 @@ import {availableParallelism, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {discoverTestFiles, parseTestOptions, selectTestGroups, testConcurrency} from './test-selection.mjs';
+import {markFishCompletionsGenerated} from './test-shell-home.mjs';
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
@@ -12,11 +13,17 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
   try {
     const testHome = join(root, 'home');
     mkdirSync(testHome, {mode: 0o700});
+    markFishCompletionsGenerated(testHome);
     // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.
     // Tests never see the user's real NMSh settings: configuration lives under this run's private root.
     const env = {...process.env, HOME: testHome, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
+    // Ambient XDG data, cache and state directories (a developer's, or a wrapper's shared cache) are not the tests':
+    // shells and tools fall back to the private HOME, as they do on CI where these are unset.
+    delete env.XDG_DATA_HOME;
+    delete env.XDG_CACHE_HOME;
+    delete env.XDG_STATE_HOME;
     // PTY workers also own shell/helper processes. Bound fan-out on larger
     // development hosts; explicit Node --test-concurrency options still win.
     const concurrency = testConcurrency(process.env.NMSH_TEST_CONCURRENCY, availableParallelism());

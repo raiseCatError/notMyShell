@@ -46,6 +46,9 @@ export function parseCompletionFacts(line: string): CompletionFacts | undefined 
   return {zshCompletions: zc === '1', fzfTab: ft === '1', completionSystem: cs === '1'};
 }
 
+/** How many times a lookup superseded by newer shell knowledge is asked again before it settles as unknown. */
+const REASKS = 3;
+
 export class SemanticService {
   private child: ReturnType<typeof spawn>;
   private pending = new Map<number, (result: CommandType) => void>();
@@ -65,8 +68,10 @@ export class SemanticService {
     this.shellNamesComplete = text.split('\n').includes('complete');
     this.cache.clear();
     for (const [name, type] of this.shellNames) this.cache.set(name, type);
-    for (const resolve of this.pending.values()) resolve('unknown');
+    // Lookups in flight were asked against the old knowledge; each one asks again against this one (see lookup).
+    const superseded = [...this.pending.values()];
     this.pending.clear();
+    for (const resolve of superseded) resolve('unknown');
     for (const resolve of this.rawPending.values()) resolve('');
     this.rawPending.clear();
   }
@@ -207,6 +212,15 @@ done\n`);
   private isDead = false;
 
   async classifyCommand(cmd: string): Promise<CommandType> {
+    return this.lookup(cmd, 0);
+  }
+
+  /**
+   * A lookup that newer shell knowledge superseded while it was in flight never caches its answer (it may be stale),
+   * and is asked again against the new knowledge, at most REASKS times. Without that, a stored command classified
+   * just as the next prompt arrived (a fast queue) would keep the unclassified color for good (#408).
+   */
+  private async lookup(cmd: string, reasked: number): Promise<CommandType> {
     if (!cmd || cmd.trim().length === 0) return 'unknown';
     // Only classify the first word if it has spaces
     cmd = cmd.split(' ')[0];
@@ -227,7 +241,7 @@ done\n`);
       }, 1500);
       this.pending.set(id, (res) => {
         clearTimeout(timer);
-        if (generation !== this.generation) { resolve('unknown'); return; }
+        if (generation !== this.generation) { resolve(reasked < REASKS ? this.lookup(cmd, reasked + 1) : 'unknown'); return; }
         if (this.cache.size >= 8192) this.cache.delete(this.cache.keys().next().value!);
         this.cache.set(cmd, res);
         resolve(res);

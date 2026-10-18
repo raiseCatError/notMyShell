@@ -54,9 +54,29 @@ export type SerializedLine = SerializedCell[];
  */
 export const MAX_CONTROL_SEQUENCE = 8192;
 
+/** The screen height assumed until the owner reports the PTY's rows (a terminal's classic default). */
+const DEFAULT_SCREEN_ROWS = 24;
+
+/**
+ * The live region (#388). A program may redraw its own recent rows in place, as on a terminal: cursor up/down
+ * (`CSI A/B/E/F`, `ESC M/D/E`), save/restore (`ESC 7/8`, `CSI s/u`) and erasing (`CSI J` 0/1, `CSI K` 0/1/2) act on
+ * the row the cursor is on. The cursor never moves above the fence (the line after the newest one NMSh wrote: a
+ * command header, a notice, an earlier command) nor more than a screen height above the newest line, because a
+ * terminal cannot address its scrollback either. So a multi-row progress display updates its rows instead of adding
+ * a copy of them per frame, and nothing outside the running program's own rows can be changed. Absolute row
+ * positioning (`CSI H/f/d` rows) is not mapped: an inline program cannot know where its rows are, so it keeps the
+ * previous behavior. The stored lines are what a terminal would show at the end; intermediate frames are not kept.
+ */
 export class AnsiOutputParser {
   readonly lines: StyledLine[] = [];
   private current: StyledLine = [];
+  /** The cursor's row: an index into `lines`, or `lines.length` for the current (newest) line. */
+  private row = 0;
+  /** The lowest row the program may address (see the live region). */
+  private fence = 0;
+  private screenRows = DEFAULT_SCREEN_ROWS;
+  /** DECSC / SCOSC saved cursor (row, column, and for ESC 7 the style). */
+  private saved?: {row: number; column: number; style?: string};
   private column = 0;
   private style = '';
   private pending = '';
@@ -85,6 +105,50 @@ export class AnsiOutputParser {
   }
 
   constructor(private readonly onClear?: () => void) {}
+
+  /** The PTY's rows: how far above the newest line a program's cursor can reach. */
+  setScreenRows(rows: number): void {
+    this.screenRows = Math.max(1, Math.min(1000, Math.floor(rows) || DEFAULT_SCREEN_ROWS));
+  }
+
+  /**
+   * Program output from here on may redraw only rows from `index` (clamped to the stored lines); NMSh-written rows
+   * and earlier commands stay out of reach. Used when a running command is resumed from a journal.
+   */
+  fenceAt(index: number): void {
+    this.fence = Math.max(0, Math.min(index, this.lines.length));
+    this.row = this.lines.length;
+    this.saved = undefined;
+  }
+
+  /** The line the cursor is on. */
+  private get target(): StyledLine {
+    return this.row < this.lines.length ? this.lines[this.row]! : this.current;
+  }
+
+  /** The highest row the cursor may move to: the fence, or a screen height above the newest line. */
+  private get topRow(): number {
+    return Math.max(this.fence, this.lines.length - (this.screenRows - 1));
+  }
+
+  private moveRow(delta: number): void {
+    this.row = Math.max(this.topRow, Math.min(this.lines.length, this.row + delta));
+  }
+
+  /** Line feed: down a row, or a new line at the bottom. */
+  private lineFeed(): void {
+    if (this.row < this.lines.length) { this.row += 1; return; }
+    this.lines.push(this.current);
+    this.current = [];
+    this.row = this.lines.length;
+  }
+
+  /** NMSh wrote a line: the cursor returns below it and nothing at or above it can be redrawn. */
+  private settle(): void {
+    this.row = this.lines.length;
+    this.fence = this.lines.length;
+    this.saved = undefined;
+  }
 
   write(chunk: string): void {
     const input = this.pending + chunk;
@@ -128,8 +192,7 @@ export class AnsiOutputParser {
         continue;
       }
       if (character === '\n') {
-        this.lines.push(this.current);
-        this.current = [];
+        this.lineFeed();
         this.column = 0;
         this.ending = true;
         index += 1;
@@ -149,7 +212,7 @@ export class AnsiOutputParser {
         const spaces = 8 - (this.column % 8);
         for (let count = 0; count < spaces; count += 1) {
           this.put(' ', 1);
-          const cell = this.current[this.column - 1]!;
+          const cell = this.target[this.column - 1]!;
           cell.tab = true;
           if (count === 0) cell.tabSpan = spaces;
         }
@@ -182,11 +245,14 @@ export class AnsiOutputParser {
     this.hyperlink = undefined;
     this.style = style;
     this.write(text);
+    // Text with its own line breaks or row movement still ends on the newest line.
+    this.row = this.lines.length;
     this.lines.push(this.current);
     this.current = [];
     this.column = 0;
     this.style = '';
     this.hyperlink = undefined;
+    this.settle();
   }
 
   ensureLineBoundary(): void {
@@ -195,6 +261,7 @@ export class AnsiOutputParser {
       this.current = [];
       this.column = 0;
     }
+    this.settle();
   }
 
   replaceLine(index: number, text: string): void {
@@ -205,6 +272,10 @@ export class AnsiOutputParser {
     const oldPending = this.pending;
     const oldHyperlink = this.hyperlink;
     const oldDiscarding = this.discarding;
+    const oldRow = this.row;
+    const oldFence = this.fence;
+    const oldSaved = this.saved;
+    const oldLength = this.lines.length;
 
     this.current = [];
     this.column = 0;
@@ -212,13 +283,15 @@ export class AnsiOutputParser {
     this.pending = '';
     this.discarding = false;
     this.hyperlink = undefined;
-    
+    // Replacement text is one line of NMSh's own: it is written as the newest line and cannot reach other rows.
+    this.row = this.lines.length;
+    this.fence = this.lines.length;
+    this.saved = undefined;
+
     this.write(text);
-    if (this.pending.length > 0) {
-      // Flush any remaining characters if write left pending state (e.g. incomplete escape)
-      // For simple replacement lines, this shouldn't happen unless malformed, but just in case.
-    }
-    this.lines[index] = this.current;
+    // A line break in replacement text would add lines; only the first one replaces the stored line.
+    const replaced = this.lines.length > oldLength ? this.lines.splice(oldLength)[0]! : this.current;
+    this.lines[index] = replaced;
 
     this.current = oldCurrent;
     this.column = oldColumn;
@@ -226,6 +299,9 @@ export class AnsiOutputParser {
     this.pending = oldPending;
     this.hyperlink = oldHyperlink;
     this.discarding = oldDiscarding;
+    this.row = oldRow;
+    this.fence = oldFence;
+    this.saved = oldSaved;
   }
 
   completedCount(): number {
@@ -284,12 +360,17 @@ export class AnsiOutputParser {
       const restored: StyledLine = line.map(cell => cell === null ? null : 'empty' in cell ? undefined : {...cell});
       this.lines.push(restored);
     }
+    // A restored transcript is history; a resumed command reopens its own rows with fenceAt.
+    this.settle();
   }
 
   trim(maxLines: number): number {
     if (this.lines.length <= maxLines) return 0;
     const removed = this.lines.length - maxLines;
     this.lines.splice(0, removed);
+    this.row = Math.max(0, this.row - removed);
+    this.fence = Math.max(0, this.fence - removed);
+    if (this.saved) this.saved = {...this.saved, row: Math.max(0, this.saved.row - removed)};
     return removed;
   }
 
@@ -305,7 +386,7 @@ export class AnsiOutputParser {
       }
       const params = match[1] ?? '';
       const final = match[3] ?? '';
-      this.applyCsi(params, final);
+      this.applyCsi(params, final, match[2] ?? '');
       return {complete: true, next: start + match[0].length};
     }
     if (kind === ']') {
@@ -338,7 +419,20 @@ export class AnsiOutputParser {
       if (start + 1 + intermediates >= input.length || intermediates >= MAX_CONTROL_SEQUENCE - 1) return {complete: false, next: start};
       return {complete: true, next: start + 1 + intermediates};
     }
+    // Two-byte escapes that move within the live region; others (keypad modes, RIS…) are dropped as before.
+    if (kind === '7') this.saved = {row: this.row, column: this.column, style: this.style};
+    else if (kind === '8') this.restoreCursor(true);
+    else if (kind === 'M') this.moveRow(-1);
+    else if (kind === 'D') { this.lineFeed(); this.ending = true; }
+    else if (kind === 'E') { this.lineFeed(); this.column = 0; this.ending = true; }
     return {complete: true, next: Math.min(input.length, start + 2)};
+  }
+
+  private restoreCursor(withStyle: boolean): void {
+    if (!this.saved) return;
+    this.row = Math.max(this.topRow, Math.min(this.lines.length, this.saved.row));
+    this.column = this.saved.column;
+    if (withStyle && this.saved.style !== undefined) this.style = this.saved.style;
   }
 
   /**
@@ -368,17 +462,32 @@ export class AnsiOutputParser {
     if (kept.length > 0) this.style += `\u001B[${kept.join(';')}m`;
   }
 
-  private applyCsi(params: string, final: string): void {
+  private applyCsi(params: string, final: string, intermediates = ''): void {
     this.touch();
     const values = params.replace(/^\?/u, '').split(';').map(value => Number(value || '0'));
     const amount = values[0] || 1;
+    // Row movement, save/restore and partial erases: plain forms only (a private marker or intermediate is another request).
+    const plain = !intermediates && !/^[<=>?]/u.test(params);
     if (final === 'm') {
       // A private marker makes it another request (`CSI > 4 ; 2 m` is xterm's modifyOtherKeys), not SGR.
       if (/^[<=>?]/u.test(params)) return;
       this.applySgr(params);
     } else if (final === 'K') {
-      if ((values[0] ?? 0) === 2) this.current = [];
-      else this.current.splice(this.column);
+      const line = this.target;
+      const mode = values[0] ?? 0;
+      if (mode === 2) line.length = 0;
+      else if (mode === 1) { for (let position = 0; position <= this.column && position < line.length; position += 1) line[position] = undefined; }
+      else line.splice(this.column);
+      this.touch(line);
+    } else if (plain && (final === 'A' || final === 'B' || final === 'E' || final === 'F')) {
+      this.moveRow(final === 'A' || final === 'F' ? -amount : amount);
+      if (final === 'E' || final === 'F') this.column = 0;
+    } else if (plain && params === '' && final === 's') {
+      this.saved = {row: this.row, column: this.column};
+    } else if (plain && params === '' && final === 'u') {
+      this.restoreCursor(false);
+    } else if (plain && final === 'J' && (values[0] ?? 0) <= 1) {
+      this.eraseDisplay(values[0] ?? 0);
     } else if (final === 'G') {
       this.column = Math.max(0, amount - 1);
     } else if (final === 'C') {
@@ -390,6 +499,9 @@ export class AnsiOutputParser {
         this.lines.length = 0;
         this.current = [];
         this.column = 0;
+        this.row = 0;
+        this.fence = 0;
+        this.saved = undefined;
         this.onClear?.();
       }
     }
@@ -397,21 +509,44 @@ export class AnsiOutputParser {
 
   private put(text: string, width: number): void {
     this.ending = false;
-    for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
-    this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
+    const line = this.target;
+    for (let position = 0; position < width; position += 1) line[this.column + position] = undefined;
+    line[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
     this.touch();
-    for (let position = 1; position < width; position += 1) this.current[this.column + position] = null;
+    for (let position = 1; position < width; position += 1) line[this.column + position] = null;
     this.column += width;
   }
 
-  private touch(): void { revisions.set(this.current, lineRevision(this.current) + 1); }
+  private touch(line: StyledLine = this.target): void { revisions.set(line, lineRevision(line) + 1); }
 
   private findPreviousCell(): StyledCell | undefined {
-    for (let index = Math.min(this.column - 1, this.current.length - 1); index >= 0; index -= 1) {
-      const cell = this.current[index];
+    const line = this.target;
+    for (let index = Math.min(this.column - 1, line.length - 1); index >= 0; index -= 1) {
+      const cell = line[index];
       if (cell) return cell;
     }
     return undefined;
+  }
+
+  /** Erase in display within the live region: 0 below the cursor, 1 above it. */
+  private eraseDisplay(mode: number): void {
+    const line = this.target;
+    if (mode === 0) {
+      line.splice(this.column);
+      if (this.row < this.lines.length) {
+        // The cursor's row becomes the newest line; the program's rows below it are gone, as on the screen.
+        this.current = line;
+        this.lines.length = this.row;
+      } else this.touch(line);
+      this.touch(this.current);
+      return;
+    }
+    for (let row = this.topRow; row < this.row; row += 1) {
+      this.lines[row]!.length = 0;
+      this.touch(this.lines[row]!);
+    }
+    for (let position = 0; position <= this.column && position < line.length; position += 1) line[position] = undefined;
+    this.touch(line);
   }
 }
 
