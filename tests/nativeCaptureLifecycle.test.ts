@@ -246,6 +246,9 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
   owner.stderr!.on('data', data => { ownerError = (ownerError + String(data)).slice(-4096); });
   let inner = 0;
   try {
+    // The owner's cold `node --import=tsx` start is not what this test bounds (under a full parallel run it alone can
+    // take longer than the capture's own window); the bounds below start once it has loaded.
+    await until(() => loadedAt !== undefined || owner.exitCode !== null, 30_000, 'the owner process to load');
     const identity = await publishedCapture(root, prefix);
     const transport = identity.transport;
     inner = identity.pid;
@@ -300,12 +303,15 @@ exec /bin/zsh "$@"
   chmodSync(join(bin, 'zsh'), 0o700);
   const module = new URL('../src/shell/CompletionService.ts', import.meta.url).href;
   const program = `import {NativeCompletionSource} from ${JSON.stringify(module)};
+import {writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(join(root, 'owner-ready'))}, '');
 await new NativeCompletionSource().query({buffer:'g',cwd:${JSON.stringify(root)}},new AbortController().signal);`;
   const owner = spawn(process.execPath, ['--import=tsx', '--input-type=module', '-e', program], {
     env: {...process.env, HOME: root, FPATH: root, TMPDIR: root, PATH: `${bin}:${process.env.PATH}`}, stdio: 'ignore', detached: true,
   });
   let inner = 0;
   try {
+    await until(() => existsSync(join(root, 'owner-ready')) || owner.exitCode !== null, 30_000, 'the owner process to load');
     await until(() => existsSync(marker), 3000, 'controlled PID rewrite');
     inner = Number(readFileSync(join(root, 'inner-pid'), 'utf8'));
     assert.ok(Number.isSafeInteger(inner) && inner > 1);
