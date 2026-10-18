@@ -51,8 +51,8 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
   ms: the hidden answer is never drawn`). The final fix: 15 of 16 copies clean across four rounds (load 3–20). The one
   failure, `a command typed right after a read returns, or right after Ctrl+C` (`timed out waiting for the command
   after Ctrl+C to run`), then passed 18/18 targeted runs (12 of them 4× parallel) on the fix and 18/18 on the baseline;
-  it does not exercise held keys (typing after Ctrl+C is type-ahead). Recorded as a possible pre-existing test race
-  (Ctrl+C landing before `read` starts lets the typed line answer the read).
+  it does not exercise held keys (typing after Ctrl+C is type-ahead). Filed as #436 (needs reproduction; possible
+  race: Enter right after Ctrl+C writes the line to the PTY before the shell has acted on SIGINT).
 - CPU contention alone does not reproduce #426: at load 64 a probe (`stty` + `ps`) took 10 ms p50, 39 ms max. The
   audit's slow looks came with memory pressure (5–7 GB of swap); this session did not induce swap deliberately.
 - Environment, not product: a Finder window on the T7 makes `LiveSandbox.dispose`'s `lsof +D` see Finder (pid 44738)
@@ -60,8 +60,8 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
 
 ## Physical QA still required
 
-R1: Ghostty and Terminal.app, zsh, Bash and Fish (see the design's R1 section). Nothing in v0.22 has had a physical
-pass.
+Checklist: [v0.22 physical QA](../testing/v022-physical-qa.md). Pass 1 for R1 (#433), pass 2 for U1 (#434). Nothing in
+v0.22 has had a physical pass.
 
 ## Open risks
 
