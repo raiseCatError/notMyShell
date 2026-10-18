@@ -1643,6 +1643,7 @@ export class TerminalApp {
       const action = viewerKey(viewer, key, columns, rows - 4, this.viewerLook());
       if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
+      else if (action?.kind === 'open') void this.openFromViewer(viewer, action);
       else if (action?.kind === 'copy') {
         void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
@@ -8560,6 +8561,25 @@ export class TerminalApp {
     }
     const failure = await runHostAction(action);
     report(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`, failure ? ERROR : INFO);
+  }
+
+  /**
+   * `o` in /view: the file shown goes to the person's editor through the /open bridge. A GUI editor opens beside NMSh
+   * and the viewer stays; a terminal editor's command goes in the composer for the person to run, so the viewer
+   * closes, and a draft already there is never replaced.
+   */
+  private async openFromViewer(viewer: ViewerState, target: {path: string; line?: number}): Promise<void> {
+    const action = this.hostActions().openFile({path: target.path, ...(target.line ? {line: target.line} : {})});
+    const say = (note: string) => { if (this.viewer === viewer) { viewer.note = note; this.render(); } };
+    if (action.kind === 'unsupported') return say(action.reason);
+    if (action.kind === 'compose') {
+      if (this.editor.text.trim()) return say(`The composer has a draft. Clear it, then press o to put the ${action.label} command there.`);
+      this.viewer = undefined;
+      this.returnFromPanel();
+      return this.performHostAction(action, (message, style) => { this.output.addFrontendInteraction('/view', message, style); this.render(); });
+    }
+    const failure = await runHostAction(action);
+    say(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`);
   }
 
   /** Changes whenever presented rows may have changed; matches are recomputed only then. */
