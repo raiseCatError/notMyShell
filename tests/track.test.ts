@@ -5,7 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {parseWatch, watchSafety, WatchTasks, MIN_LOCAL_MS} from '../src/tasks/WatchTasks.js';
-import {renderWatchPanel, watchPanelKey, watchRow} from '../src/tasks/WatchPanel.js';
+import {renderWatchPanel, watchNoticeRows, watchPanelKey, watchRow} from '../src/tasks/WatchPanel.js';
+import {setIconStyle} from '../src/ui/glyphs.js';
 import {stripAnsi} from '../src/util/text.js';
 
 function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
@@ -257,6 +258,14 @@ test('track status says only what is known: pending, live, failed, timed out, pa
   assert.match(plain(task({current: run('ok'), runs: 1}), 2_000, true), /refreshing…/u);
   assert.match(plain(task({current: run('ok', {truncated: true}), runs: 1})), /output cut at 200 kB/u);
   assert.match(plain(task({current: run('ok'), status: 'stopped', runs: 4})), /^■ stopped/u);
+  setIconStyle('safe');
+  try {
+    assert.match(plain(task()), /^o first run pending/u, 'Safe glyphs: ASCII marks');
+    assert.match(plain(task({current: run('ok'), runs: 1})), /^\* live/u);
+    assert.match(plain(task({current: run('ok'), status: 'paused', runs: 1})), /^= paused/u);
+    assert.match(plain(task({current: run('ok'), status: 'stopped', runs: 4})), /^# stopped/u);
+    assert.match(stripAnsi(watchRow(task({current: run('ok'), status: 'paused', runs: 1}), 2_000)), /^= Track/u);
+  } finally { setIconStyle('nerd'); }
 });
 
 test('the live result keeps a stable height: shorter results pad, longer ones say how much is not shown; text is inert', () => {
@@ -294,4 +303,15 @@ test('the block: stored lines once, live rows replaced in place under them, neve
   assert.equal(logicalLines(after).some(line => line.text.includes('second')), false, 'find never matches the live result');
   buffer.clearPresentation();
   assert.equal(buffer.wrapped(80).some(row => row.derived), false);
+});
+
+test('above the composer: one row per tracker for up to two, then one summary row', () => {
+  const one = task({current: run('ok'), runs: 1});
+  const failing = task({id: 'w2', current: run('no', {exitCode: 2}), runs: 1});
+  const paused = task({id: 'w3', current: run('ok'), status: 'paused', runs: 1});
+  assert.equal(watchNoticeRows([one, failing], 2_000).length, 2);
+  const summary = watchNoticeRows([one, failing, paused, task({id: 'w4'})], 2_000);
+  assert.equal(summary.length, 1);
+  assert.equal(stripAnsi(summary[0]!), '◉ 4 trackers · 1 failing · 1 paused · /track opens the manager');
+  assert.deepEqual(watchNoticeRows([], 2_000), []);
 });

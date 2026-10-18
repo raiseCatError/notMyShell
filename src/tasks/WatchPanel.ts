@@ -3,6 +3,7 @@ import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
+import {trackMark} from './trackBlock.js';
 import type {WatchTask} from './WatchTasks.js';
 
 /** /track and /watch share one live snapshot view: no duplicated transcript output. */
@@ -50,10 +51,19 @@ export function watchRow(watch: WatchTask, now: number): string {
   const secondary = foreground(UI_COLORS.secondary);
   const reset = '\u001b[0m';
   const state = watch.current ? (watch.current.exitCode === 0 && !watch.current.timedOut && !watch.current.error ? foreground(UI_COLORS.success) : foreground(UI_COLORS.failure)) : subtle;
-  const mark = watch.status === 'paused' ? '‖' : '◉';
+  const mark = trackMark(watch.status === 'paused' ? 'paused' : 'live');
   const last = watch.current ? ` · updated ${ago(Math.max(0, now - watch.current.at - watch.current.durationMs))} ago · ${runStatus(watch.current)}` : ' · first run pending';
   return `${state}${mark}${reset} ${secondary}Track · ${watch.command.slice(0, 40)}${reset}${subtle} · every ${formatEvery(watch.intervalMs)}${watch.summary ? ` · ${watch.summary}` : ''}`
     + `${watch.changes.length ? ' · changed' : ''} · runs ${watch.runs}${watch.status === 'paused' ? ' · paused' : last}${reset}`;
+}
+
+/** The rows above the composer for active watches: one each for up to two, else one summary (each /track block and the manager show the rest). */
+export function watchNoticeRows(watches: readonly WatchTask[], now: number): string[] {
+  if (watches.length <= 2) return watches.map(watch => watchRow(watch, now));
+  const failing = watches.filter(watch => watch.current && (watch.current.exitCode !== 0 || watch.current.timedOut || watch.current.error)).length;
+  const paused = watches.filter(watch => watch.status === 'paused').length;
+  const parts = [`${watches.length} trackers`, ...(failing ? [`${failing} failing`] : []), ...(paused ? [`${paused} paused`] : []), '/track opens the manager'];
+  return [`${foreground(failing ? UI_COLORS.failure : UI_COLORS.success)}${trackMark('live')}\u001b[0m ${foreground(UI_COLORS.secondary)}${parts.join(' · ')}\u001b[0m`];
 }
 
 export function renderWatchPanel(state: WatchPanelState, watches: readonly WatchTask[], columns: number, now: number, rowsAvailable: number): string[] {
@@ -69,7 +79,7 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
         `${secondary}  Confirmation is disabled at this size. Esc cancels.${reset}`].map(row => truncateAnsi(row, columns));
     }
     const yes = state.confirm.choice === 'yes';
-    rows.push('', `  ${primary}Watch ${state.confirm.command}?${reset}`, `  ${secondary}${state.confirm.reason}${reset}`,
+    rows.push('', `  ${primary}${state.confirm.track ? 'Track' : 'Watch'} ${state.confirm.command}?${reset}`, `  ${secondary}${state.confirm.reason}${reset}`,
       `  ${subtle}It runs in ${state.confirm.cwd}, every ${formatEvery(state.confirm.intervalMs ?? 5000)}, until you stop it.${reset}`, '',
       `  ${!yes ? `${accent}${GLYPHS.selection} No${reset}` : `${subtle}  No${reset}`}    ${yes ? `${accent}${GLYPHS.selection} Yes${reset}` : `${subtle}  Yes${reset}`}`, '',
       renderControls([['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']]));

@@ -269,7 +269,7 @@ import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
 import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
-import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
+import {renderWatchPanel, watchNoticeRows, watchPanelKey, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
 import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
@@ -8100,7 +8100,7 @@ export class TerminalApp {
     const now = Date.now();
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
-    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns)];
     const background = this.backgroundRows(columns);
     return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
