@@ -205,6 +205,9 @@ export class WatchTasks {
       return true;
     }
     this.children.set(id, child);
+    // Notify the presenter when a refresh begins, not only when it completes:
+    // a slow sample must be shown as refreshing while its previous result stays visible.
+    this.emit(watch);
     const take = (decoder: StringDecoder, chunk: Buffer) => {
       const kept = Math.min(chunk.length, Math.max(0, MAX_OUTPUT - receivedBytes));
       if (kept) { receivedBytes += kept; output += decoder.write(chunk.subarray(0, kept)); }

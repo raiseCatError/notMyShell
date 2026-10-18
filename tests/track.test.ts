@@ -103,6 +103,27 @@ test('/track reuses one current and previous snapshot, does not overlap manual r
   }
 });
 
+test('/track emits a live refresh-start event before the sample completes', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-refresh-'));
+  const engine = new WatchTasks('/bin/sh');
+  try {
+    const task = engine.start('sleep 0.2; printf "ready\\n"', cwd, 5000,
+      {kind: 'allowed', network: false, remote: false});
+    await waitFor(() => task.runs === 1);
+    let notifiedWhileSampling = false;
+    const unsubscribe = engine.onChange(changed => {
+      if (changed.id === task.id && engine.sampling(task.id)) notifiedWhileSampling = true;
+    });
+    assert.equal(engine.runNow(task.id), true);
+    assert.equal(notifiedWhileSampling, true, 'presenter is notified during refresh');
+    await waitFor(() => task.runs === 2);
+    unsubscribe();
+  } finally {
+    engine.dispose();
+    rmSync(cwd, {recursive: true, force: true});
+  }
+});
+
 test('/track strips terminal control sequences from the displayed snapshot', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-controls-'));
   const engine = new WatchTasks('/bin/sh');
