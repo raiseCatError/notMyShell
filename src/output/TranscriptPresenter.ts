@@ -144,7 +144,7 @@ export class TranscriptPresenter {
   }
 
   rows(view: TranscriptView, width: number): WrappedRow[] {
-    const {lines, completed, active, visualGaps, historicalContexts, welcome, firstRun, ownerOf} = view;
+    const {lines, completed, active, visualGaps, historicalContexts, welcome, firstRun, ownerOf, liveRows} = view;
     const column = this.layout === 'chat' ? chatColumn(width) : undefined;
     // A chat command block is right-aligned as a whole: its widest wrapped row sets the left edge.
     const blockWidths = new Map<number, number>();
@@ -288,7 +288,7 @@ export class TranscriptPresenter {
         result.push(row);
       }
       // A /track block's live result, under its stored line (derived: never stored, searched, selected or copied).
-      for (const ansi of view.liveRows?.(i, width) ?? []) result.push({ansi: truncateAnsi(ansi, width), plain: stripAnsi(truncateAnsi(ansi, width)), lineIndex: i, derived: true});
+      if (liveRows) for (const ansi of liveRows(i, width) ?? []) result.push({ansi: truncateAnsi(ansi, width), plain: stripAnsi(truncateAnsi(ansi, width)), lineIndex: i, derived: true});
     }
     if (active) {
       for (const activity of active.activities) {
