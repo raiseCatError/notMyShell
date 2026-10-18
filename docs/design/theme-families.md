@@ -27,6 +27,11 @@ are derived, so older configurations load unchanged:
 | Nord | Nord | |
 | Solarized | Dark, Light | |
 | One Dark | One Dark, One Light | |
+| Ayu | Dark, Mirage, Light | v0.21; Mirage is the family default |
+| Kanagawa | Wave, Dragon, Lotus | v0.21 |
+| Everforest | Dark, Light | v0.21; medium contrast (soft/hard change only the editor background) |
+| Flexoki | Dark, Light | v0.21 |
+| Night Owl | Night Owl, Light Owl | v0.21 |
 | Custom | the user's theme (`customTheme`) | NMSh Theme JSON |
 
 Settings shows `Theme family`, then nested `Variant` (hidden for one-variant
@@ -54,6 +59,30 @@ NMSh never fetches palettes at runtime.
 | Nord | github.com/nordtheme/nord `src/nord.css` | MIT | Copyright (c) 2016-present Sven Greb |
 | Solarized | github.com/altercation/solarized (README) | MIT | Copyright (c) 2011 Ethan Schoonover |
 | One Dark / One Light | github.com/atom/one-dark-syntax, one-light-syntax `styles/colors.less` (HSL converted to hex) | MIT | Copyright (c) 2016 GitHub Inc. |
+| Ayu | github.com/ayu-theme/ayu-colors `themes/dark.yaml`, `mirage.yaml`, `light.yaml` (d461f029) | MIT | Copyright (c) 2016 Ike Ku |
+| Kanagawa | github.com/rebelot/kanagawa.nvim `lua/kanagawa/colors.lua`, `themes.lua` (bb85e4bf) | MIT | Copyright (c) 2021 Tommaso Laurenzi |
+| Everforest | github.com/sainnhe/everforest `palette.md` (85a86eb6) | MIT | Copyright (c) 2019 Sainnhe Park |
+| Flexoki | github.com/kepano/flexoki `README.md` palette tables (8d723bac) | MIT | Copyright (c) 2023 Steph Ango |
+| Night Owl | github.com/sdras/night-owl-vscode-theme `themes/Night Owl-color-theme.json`, `Night Owl-Light-color-theme.json` (cc291eba) | MIT | Copyright (c) 2018 Sarah Drasner |
+
+v0.21 mapping notes. Values are used exactly as each source writes them; the mapping to NMSh roles follows the
+theme's own semantics where it has them:
+
+- **Ayu**: the YAML's base palette colors (not the generated syntax tones), `editor.fg`, `ui.fg`, `ui.panel.bg`,
+  `common.accent.tint` and `common.error`. Ayu defines one text color, so primary and secondary are the same.
+- **Kanagawa**: each theme's roles from `themes.lua`: project = `fun`, path = `bg_p2`, branch = `keyword`,
+  Node = `string`, Go = `type`, Python = `identifier`, separator = `nontext`, subtle = `comment`, selection =
+  `bg_visual`, status = `ok`/`error`.
+- **Everforest**: backgrounds by their position in `palette.md` (bg_dim, bg0…bg5), the seven accents and three greys.
+- **Flexoki**: dark uses the 400 accents and base tiers (tx base-200, tx-2 base-500, tx-3 base-700, ui-2 base-850,
+  ui-3 base-800); light uses the 600 accents, as Flexoki documents its standard palette.
+- **Night Owl**: editor, selection, line-number and terminal ANSI colors, and the comment token color.
+
+Considered for v0.21 and not bundled: **Oxocarbon** (its grays are computed at runtime in HSLuv by the theme's own
+code; reproducing them would need running that code or re-implementing it, and the issue asks for no
+approximations), **GitHub Primer** (values come from a built `@primer/primitives` release, not the theme
+repository), **Material/Palenight** and **classic Monokai** (licensing and canonical source not verified), and
+Tier 2 families. The Built-in list in Theme Studio gains `/` to filter by name, family, or dark/light.
 
 Only color values are used; no code, assets or names beyond the theme names
 for identification. Random gallery or theme-site copies were not used.

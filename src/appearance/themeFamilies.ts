@@ -44,7 +44,8 @@ export interface ThemeVariant {
   accents?: Record<CatppuccinAccent, string>;
 }
 
-export type ThemeFamilyId = 'nmsh' | 'catppuccin' | 'dracula' | 'tokyonight' | 'gruvbox' | 'rosepine' | 'nord' | 'solarized' | 'onedark' | 'custom';
+export type ThemeFamilyId = 'nmsh' | 'catppuccin' | 'dracula' | 'tokyonight' | 'gruvbox' | 'rosepine' | 'nord' | 'solarized' | 'onedark'
+  | 'ayu' | 'kanagawa' | 'everforest' | 'flexoki' | 'nightowl' | 'custom';
 
 export interface ThemeFamily {
   id: ThemeFamilyId;
@@ -65,6 +66,11 @@ export const THEME_FAMILIES: readonly ThemeFamily[] = [
   {id: 'nord', label: 'Nord', variantLabel: 'Variant', source: 'https://github.com/nordtheme/nord', license: 'MIT'},
   {id: 'solarized', label: 'Solarized', variantLabel: 'Variant', source: 'https://github.com/altercation/solarized', license: 'MIT'},
   {id: 'onedark', label: 'One Dark', variantLabel: 'Variant', source: 'https://github.com/atom/one-dark-syntax', license: 'MIT'},
+  {id: 'ayu', label: 'Ayu', variantLabel: 'Version', source: 'https://github.com/ayu-theme/ayu-colors', license: 'MIT'},
+  {id: 'kanagawa', label: 'Kanagawa', variantLabel: 'Theme', source: 'https://github.com/rebelot/kanagawa.nvim', license: 'MIT'},
+  {id: 'everforest', label: 'Everforest', variantLabel: 'Variant', source: 'https://github.com/sainnhe/everforest', license: 'MIT'},
+  {id: 'flexoki', label: 'Flexoki', variantLabel: 'Variant', source: 'https://github.com/kepano/flexoki', license: 'MIT'},
+  {id: 'nightowl', label: 'Night Owl', variantLabel: 'Variant', source: 'https://github.com/sdras/night-owl-vscode-theme', license: 'MIT'},
   {id: 'custom', label: 'Custom', variantLabel: 'Theme'},
 ];
 
@@ -172,6 +178,64 @@ export const THEME_VARIANTS: readonly ThemeVariant[] = [
     roles: {project: '#4078f2', cwd: '#d4d4d6', gitBranch: '#a626a4', node: '#50a14f', go: '#0184bc', python: '#c18401', docker: '#986801',
       kubernetes: '#a0a1a7', success: '#50a14f', failure: '#e45649'},
     ui: {accent: '#4078f2', separator: '#a0a1a7', success: '#50a14f', failure: '#e45649'}},
+  // ayu-theme/ayu-colors themes/{dark,mirage,light}.yaml (d461f029): the palette's base colors, editor and UI
+  // foregrounds, panel background and accent tint as written; syntax tones derived from them are not used.
+  {id: 'ayuDark', family: 'ayu', variant: 'Dark', label: 'Ayu Dark', description: 'Ayu Dark, warm accents on near black', dark: true,
+    roles: {project: '#e6b450', cwd: '#5a6673', gitBranch: '#d2a6ff', node: '#aad94c', go: '#95e6cb', python: '#e6c08a', docker: '#59c2ff',
+      kubernetes: '#39bae6', success: '#aad94c', failure: '#f07178'},
+    ui: {accent: '#e6b450', separator: '#5a6378', success: '#aad94c', failure: '#d95757', primary: '#bfbdb6', secondary: '#bfbdb6', subtle: '#5a6378', selection: '#141821'}},
+  {id: 'ayuMirage', family: 'ayu', variant: 'Mirage', label: 'Ayu Mirage', description: 'Ayu Mirage, softer on blue-gray', dark: true,
+    roles: {project: '#ffcc66', cwd: '#6e7c8f', gitBranch: '#dfbfff', node: '#d5ff80', go: '#95e6cb', python: '#d9be98', docker: '#73d0ff',
+      kubernetes: '#5ccfe6', success: '#d5ff80', failure: '#f28779'},
+    ui: {accent: '#ffcc66', separator: '#707a8c', success: '#d5ff80', failure: '#ff6666', primary: '#cccac2', secondary: '#cccac2', subtle: '#707a8c', selection: '#282e3b'}},
+  {id: 'ayuLight', family: 'ayu', variant: 'Light', label: 'Ayu Light', description: 'Ayu Light, bright and clear', dark: false,
+    roles: {project: '#f29718', cwd: '#adaeb1', gitBranch: '#a37acc', node: '#86b300', go: '#4cbf99', python: '#eba400', docker: '#22a4e6',
+      kubernetes: '#55b4d4', success: '#86b300', failure: '#f07171'},
+    ui: {accent: '#f29718', separator: '#828e9f', success: '#86b300', failure: '#e65050'}},
+  // rebelot/kanagawa.nvim lua/kanagawa/colors.lua and themes.lua (bb85e4bf): each theme's own role colors
+  // (fun, keyword, string, type, identifier, bg_p2, nontext, comment, bg_visual, ok, error).
+  {id: 'kanagawaWave', family: 'kanagawa', variant: 'Wave', label: 'Kanagawa Wave', description: 'Kanagawa Wave, ink and wave blue', dark: true,
+    roles: {project: '#7e9cd8', cwd: '#363646', gitBranch: '#957fb8', node: '#98bb6c', go: '#7aa89f', python: '#e6c384', docker: '#7fb4ca',
+      kubernetes: '#d27e99', success: '#98bb6c', failure: '#e82424'},
+    ui: {accent: '#7e9cd8', separator: '#54546d', success: '#98bb6c', failure: '#e82424', primary: '#dcd7ba', secondary: '#c8c093', subtle: '#727169', selection: '#223249'}},
+  {id: 'kanagawaDragon', family: 'kanagawa', variant: 'Dragon', label: 'Kanagawa Dragon', description: 'Kanagawa Dragon, dark and muted', dark: true,
+    roles: {project: '#8ba4b0', cwd: '#393836', gitBranch: '#8992a7', node: '#8a9a7b', go: '#8ea4a2', python: '#c4b28a', docker: '#658594',
+      kubernetes: '#a292a3', success: '#98bb6c', failure: '#e82424'},
+    ui: {accent: '#8ba4b0', separator: '#625e5a', success: '#98bb6c', failure: '#e82424', primary: '#c5c9c5', secondary: '#c8c093', subtle: '#737c73', selection: '#223249'}},
+  {id: 'kanagawaLotus', family: 'kanagawa', variant: 'Lotus', label: 'Kanagawa Lotus', description: 'Kanagawa Lotus, the light theme', dark: false,
+    roles: {project: '#4d699b', cwd: '#e4d794', gitBranch: '#624c83', node: '#6f894e', go: '#597b75', python: '#77713f', docker: '#6693bf',
+      kubernetes: '#b35b79', success: '#6f894e', failure: '#e82424'},
+    ui: {accent: '#4d699b', separator: '#a09cac', success: '#6f894e', failure: '#e82424'}},
+  // sainnhe/everforest palette.md (85a86eb6), medium contrast: backgrounds by position (bg0…bg5), accents, greys.
+  // Soft and hard change only the editor background, which NMSh does not paint.
+  {id: 'everforestDark', family: 'everforest', variant: 'Dark', label: 'Everforest Dark', description: 'Everforest Dark, green-based and calm', dark: true,
+    roles: {project: '#a7c080', cwd: '#475258', gitBranch: '#d699b6', node: '#83c092', go: '#7fbbb3', python: '#dbbc7f', docker: '#7fbbb3',
+      kubernetes: '#e69875', success: '#a7c080', failure: '#e67e80'},
+    ui: {accent: '#a7c080', separator: '#7a8478', success: '#a7c080', failure: '#e67e80', primary: '#d3c6aa', secondary: '#9da9a0', subtle: '#7a8478', selection: '#3d484d'}},
+  {id: 'everforestLight', family: 'everforest', variant: 'Light', label: 'Everforest Light', description: 'Everforest Light, warm paper', dark: false,
+    roles: {project: '#8da101', cwd: '#bdc3af', gitBranch: '#df69ba', node: '#35a77c', go: '#3a94c5', python: '#dfa000', docker: '#3a94c5',
+      kubernetes: '#f57d26', success: '#8da101', failure: '#f85552'},
+    ui: {accent: '#8da101', separator: '#a6b0a0', success: '#8da101', failure: '#f85552'}},
+  // kepano/flexoki README (8d723bac): dark uses the 400 accents and base tiers (tx base-200, tx-2 base-500,
+  // tx-3 base-700, ui-2 base-850, ui-3 base-800); light uses the 600 accents (ui-3 base-200, tx-3 base-300).
+  {id: 'flexokiDark', family: 'flexoki', variant: 'Dark', label: 'Flexoki Dark', description: 'Flexoki Dark, inky and warm', dark: true,
+    roles: {project: '#4385be', cwd: '#403e3c', gitBranch: '#8b7ec8', node: '#879a39', go: '#3aa99f', python: '#d0a215', docker: '#da702c',
+      kubernetes: '#ce5d97', success: '#879a39', failure: '#d14d41'},
+    ui: {accent: '#4385be', separator: '#575653', success: '#879a39', failure: '#d14d41', primary: '#cecdc3', secondary: '#878580', subtle: '#575653', selection: '#343331'}},
+  {id: 'flexokiLight', family: 'flexoki', variant: 'Light', label: 'Flexoki Light', description: 'Flexoki Light, paper and ink', dark: false,
+    roles: {project: '#205ea6', cwd: '#cecdc3', gitBranch: '#5e409d', node: '#66800b', go: '#24837b', python: '#ad8301', docker: '#bc5215',
+      kubernetes: '#a02f6f', success: '#66800b', failure: '#af3029'},
+    ui: {accent: '#205ea6', separator: '#b7b5ac', success: '#66800b', failure: '#af3029'}},
+  // sdras/night-owl-vscode-theme themes/Night Owl-color-theme.json and Night Owl-Light-color-theme.json (cc291eba):
+  // editor, selection, line-number and terminal ANSI colors, and the comment token color.
+  {id: 'nightOwl', family: 'nightowl', variant: 'Night Owl', label: 'Night Owl', description: 'Night Owl, for night owls', dark: true,
+    roles: {project: '#82aaff', cwd: '#1d3b53', gitBranch: '#c792ea', node: '#22da6e', go: '#7fdbca', python: '#ffeb95', docker: '#21c7a8',
+      kubernetes: '#f78c6c', success: '#22da6e', failure: '#ef5350'},
+    ui: {accent: '#82aaff', separator: '#4b6479', success: '#22da6e', failure: '#ef5350', primary: '#d6deeb', secondary: '#d6deeb', subtle: '#637777', selection: '#1d3b53'}},
+  {id: 'nightOwlLight', family: 'nightowl', variant: 'Light Owl', label: 'Light Owl', description: 'Night Owl\'s light theme', dark: false,
+    roles: {project: '#288ed7', cwd: '#e0e0e0', gitBranch: '#d6438a', node: '#08916a', go: '#2aa298', python: '#e0af02', docker: '#288ed7',
+      kubernetes: '#d6438a', success: '#08916a', failure: '#de3d3b'},
+    ui: {accent: '#288ed7', separator: '#90a7b2', success: '#08916a', failure: '#e64d49'}},
 ];
 
 export function themeVariant(id: string): ThemeVariant | undefined {

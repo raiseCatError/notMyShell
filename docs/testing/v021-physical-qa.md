@@ -24,6 +24,8 @@
 | 5 `/track` | Ghostty | macOS | zsh | | Not run | |
 | 5 `/track` | Terminal.app | macOS | Fish | | Not run | |
 | 6 Modules | Ghostty | macOS | zsh | | Not run | |
+| 7 Themes | Ghostty | macOS | zsh | | Not run | |
+| 7 Themes | Terminal.app | macOS | zsh | | Not run | |
 
 ## 1. Multi-row progress redraws (#388)
 
@@ -114,3 +116,15 @@
 - [ ] 6.3 In a Docker or Podman container (or a Codespace), the container module names it; on the host it shows nothing.
 - [ ] 6.4 `/modules explain` lists every configured module with its surface and reason; `/modules timings` lists the
   slowest collections; neither changes what is collected (the Status Strip CPU stays as it was).
+
+## 7. Theme families
+
+- [ ] 7.1 `/theme`: the Built-in list shows Ayu, Kanagawa, Everforest, Flexoki and Night Owl; `/` then `kanagawa` leaves
+  three; `/` then `light` leaves the light variants; Esc clears the filter, Esc again closes.
+- [ ] 7.2 Activate each new variant on a dark terminal: prompt fills, branch, status, selection band and transcript
+  chrome are readable; module text stays readable on every fill.
+- [ ] 7.3 Activate the light variants (Ayu Light, Kanagawa Lotus, Everforest Light, Flexoki Light, Light Owl) on a light
+  and on a dark terminal: accents and rules change, NMSh's text tiers stay readable.
+- [ ] 7.4 `NO_COLOR=1` and a 256-color terminal (`TERM=xterm-256color`, no `COLORTERM`): nothing breaks.
+- [ ] 7.5 Switching themes never changes Ghostty's or Terminal.app's own colors or configuration files; a config saved
+  with an older theme id still loads that theme.
