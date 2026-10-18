@@ -36,9 +36,10 @@ starts `fish_update_completions` detached (Fish 4.x checks `$__fish_cache_dir/ge
 test home after the shell exits, racing `rmSync`. Production is unaffected: NMSh runs Fish with the person's own
 directories, where this one-time generation is Fish's normal behavior. The harness, however, did not isolate
 `XDG_DATA_HOME`/`XDG_CACHE_HOME`, so test shells also wrote into ambient caches (observed under `t7run`).
-Fix: every test home is hermetic for data, cache and state, and Fish's "already generated" directories exist in it
-(`tests/helpers/shellHome.ts`), applied by the canonical runner, `LiveSandbox` and the adapter fixtures. Test: a Fish
-started in a prepared home spawns no generator; the lifecycle tests remove their homes without retries.
+Fix: Fish's "already generated" directories exist in every test home (`scripts/test-shell-home.mjs`, used by the
+canonical runner, `LiveSandbox` and the fixtures that start Fish with their own home), and the runner no longer passes
+ambient `XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` to tests, so local runs fall back to the private home as CI
+does. Test: a Fish started in a prepared home spawns no generator (and the same test fails without the marker).
 
 **#408 queued highlight.** Cause confirmed in production code, not only the test: every prompt marker's shell
 knowledge clears `SemanticService`'s cache and resolves in-flight classifications as `unknown`, so a stored command
