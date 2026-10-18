@@ -36,15 +36,15 @@ run unexpectedly. On that foundation it adds a small number of workflow improvem
 
 | Slice | Issue | Summary | State |
 | --- | --- | --- | --- |
-| U1 | #366 | `/view` → open the file at the line on screen in the person's editor through the existing `/open` bridge; refusal messages offer the same | Planned |
+| U1 | #366 | `/view` → open the file at the line on screen in the person's editor through the existing `/open` bridge; refusal messages offer the same | Draft PR #434 |
 
-### Optional, pending a maintainer decision
+### Optional, decided by the maintainer (2026-10-18)
 
-| Item | Issue | Decision needed |
+| Item | Issue | Decision and state |
 | --- | --- | --- |
-| D1 | #389 | A recalled history entry browses as one entry (Up/Down step entries until it is edited). Reproduced on `dev`; changes a behavior the maintainer triaged as acceptable and a test codifies. The position indicator is a separate, later step |
-| D2 | #432 | Natural-language command suggestions from the composer ([design](v022-natural-language-commands.md)). Needs a product decision on remote model APIs, which the ROADMAP's design principles currently exclude from the core experience |
-| D3 | #366 | Choose a terminal editor for "Open with" when `$VISUAL`/`$EDITOR` is unset (detected installed editors). Settings surface change; after U1 |
+| D1 | #389 | A recalled history entry browses as one entry (Up/Down step entries until it is edited). Reproduced on `dev`; changes a behavior the maintainer triaged as acceptable and a test codifies. **Approved.** Draft PR #438; the `History n/N` indicator is a separate slice on an existing composer edge, draft PR #441 (based on #438) |
+| D2 | #432 | Natural-language command suggestions from the composer ([design](v022-natural-language-commands.md)). **Approved as optional:** Off by default, local model first (draft PR #440); remote bring-your-own-key providers later, in a separate PR after a security review |
+| D3 | #366 | Choose a terminal editor for "Open with" when `$VISUAL`/`$EDITOR` is unset (detected installed editors). **Approved.** Draft PR #439 |
 
 ### Explicitly deferred (status unchanged)
 
@@ -108,7 +108,7 @@ registry, no new PTY ownership. Paths stay single argv elements. Viewing output 
 
 **Physical QA.** Ghostty and Terminal.app with `$EDITOR=nvim` and with Zed/VS Code integrated terminals.
 
-## D1 — #389 multiline history browsing (pending decision)
+## D1 — #389 multiline history browsing (approved; #438, #441)
 
 Reproduction on `dev` (`a8b383c2`): recall a two-line entry with Up, press Up again: the caret moves to the entry's
 first line; a third Up recalls the older entry (`tests/composerHistory.test.ts` "a recalled multiline command navigates
@@ -117,13 +117,17 @@ the composer shows an unchanged recalled entry, Up/Down step entries; any edit, 
 or selection ends browsing. Draft multiline editing is unchanged. Implementation would sit in `TerminalApp`'s Up/Down
 routing and `ComposerHistory`; `CommandEditor` stays as is. The `History n/N` indicator is a separate step.
 
-## D2 — natural-language command suggestions (pending decision)
+## D2 — natural-language command suggestions (approved as optional; #440)
 
 See [the design](v022-natural-language-commands.md). Summary: one optional, off-by-default `CommandSuggester` behind
 Ask, with a local provider (the person's own OpenAI-compatible local runtime) and an optional bring-your-own-key remote
 provider; a request is explicit (`/btw` or a `?? ` prefix), the suggestion is shown for review and inserted into the
 composer, and only the person's Enter runs it. Nothing about files, environment or transcripts is sent unless the
 person attaches it.
+
+As decided, the first slice (#440) is the local model only, reached through `/btw`/Ask (no `?? ` prefix and no
+composer mode yet), with Copy and Insert and no refinement turns. NMSh's own risk label comes first and the model's
+words are quoted and attributed.
 
 ## Release gates
 

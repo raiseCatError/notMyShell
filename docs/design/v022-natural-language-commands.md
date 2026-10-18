@@ -1,8 +1,9 @@
-# Natural-language command suggestions (proposal)
+# Natural-language command suggestions
 
-**Status: proposal, not approved, not implemented.** Part of the [v0.22 design](v022-daily-use.md) as decision D2; discussed in
-[#432](https://github.com/raiseCatError/notMyShell/issues/432).
-Nothing here ships without the maintainer's scope decision on the questions at the end.
+**Status: approved as optional (decision D2, 2026-10-18); first slice in draft PR #440.** Part of the
+[v0.22 design](v022-daily-use.md); discussed in [#432](https://github.com/raiseCatError/notMyShell/issues/432). The first
+slice is the local model only. Remote providers are a separate, later PR after a security and credential-handling
+review. The decisions are at the end.
 
 ## The need
 
@@ -111,7 +112,7 @@ started implicitly.
 No agent loop, tool use, file reading, multi-step plans or automatic execution; no conversation memory beyond one
 refinement; no new assistant surface; no replacement of the deterministic resolver; no change to how commands run.
 
-## Tests (if approved)
+## Tests
 
 Fake providers only (no network in tests): schema validation; adversarial outputs (escape sequences, control
 characters, multi-line, oversize, `rm -rf ~`, `curl … | sh`, a command hidden after a newline); NMSh's label overriding
@@ -119,18 +120,19 @@ any model wording; insert puts the exact text in the composer and runs nothing; 
 unreachable endpoint and model refusal each produce a clear message and the deterministic result; nothing secret in
 transcripts, journals or settings; narrow width, `NO_COLOR` and Safe glyphs.
 
-## Questions for the maintainer
+## Decisions (2026-10-18)
 
-1. **Remote providers at all?** The ROADMAP's design principles keep the core experience free of cloud inference. An
-   off-by-default, bring-your-own-key provider outside the core would be a new boundary. Yes, no, or local only?
-2. **Which provider first?** Recommendation: local (the existing model service) first, Anthropic second, generic
-   OpenAI-compatible third.
-3. **Entry point.** `/btw` only (exists today), or also an Ask mode toggled from the composer? Which key, after the
-   keymap conflict review (#335)?
-4. **Key storage.** Environment variable name only (recommended for a first slice), or also macOS Keychain / Secret
-   Service?
-5. **Dependency.** The official Anthropic SDK (one dependency, loaded only when that provider is chosen) for the
-   Anthropic provider, if it is approved.
+1. **Remote providers:** allowed as an optional, Off-by-default bring-your-own-key choice, in a separate PR after a
+   security review. Consumer subscriptions (ChatGPT, Claude) are never used as API credentials; no browser cookies or
+   session tokens.
+2. **Order:** the local model first (#440); Anthropic and OpenAI-compatible providers later.
+3. **Entry point:** explicit requests through `/btw` and Ask only. A composer Ask mode can follow after the keybinding
+   and input-ownership review.
+4. **Credentials:** an environment-variable name only, for the remote slice.
+5. **Dependency:** decided with the remote slice.
 
-A bounded first slice, once approved: the `suggestion` outcome, the local provider, insert/copy/refine, NMSh's
-classification and the validation rules. The remote providers follow as a second slice after the credential review.
+Behavior in every slice: display only; Insert is deliberate and only Enter runs; NMSh owns the risk label; nothing is
+sent silently (files, transcripts, environment, secrets, output); lightweight on an 8 GB Mac.
+
+**The first slice (#440):** the `suggested` outcome, the local provider through the shared model service, Copy and
+Insert, NMSh's label and the validation rules above. Not yet: refinement turns, a composer mode, remote providers.
