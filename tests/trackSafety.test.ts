@@ -12,11 +12,14 @@ test('a redirect into a file is a write even when /dev/null appears elsewhere (p
     assert.ok(splitCommands(command).some(part => classifyCommand(part.text, part.pipedFrom).includes('modifies')), `paste review: ${command}`);
     assert.equal(kind(command), 'refused', command);
   }
-  for (const command of ['ls >/dev/null', 'ls 2>/dev/null', 'npm test 2>&1', 'ls >&2', 'ls 2>&1 | tail -5', 'ls &>/dev/null', 'echo "a > b"', "echo 'x >y'", 'echo a\\>b', 'ls >&-']) {
+  for (const command of ['ls >/dev/null', 'ls 2>/dev/null', 'npm test 2>&1', 'ls >&2', 'ls 2>&1 | tail -5', 'echo "a > b"', "echo 'x >y'", 'echo a\\>b', 'ls >&-']) {
     assert.ok(!writesFiles(command), command);
     assert.notEqual(kind(command), 'refused', command);
   }
   assert.deepEqual(splitCommands('ls >| out').map(part => part.text), ['ls >| out'], '>| is a redirection, not a pipe');
+  // POSIX sh (dash) reads `cmd &>/dev/null` as a background job: never repeated, even to /dev/null.
+  assert.equal(watchSafety('ls &>/dev/null').kind, 'refused');
+  assert.equal(watchSafety('ls &>/dev/null').kind === 'refused' && watchSafety('ls &>/dev/null').reason, 'Background operators and heredocs cannot be tracked safely.');
 });
 
 test('/track asks before a command that runs another command or changes its environment', () => {

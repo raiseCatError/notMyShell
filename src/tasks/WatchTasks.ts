@@ -40,8 +40,9 @@ export function watchSafety(command: string): WatchSafety {
     return {kind: 'refused', reason: 'Shell and process substitutions cannot be tracked repeatedly.'};
   }
   // Detached shell jobs would outlive the observed sample and multiply on every tick; heredocs also need a different
-  // stdin/input-ownership contract. `&&`, descriptor duplication (`2>&1`) and `&>` are not background operators.
-  if (/(?:^|[^&<>])&(?![&>])|<</u.test(maskQuoted(command))) {
+  // stdin/input-ownership contract. `&&` and descriptor duplication (`2>&1`, `>&2`) are not background operators; `&>`
+  // is one for the POSIX sh that runs samples (dash reads `cmd &>file` as `cmd &` then `>file`), so it stays refused.
+  if (/(?:^|[^&<>])&(?!&)|<</u.test(maskQuoted(command))) {
     return {kind: 'refused', reason: 'Background operators and heredocs cannot be tracked safely.'};
   }
   if (writesFiles(command)) return {kind: 'refused', reason: 'NMSh won\'t repeatedly run a command whose output is redirected into a file.'};
