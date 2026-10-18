@@ -69,7 +69,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 ## Native modules and the Context Engine
 
-The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
+NMSh's shipped native module ecosystem uses trusted capabilities to resolve contextual facts and routes them to the Main Prompt, Context Rail or Right Context. For upcoming work, see the [open v0.21 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.21); candidate labels are planning signals, not release promises.
 
 v0.17.0 introduced fact metadata, native module routing and the Context Rail. v0.18.0 adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
