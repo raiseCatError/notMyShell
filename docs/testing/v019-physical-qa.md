@@ -2,7 +2,8 @@
 
 ## Status
 
-- **Not run. v0.19.0 is not published until this pass is recorded.** Every automated gate (canonical local
+- **v0.19.0 was never published on its own.** Its work first ships in v0.20.0, and the physical status of both is
+  recorded in [v020-physical-qa.md](v020-physical-qa.md); this checklist was not completed item by item. Every automated gate (canonical local
   verification, PR and `workflow_dispatch` CI with Fedora and both timing smokes, Node 22, report/compare/clipboard
   security, and the frozen per-feature Linux/Fish 3.7 evidence) is evidence, not acceptance.
 - **What does not count:** headless PTY fixtures, synthetic keys sent through tmux, and screenshots of a window driven

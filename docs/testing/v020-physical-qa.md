@@ -2,13 +2,25 @@
 
 ## Status
 
-- **Not run. v0.20.0 is a release candidate and is not published until this pass and v0.19's
-  ([v019-physical-qa.md](v019-physical-qa.md)) are recorded.** v0.20 is built on the unpublished v0.19 candidate, so
-  a v0.19 failure blocks both.
+- **v0.20.0 was published on 2026-10-18 with partial physical evidence, by maintainer decision.** It is the first
+  stable release since v0.18.0 and includes the unpublished v0.19 candidate, so this record covers both
+  ([v019-physical-qa.md](v019-physical-qa.md) keeps the v0.19 checklist). Items not run below are outstanding
+  follow-ups, not passes, and the release notes list them as known limitations.
+- **Reported acceptance (macOS):** the maintainer physically tested and accepted the first-run starting point
+  (Reactive Horizon), the guided Setup and the Tools discovery, selection and install flow on macOS on the final
+  onboarding line (`a469ba8e`, carried unchanged into the release commit). This is the maintainer's reported result,
+  not an item-by-item record of the checklists below, and it does not stand for any other host or platform.
+- **Stabilization evidence:** physical QA of the v0.19 and v0.20 candidates on macOS found the input-ownership,
+  exact-copy, queue, Setup, task-bar and composer-history issues fixed before release (draft PRs #395 and #396 and the
+  onboarding QA record, [post-v020-preferences-onboarding.md](post-v020-preferences-onboarding.md)). Their full
+  retests were not recorded item by item.
+- **Not performed:** any physical Linux terminal (including Omarchy/Hyprland and Linux Fish 3.7), WSL 2, iTerm2,
+  kitty, WezTerm or Windows Terminal; managed Claude against a live account (pass 4); the experimental workspace
+  regions (1E). Linux stays beta on automated CI (Ubuntu, Fedora).
 - **What does not count:** headless PTY fixtures, synthetic keys sent through tmux, and captures of a window driven
   that way. Each item needs a person at a real terminal with a real keyboard and pointer.
-- **Build under test:** the exact `release/v0.20.0` commit named in the release PR. Build it from a clean checkout
-  (`npm ci && npm run build`) and record `node dist/index.js --version`.
+- **Build under test:** the exact release commit (`v0.20.0`). Build it from a clean checkout (`npm ci && npm run build`)
+  and record `node dist/index.js --version`.
 - **Isolation:** a throwaway `HOME` (or `XDG_CONFIG_HOME`), a temporary working directory, and for managed Claude a
   disposable Claude account directory. Never point a probe at a real account; every secret below is fake.
 
@@ -16,14 +28,15 @@
 
 | Pass | Host and version | OS | Shell and version | Commit (`--version`) | Result | Notes |
 |---|---|---|---|---|---|---|
-| 1 Workspace regions Off (default) | Ghostty | macOS | zsh | | Not run | |
-| 1 Workspace regions Off (default) | Terminal.app | macOS | zsh | | Not run | |
+| Onboarding, guided Setup and Tools | as reported | macOS | as reported | `a469ba8e` line | Accepted (reported) | maintainer's physical acceptance; not itemized |
+| 1 Workspace regions Off (default) | Ghostty | macOS | zsh | | Not recorded | |
+| 1 Workspace regions Off (default) | Terminal.app | macOS | zsh | | Not recorded | |
 | 1E Experimental regions (optional, not a release gate) | Ghostty, Terminal.app, tmux | macOS | zsh | | Deferred | experimental, Off by default |
-| 2 Background tasks | Ghostty | macOS | zsh | | Not run | |
-| 2 Background tasks | physical Linux terminal | Linux | Fish 3.7 or Bash | | Not run | |
-| 3 Modules and worktrees | Ghostty | macOS | zsh | | Not run | |
-| 4 Managed Claude | Ghostty | macOS | zsh | | Not run | |
-| 5 Regression of v0.19 core | Terminal.app | macOS | Bash or Fish | | Not run | |
+| 2 Background tasks | Ghostty | macOS | zsh | | Not recorded | |
+| 2 Background tasks | physical Linux terminal | Linux | Fish 3.7 or Bash | | Not run | no physical Linux host |
+| 3 Modules and worktrees | Ghostty | macOS | zsh | | Not recorded | |
+| 4 Managed Claude | Ghostty | macOS | zsh | | Deferred | Claude plugin toggle off in this release |
+| 5 Regression of v0.19 core | Terminal.app | macOS | Bash or Fish | | Not recorded | stabilization fixes from earlier macOS passes |
 
 ## Pass 1 — workspace regions
 
@@ -98,5 +111,5 @@ regions docked belongs to 1E and is optional.
 
 ## After the pass
 
-Fill the Results table, attach captures of any failure with the exact keys typed, and record the outcome on the
-release PR. A failure blocks publication until it is fixed on the release branch and the affected items are rerun.
+Fill the Results table, attach captures of any failure with the exact keys typed, and open an issue for each failure
+against v0.20.0. Fixes ship in a patch release; rerun the affected items on that build.

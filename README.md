@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest published stable release: [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0180---2026-10-13) for its scope and known limitations; physical-terminal QA for this release is still pending. v0.19.0 (terminal workflow: input awareness, command queue, reviewed reports and comparisons) is a release candidate on `release/v0.19.0` and is not published until its physical-terminal QA passes. v0.20.0 (workspace sidebar and panel, background tasks, more native modules) is a release candidate built on it, on `release/v0.20.0`.
+Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
 
 ## See notMyShell in motion
 
@@ -53,7 +53,8 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 - **A composer that stays where you want it** — Bottom, Top or Flow (right after the newest output), one-line or two-line, with true multiline editing.
 - **Semantic highlighting** — commands, builtins, aliases and functions are classified against your real shell as you type; partial input is never executed.
-- **A transcript you can use** — command blocks with status and timing, folding for long output, `/find` and `/filter`, plain-text `/copy`.
+- **A transcript you can use** — command blocks with status and timing, folding for long output, `/find` and `/filter`, exact `/copy` with keyboard output selection and `/actions`.
+- **A terminal workflow** — NMSh shows when a command is waiting for you, queues the next commands as a readable timeline with saved summaries, turns output into reviewed reports and comparisons, and runs long-lived commands as background tasks beside the shell (`/background`).
 - **Live sessions** — closing a window detaches the shell instead of killing it; running commands keep going. `/resume` or `nmsh --attach` brings them back.
 - **Prompt providers** — NMSh Native (Powerline, Soft, Minimal, Outline styles), Starship, Oh My Posh, Powerlevel10k or None.
 - **Theme Studio and Theme Bridge** — built-in, imported and custom themes in `/theme`; opt-in `/theme-bridge` carries the active theme to fzf, less/man, file listings, bat, tmux, Vim, Neovim and Helix through files NMSh owns and you review.
@@ -116,7 +117,7 @@ brew install raiseCatError/tap/nmsh
 nmsh
 ```
 
-The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) maintains formula updates through its native autobump and test-bot workflows. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
+The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) updates its formula after each release through its own bump and test-bot workflows, so it can lag behind the newest release; `nmsh --version` shows what you have, and [building from source](#build-from-source) gets the current release from `master`. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
 
 To uninstall the Homebrew package:
 
