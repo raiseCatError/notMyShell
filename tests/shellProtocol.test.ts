@@ -10,6 +10,14 @@ test('only an authenticated reader marker transfers terminal ownership, includin
   assert.deepEqual(decoder.push('der\u0007Name: '), [{kind: 'reader'}, {kind: 'data', data: 'Name: '}]);
 });
 
+test('#436: only an authenticated done marker says the command finished before the prompt hooks run', () => {
+  const decoder = new ShellProtocolDecoder('token');
+  const foreign = '\u001b]777;nmsh;other;done\u0007';
+  assert.deepEqual(decoder.push(foreign), [{kind: 'data', data: foreign}], 'another token is ordinary output');
+  assert.deepEqual(decoder.push('out\u001b]777;nmsh;token;do'), [{kind: 'data', data: 'out'}]);
+  assert.deepEqual(decoder.push('ne\u0007\u001b]777;nmsh;token;0;/tmp\u0007'), [{kind: 'done'}, {kind: 'marker', marker: {exitCode: 0, cwd: '/tmp'}}]);
+});
+
 test('extracts split shell markers without leaking them into output', () => {
   const decoder = new ShellProtocolDecoder('token');
   assert.deepEqual(decoder.push('hello\u001B]777;nmsh;tok'), [{kind: 'data', data: 'hello'}]);

@@ -40,6 +40,39 @@ test('a shell reader owns input until the command returns, without claiming a wa
   watch.dispose();
 });
 
+test('#436: after the shell says the command is done, its prompt hooks are never read as the command waiting', async () => {
+  // A slow hook holds the terminal, idle, with line settings: exactly what a builtin read looks like.
+  let resolve!: (sample: TerminalSample) => void;
+  const changes: InputState[] = [];
+  const watch = new InputWatch({probe: () => new Promise<TerminalSample>(done => { resolve = done; }), tty: () => '/dev/ttys9'});
+  watch.on('change', state => changes.push(state));
+  watch.onExec('make', 0);
+  const looking = watch.lookNow();
+  for (let index = 0; index < 3; index++) await Promise.resolve();
+  watch.onDone(50);
+  resolve({modes: {canonical: true, echo: false, signals: true}, foreground: [{pid: 1, state: 'Ss+', cpuMs: 1, command: 'zsh'}]});
+  await looking;
+  assert.equal(watch.state.request, undefined, 'a sample under way when the command finished is dropped');
+  assert.ok(changes.every(state => !state.request), 'never reported, not even for a moment');
+  await watch.lookNow();
+  assert.equal(watch.state.request, undefined, 'and nothing is sampled until the prompt');
+  // An open wait is closed by done: its time is counted to that moment.
+  const asked = new InputWatch({probe: async () => ({modes: {canonical: true, echo: false, signals: true}, foreground: [{pid: 1, state: 'S+', cpuMs: 1, command: 'sudo'}]}), tty: () => '/dev/ttys9', now: () => 100});
+  asked.onExec('sudo -k true', 0);
+  await asked.lookNow();
+  assert.equal(asked.state.request?.mode, 'hidden');
+  asked.onDone(400);
+  assert.equal(asked.state.request, undefined);
+  assert.equal(asked.state.timing.waitedMs, 400, 'the wait counts to the moment the command finished');
+  // The next command is watched again.
+  asked.onPrompt(500);
+  asked.onExec('read -s x', 600);
+  await asked.lookNow();
+  assert.equal(asked.state.request?.mode, 'hidden');
+  watch.dispose();
+  asked.dispose();
+});
+
 test('open line: a prompt left without a newline is open; a finished line, a rewrite or cursor drawing is not', () => {
   const line = new OpenLine();
   line.push('Pass 1: Checking inodes\r\nPadding at end of inode bitmap is not set. Fix<y>? ');

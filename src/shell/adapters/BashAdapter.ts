@@ -106,6 +106,8 @@ __nmsh_history_last=
 ${context.bridgeEnvPath ? bridgeBootstrap('bash', context.bridgeEnvPath) : ''}
 __nmsh_precmd() {
   local nmsh_status=$? nmsh_command
+  # The command is done (#436): the prompt hooks below may hold the terminal; nothing they do is its input.
+  ${marker('done')}
   for nmsh_command in "\${__nmsh_user_prompt_command[@]}"; do
     [[ -n $nmsh_command ]] || continue
     __nmsh_set_status "$nmsh_status"

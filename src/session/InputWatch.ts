@@ -69,6 +69,8 @@ const defaultTimer = (callback: () => void, ms: number) => {
 export class InputWatch extends EventEmitter<InputWatchEvents> {
   private running?: {command: string; since: number};
   private reader = false;
+  /** The shell said the command is done and runs its prompt hooks: nothing until its prompt is the command's input. */
+  private done = false;
   private readonly line = new OpenLine();
   private readonly screen = new AlternateScreenTracker();
   private request?: InputRequest;
@@ -126,8 +128,22 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.emit('change', this.state);
   }
 
+  /**
+   * The shell's first prompt hook ran: the command has finished (#436). A slow hook holds the terminal, idle, exactly
+   * as a builtin read does, so from here to the prompt nothing is sampled and a sample already under way is dropped.
+   */
+  onDone(at = this.now()): void {
+    if (!this.running || this.done) return;
+    this.done = true;
+    this.cancelTimer?.();
+    this.cancelTimer = undefined;
+    this.generation += 1;
+    if (this.request) this.closeWait(at, true);
+  }
+
   onExec(command: string, at = this.now()): void {
     this.reader = false;
+    this.done = false;
     this.closeWait(at, false);
     this.running = {command, since: at};
     this.waitedMs = 0;
@@ -165,6 +181,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
 
   /** The command finished (the shell is back at its prompt): close any wait; the final timing stays readable. */
   onPrompt(at = this.now()): void {
+    this.done = false;
     if (!this.running) return;
     this.closeWait(at, false);
     this.running = undefined;
@@ -182,7 +199,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   async lookNow(): Promise<void> {
     for (let sample = 0; sample < 2; sample += 1) {
       while (this.probing) await this.probing;
-      if (this.disposed || !this.running || !this.options.probe) return;
+      if (this.disposed || !this.running || this.done || !this.options.probe) return;
       this.followUp = false;
       await this.look(true);
       if (!this.followUp || this.request) return;
@@ -221,7 +238,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   private schedule(): void {
     this.cancelTimer?.();
     this.cancelTimer = undefined;
-    if (this.disposed || !this.running || !this.options.probe) return;
+    if (this.disposed || !this.running || this.done || !this.options.probe) return;
     const quiet = this.now() - this.lastActivity;
     const planned = this.looks === 0 ? (this.line.open ? FIRST_LOOK_OPEN_MS : FIRST_LOOK_MS)
       : LOOKS_MS[this.looks - 1] ?? (quiet > SLOW_LOOK_AFTER_MS ? SLOW_LOOK_MS : STEADY_LOOK_MS);
@@ -231,7 +248,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
 
   /** One sample; onDemand looks (lookNow) leave the schedule's back-off where it was. */
   private async look(onDemand = false): Promise<void> {
-    if (this.disposed || !this.running || this.probing) return;
+    if (this.disposed || !this.running || this.done || this.probing) return;
     if (!onDemand) this.looks += 1;
     if (this.ownsTerminal) {
       if (this.request) this.closeWait(this.now(), true);
@@ -247,14 +264,14 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     const probing = (async () => { try { sample = await probe({tty}); } catch { sample = undefined; } })();
     this.probing = probing;
     try { await probing; } finally { this.probing = undefined; }
-    if (this.disposed || !this.running) return;
+    if (this.disposed || !this.running || this.done) return;
     if (generation === this.generation && sample) this.apply(sample, this.now());
     this.schedule();
   }
 
   /** Decide from one sample. Exposed for tests through InputWatch.evaluate. */
   apply(sample: TerminalSample, now: number): void {
-    if (!this.running || this.ownsTerminal) return;
+    if (!this.running || this.done || this.ownsTerminal) return;
     const busy = this.busy(sample.foreground, now);
     this.followUp = false;
     const next = this.decide(sample, busy, now);

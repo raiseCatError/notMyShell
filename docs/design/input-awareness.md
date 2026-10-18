@@ -44,6 +44,13 @@ process), so the open question plus an idle process is the best available eviden
   (`cat`, Python `input()` with no prompt). The shell's own `read` is detected with or without a prompt.
 - On macOS, a `wait` builtin looks like a line read (the shell holds the terminal, idle); it is shown as "Probably".
   Linux's kernel report tells them apart.
+- The shell's own prompt hooks are never taken for the command reading (#436). After a command ends, zsh and Bash run
+  their prompt hooks (the person's and NMSh's) before the prompt marker, and a slow hook holds the terminal, idle, as a
+  builtin `read` does. Each shell's first hook prints an authenticated `done` marker; from it to the next command
+  nothing is sampled and a sample already under way is dropped. zsh's single `precmd` function and Fish's other
+  postexec handlers can run before it.
+- A question that began before Ctrl+C or Ctrl+Z, reported late, is the one the stop ended: the frontend drops it, so it
+  never turns what was typed after the stop into a reply (#436).
 - Programs reading through `poll`/`select` on macOS.
 - Programs that own the terminal. Fish 4's own `read` is one: it is fish's line editor, with bracketed paste and OSC 133
   marks, so NMSh hands it the terminal and fish answers natively. It is not reported as waiting.

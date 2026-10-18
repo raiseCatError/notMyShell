@@ -11840,6 +11840,14 @@ export class TerminalApp {
   private onInputState(state: InputState): void {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
+    // A question that began before Ctrl+C or Ctrl+Z is the one the stop ended, reported late (the session sampled it
+    // before it saw the stop). It never turns what was typed after the stop into a reply, nor routes keys to the
+    // program (#436); a question the program asks after the stop is new.
+    const stoppedAt = this.running.stoppedAt;
+    if (state.request && stoppedAt !== undefined && state.request.since < stoppedAt) {
+      const {request: _ended, ...current} = state;
+      state = current;
+    }
     this.inputState = state;
     const draft = this.runningDraft;
     if (state.terminalOwner) {

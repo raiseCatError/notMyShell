@@ -227,6 +227,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         }
       } else if (event.kind === 'reader') {
         if (this.ready && !this.atPrompt) this.inputWatch.onReader();
+      } else if (event.kind === 'done') {
+        if (this.ready && !this.atPrompt) this.inputWatch.onDone();
       } else if (event.kind === 'exec') {
         this.atPrompt = false;
         this.commandStart = true;
