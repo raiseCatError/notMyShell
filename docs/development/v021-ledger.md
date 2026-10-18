@@ -14,14 +14,15 @@ Automated results here are not physical-terminal validation.
 
 | # | Slice | Issues | Branch / PR | Merged commit | State |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Design and ledger | #410 | `docs/v021-design` / #411 | | PR open, CI green; awaiting merge |
-| 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` (stacked on #411) | | PR open |
-| 2 | `/view` | #397, #402 | `feature/v021-view` (stacked on slice 1) | | PR open |
-| 3 | `/edit` | #402 | `feature/v021-edit` (stacked on slice 2) | | PR open |
-| 4 | Semantic Output | #386 | `feature/v021-semantic` (stacked on slice 3) | | PR open |
-| 5 | `/track` | #393 (#394) | `feature/v021-track` (stacked on slice 4) | | PR open |
-| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` (stacked on slice 5) | | PR open |
-| 7 | Themes and controls | #401, #336 | `feature/v021-themes` (stacked on slice 6) | | PR open |
+| 0 | Design and ledger | #410 | `docs/v021-design` / [#411](https://github.com/raiseCatError/notMyShell/pull/411) → `dev` | | PR open, CI green |
+| 1 | Reliability gates | #403, #408, #388 | `fix/v021-reliability` / [#412](https://github.com/raiseCatError/notMyShell/pull/412) → #411 | | PR open, CI green |
+| 2 | `/view` | #397, #402 | `feature/v021-view` / [#413](https://github.com/raiseCatError/notMyShell/pull/413) → #412 | | PR open, CI green |
+| 3 | `/edit` | #402 | `feature/v021-edit` / [#414](https://github.com/raiseCatError/notMyShell/pull/414) → #413 | | PR open, CI green |
+| 4 | Semantic Output | #386 | `feature/v021-semantic` / [#415](https://github.com/raiseCatError/notMyShell/pull/415) → #414 | | PR open, CI green (one rerun) |
+| 5 | `/track` | #393 (#394) | `feature/v021-track` / [#416](https://github.com/raiseCatError/notMyShell/pull/416) → #415 | | PR open |
+| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` / [#417](https://github.com/raiseCatError/notMyShell/pull/417) → #416 | | PR open |
+| 7 | Themes and controls | #401, #336 | `feature/v021-themes` / [#418](https://github.com/raiseCatError/notMyShell/pull/418) → #417 | | PR open |
+| 8 | Checkpoint (this ledger) | #410 | `docs/v021-checkpoint` → #418 | | PR open |
 
 ## Decisions
 
@@ -60,3 +61,40 @@ toggle, copy flags, Off). Slice 5: section 5 (`/track` block, refresh, copy, sto
 - Merging into `dev` needs the maintainer (the agent's merge was refused by its permission policy). Slices are
   stacked PRs; merge them in order, each squashed.
 - #388: programs that position rows absolutely inline (rare) still append; recorded in the design.
+- Nothing in v0.21 has had a physical-terminal pass yet. Every slice issue stays open until its pass is recorded.
+- Two CI flakes outside v0.21's changes were seen once each (below); neither reproduced on rerun.
+
+## Integration verification (stack head, 2026-10-18)
+
+Run on `feature/v021-themes` (all eight slices) in a T7 worktree, `NMSH_TEST_TMPDIR=/Volumes/T7Tmp/ai-dev`.
+
+- `npm run verify:release`: 3,118 tests, 3,115 pass, 2 skipped, 1 fail. The failure,
+  `nativeCaptureLifecycle` "native cancellation reaps a PTY before it can process the initialization command", timed
+  out waiting for the inner shell under full-suite load; the file passes 3 of 3 alone. v0.21 does not touch native
+  capture.
+- `npm run typecheck:bench` passes; `npm run bench:smoke` passes (see "Performance" below).
+- CI on each stacked PR (Ubuntu and macOS shards, Node 22 compatibility, Quality): green for #411–#415 at the time of
+  writing; #416–#418 re-run after the live-row change below. Flakes seen once: #415's Ubuntu shard hit the 10-minute
+  job limit with output stalled in `tests/shellFrameworks.test.ts` (an orphaned Fish process); #417's macOS shard
+  failed `tests/backgroundSession.test.ts:92` (task removal timing). Both passed on rerun and are in code v0.21 does
+  not change; each is worth its own issue.
+
+## Performance
+
+- `npm run bench:smoke` at the stack head (`8bb85d5e`) passed every budget: pty-ready p50 23 ms, service-ready p50
+  233 ms, cold context collection p50 48 ms, every-module render p50 39 ms, configured completion warm p50 10 ms,
+  `transcript/wrap-present-10000` p50 48 ms, `transcript/wrap-present-100000` p50 467 ms.
+- `transcript/wrap-present-100000` is noisy on this 8 GB Mac: a `dev` baseline worktree measured p50 501–606 ms
+  across runs, and earlier stack runs 484–1,161 ms with the slow ones not repeating. No consistent regression was
+  found. The one per-row cost v0.21 adds, the `/track` live-row lookup, is now skipped entirely when the transcript
+  has no trackers (#416).
+- Bounded by design and covered by tests: `/view` layout per line (a 1 MB single line no longer takes 17 s), file
+  loads (8 MiB / 200,000 lines), `/edit` (1 MiB), Semantic Output recognizers (linear, 2 MiB scanned, 20 items),
+  `/track` samples (200 kB, 12 live rows, at most 8 trackers).
+
+## Release readiness
+
+Ready for the maintainer's decision, not for release. Before a v0.21 tag: merge #411→#418 in order (then this
+checkpoint), let `dev` CI pass, run the [physical QA](../testing/v021-physical-qa.md) passes and record them, then
+close the slice issues whose passes succeed. Tagging, the GitHub release, the Homebrew tap and the website deploy
+stay with the maintainer.
