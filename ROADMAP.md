@@ -8,17 +8,17 @@
 | **Not released separately** | v0.19.0 — Terminal workflow candidate; never tagged or published, its work first ships in v0.20.0 |
 | **Previous release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
-| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and further Theme Bridge work released in v0.18.0 |
+| **Next implementation candidates (not yet committed)** | [v0.21 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.21) — viewer/text editing, Semantic Output, `/track`, native modules, bundled themes and selected defects. The maintainer will choose final scope after implementation and verification. |
 | **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
-| **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
+| **Public planning** | [Open issues](https://github.com/raiseCatError/notMyShell/issues); the owner-only project board is not a public status source |
 
 GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.20.0.
 
-## Current engineering focus — native modules and Context Engine
+## Native modules and Context Engine — released foundation, ongoing expansion
 
-The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model and the [Context Engine design](docs/design/context-engine.md) its architecture. The foundation shipped in v0.17.0 and the module platform below in v0.18.0.
+An ongoing capability is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model and the [Context Engine design](docs/design/context-engine.md) its architecture. The foundation shipped in v0.17.0 and the module platform below in v0.18.0.
 
 | State | Scope |
 |---|---|
@@ -208,6 +208,6 @@ In v0.16.0 zsh, Fish and Bash 4.4+ are implemented backends behind a real [Shell
 
 ## GitHub Project
 
-**[NMSh Development →](https://github.com/users/raiseCatError/projects/1)**
+**[Open NMSh issues →](https://github.com/raiseCatError/notMyShell/issues)**
 
 Status columns: **Backlog → Ready → In Progress → Needs Human Test → Done**
