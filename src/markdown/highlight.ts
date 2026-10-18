@@ -230,12 +230,12 @@ function tokenizeLine(line: string, grammar: Grammar, id: string, state: LineSta
 }
 
 /** Tokens for each line of a code block; a line's tokens always concatenate back to exactly that line. */
-export function highlightCode(lines: readonly string[], language: string | undefined): CodeToken[][] {
+export function highlightCode(lines: readonly string[], language: string | undefined, maxLines = MAX_LINES): CodeToken[][] {
   const id = languageId(language);
   if (!id) return lines.map(line => [{text: line, kind: 'plain'}]);
   const state: LineState = {};
   return lines.map((line, number) => {
-    if (number >= MAX_LINES || line.length > MAX_LINE_LENGTH) return [{text: line, kind: 'plain'}];
+    if (number >= maxLines || line.length > MAX_LINE_LENGTH) return [{text: line, kind: 'plain'}];
     if (id === 'diff') return diffLine(line);
     if (id === 'markdown') return markdownLine(line, state);
     return tokenizeLine(line, GRAMMARS[id]!, id, state);

@@ -1,0 +1,502 @@
+import type {Key} from '../terminal/keys.js';
+import type {SyntaxSgr} from '../input/syntaxTheme.js';
+import {graphemes} from '../input/inputLayout.js';
+import {codeTokenStyle, renderMarkdown, type MarkdownRow} from '../markdown/render.js';
+import {highlightCode, type CodeToken} from '../markdown/highlight.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import {renderControlRows} from '../ui/controls.js';
+import {editText} from '../ui/formControls.js';
+import {framePanel} from '../ui/PanelShell.js';
+import {foreground, UI_COLORS} from '../ui/palette.js';
+import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
+import {formatBytes, type ViewDocument} from './document.js';
+
+/**
+ * The native read-only viewer (#397): one document in a full-height panel, never the transcript. Drawing is bounded
+ * to what is visible: only the lines on screen are laid out, one wrapped line takes at most MAX_WRAP_ROWS rows, syntax
+ * roles cover the first HIGHLIGHT_LINES lines and Markdown renders up to RENDER_MARKDOWN_BYTES. Every character is
+ * drawn inert: control and format characters (bidi overrides, zero-width marks) are shown as visible marks and tabs
+ * as spaces, and Markdown links are links only for the renderer's allowed targets.
+ */
+
+const HIGHLIGHT_LINES = 20_000;
+const RENDER_MARKDOWN_BYTES = 1024 * 1024;
+const MAX_WRAP_ROWS = 200;
+const TAB = 4;
+const HORIZONTAL_STEP = 8;
+const WHEEL_ROWS = 3;
+const RESET = '\u001b[0m';
+const REVERSE = '\u001b[7m';
+const BOLD = '\u001b[1m';
+
+interface Segment {text: string; style: string}
+/** One logical line of what is shown: a source line (segments), or a rendered Markdown row (prestyled). */
+interface Unit {text: string; segments?: Segment[]; prestyled?: string; number?: number; rest?: number}
+
+export interface ViewerState {
+  document: ViewDocument;
+  /** First visible unit, and the wrapped row inside it. */
+  top: number;
+  sub: number;
+  /** Horizontal offset in cells while not wrapping. */
+  left: number;
+  wrap: boolean;
+  numbers: boolean;
+  /** Markdown drawn rendered (true) or as source. */
+  rendered: boolean;
+  input?: {kind: 'search' | 'goto'; value: string};
+  query?: string;
+  match?: {unit: number; start: number; length: number};
+  matchCount?: number;
+  /** One line of feedback (copy result, no match, wrapped search). */
+  note?: string;
+  /** Units the last drawing showed, for the position line. */
+  shown?: {first: number; last: number};
+  tokens?: CodeToken[][];
+  markdown?: {width: number; rows: MarkdownRow[]};
+}
+
+export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number};
+
+export interface ViewerLook {syntax?: SyntaxSgr; hyperlinks?: boolean}
+
+export function createViewer(document: ViewDocument): ViewerState {
+  const markdown = document.format === 'markdown' && Buffer.byteLength(document.text) <= RENDER_MARKDOWN_BYTES;
+  const note = document.format === 'markdown' && !markdown ? 'Too large to render: showing the Markdown source.' : undefined;
+  return {document, top: 0, sub: 0, left: 0, wrap: true, numbers: !markdown, rendered: markdown, ...(note ? {note} : {})};
+}
+
+// ---- Text ---------------------------------------------------------------------------------------------------------
+
+/** Characters drawn as visible marks: controls (not tab) and invisible format, line and paragraph separators. */
+const UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/gu;
+const PRINTABLE_ASCII = /^[\t\x20-\x7e]*$/u;
+const markOf = (character: string) => character === '\u001b' ? '␛' : '·';
+const cellWidth = (character: string) => character.length === 1 && character >= ' ' && character <= '~' ? 1 : displayWidth(character);
+
+/**
+ * A piece of a line as the viewer draws it, from `column`: tabs expanded to the next stop and every unsafe character
+ * a visible mark. Printable ASCII takes a fast path; other text is measured by grapheme.
+ */
+function safePiece(text: string, column: number): {text: string; column: number} {
+  if (PRINTABLE_ASCII.test(text)) {
+    if (!text.includes('\t')) return {text, column: column + text.length};
+    let out = '';
+    for (const character of text) {
+      if (character === '\t') { const spaces = TAB - (column % TAB); out += ' '.repeat(spaces); column += spaces; }
+      else { out += character; column += 1; }
+    }
+    return {text: out, column};
+  }
+  const safe = text.replace(UNSAFE, markOf);
+  if (!safe.includes('\t')) return {text: safe, column: column + displayWidth(safe)};
+  let out = '';
+  for (const character of graphemes(safe)) {
+    if (character === '\t') { const spaces = TAB - (column % TAB); out += ' '.repeat(spaces); column += spaces; }
+    else { out += character; column += cellWidth(character); }
+  }
+  return {text: out, column};
+}
+
+/** The whole line as drawn: what search matches against, so match offsets are drawing offsets. */
+function safeLine(line: string): string {
+  return safePiece(line, 0).text;
+}
+
+/**
+ * Tokens → drawable segments, stopping once `budget` cells are produced: a line is never laid out further than it
+ * can be shown. `rest` counts the source characters left undrawn.
+ */
+function safeSegments(tokens: readonly CodeToken[], styleOf: (token: CodeToken) => string, budget: number): {segments: Segment[]; rest: number} {
+  const segments: Segment[] = [];
+  let column = 0;
+  let rest = 0;
+  for (const token of tokens) {
+    if (column >= budget) { rest += token.text.length; continue; }
+    // Enough source for the remaining cells (a cell is at most a few code units; a longer cluster just shows less).
+    const room = (budget - column) * 4 + 8;
+    const source = token.text.length > room ? token.text.slice(0, room) : token.text;
+    rest += token.text.length - source.length;
+    const piece = safePiece(source, column);
+    column = piece.column;
+    if (piece.text) segments.push({text: piece.text, style: styleOf(token)});
+  }
+  return {segments, rest};
+}
+
+function smartMatch(text: string, query: string): (from: number) => number {
+  const insensitive = query === query.toLowerCase();
+  const haystack = insensitive ? text.toLowerCase() : text;
+  return from => haystack.indexOf(query, from);
+}
+
+// ---- Units --------------------------------------------------------------------------------------------------------
+
+function contentWidth(state: ViewerState, columns: number): number {
+  return Math.max(4, columns - 4 - gutterWidth(state));
+}
+
+function gutterWidth(state: ViewerState): number {
+  return state.numbers && !state.rendered ? Math.max(3, String(state.document.lines.length).length) + 1 : 0;
+}
+
+function markdownRows(state: ViewerState, width: number, look: ViewerLook): MarkdownRow[] {
+  if (state.markdown?.width !== width) {
+    state.markdown = {width, rows: renderMarkdown(state.document.text, width, {...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks)})};
+  }
+  return state.markdown.rows;
+}
+
+function unitCount(state: ViewerState, width: number, look: ViewerLook): number {
+  return state.rendered ? markdownRows(state, width, look).length : state.document.lines.length;
+}
+
+function lineTokens(state: ViewerState, index: number): CodeToken[] {
+  const line = state.document.lines[index] ?? '';
+  if (!state.document.language) return [{text: line, kind: 'plain'}];
+  state.tokens ??= highlightCode(state.document.lines.slice(0, HIGHLIGHT_LINES), state.document.language, HIGHLIGHT_LINES);
+  return state.tokens[index] ?? [{text: line, kind: 'plain'}];
+}
+
+/** The cells a unit may need to draw: a bounded wrap, or the visible window when scrolled sideways. */
+function cellBudget(state: ViewerState, width: number): number {
+  return state.wrap ? MAX_WRAP_ROWS * width : state.left + width + 1;
+}
+
+function unitAt(state: ViewerState, index: number, width: number, look: ViewerLook): Unit {
+  if (state.rendered) {
+    const row = markdownRows(state, width, look)[index];
+    return {text: row?.plain ?? '', prestyled: row?.ansi ?? ''};
+  }
+  const level = colorLevel();
+  const styleOf = (token: CodeToken) => level === 'none' ? '' : codeTokenStyle(token.kind, {...(look.syntax ? {syntax: look.syntax} : {}), level});
+  const {segments, rest} = safeSegments(lineTokens(state, index), styleOf, cellBudget(state, width));
+  return {text: segments.map(segment => segment.text).join(''), segments, number: index + 1, rest};
+}
+
+/** The searchable text of a unit (the same characters it is drawn with), without styling work. */
+function unitText(state: ViewerState, index: number, width: number, look: ViewerLook): string {
+  if (state.rendered) return markdownRows(state, width, look)[index]?.plain ?? '';
+  return safeLine(state.document.lines[index] ?? '');
+}
+
+interface Cell {text: string; width: number; style: string}
+type Highlight = {start: number; end: number; current: boolean};
+
+function cellsOf(unit: Unit, highlights: readonly Highlight[]): Cell[] {
+  const cells: Cell[] = [];
+  let offset = 0;
+  let range = 0;
+  for (const segment of unit.segments ?? []) {
+    for (const character of PRINTABLE_ASCII.test(segment.text) ? segment.text : graphemes(segment.text)) {
+      while (range < highlights.length && highlights[range]!.end <= offset) range += 1;
+      const mark = range < highlights.length && offset >= highlights[range]!.start ? highlights[range] : undefined;
+      cells.push({text: character, width: cellWidth(character), style: mark ? `${segment.style}${REVERSE}${mark.current ? BOLD : ''}` : segment.style});
+      offset += character.length;
+    }
+  }
+  return cells;
+}
+
+function paint(cells: readonly Cell[]): string {
+  let out = '';
+  let style: string | undefined;
+  for (const cell of cells) {
+    if (cell.style !== style) { out += `${RESET}${cell.style}`; style = cell.style; }
+    out += cell.text;
+  }
+  return `${out}${RESET}`;
+}
+
+/** The rows a unit takes: wrapped (bounded), or one row scrolled by `left`. */
+function unitRows(state: ViewerState, unit: Unit, width: number, highlights: readonly Highlight[]): string[] {
+  if (unit.prestyled !== undefined) {
+    return [highlights.length ? `${REVERSE}${truncateAnsi(unit.text, width)}${RESET}` : unit.prestyled];
+  }
+  const cells = cellsOf(unit, highlights);
+  const subtle = foreground(UI_COLORS.subtle);
+  const more = Boolean(unit.rest);
+  if (!state.wrap) {
+    let skipped = 0;
+    let index = 0;
+    while (index < cells.length && skipped + cells[index]!.width <= state.left) { skipped += cells[index]!.width; index += 1; }
+    const row: Cell[] = [];
+    let used = 0;
+    while (index < cells.length && used + cells[index]!.width <= width) { row.push(cells[index]!); used += cells[index]!.width; index += 1; }
+    if ((index < cells.length || more) && row.length) row[row.length - 1] = {text: '›', width: 1, style: subtle};
+    if (state.left > 0 && row.length) row[0] = {text: '‹', width: 1, style: subtle};
+    return [paint(row)];
+  }
+  const rows: string[] = [];
+  let row: Cell[] = [];
+  let used = 0;
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index]!;
+    if (used + cell.width > width && row.length) {
+      rows.push(paint(row));
+      row = [];
+      used = 0;
+      if (rows.length === MAX_WRAP_ROWS - 1) {
+        const rest = cells.length - index + (unit.rest ?? 0);
+        rows.push(`${subtle}${truncateText(`… ${rest.toLocaleString('en-US')} more characters on this line · w turns wrapping off`, width)}${RESET}`);
+        return rows;
+      }
+    }
+    row.push(cell);
+    used += cell.width;
+  }
+  rows.push(paint(row));
+  return rows;
+}
+
+function rowCount(state: ViewerState, index: number, width: number, look: ViewerLook): number {
+  if (!state.wrap || state.rendered) return 1;
+  const line = state.document.lines[index] ?? '';
+  if (!line) return 1;
+  // Printable ASCII wraps by simple division; anything else is laid out, bounded (wide characters move whole to the next row).
+  if (PRINTABLE_ASCII.test(line)) return Math.min(MAX_WRAP_ROWS, Math.max(1, Math.ceil(safeLine(line).length / width)));
+  return unitRows(state, unitAt(state, index, width, look), width, []).length;
+}
+
+// ---- Scrolling ----------------------------------------------------------------------------------------------------
+
+/** The top position at which the last unit's last row is at the bottom: no scrolling past the end. */
+function lastTop(state: ViewerState, width: number, height: number, look: ViewerLook): {top: number; sub: number} {
+  let remaining = height;
+  for (let index = unitCount(state, width, look) - 1; index >= 0; index -= 1) {
+    const rows = rowCount(state, index, width, look);
+    if (rows >= remaining) return {top: index, sub: rows - remaining};
+    remaining -= rows;
+  }
+  return {top: 0, sub: 0};
+}
+
+function clampTop(state: ViewerState, width: number, height: number, look: ViewerLook): void {
+  const last = lastTop(state, width, height, look);
+  if (state.top > last.top || (state.top === last.top && state.sub > last.sub)) { state.top = last.top; state.sub = last.sub; }
+  state.top = Math.max(0, state.top);
+  state.sub = Math.max(0, Math.min(state.sub, rowCount(state, state.top, width, look) - 1));
+}
+
+function scroll(state: ViewerState, delta: number, width: number, height: number, look: ViewerLook): void {
+  let remaining = delta;
+  while (remaining > 0) {
+    const rows = rowCount(state, state.top, width, look);
+    if (state.sub + remaining < rows) { state.sub += remaining; break; }
+    remaining -= rows - state.sub;
+    if (state.top + 1 >= unitCount(state, width, look)) { state.sub = rows - 1; break; }
+    state.top += 1;
+    state.sub = 0;
+  }
+  while (remaining < 0) {
+    if (state.sub + remaining >= 0) { state.sub += remaining; break; }
+    remaining += state.sub + 1;
+    if (state.top === 0) { state.sub = 0; break; }
+    state.top -= 1;
+    state.sub = rowCount(state, state.top, width, look) - 1;
+  }
+  clampTop(state, width, height, look);
+}
+
+function reveal(state: ViewerState, unit: number, width: number, height: number, look: ViewerLook): void {
+  const visible = state.shown && unit >= state.shown.first && unit <= state.shown.last && unit !== state.shown.last;
+  if (!visible) { state.top = Math.max(0, unit - Math.floor(height / 3)); state.sub = 0; }
+  clampTop(state, width, height, look);
+}
+
+// ---- Search -------------------------------------------------------------------------------------------------------
+
+function findFrom(state: ViewerState, unit: number, offset: number, direction: 1 | -1, width: number, look: ViewerLook): {unit: number; start: number; wrapped: boolean} | undefined {
+  const query = state.query;
+  if (!query) return undefined;
+  const count = unitCount(state, width, look);
+  for (let step = 0; step <= count; step += 1) {
+    const raw = unit + direction * step;
+    const index = ((raw % count) + count) % count;
+    const text = unitText(state, index, width, look);
+    const find = smartMatch(text, query);
+    let found = -1;
+    if (direction === 1) found = find(step === 0 ? offset : 0);
+    else {
+      const limit = step === 0 ? offset - 1 : text.length;
+      for (let at = find(0); at >= 0 && at <= limit; at = find(at + 1)) found = at;
+    }
+    if (found >= 0) return {unit: index, start: found, wrapped: direction === 1 ? raw >= count : raw < 0};
+  }
+  return undefined;
+}
+
+function countMatches(state: ViewerState, width: number, look: ViewerLook): number {
+  const query = state.query;
+  if (!query) return 0;
+  let total = 0;
+  for (let index = 0; index < unitCount(state, width, look); index += 1) {
+    const find = smartMatch(unitText(state, index, width, look), query);
+    for (let at = find(0); at >= 0; at = find(at + query.length)) total += 1;
+  }
+  return total;
+}
+
+function step(state: ViewerState, direction: 1 | -1, width: number, height: number, look: ViewerLook): void {
+  const from = state.match ? {unit: state.match.unit, offset: state.match.start + (direction === 1 ? 1 : 0)} : {unit: state.top, offset: 0};
+  const found = findFrom(state, from.unit, from.offset, direction, width, look);
+  if (!found) { state.match = undefined; state.note = `No match for “${state.query}”.`; return; }
+  state.match = {unit: found.unit, start: found.start, length: state.query!.length};
+  state.note = found.wrapped ? (direction === 1 ? 'Search wrapped to the top.' : 'Search wrapped to the bottom.') : undefined;
+  reveal(state, found.unit, width, height, look);
+}
+
+// ---- Keys ---------------------------------------------------------------------------------------------------------
+
+export function viewerKey(state: ViewerState, key: Key, columns: number, height: number, look: ViewerLook = {}): ViewerAction | undefined {
+  const width = contentWidth(state, columns);
+  const body = bodyHeight(state, columns, height);
+  if (state.input) {
+    const input = state.input;
+    if (key.kind === 'escape' || key.kind === 'interrupt') { state.input = undefined; return undefined; }
+    if (key.kind === 'enter') {
+      state.input = undefined;
+      if (input.kind === 'goto') {
+        const line = Number(input.value.trim());
+        if (!Number.isInteger(line) || line < 1) { state.note = 'Type a line number.'; return undefined; }
+        state.top = Math.min(line, unitCount(state, width, look)) - 1;
+        state.sub = 0;
+        clampTop(state, width, body, look);
+        state.note = undefined;
+        return undefined;
+      }
+      state.query = input.value;
+      state.match = undefined;
+      if (!state.query) { state.matchCount = undefined; return undefined; }
+      state.matchCount = countMatches(state, width, look);
+      step(state, 1, width, body, look);
+      return undefined;
+    }
+    const next = editText(input.value, key);
+    if (next !== undefined) input.value = next.slice(0, 200);
+    return undefined;
+  }
+  state.note = undefined;
+  const text = key.kind === 'text' ? key.value : undefined;
+  if (key.kind === 'escape' && state.query) { state.query = undefined; state.match = undefined; state.matchCount = undefined; return undefined; }
+  if (key.kind === 'escape' || key.kind === 'interrupt' || text === 'q') return {kind: 'close'};
+  if (key.kind === 'up' || text === 'k') scroll(state, -1, width, body, look);
+  else if (key.kind === 'down' || text === 'j') scroll(state, 1, width, body, look);
+  else if (key.kind === 'wheelUp') scroll(state, -WHEEL_ROWS, width, body, look);
+  else if (key.kind === 'wheelDown') scroll(state, WHEEL_ROWS, width, body, look);
+  else if (key.kind === 'pageUp' || text === 'b') scroll(state, -Math.max(1, body - 1), width, body, look);
+  else if (key.kind === 'pageDown' || text === ' ' || text === 'f') scroll(state, Math.max(1, body - 1), width, body, look);
+  else if (key.kind === 'lineHome' || key.kind === 'bufferHome' || text === 'g') { state.top = 0; state.sub = 0; }
+  else if (key.kind === 'lineEnd' || key.kind === 'bufferEnd' || key.kind === 'latest' || text === 'G') Object.assign(state, lastTop(state, width, body, look));
+  else if ((key.kind === 'left' || key.kind === 'right') && !state.wrap && !state.rendered) state.left = Math.max(0, state.left + (key.kind === 'left' ? -HORIZONTAL_STEP : HORIZONTAL_STEP));
+  else if (text === 'w' && !state.rendered) { state.wrap = !state.wrap; state.left = 0; state.sub = 0; clampTop(state, width, body, look); }
+  else if (text === 'l' && !state.rendered) { state.numbers = !state.numbers; state.sub = 0; }
+  else if (text === 'm' && state.document.format === 'markdown') {
+    if (!state.rendered && Buffer.byteLength(state.document.text) > RENDER_MARKDOWN_BYTES) state.note = 'Too large to render: showing the Markdown source.';
+    else { state.rendered = !state.rendered; state.numbers = !state.rendered; state.top = 0; state.sub = 0; state.match = undefined; state.matchCount = undefined; }
+  }
+  else if (text === '/' || key.kind === 'find') state.input = {kind: 'search', value: state.query ?? ''};
+  else if (text === ':') state.input = {kind: 'goto', value: ''};
+  else if (text === 'n' && state.query) step(state, 1, width, body, look);
+  else if (text === 'N' && state.query) step(state, -1, width, body, look);
+  else if (text === 'c') return {kind: 'copy', text: state.document.text, lines: state.document.lines.length};
+  return undefined;
+}
+
+// ---- Drawing ------------------------------------------------------------------------------------------------------
+
+function detail(document: ViewDocument): string {
+  const lines = `${document.lines.length.toLocaleString('en-US')} line${document.lines.length === 1 ? '' : 's'}`;
+  if (document.origin.kind === 'output') {
+    const status = document.origin.exitCode === undefined ? '' : ` · exit ${document.origin.exitCode}`;
+    return `output ${document.origin.number}${status} · ${lines}${document.format === 'diff' ? ' · diff' : ''}`;
+  }
+  const kind = document.format === 'markdown' ? 'Markdown' : document.format === 'diff' ? 'diff' : document.language ?? 'text';
+  const ending = document.lineEnding === 'crlf' ? ' · CRLF' : document.lineEnding === 'mixed' ? ' · mixed line endings' : '';
+  const link = document.origin.symlink ? ` · → ${document.origin.realPath}` : '';
+  return `${kind} · ${lines} · ${formatBytes(document.origin.bytes)}${ending}${link}`;
+}
+
+function headerRows(state: ViewerState, columns: number, height: number): string[] {
+  const width = Math.max(10, columns - 4);
+  const primary = foreground(UI_COLORS.primary);
+  const subtle = foreground(UI_COLORS.subtle);
+  const warning = foreground(UI_COLORS.warning);
+  const title = state.document.origin.kind === 'output' ? `$ ${state.document.title}` : state.document.title;
+  const shownTitle = truncateText(title.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), Math.max(8, Math.floor(width * 0.6)));
+  const rows = [`  ${primary}${shownTitle}${RESET}  ${subtle}${truncateText(detail(state.document), Math.max(1, width - displayWidth(shownTitle) - 2))}${RESET}`];
+  const notes = height >= 12 ? state.document.notes.slice(0, 2) : [];
+  for (const note of notes) rows.push(`  ${warning}${truncateText(note, width)}${RESET}`);
+  return rows;
+}
+
+function controls(state: ViewerState, columns: number): string[] {
+  const width = Math.max(1, columns - 4);
+  if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
+  return renderControlRows([
+    ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
+    ...(state.document.format === 'markdown' ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
+    ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
+    ['c', 'copy all'], ['Esc', 'close'],
+  ], width);
+}
+
+function bodyHeight(state: ViewerState, columns: number, height: number): number {
+  return Math.max(1, height - 2 - headerRows(state, columns, height).length - 1 - controls(state, columns).length);
+}
+
+function statusRow(state: ViewerState, width: number, total: number): string {
+  const subtle = foreground(UI_COLORS.subtle);
+  const accent = foreground(UI_COLORS.accent);
+  if (state.input) {
+    const label = state.input.kind === 'search' ? 'Find: ' : 'Go to line: ';
+    return `  ${accent}${label}${RESET}${truncateText(state.input.value.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), Math.max(1, width - label.length - 1))}${accent}▏${RESET}`;
+  }
+  const unit = state.rendered ? 'Row' : 'Line';
+  const first = state.shown ? state.shown.first + 1 : 0;
+  const last = state.shown ? state.shown.last + 1 : 0;
+  const position = total === 0 ? 'Empty' : `${unit}${last > first ? 's' : ''} ${first.toLocaleString('en-US')}${last > first ? `–${last.toLocaleString('en-US')}` : ''} of ${total.toLocaleString('en-US')}`;
+  const search = state.query ? ` · ${state.matchCount === undefined ? '' : `${state.matchCount.toLocaleString('en-US')} match${state.matchCount === 1 ? '' : 'es'} for `}“${state.query}”` : '';
+  const note = state.note ? ` · ${state.note}` : '';
+  return `  ${subtle}${truncateText(`${position}${search}${note}`.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), width)}${RESET}`;
+}
+
+export function renderViewer(state: ViewerState, columns: number, height: number, look: ViewerLook = {}): string[] {
+  const width = contentWidth(state, columns);
+  const gutter = gutterWidth(state);
+  const body = bodyHeight(state, columns, height);
+  clampTop(state, width, body, look);
+  const out = headerRows(state, columns, height);
+  const total = unitCount(state, width, look);
+  const subtle = foreground(UI_COLORS.subtle);
+  const rows: string[] = [];
+  let first = -1;
+  let last = -1;
+  for (let index = state.top; index < total && rows.length < body; index += 1) {
+    const unit = unitAt(state, index, width, look);
+    const highlights = state.query ? matchRanges(unit.text, state.query, state.match?.unit === index ? state.match.start : -1) : [];
+    let unitRowsList = unitRows(state, unit, width, highlights);
+    if (index === state.top) unitRowsList = unitRowsList.slice(state.sub);
+    unitRowsList.forEach((row, offset) => {
+      if (rows.length >= body) return;
+      const number = gutter ? `${subtle}${(offset === 0 && (index !== state.top || state.sub === 0) ? String(unit.number ?? '') : '').padStart(gutter - 1)}${RESET} ` : '';
+      rows.push(`  ${number}${row}`);
+    });
+    if (first < 0) first = index;
+    last = index;
+  }
+  state.shown = first < 0 ? undefined : {first, last};
+  if (!total) rows.push(`  ${subtle}${state.document.origin.kind === 'output' ? 'No output.' : 'Empty file.'}${RESET}`);
+  while (rows.length < body) rows.push('');
+  out.push(...rows, statusRow(state, Math.max(1, columns - 4), total), ...controls(state, columns).map(row => `  ${row}`));
+  const rule = framePanel([], columns)[0]!;
+  if (height <= 1) return [rule].slice(0, Math.max(0, height));
+  return [...framePanel(out.slice(0, Math.max(0, height - 2)).map(row => truncateAnsi(row, columns)), columns), rule];
+}
+
+function matchRanges(text: string, query: string, current: number): Array<{start: number; end: number; current: boolean}> {
+  const ranges: Array<{start: number; end: number; current: boolean}> = [];
+  const find = smartMatch(text, query);
+  for (let at = find(0); at >= 0 && ranges.length < 256; at = find(at + Math.max(1, query.length))) ranges.push({start: at, end: at + query.length, current: at === current});
+  return ranges;
+}

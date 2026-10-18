@@ -209,6 +209,13 @@ function tokenSgr(kind: CodeTokenKind, context: Context): string {
   }
 }
 
+/** The style a code token gets in rendered Markdown, for other NMSh surfaces that show code the same way (the viewer). */
+export function codeTokenStyle(kind: CodeTokenKind, options: {syntax?: SyntaxSgr; level?: ColorLevel} = {}): string {
+  const level = options.level ?? colorLevel();
+  return tokenSgr(kind, {level, safe: false, hyperlinks: false, ...(options.syntax ? {syntax: options.syntax} : {}),
+    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0});
+}
+
 function codeRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context): MarkdownRow[] {
   const index = context.codeIndex++;
   const gutter = `${context.fg(UI_COLORS.separator)}${glyph(context, '│', '|')}${RESET} `;
