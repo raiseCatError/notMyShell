@@ -22,7 +22,7 @@ Before starting work, check:
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
 - **[v0.20.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0)** — current stable release, merged through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392) (see [ROADMAP.md](ROADMAP.md))
 - **[CHANGELOG.md](CHANGELOG.md)** — the authoritative record of notable changes; see [Changelog](#changelog) below
-- **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
+- **GitHub Issues** — [raiseCatError/notMyShell issues](https://github.com/raiseCatError/notMyShell/issues) — public bug reports, proposals and development status
 
 ## Branch Model
 

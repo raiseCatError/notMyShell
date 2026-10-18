@@ -57,7 +57,7 @@ followed by a successful rerun. None establishes final released-tag physical acc
 | Prompts, Theme Studio, Chroma and Theme Bridge | Integrated; prompt/theme ownership contracts | Prompts, themes, configuration, accessibility |
 | Rerunnable Setup | Integrated; `src/setup/SetupCat.ts`, `tests/setupOrder.test.ts` | Setup guide; starting points versus full guided wizard |
 | Reactive Horizon first run | Integrated into production app paths at public `15d776ee`; `tests/startupApp.test.ts`, `tests/startupEnding.test.ts` | Setup guide; four choices, reactive sky, transparency, real-composer ending and bounded host offer |
-| Learn Mode | **Future proposal**, issue #398; not part of v0.20 code | Dedicated planned Learn page; isolation gates preserved |
+| Learn Mode | Deferred idea, issue #398; not part of v0.20 code | Intentionally not advertised; `/learn/` returns 404 |
 
 ## Onboarding integration boundary
 
@@ -105,7 +105,7 @@ reason to call the already integrated Horizon experience a future proposal.
 - Curated guides and pages were reconciled against the release: welcome on every first
   run, Keep Existing provider choices, the Tools tiers and flow, the update notice,
   queue settings and history, platform evidence. Candidate-only wording is state-gated
-  or removed. Learn Mode stays a planned proposal.
+  or removed. Learn Mode is not advertised.
 - Checks on the synced tree: `npm test`, `npm run check`, `npm run build:launch`
   (62 pages, internal links/anchors, sitemap, metadata, search), `npm run test:browser`
   (17/17, axe in both themes and reduced motion). External links: 198 of 199 return

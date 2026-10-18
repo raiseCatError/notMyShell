@@ -3,8 +3,8 @@ import Base from './Base.astro';
 import DocNavigation from '../components/DocNavigation.astro';
 import { documents, docNavigation, groupId } from '../lib/docs';
 import { launch, launchLabel, sourceUrl } from '../lib/site';
-interface Props { title: string; description: string; slug: string; headings: { depth: number; slug: string; text: string }[]; source?: string; sources?: string[] }
-const { title, description, slug, headings, source, sources = [] } = Astro.props;
+interface Props { title: string; description: string; slug: string; headings: { depth: number; slug: string; text: string }[]; source?: string; sources?: string[]; editorial?: string[] }
+const { title, description, slug, headings, source, sources = [], editorial = [] } = Astro.props;
 const entries = await documents();
 const currentIndex = entries.findIndex(entry => entry.slug === slug);
 const previous = entries[currentIndex - 1];
@@ -79,6 +79,7 @@ const currentSubgroup = currentGroup?.children.find(group => group.articles.some
       <article class="prose" data-pagefind-body style={`view-transition-name: docs-article-${slug.replaceAll('/', '-') || 'index'}`}>
         <header class="doc-heading"><span class="eyebrow">{source ? 'Pinned technical reference' : 'The NMSh handbook'}</span><h1 data-pagefind-meta="title">{title}</h1><p class="lead">{description}</p></header>
         {source && <aside class="note"><strong>Source snapshot · {launchLabel}</strong><p>This repository document retains its original design notes and caveats. Historical proposals in it are not all product commitments. <a href={sourceUrl(source)}>Read the canonical source ↗</a></p></aside>}
+        {editorial.length > 0 && <aside class="note"><strong>Editorial update</strong>{editorial.map(note => <p>{note}</p>)}<p>The canonical source at the tagged release is unchanged.</p></aside>}
         <slot />
       </article>
       <div class="doc-provenance" data-pagefind-ignore><span>Reviewed against {launchLabel} · source {launch.commit.slice(0, 8)} · {launch.verifiedAt}</span>{sourcePaths.length > 0 && <div>Sources: {sourcePaths.map((path, index) => <>{index > 0 && ' · '}<a href={sourceUrl(path)}>{path.split('/').pop()}</a></>)}</div>}<a href={`https://github.com/raiseCatError/notMyShell/issues/new?title=${encodeURIComponent(`Documentation: ${title}`)}`}>Suggest a correction ↗</a></div>

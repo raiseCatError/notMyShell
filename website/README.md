@@ -22,7 +22,7 @@ website/
     data/            Launch baseline, public releases, source hashes, media inventory
     layouts/         Shared product shell and documentation layout
     lib/             Shared release metadata and docs navigation
-    pages/           Product, install, Learn, roadmap, docs and release routes
+    pages/           Product, install, roadmap, docs and release routes
     scripts/         Small browser enhancement: theme, copy and search
     styles/          Shared tokens, responsive layouts and prose styles
   public/            Genuine brand artwork, robots and Cloudflare headers
@@ -161,9 +161,10 @@ not leave a half-fetched refresh. Filesystem write failures still require checki
 the Git diff and rerunning the refresh; normal builds validate the complete result.
 
 The roadmap is a curated editorial view linked to public issues, not an API dump.
-Recheck issue state and product direction during each release review. Issue #398 is
-authoritative for Learn Mode; it remains a future proposal with no date or version
-commitment. Never add an install command, fake course player or unsafe host-shell demo.
+Recheck issue state and product direction during each release review. The site does
+not advertise Learn Mode or any Bash/zsh course: issue #398 is a deferred, unscheduled
+idea about explaining NMSh's own interface and stays off the public site. Never add an
+install command, fake course player or unsafe host-shell demo.
 
 Add product pages in `src/pages/`, reuse `Base`, `Code` and `Media`, and update sitemap
 routes/global navigation deliberately. New or renamed docs paths need explicit
@@ -185,7 +186,6 @@ caption and future alt-text requirements. Every slot is currently intentionally 
 | `session-resume` | Detach and reattach a live shell | 1440×900 / 8:5 |
 | `context-modules` | Native prompt, Rail and Status Strip | 1440×900 / 8:5 |
 | `vespyr-appearance` | Vespyr and appearance choices | 1440×900 / 8:5 |
-| `learn-concept` | Future approved guide/practice concept | 1440×960 / 3:2 |
 
 When genuine supplied assets are available, put them in `public/media/` and add
 `src: "/media/name.webp"`, `kind: "image"`, and a specific `alt` to the corresponding
@@ -197,7 +197,7 @@ No video library, automatic playback or animation bypass is introduced. Match th
 reserved ratio (the home slot is height-capped on desktop) to avoid layout movement.
 
 Update the caption honestly when replacing pending media. Do not call a conceptual
-Learn image a working interface. Requirements in `altRequirement` are instructions
+image a working interface. Requirements in `altRequirement` are instructions
 for a future author, never fabricated alt text for an unavailable asset. Build
 validation rejects missing local assets, missing alt text, bad dimensions and
 unapproved external media URLs. Genuine existing logo/lockup assets are copied
@@ -379,3 +379,13 @@ References: [disabled Git builds](https://developers.cloudflare.com/pages/config
   theme switching usable without falsely claiming persistence.
 - **Cloudflare root install builds the CLI:** set Root directory to `website` and
   verify the explicit build command and dependency-install environment above.
+
+## Editorial corrections to pinned references
+
+Reference pages are synchronized from the tagged release and are never edited by hand
+(`validate-content` rejects it). A stale or wrong passage in a tagged document is
+corrected in `scripts/editorial.mjs` instead: each entry is pinned to one source commit,
+must match exactly once, is applied during `npm run sync:upstream`, is listed in the
+provenance manifest and appears on the page as an "Editorial update". Fix the canonical
+document on the development branch too, then delete the entry once a tagged release
+contains the fix.

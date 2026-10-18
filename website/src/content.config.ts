@@ -4,7 +4,7 @@ import { glob } from 'astro/loaders';
 
 const documentSchema = z.object({
   title: z.string(), description: z.string(), group: z.string(), order: z.number(),
-  source: z.string().optional(), sources: z.array(z.string()).default([]),
+  source: z.string().optional(), editorial: z.array(z.string()).default([]), sources: z.array(z.string()).default([]),
 });
 export const collections = {
   guides: defineCollection({ loader: glob({ pattern: '**/*.md', base: './src/content/guides' }), schema: documentSchema }),

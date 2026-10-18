@@ -92,5 +92,4 @@ shell configuration. Review individual changes and installation plans. Use
 
 These instructions describe the published [v0.20.0 release](/releases/).
 [First-run behavior and validation](/docs/reference/onboarding/) records its defaults
-and the acceptance evidence behind them. [Learn Mode](/learn/) is separate:
-it remains a future learning proposal, not part of setup.
+and the acceptance evidence behind them.

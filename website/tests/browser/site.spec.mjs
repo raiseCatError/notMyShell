@@ -62,7 +62,7 @@ test('copy succeeds and failure gives honest manual instructions', async ({ page
 test('desktop, tablet and mobile preserve layout, links and accessible navigation', async ({ page }) => {
   for (const width of [1440, 834, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    for (const path of ['/', '/features/', '/docs/context/', '/docs/reference/context-modules/', '/learn/']) {
+    for (const path of ['/', '/features/', '/docs/context/', '/docs/reference/context-modules/']) {
       await page.goto(path);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -83,11 +83,8 @@ test('desktop, tablet and mobile preserve layout, links and accessible navigatio
   await expect(page.locator('.docs-mobile details[data-doc-group="make-it-yours"]')).not.toHaveAttribute('open');
 });
 
-test('planned learning is explicit and documentation works without JavaScript', async ({ browser, page }) => {
-  await page.goto('/learn/');
-  await expect(page.getByText('Planned · Future Learn Mode', { exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: /proposal.*398/i })).toHaveAttribute('href', 'https://github.com/raiseCatError/notMyShell/issues/398');
-  await expect(page.locator('main')).toContainText('temporary folder');
+test('documentation works without JavaScript', async ({ browser, page }) => {
+  await page.goto('/docs/');
   const context = await browser.newContext({ javaScriptEnabled: false });
   const plain = await context.newPage();
   await plain.goto(new URL('/docs/', page.url()).href);
@@ -100,7 +97,7 @@ test('planned learning is explicit and documentation works without JavaScript', 
 test('reduced motion, skip link and both themes pass automated accessibility checks', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   for (const theme of ['dark', 'light']) {
-    for (const path of ['/', '/features/', '/install/', '/docs/', '/docs/getting-started/', '/learn/', '/roadmap/', '/releases/', '/architecture/', '/404.html', '/docs/reference/context-modules/']) {
+    for (const path of ['/', '/features/', '/install/', '/docs/', '/docs/getting-started/', '/roadmap/', '/releases/', '/architecture/', '/404.html', '/docs/reference/context-modules/']) {
       await page.goto(path);
       await page.evaluate(value => document.documentElement.dataset.theme = value, theme);
       const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
@@ -128,4 +125,16 @@ test('compact contents, heading permalinks, missing search data and 404 remain u
   const response = await page.goto('/no-such-nmsh-page/');
   expect(response.status()).toBe(404);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('A small detour.');
+});
+
+test('the retired Learn page is not served or discoverable', async ({ page, request }) => {
+  const response = await page.goto('/learn/');
+  expect(response?.status()).toBe(404);
+  await page.goto('/');
+  await expect(page.locator('header nav, footer').getByRole('link', { name: /learn/i })).toHaveCount(0);
+  await expect(page.locator('main')).not.toContainText(/learn mode|learn the shell/i);
+  const sitemap = await (await request.get('/sitemap.xml')).text();
+  expect(sitemap).not.toContain('/learn');
+  const llms = await (await request.get('/llms.txt')).text();
+  expect(llms).not.toMatch(/learn mode|\/learn/i);
 });

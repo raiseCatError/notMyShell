@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { selectStable, normalizeMarkdown, renderReleaseMarkdown, assertReleaseCache, planOwnedRemovals } from './content.mjs';
 import { sources } from './upstream-sources.mjs';
 import { assertLaunch } from './launch.mjs';
+import { applyEditorial } from './editorial.mjs';
 
 const repository = 'raiseCatError/notMyShell';
 const root = new URL('../', import.meta.url);
@@ -53,9 +54,9 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 const files = [];
 for (const source of sources) {
   const original = await fetchText(`https://raw.githubusercontent.com/${repository}/${commit.sha}/${source.path}`);
-  const body = normalizeMarkdown(original.replace(/^# .+\r?\n/, ''));
-  const markdown = `---\ntitle: ${JSON.stringify(source.title)}\ndescription: ${JSON.stringify(`Canonical ${source.title.toLowerCase()} from the v${version} ${state} source.`)}\ngroup: Technical reference\norder: ${sources.indexOf(source) + 100}\nsource: ${JSON.stringify(source.path)}\n---\n${body}`;
-  files.push({ source, original, markdown });
+  const { body, applied } = applyEditorial(source.slug, commit.sha, normalizeMarkdown(original.replace(/^# .+\r?\n/, '')));
+  const markdown = `---\ntitle: ${JSON.stringify(source.title)}\ndescription: ${JSON.stringify(`Canonical ${source.title.toLowerCase()} from the v${version} ${state} source.`)}\ngroup: Technical reference\norder: ${sources.indexOf(source) + 100}\nsource: ${JSON.stringify(source.path)}\n${applied.length ? `editorial: ${JSON.stringify(applied.map(item => item.note))}\n` : ''}---\n${body}`;
+  files.push({ source, original, markdown, editorial: applied.map(item => item.id) });
 }
 const history = releases.filter(release => !release.draft && !release.prerelease && /^v\d+\.\d+\.\d+$/.test(release.tag_name));
 const releaseFiles = history.map(release => ({ name: `${release.tag_name}.md`, markdown: renderReleaseMarkdown(release) }));
@@ -98,7 +99,7 @@ const snapshot = {
 const manifest = {
   commit: commit.sha, version, state,
   routes: Object.fromEntries(sources.map(source => [source.path, source.slug])),
-  files: files.map(file => ({ ...file.source, sourceSha256: sha256(file.original), generatedSha256: sha256(file.markdown) })),
+  files: files.map(file => ({ ...file.source, sourceSha256: sha256(file.original), generatedSha256: sha256(file.markdown), ...(file.editorial.length ? { editorial: file.editorial } : {}) })),
 };
 await writeFile(new URL('src/data/release.json', root), JSON.stringify(snapshot, null, 2) + '\n');
 await writeFile(new URL('src/data/launch.json', root), JSON.stringify(launch, null, 2) + '\n');

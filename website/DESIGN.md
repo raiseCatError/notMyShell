@@ -49,8 +49,7 @@ silently promoted by a build. A check-only sync reports drift without changing f
 
 ## Information architecture
 
-Product `/`, Features `/features/`, Install `/install/`, Docs `/docs/`, future Learn
-`/learn/`, Roadmap `/roadmap/`, Releases `/releases/`, Architecture `/architecture/`.
+Product `/`, Features `/features/`, Install `/install/`, Docs `/docs/`, Roadmap `/roadmap/`, Releases `/releases/`, Architecture `/architecture/`.
 Docs progress from first run, concepts and everyday use through composer, completion,
 transcript, sessions, prompts, themes, integrations, context, shells, configuration,
 accessibility, troubleshooting, advanced usage, development and reference.
@@ -70,8 +69,7 @@ decorative animation. Original brand artwork is reused unmodified.
 Marketing sections use editorial splits, numbered explanations and comparison rows,
 not endless cards. A fine ruled media field with an abstract registration mark,
 purpose label and honest pending notice reserves its real aspect ratio. No fake
-commands, output, playback buttons or product UI. Learn is a conceptual introduction,
-not a functional lesson player. The homepage stays static. Motion is limited to quick
+commands, output, playback buttons or product UI. The homepage stays static. Motion is limited to quick
 article-only fades between documentation pages, short native dialog entry/exit and
 hover feedback. No scroll-triggered reveals or JavaScript-gated content. Reduced
 motion disables it. Focus rings and text labels carry state
