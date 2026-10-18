@@ -7,8 +7,8 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
 
 - `dev` = `a8b383c2` (v0.21 integrated, plus #425, #427, #428). `master` = `6af5cbab` (v0.20.0 line), an ancestor of
   `dev`. `release/v0.21.0` = `d9e08393` (`dev` at `433af8fd` plus the candidate commit).
-- PR #430 (`dev` → `release/v0.21.0`) was open at the start of the session and merged at 22:02 IST the same day:
-  `release/v0.21.0` = `86bb3a6c`, which contains `dev` `a8b383c2`. Draft PR #429 is the v0.21 release.
+- PR #430 (`dev` → `release/v0.21.0`) has merged: merge commit `86bb3a6c` (dated 22:02 IST), which contains `dev`
+  `a8b383c2`. GitHub still reported it open when this session first checked. Draft PR #429 is the v0.21 release.
 - **v0.22 PRs stay draft against `dev` until v0.21 ships**: a fix v0.21's QA needs lands on `dev` and reaches the
   release by another `dev` → release merge, which would carry anything v0.22 merged earlier. Nothing in v0.22
   touches `release/v0.21.0`, its QA evidence, `master` or publishing.
