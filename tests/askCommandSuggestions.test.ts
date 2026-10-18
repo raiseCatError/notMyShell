@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {commandPrompt, COMMAND_SCHEMA, validateCommandSuggestion} from '../src/understanding/tasks.js';
 import {suggestionBlock, suggestionRisk} from '../src/ask/commandSuggestions.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {createSetup, sectionIndex, setupKey, setupSelectedRow} from '../src/setup/SetupCat.js';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
@@ -92,6 +93,17 @@ test('setting: off by default; only an explicit choice turns suggestions on', ()
   assert.equal(normalizePromptConfiguration({}).askCommandSuggestions, 'off');
   assert.equal(normalizePromptConfiguration({askCommandSuggestions: 'local'}).askCommandSuggestions, 'local');
   assert.equal(normalizePromptConfiguration({askCommandSuggestions: 'anthropic'}).askCommandSuggestions, 'off', 'remote providers are not part of this slice');
+});
+
+test('Setup → Ask & local understanding has the same row, Off until chosen, and the choice stays in the draft', () => {
+  const state = createSetup(normalizePromptConfiguration({}), 'ask');
+  state.section = sectionIndex('ask'); state.row = 0;
+  for (let guard = 0; guard < 20 && setupSelectedRow(state)?.row.id !== 'askCommandSuggestions'; guard += 1) setupKey(state, {kind: 'down'});
+  assert.equal(setupSelectedRow(state)?.row.id, 'askCommandSuggestions');
+  assert.equal(state.draft.askCommandSuggestions, 'off');
+  setupKey(state, {kind: 'right'});
+  assert.equal(state.draft.askCommandSuggestions, 'local');
+  assert.equal(state.saved.askCommandSuggestions, 'off', 'nothing is applied until Setup applies');
 });
 
 // ------------------------------------------------------------------ the shared local model service
