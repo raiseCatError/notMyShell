@@ -19,10 +19,10 @@ Automated results here are not physical-terminal validation.
 | 2 | `/view` | #397, #402 | `feature/v021-view` / [#413](https://github.com/raiseCatError/notMyShell/pull/413) → #412 | | PR open, CI green |
 | 3 | `/edit` | #402 | `feature/v021-edit` / [#414](https://github.com/raiseCatError/notMyShell/pull/414) → #413 | | PR open, CI green |
 | 4 | Semantic Output | #386 | `feature/v021-semantic` / [#415](https://github.com/raiseCatError/notMyShell/pull/415) → #414 | | PR open, CI green (one rerun) |
-| 5 | `/track` | #393 (#394) | `feature/v021-track` / [#416](https://github.com/raiseCatError/notMyShell/pull/416) → #415 | | PR open |
-| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` / [#417](https://github.com/raiseCatError/notMyShell/pull/417) → #416 | | PR open |
-| 7 | Themes and controls | #401, #336 | `feature/v021-themes` / [#418](https://github.com/raiseCatError/notMyShell/pull/418) → #417 | | PR open |
-| 8 | Checkpoint (this ledger) | #410 | `docs/v021-checkpoint` → #418 | | PR open |
+| 5 | `/track` | #393 (#394) | `feature/v021-track` / [#416](https://github.com/raiseCatError/notMyShell/pull/416) → #415 | | PR open, CI green |
+| 6 | Modules and diagnostics | #364, #365 | `feature/v021-modules` / [#417](https://github.com/raiseCatError/notMyShell/pull/417) → #416 | | PR open, CI green (one rerun) |
+| 7 | Themes and controls | #401, #336 | `feature/v021-themes` / [#418](https://github.com/raiseCatError/notMyShell/pull/418) → #417 | | PR open, CI green |
+| 8 | Checkpoint (this ledger) | #410 | `docs/v021-checkpoint` → #418 | | PR open, CI green |
 
 ## Decisions
 
@@ -62,7 +62,7 @@ toggle, copy flags, Off). Slice 5: section 5 (`/track` block, refresh, copy, sto
   stacked PRs; merge them in order, each squashed.
 - #388: programs that position rows absolutely inline (rare) still append; recorded in the design.
 - Nothing in v0.21 has had a physical-terminal pass yet. Every slice issue stays open until its pass is recorded.
-- Two CI flakes outside v0.21's changes were seen once each (below); neither reproduced on rerun.
+- Three CI flakes outside v0.21's changes were seen once each (below); none reproduced on rerun.
 
 ## Integration verification (stack head, 2026-10-18)
 
@@ -73,11 +73,12 @@ Run on `feature/v021-themes` (all eight slices) in a T7 worktree, `NMSH_TEST_TMP
   out waiting for the inner shell under full-suite load; the file passes 3 of 3 alone. v0.21 does not touch native
   capture.
 - `npm run typecheck:bench` passes; `npm run bench:smoke` passes (see "Performance" below).
-- CI on each stacked PR (Ubuntu and macOS shards, Node 22 compatibility, Quality): green for #411–#415 at the time of
-  writing; #416–#418 re-run after the live-row change below. Flakes seen once: #415's Ubuntu shard hit the 10-minute
-  job limit with output stalled in `tests/shellFrameworks.test.ts` (an orphaned Fish process); #417's macOS shard
-  failed `tests/backgroundSession.test.ts:92` (task removal timing). Both passed on rerun and are in code v0.21 does
-  not change; each is worth its own issue.
+- CI on each stacked PR (Ubuntu and macOS shards, Node 22 compatibility, Quality): green on #411–#419 at their current
+  heads. Flakes seen once each, all in code v0.21 does not change and all passing on rerun: #415's Ubuntu shard hit
+  the 10-minute job limit with output stalled in `tests/shellFrameworks.test.ts` (an orphaned Fish process); #417's
+  macOS shard failed `tests/backgroundSession.test.ts:92` (task removal timing); #417's Ubuntu shard failed
+  `tests/configuredCompletion.test.ts:89` (the helper's private root still present just after a startup timeout).
+  Each is worth its own issue.
 
 ## Performance
 
