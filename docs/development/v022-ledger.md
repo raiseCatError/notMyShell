@@ -19,9 +19,9 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
 | # | Slice | Issues | Branch / PR | State |
 | --- | --- | --- | --- | --- |
 | 0 | Design, ledger, NL proposal | #431, #432 | `docs/v022-design` (this ledger's PR) | Draft PR |
-| R1 | Input ownership under load | #426 | `fix/v022-input-ownership-look` / #433 | Draft PR; automated verification done |
+| R1 | Input ownership under load | #426 | `fix/v022-input-ownership-look` / #433 | Draft PR; local full verify and CI green |
 | R2 | Fish keys after a handed-over read | #356 | — | Investigation |
-| U1 | `/view` → open in editor | #366 | `feature/v022-view-open-editor` / #434 | Draft PR |
+| U1 | `/view` → open in editor | #366 | `feature/v022-view-open-editor` / #434 | Draft PR; local full verify green |
 | D1 | Multiline history browsing | #389 | — | Reproduced; awaiting maintainer decision |
 | D2 | Natural-language command suggestions | #432 | — | Proposal; awaiting maintainer decision |
 
@@ -53,6 +53,10 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
   after Ctrl+C to run`), then passed 18/18 targeted runs (12 of them 4× parallel) on the fix and 18/18 on the baseline;
   it does not exercise held keys (typing after Ctrl+C is type-ahead). Filed as #436 (needs reproduction; possible
   race: Enter right after Ctrl+C writes the line to the PTY before the shell has acted on SIGINT).
+- R1 full `npm run verify` on `6958c277` (load 9–14): 3,152 tests, 3,150 pass, 2 skipped, 0 failed. CI on #433
+  (macOS and Ubuntu shards, Node 22, Quality, Verify 22.x/26.x): green.
+- U1: 5 new tests fail before the change and pass after; full `npm run verify` on `5d81d93e` (load 4–13): 3,148
+  tests, 3,146 pass, 2 skipped, 0 failed.
 - CPU contention alone does not reproduce #426: at load 64 a probe (`stty` + `ps`) took 10 ms p50, 39 ms max. The
   audit's slow looks came with memory pressure (5–7 GB of swap); this session did not induce swap deliberately.
 - Environment, not product: a Finder window on the T7 makes `LiveSandbox.dispose`'s `lsof +D` see Finder (pid 44738)
