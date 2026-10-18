@@ -1,4 +1,4 @@
-import {existsSync, mkdtempSync, renameSync, rmSync} from 'node:fs';
+import {mkdtempSync, readdirSync, renameSync, rmdirSync, rmSync} from 'node:fs';
 import {basename, dirname, join} from 'node:path';
 
 /**
@@ -13,15 +13,38 @@ export function removeDirectoryNow(path: string): void {
     grave = mkdtempSync(join(dirname(path), `${basename(path)}-gone-`));
     renameSync(path, join(grave, 'directory'));
   } catch { /* Already gone, or not movable: removed where it is below. */ }
-  for (const target of grave ? [grave, path] : [path]) removeAll(target);
+  for (const target of grave ? [grave, path] : [path]) {
+    if (!removeTree(target)) {
+      setTimeout(() => { try { rmSync(target, {recursive: true, force: true}); } catch { /* Best effort. */ } }, 100).unref();
+    }
+  }
 }
 
-function removeAll(target: string): void {
-  // A remover that already holds the directory open (`rm -rf` works through directory descriptors, so it follows the
-  // rename) can make one rmSync stop early without an error; another pass finishes what is left.
-  for (let pass = 0; pass < 5; pass += 1) {
-    try { rmSync(target, {recursive: true, force: true, maxRetries: 3, retryDelay: 5}); } catch { /* Another pass. */ }
-    if (!existsSync(target)) return;
+/**
+ * Remove a directory tree while another remover may be deleting inside it. A remover that already holds the directory
+ * open (`rm -rf` works through directory descriptors, so it follows a rename) makes entries vanish mid-walk, and one
+ * rmSync then stops early without an error. Each pass removes what is listed, tolerating what vanished, and retries
+ * the directory itself while it is not empty; nothing can add entries (its path is gone), so every pass shrinks it.
+ */
+function removeTree(target: string): boolean {
+  for (let pass = 0; pass < 50; pass += 1) {
+    let names: string[];
+    try { names = readdirSync(target); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return true;
+      if (code !== 'ENOTDIR') return false;
+      try { rmSync(target, {force: true}); return true; } catch { return false; }
+    }
+    for (const name of names) {
+      try { rmSync(join(target, name), {recursive: true, force: true}); } catch { /* Vanished or retried next pass. */ }
+    }
+    try { rmdirSync(target); return true; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return true;
+      if (code !== 'ENOTEMPTY' && code !== 'EEXIST' && code !== 'EBUSY') return false;
+    }
   }
-  setTimeout(() => { try { rmSync(target, {recursive: true, force: true}); } catch { /* Best effort. */ } }, 100).unref();
+  return false;
 }
