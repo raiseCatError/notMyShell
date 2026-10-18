@@ -77,4 +77,23 @@ export const direnv = defineCapability<DirenvFact>({
   },
 });
 
-export const ENVIRONMENT_CAPABILITIES = [toolVersions, direnv] as CapabilityDefinition<unknown>[];
+export interface NixShellFact {
+  /** `pure` / `impure` as nix-shell and nix develop report it; `active` for an older nix that sets only 1. */
+  state: 'pure' | 'impure' | 'active';
+}
+
+export const nixShell = defineCapability<NixShellFact>({
+  id: 'env.nixShell',
+  title: 'Nix shell',
+  reads: ['IN_NIX_SHELL, set in the shell by nix-shell and nix develop (never runs nix)'],
+  scope: 'session', family: 'metadata', cost: 'cheap', trust: 'session', sensitivity: 'public', persistence: 'snapshot-safe',
+  fields: ['state'], env: ['IN_NIX_SHELL'], ttlMs: 30_000, timeoutMs: 500, invalidateOn: ['command'],
+  preview: {state: 'impure'},
+  async resolve(context) {
+    const value = context.env.values.IN_NIX_SHELL;
+    if (!value) return undefined;
+    return {value: {state: value === 'pure' || value === 'impure' ? value : 'active'}, evidence: 'IN_NIX_SHELL'};
+  },
+});
+
+export const ENVIRONMENT_CAPABILITIES = [toolVersions, direnv, nixShell] as CapabilityDefinition<unknown>[];

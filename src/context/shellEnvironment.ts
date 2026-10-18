@@ -39,6 +39,8 @@ export const CONTEXT_ENV_VALUES: Readonly<Record<string, number>> = {
   MISE_ENV: 64, MISE_DATA_DIR: 1024, ASDF_DATA_DIR: 1024,
   // direnv's own bookkeeping says what it loaded; NMSh never runs direnv.
   DIRENV_DIR: 1024, DIRENV_FILE: 1024,
+  // nix-shell and nix develop mark their shells; dev container hosts mark theirs.
+  IN_NIX_SHELL: 16, REMOTE_CONTAINERS: 8, CODESPACES: 8,
 };
 
 /** Reported as present or absent only; values are never read by the snapshot code. */

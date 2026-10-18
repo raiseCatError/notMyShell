@@ -7,11 +7,11 @@ import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
 import {projectBuild} from '../src/context/capabilities/build.js';
-import {dartRuntime, denoRuntime, dotnetRuntime, elixirRuntime, flutterRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
-import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
+import {bunRuntime, dartRuntime, denoRuntime, dotnetRuntime, elixirRuntime, flutterRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
+import {direnv, nixShell, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
-import {clock, operatingSystem, sessionDuration, sessionJobs, sessionUser} from '../src/context/capabilities/system.js';
+import {clock, container, operatingSystem, sessionDuration, sessionJobs, sessionUser} from '../src/context/capabilities/system.js';
 import {gitExtras, jujutsu, mercurial} from '../src/context/capabilities/vcs.js';
 import {resetServiceCaches, versionFromInstallPath} from '../src/context/services.js';
 import {CORE_CAPABILITIES} from '../src/context/registry.js';
@@ -717,4 +717,41 @@ test('vcs.hg and vcs.jj: Mercurial and Jujutsu state from their own directories,
     assert.deepEqual(await resolve(jujutsu, {cwd: second, home}), {repository: true, colocated: false, workspace: 'secondary'});
     assert.equal(await resolve(jujutsu, {cwd: join(home, 'src'), home}), undefined);
   } finally { await rm(home, {recursive: true, force: true}); }
+});
+
+test('v0.21 modules: Bun from its own files, a Nix shell from IN_NIX_SHELL, a container from markers and host variables; nothing run', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const cellar = join(tools, 'Cellar', 'bun', '1.1.34', 'bin');
+    await mkdir(cellar, {recursive: true});
+    await sentinelExecutable(join(cellar, 'bun'), join(tools, 'BUN_RAN'), '9.9.9');
+    // Corepack's pin is exact; engines is a range; .bun-version wins over both.
+    await writeFile(join(root, 'package.json'), JSON.stringify({packageManager: 'bun@1.1.30', engines: {bun: '>=1.0'}}));
+    assert.deepEqual(await resolve(bunRuntime, {cwd: root, root, env: {PATH: cellar}}), {requested: '1.1.30', requestedFrom: 'package.json packageManager', active: '1.1.34', manager: 'Homebrew', mismatch: true});
+    await writeFile(join(root, 'package.json'), JSON.stringify({engines: {bun: '>=1.0'}}));
+    resetServiceCaches();
+    assert.equal((await resolve(bunRuntime, {cwd: root, root, env: {PATH: cellar}}))?.requested, '>=1.0');
+    await writeFile(join(root, '.bun-version'), '1.1.34\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(bunRuntime, {cwd: root, root, env: {PATH: cellar}}), {requested: '1.1.34', requestedFrom: '.bun-version', active: '1.1.34', manager: 'Homebrew'});
+    // Hostile package.json content stays inert data; a non-bun packageManager is no request.
+    await rm(join(root, '.bun-version'));
+    await writeFile(join(root, 'package.json'), JSON.stringify({packageManager: 'pnpm@9.0.0; touch PWNED', engines: 'not an object'}));
+    resetServiceCaches();
+    assert.equal(await resolve(bunRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested']}), undefined);
+    assert.equal(await exists(join(tools, 'BUN_RAN')), false, 'bun was never run');
+    assert.equal(await exists(join(root, 'PWNED')), false);
+
+    assert.deepEqual(await resolve(nixShell, {cwd: root, env: {IN_NIX_SHELL: 'impure'}}), {state: 'impure'});
+    assert.deepEqual(await resolve(nixShell, {cwd: root, env: {IN_NIX_SHELL: '1'}}), {state: 'active'});
+    assert.equal(await resolve(nixShell, {cwd: root, env: {}}), undefined);
+
+    assert.deepEqual(await resolve(container, {cwd: root, env: {CODESPACES: 'true'}}), {kind: 'Codespaces'});
+    assert.deepEqual(await resolve(container, {cwd: root, env: {REMOTE_CONTAINERS: 'true'}}), {kind: 'Dev Container'});
+    const onHost = await resolve(container, {cwd: root, env: {}});
+    const markers = (await exists('/.dockerenv')) || (await exists('/run/.containerenv'));
+    assert.equal(onHost === undefined, !markers, 'only the real marker files decide, never workspace content');
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
