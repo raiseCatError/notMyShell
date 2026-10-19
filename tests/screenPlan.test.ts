@@ -250,7 +250,7 @@ test('scroll paging uses the rendered transcript height including shell suggesti
   }
 });
 
-test('PTY resizes to plan rows on panel open/close and full screen in passthrough', () => {
+test('the shell\'s rows come from the reference layout: a panel opening or closing never resizes it; passthrough gets the full terminal', () => {
   const app = appWithOutput();
   try {
     const sizes: number[] = [];
@@ -258,14 +258,14 @@ test('PTY resizes to plan rows on panel open/close and full screen in passthroug
     app['renderer'].render = (() => {}) as never;
     app['render']();
     const closed = sizes.at(-1)!;
-    assert.equal(closed, 16, 'v0.4: 20 rows minus gap, prompt, input, separator');
+    assert.equal(closed, 15, '20 rows minus prompt, input, separator and a running command\'s two activity rows (#443)');
+    const resizes = sizes.length;
     app['appearanceHub'] = {} as never;
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel'), configurable: true});
     app['render']();
-    assert.equal(sizes.at(-1), 14);
     app['appearanceHub'] = undefined;
     app['render']();
-    assert.equal(sizes.at(-1), closed);
+    assert.equal(sizes.length, resizes, 'opening and closing a panel never resizes the shell\'s terminal');
     app['passthrough'] = true;
     app['onResize']();
     assert.equal(sizes.at(-1), 20, 'passthrough keeps the full terminal');

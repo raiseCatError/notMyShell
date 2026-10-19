@@ -40,7 +40,9 @@ test('live fish: builtin output arrives whole while NMSh\'s chrome changes under
         await pause(60);
       }
       await until(async () => await frontend.completions(command) > before, 60_000, `command ${run} to complete`);
-      frontend.pty.write('\u0015\u0015\u0015\u0015');
+      // At the prompt, Ctrl+C clears whatever the churn left in the composer, so the next command starts clean.
+      await pause(200);
+      frontend.pty.write('\u0003');
       const records = (await sandbox.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command);
       const output = records.at(-1)?.output ?? strip(frontend.output.slice(mark));
       const seen = new Set(output.match(new RegExp(`OUT-${run}-\\d+`, 'gu')) ?? []);
