@@ -227,7 +227,8 @@ import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
-import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, systemHostEnvironment, terminalEditorPreview, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {TERMINAL_EDITORS} from '../host/terminalEditors.js';
 import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
 import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
 import {compileQuery, createFind, findCount, parseSearchCommand, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
@@ -5561,7 +5562,7 @@ export class TerminalApp {
     else if (destination === 'cursor') this.openCursorPanel();
     else if (destination === 'themeStudio') this.openThemeStudio();
     else if (destination === 'themeBridge') void this.openThemeBridge();
-    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
+    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation' || destination === 'editor') this.startProviderPanel(destination);
     else if (destination === 'queue') this.rowPanel = createRowPanel('Queue', '/queue · /settings queue', [...QUEUE_SETTINGS_ROW_IDS], 'queue');
     else void this.startKeyboard();
   }
@@ -7625,8 +7626,10 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'): void {
-    const state: ProviderPanelState = family === 'welcome'
+  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor'): void {
+    const state: ProviderPanelState = family === 'editor'
+      ? createProviderPanel(family, 'Terminal editor', TERMINAL_EDITORS, this.promptConfiguration.terminalEditor)
+      : family === 'welcome'
       ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
       : family === 'navigation' ? createProviderPanel(family, 'Directory navigation', NAVIGATION_PROVIDERS, this.promptConfiguration.navigation)
       : family === 'picker' ? createProviderPanel(family, 'Picker', PICKER_PROVIDERS, this.promptConfiguration.picker)
@@ -7646,6 +7649,7 @@ export class TerminalApp {
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
     if (state.family === 'navigation') return [`${SUBTLE}Find with /dirs; selecting inserts a visible cd command. Press Enter separately to navigate.${RESET}`];
+    if (state.family === 'editor') return terminalEditorPreview(selected.id, process.env).map(line => `${SUBTLE}${line}${RESET}`);
     if (state.family === 'picker') return [`${SUBTLE}Selections restore the composer; cancel leaves it unchanged. Missing or failing tools use Native.${RESET}`];
     if (state.family === 'history') return [`${SUBTLE}${selected.id === 'atuin' ? 'Read-only local history; existing hooks unchanged; no sync.' : 'Shell-approved journal metadata and imported zsh history.'}${RESET}`];
     if (state.family === 'suggestions') {
@@ -7706,7 +7710,9 @@ export class TerminalApp {
 
   private saveProviderChoice(state: ProviderPanelState): void {
     const selected = providerPanelSelection(state);
-    const next = state.family === 'welcome'
+    const next = state.family === 'editor'
+      ? {...structuredClone(this.promptConfiguration), terminalEditor: selected.id as PromptConfiguration['terminalEditor']}
+      : state.family === 'welcome'
       ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
       : state.family === 'navigation' ? {...structuredClone(this.promptConfiguration), navigation: selected.id as PromptConfiguration['navigation']}
       : state.family === 'picker' ? {...structuredClone(this.promptConfiguration), picker: selected.id as PromptConfiguration['picker']}
@@ -8603,7 +8609,7 @@ export class TerminalApp {
   private openPanel?: OpenPanelState;
 
   private hostActions(): HostActionAdapter {
-    return resolveHostActions(this.promptConfiguration.openWith);
+    return resolveHostActions(this.promptConfiguration.openWith, systemHostEnvironment(), this.promptConfiguration.terminalEditor);
   }
 
   /** path:line references in the newest outputs, each with the cwd its command ran in. */

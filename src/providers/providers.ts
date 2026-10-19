@@ -8,7 +8,7 @@ import {GLYPHS} from '../ui/glyphs.js';
  * runtime interface (prompt render, welcome render, suggestion query, ...);
  * this module only describes providers and how their availability looks.
  */
-export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'tool';
+export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor' | 'tool';
 export type ProviderKind = 'native' | 'external' | 'none';
 
 export interface ProviderInstall {
