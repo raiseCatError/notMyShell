@@ -888,7 +888,9 @@ export class TerminalApp {
      * ordinary routing again, so later typing is never sent into it unasked. */
     stoppedAt?: number;
     /** A question was reported after Ctrl+C or Ctrl+Z: the program survived the stop and asked (#426). */
-    askedAfterStop?: boolean};
+    askedAfterStop?: boolean;
+    /** A look found the command done (the shell's authenticated done marker; its prompt hooks may still run). */
+    done?: boolean};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -914,7 +916,8 @@ export class TerminalApp {
    * are type-ahead for the shell and stay in the composer.
    */
   /** typeAhead: begun right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back: never a reply (#436). */
-  private runningDraft?: {startId: number; at: number; answering: boolean; typeAhead: boolean};
+  /** afterDone: begun once the shell said the command is done (a look answered idle): type-ahead for the prompt. */
+  private runningDraft?: {startId: number; at: number; answering: boolean; typeAhead: boolean; afterDone?: boolean};
   /**
    * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
@@ -938,7 +941,7 @@ export class TerminalApp {
    * a question asked after the stop (they are its reply), or the end of the stop window with the program still running
    * (they are held for approval like any line typed while it runs).
    */
-  private stopAhead?: {startId: number; lines: string[]; program: string; timer: NodeJS.Timeout};
+  private stopAhead?: {startId: number; lines: string[]; program: string; timer?: NodeJS.Timeout; done: boolean};
   /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
   private replayTypedWhile?: string;
   /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
@@ -2451,7 +2454,8 @@ export class TerminalApp {
     if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
       // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt, not a reply.
       const typeAhead = this.justStopped();
-      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !typeAhead, typeAhead};
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !typeAhead, typeAhead,
+        ...(this.running.done ? {afterDone: true} : {})};
     }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
@@ -11755,7 +11759,7 @@ export class TerminalApp {
     // Typing held when a command ended right after its hidden input: whatever runs now, only the person settles it.
     if (this.ownershipLook?.atPrompt && !this.passthrough) return {text: heldAtPromptActions(this.ownershipLook.program), waiting: true};
     if (this.stopAhead && this.running?.startId === this.stopAhead.startId && !this.editor.text) {
-      return {text: `Runs at the prompt once ${this.stopAhead.program} stops · Esc takes it back`, waiting: false};
+      return {text: `${this.stopAhead.done ? 'Runs when the prompt is back' : `Runs at the prompt once ${this.stopAhead.program} stops`} · Esc takes it back`, waiting: false};
     }
     if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
@@ -11775,16 +11779,19 @@ export class TerminalApp {
    * A line entered right after Ctrl+C or Ctrl+Z (see stopAhead). It is never written while the stopped command still
    * owns the terminal: a survivor that never asks would leave it in the terminal, and the shell would then run it.
    */
-  private holdForStop(text: string): void {
+  private holdForStop(text: string, done = false): void {
     const running = this.running!;
     this.editor.clear();
     this.runningDraft = undefined;
     if (this.stopAhead?.startId === running.startId) { this.stopAhead.lines.push(text); this.render(); return; }
     const program = commandWords(running.command)[0] ?? 'the command';
-    const left = Math.max(0, (running.stoppedAt ?? Date.now()) + STOP_TYPE_AHEAD_MS - Date.now());
-    const timer = setTimeout(() => this.settleStopAhead('window'), left);
-    timer.unref?.();
-    this.stopAhead = {startId: running.startId, lines: [text], program, timer};
+    // A done command only has its prompt left to come: nothing but that prompt settles the line, never time.
+    let timer: NodeJS.Timeout | undefined;
+    if (!done) {
+      timer = setTimeout(() => this.settleStopAhead('window'), Math.max(0, (running.stoppedAt ?? Date.now()) + STOP_TYPE_AHEAD_MS - Date.now()));
+      timer.unref?.();
+    }
+    this.stopAhead = {startId: running.startId, lines: [text], program, ...(timer ? {timer} : {}), done};
     this.render();
   }
 
@@ -11797,7 +11804,7 @@ export class TerminalApp {
     if (!held) return;
     if (how === 'window' && this.running?.startId === held.startId && this.inputState?.request) how = 'asked';
     if (how === 'window' && this.running?.startId !== held.startId) return;
-    clearTimeout(held.timer);
+    if (held.timer) clearTimeout(held.timer);
     this.stopAhead = undefined;
     if (how === 'drop') return;
     if (how === 'cancel') { this.editor.replaceText(held.lines.join('\n')); this.render(); return; }
@@ -12045,7 +12052,10 @@ export class TerminalApp {
       // A rapid second Enter after confirming a queue review is not an answer for the command it just started.
       if (intent === 'enter' && !text.trim() && Date.now() - this.queueConfirmedAt < QUEUE_CONFIRM_SETTLE_MS) return;
       // Right after Ctrl+C or Ctrl+Z, a line is for the prompt the stop brings back; it waits for that to be verified.
-      if (intent === 'enter' && text.trim() && this.justStopped() && !this.answersByDefault() && !this.passthrough) { this.holdForStop(text); return; }
+      // So is a line begun once the shell said the command is done (its prompt hooks run): no program is left to read
+      // it, and it is no reply (#436). One begun before that may be a reply, and is held for approval below.
+      const afterDone = Boolean(this.running.done && this.runningDraft?.startId === this.running.startId && this.runningDraft.afterDone);
+      if (intent === 'enter' && text.trim() && (this.justStopped() || afterDone) && !this.answersByDefault() && !this.passthrough) { this.holdForStop(text, afterDone && !this.justStopped()); return; }
       const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
@@ -12272,6 +12282,8 @@ export class TerminalApp {
       state = current;
     }
     this.inputState = state;
+    // The shell said the command is done: typing begun from now on is for the prompt, never a reply (#426, #436).
+    if (state.done) this.running.done = true;
     if (state.request && stoppedAt !== undefined && state.request.since >= stoppedAt) {
       this.running.askedAfterStop = true;
       if (this.stopAhead?.startId === this.running.startId) this.settleStopAhead('asked');
@@ -12508,7 +12520,9 @@ export class TerminalApp {
       // typing is not a known reply (not discarded) and not known type-ahead (never run by itself if the command ends).
       if (result === 'hidden') { if (afterHiddenAnswer()) hold.sawAnsweredHidden = true; else hold.sawHidden = true; }
       // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
-      // held by a command that ended apply now, not those for one still running.
+      // held by a command that ended apply now, not those for one still running. Typing is type-ahead for the prompt
+      // only when the shell's done marker reached this window before it began (InputState.done): a look's idle says
+      // when the look sampled, not when the key was pressed.
       if (result === 'idle') hold.ended = true;
       // An older service never says what it saw: that is no evidence either, so its typing stays held (fail closed).
       const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request) || result === undefined;

@@ -119,7 +119,7 @@ export type ServerMessage =
    * (a LookResult), from services that advertise 'input-look-result'; older frontends ignore it.
    */
   | {type: 'input-looked'; id: number; result?: string}
-  | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
+  | {type: 'input-state'; terminalOwner?: number; done?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
   | {type: 'tasks'; state: string}
   /** New output of one task (TaskUpdate as JSON). */
@@ -225,7 +225,7 @@ const SHAPES: Record<string, Shape> = {
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?', queued: 'string?'},
   prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
-  'input-state': {terminalOwner: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
+  'input-state': {terminalOwner: 'int?', done: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -322,7 +322,7 @@ export class FrameDecoder {
 export function inputStateMessage(state: InputState): Extract<ServerMessage, {type: 'input-state'}> {
   const request = state.request;
   return {type: 'input-state', waitedMs: Math.round(state.timing.waitedMs), waits: state.timing.waits,
-    ...(state.terminalOwner ? {terminalOwner: 1} : {}),
+    ...(state.terminalOwner ? {terminalOwner: 1} : {}), ...(state.done ? {done: 1} : {}),
     ...(request ? {since: request.since, confidence: request.confidence, mode: request.mode,
       ...(request.prompt ? {prompt: request.prompt.slice(0, 200)} : {}), ...(request.program ? {program: request.program.slice(0, 64)} : {})} : {})};
 }
@@ -332,9 +332,10 @@ export function inputStateFrom(message: Extract<ServerMessage, {type: 'input-sta
   const confidence = INPUT_CONFIDENCES.find(item => item === message.confidence);
   const mode = INPUT_MODES.find(item => item === message.mode);
   const timing = {waitedMs: message.waitedMs, waits: message.waits};
-  if (message.terminalOwner === 1) return {terminalOwner: true, timing};
-  if (message.since === undefined || !confidence || !mode) return {timing};
-  return {request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
+  const done = message.done === 1 ? {done: true as const} : {};
+  if (message.terminalOwner === 1) return {terminalOwner: true, ...done, timing};
+  if (message.since === undefined || !confidence || !mode) return {...done, timing};
+  return {...done, request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
 }
 
 /** A queue change from a frontend, or undefined when it is not one: every field checked, nothing guessed. */

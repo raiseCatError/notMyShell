@@ -52,3 +52,30 @@ for (const shell of ['zsh', 'bash'] as const) {
     } finally { await sandbox.dispose(); }
   });
 }
+
+for (const shell of ['zsh', 'bash'] as const) {
+  const available = supported && (shell === 'zsh' || bash);
+  test(`live ${shell}: a command typed and entered during a slow prompt hook runs once at the prompt, never held or lost (#426, #436)`, {skip: available ? false : `${shell} not available`, timeout: 120_000}, async () => {
+    const sandbox = new LiveSandbox({provider: 'none', shellBackend: shell}, shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
+    const [file, content] = SLOW_HOOK[shell];
+    writeFileSync(join(sandbox.home, file), content);
+    const frontend = sandbox.launch([], {cols: 120, rows: 36});
+    try {
+      await frontend.waitFor(/zsh|bash/u);
+      await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 30_000, 'the first prompt');
+      await frontend.run('echo READY', /READY/u);
+      writeFileSync(join(sandbox.home, 'slow'), '');
+      const mark = frontend.mark;
+      frontend.pty.write('true\r');
+      // The shell's done marker comes at once; the hook then holds the prompt for 2 s.
+      await pause(700);
+      for (const char of 'echo DURING-HOOK') { frontend.pty.write(char); await pause(20); }
+      frontend.pty.write('\r');
+      await until(async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records)
+        .filter(record => record.command === 'echo DURING-HOOK').length === 1, 15_000, 'the line to run once at the prompt');
+      const shown = strip(frontend.output.slice(mark));
+      assert.doesNotMatch(shown, /never runs by itself|waits for your approval/u, 'begun after the command was done: not held');
+      assert.doesNotMatch(shown, /(?<!e)cho DURING|command not found/u, 'whole, never split');
+    } finally { await sandbox.dispose(); }
+  });
+}

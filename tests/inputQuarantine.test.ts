@@ -289,3 +289,40 @@ test('a held line at the head of the queue never holds the prompt: a command sub
     assert.equal(f.owner.state.entries.length, 1, 'the held line still waits');
   } finally { f.dispose(); }
 });
+
+test('a line started after the shell said the command is done (its prompt hooks still run) is type-ahead: it runs once at the prompt', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('true');
+    // The command is over (the shell's done marker); a slow prompt hook holds the prompt back.
+    f.session.emit('inputState', {done: true, timing: {waitedMs: 0, waits: 0}});
+    f.type('echo after');
+    f.answer('idle'); await settled();
+    f.enter();
+    f.answer('idle'); await settled();
+    // Longer than the Ctrl+C window: a slow hook is not a stop, and nothing settles by time.
+    f.tick(3000); t.mock.timers.tick(3000); await settled();
+    assert.deepEqual(f.owner.state.entries, [], 'not held for approval');
+    assert.equal(f.written.some(data => data.includes('echo after')), false, 'never written before the prompt');
+    f.complete(0); await settled();
+    assert.deepEqual(f.submitted, ['echo after'], 'runs once, at the verified prompt');
+  } finally { f.dispose(); }
+});
+
+test('a line started while the command still ran, entered after it said done: held for approval, never run at the prompt', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('read -t 1 code; sleep 2');
+    f.type('123456');
+    f.answer('visible'); await settled();
+    // Done arrives after the line was begun: a reply to the read that just gave up, perhaps.
+    f.session.emit('inputState', {done: true, timing: {waitedMs: 0, waits: 0}});
+    f.enter();
+    f.answer('idle'); await settled();
+    f.complete(0); await settled();
+    assert.deepEqual(f.submitted, []);
+    assert.equal(f.entry('123456')?.condition, 'approve');
+  } finally { f.dispose(); }
+});

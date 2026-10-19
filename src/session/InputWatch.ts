@@ -119,7 +119,8 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   }
 
   get state(): InputState {
-    return {...(this.reader && this.running ? {terminalOwner: true as const} : {}), ...(this.request ? {request: {...this.request}} : {}), timing: {waitedMs: this.waitedMs, waits: this.waits}};
+    return {...(this.reader && this.running ? {terminalOwner: true as const} : {}), ...(this.done && this.running ? {done: true as const} : {}),
+      ...(this.request ? {request: {...this.request}} : {}), timing: {waitedMs: this.waitedMs, waits: this.waits}};
   }
 
   /** Whether the current command's program owns the terminal (and so its own input). */
@@ -145,7 +146,9 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.cancelTimer?.();
     this.cancelTimer = undefined;
     this.generation += 1;
-    if (this.request) this.closeWait(at, true);
+    // Said once, with any wait it closes: what is begun from here on is for the prompt.
+    if (this.request) this.closeWait(at, false);
+    this.emit('change', this.state);
   }
 
   onExec(command: string, at = this.now()): void {

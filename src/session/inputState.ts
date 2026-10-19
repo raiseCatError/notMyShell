@@ -35,6 +35,11 @@ export interface InputTiming {
 export interface InputState {
   /** The shell explicitly entered its interactive reader; ownership lasts until the next prompt. */
   terminalOwner?: true;
+  /**
+   * The shell's authenticated done marker: the command has finished and its prompt hooks run (#436). Nothing begun
+   * after this is the command's input; it is type-ahead for the prompt (#426). Absent from older services.
+   */
+  done?: true;
   request?: InputRequest;
   timing: InputTiming;
 }

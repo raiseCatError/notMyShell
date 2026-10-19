@@ -61,3 +61,19 @@ test('shell protocol: an unread marker carries the bytes as hex, decoded exactly
   assert.deepEqual(decoder.push(`\u001b]777;nmsh;tok;unread;${hex}\u0007`), [{kind: 'unread', text: 'pwé\r'}]);
   assert.deepEqual(decoder.push('\u001b]777;nmsh;tok;unread;zz\u0007'), [], 'not hex: dropped, never guessed');
 });
+
+test('done: the shell\'s done marker reaches every window in the input state, and an older window just ignores it', async () => {
+  const {InputWatch} = await import('../src/session/InputWatch.js');
+  const {inputStateMessage, inputStateFrom, decodeMessage, encodeMessage} = await import('../src/session/SessionProtocol.js');
+  const watch = new InputWatch({now: () => 10});
+  const states: unknown[] = [];
+  watch.on('change', state => states.push(state));
+  watch.onExec('true', 1);
+  watch.onDone(5);
+  assert.deepEqual(states.at(-1), {done: true, timing: {waitedMs: 0, waits: 0}});
+  const wire = decodeMessage(encodeMessage(inputStateMessage(watch.state)).trimEnd());
+  assert.equal(wire.ok, true);
+  assert.deepEqual(inputStateFrom((wire as {message: Parameters<typeof inputStateFrom>[0]}).message), {done: true, timing: {waitedMs: 0, waits: 0}});
+  watch.onPrompt(6);
+  assert.equal(watch.state.done, undefined, 'the prompt ends it');
+});
