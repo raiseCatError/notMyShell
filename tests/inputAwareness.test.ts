@@ -3,7 +3,7 @@ import test from 'node:test';
 import {OpenLine, promptShaped, promptText} from '../src/session/openLine.js';
 import {parseCpuTime, parseForeground, parseStty, parseSyscall, type TerminalSample} from '../src/session/terminalProbe.js';
 import {InputWatch} from '../src/session/InputWatch.js';
-import {directInput, waitedSoFar, type InputState} from '../src/session/inputState.js';
+import {directInput, lookResultFrom, waitedSoFar, type InputState} from '../src/session/inputState.js';
 import {decodeMessage, encodeMessage, inputStateFrom, inputStateMessage, parseClientFeatures, parseFeatures, type SessionInfo} from '../src/session/SessionProtocol.js';
 import {describeNotice, noticeVisibleMs, SessionNoticeTracker} from '../src/session/SessionNotices.js';
 import {liveStatusParts} from '../src/session/liveStatus.js';
@@ -314,6 +314,113 @@ test('watch: lookNow samples at once, outside the backed-off schedule; nothing r
   assert.equal(line.watch.state.request, undefined);
 });
 
+test('watch (#426): a first sample that catches the shell still on a CPU is not proof it computes; the follow-up decides', async () => {
+  // A loaded machine: the shell wrote its exec marker and is about to block in `read`, but is still runnable when the
+  // first look samples it. With nothing earlier to compare, one sample cannot say it computes.
+  const h = harness("read -r QA_REPLY; printf 'ANSWER=%s\\n' \"$QA_REPLY\"");
+  h.set({modes: lineModes, foreground: shellFg('Rs+', 10)});
+  const looked = h.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  h.set({modes: lineModes, foreground: shellFg('Ss+', 10)});
+  await h.advance(100);
+  await looked;
+  assert.equal(h.watch.state.request?.confidence, 'likely', 'blocked and idle in the follow-up: a line read');
+  assert.equal(h.watch.state.request?.mode, 'line');
+
+  // The same with line input off (`read -k 1`): confirmed key input once the follow-up sees it blocked.
+  const key = harness('read -k 1 x; echo got:$x');
+  key.set({modes: keyModes, foreground: shellFg('Rs+', 10)});
+  const keyLooked = key.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  key.set({modes: keyModes, foreground: shellFg('Ss+', 10)});
+  await key.advance(100);
+  await keyLooked;
+  assert.equal(key.watch.state.request?.mode, 'key');
+  assert.equal(key.watch.state.request?.confidence, 'confirmed');
+
+  // A shell that is computing stays not waiting: on a CPU in both samples, and using it in between.
+  const busy = harness('while :; do :; done');
+  busy.set({modes: lineModes, foreground: shellFg('Rs+', 10)});
+  const busyLooked = busy.watch.lookNow();
+  for (let index = 0; index < 5; index++) await Promise.resolve();
+  busy.set({modes: lineModes, foreground: shellFg('Rs+', 90)});
+  await busy.advance(100);
+  await busyLooked;
+  assert.equal(busy.watch.state.request, undefined);
+  assert.ok(busy.changes.every(state => !state.request), 'never reported, not even for a moment');
+
+  // Another program on a CPU with no prompt and ordinary line settings: still nothing, and the look ends after its one
+  // sample (it settles without the follow-up timer running).
+  const other = harness('make');
+  other.set({modes: lineModes, foreground: fg('R+', 10, 'make')});
+  let otherDone = false;
+  const otherLooked = other.watch.lookNow().then(() => { otherDone = true; });
+  await new Promise(done => setImmediate(done));
+  assert.equal(otherDone, true, 'no follow-up was asked for');
+  await otherLooked;
+  assert.equal(other.watch.state.request, undefined);
+});
+
+test('watch (#426): echo off with line input is hidden input whatever else is known; typed text is never drawn', async () => {
+  // On a CPU in the only sample, computing across samples, or (Linux) blocked elsewhere: a terminal would still echo
+  // nothing typed, so NMSh shows nothing either. Without that evidence the reply is "likely" hidden, not confirmed.
+  const cases: Array<[string, TerminalSample[]]> = [
+    ['runnable in the only sample', [{modes: hiddenModes, foreground: fg('R+', 5, 'sudo')}]],
+    ['computing across samples', [{modes: hiddenModes, foreground: fg('S+', 5, 'sudo')}, {modes: hiddenModes, foreground: fg('R+', 900, 'sudo')}]],
+    ['blocked elsewhere (Linux)', [{modes: hiddenModes, foreground: fg('S+', 5, 'ssh-keygen'), readingTerminal: false}]],
+  ];
+  for (const [name, samples] of cases) {
+    const h = harness('sudo -k true');
+    h.watch.onOutput('Password:', h.at());
+    for (const sample of samples) { h.set(sample); await h.advance(1000); }
+    const request = h.watch.state.request;
+    assert.equal(request?.mode, 'hidden', `${name}: hidden`);
+    assert.equal(request?.confidence, 'likely', `${name}: not claimed as a confirmed wait`);
+    assert.equal(directInput(request), true, `${name}: keys go to the program, never into the composer`);
+  }
+  // Echo off without line input (raw mode, a full-screen or proxied program) is unchanged: not a hidden line.
+  const raw = harness('docker run -it image');
+  raw.set({modes: {canonical: false, echo: false, signals: false}, foreground: fg('R+', 100, 'docker')});
+  await raw.advance(5000);
+  assert.equal(raw.watch.state.request, undefined);
+});
+
+test('watch (#426): lookNow reports what it saw: hidden, visible, unknown, nothing running, or no way to look', async () => {
+  const hidden = harness('read -s x');
+  hidden.set({modes: hiddenModes, foreground: shellFg()});
+  assert.equal(await hidden.watch.lookNow(), 'hidden');
+  const visible = harness('sleep 30');
+  visible.set({modes: lineModes, foreground: fg('S+', 1, 'sleep')});
+  assert.equal(await visible.watch.lookNow(), 'visible');
+  // ps answered but stty did not: the terminal's echo is unknown.
+  const noModes = harness('sudo -k true');
+  noModes.set({foreground: fg('S+', 1, 'sudo')});
+  assert.equal(await noModes.watch.lookNow(), 'unknown');
+  // Both probes failed or timed out.
+  const failed = harness('sudo -k true');
+  failed.set(undefined);
+  assert.equal(await failed.watch.lookNow(), 'unknown');
+  // The command ended: there is nothing to look at.
+  const ended = harness('ls');
+  ended.watch.onPrompt(ended.at());
+  assert.equal(await ended.watch.lookNow(), 'idle');
+  // No probe on this platform.
+  const none = new InputWatch({tty: () => '/dev/ttys9'});
+  none.onExec('sleep 1');
+  assert.equal(await none.lookNow(), 'unavailable');
+  none.dispose();
+  // A sample overtaken by newer output still says how the terminal echoes; only its request evidence is stale.
+  let resolve!: (sample: TerminalSample) => void;
+  const watch = new InputWatch({probe: () => new Promise<TerminalSample>(done => { resolve = done; }), tty: () => '/dev/ttys9'});
+  watch.onExec('npm test');
+  const looking = watch.lookNow();
+  for (let index = 0; index < 3; index++) await Promise.resolve();
+  watch.onOutput('ok 1 - test\r\n');
+  resolve({modes: lineModes, foreground: fg('R+', 1, 'node')});
+  assert.equal(await looking, 'visible');
+  watch.dispose();
+});
+
 test('watch: no false positives for builds, sleep, network waits, progress bars, statuses or log streams', async () => {
   // A build that printed a colon-ended status and is computing.
   const build = harness('make');
@@ -372,9 +479,14 @@ test('watch: the kernel\'s report decides when it exists (Linux): reading confir
   assert.equal(reading.watch.state.request?.mode, 'line');
   const elsewhere = harness('ssh-keygen');
   elsewhere.watch.onOutput('Enter passphrase: ', elsewhere.at());
+  elsewhere.set({modes: lineModes, foreground: fg('S+', 5, 'ssh-keygen'), readingTerminal: false});
+  await elsewhere.advance(5000);
+  assert.equal(elsewhere.watch.state.request, undefined, 'blocked elsewhere vetoes an ordinary line read');
+  // With echo off the veto only lowers confidence: typed text must never be drawn (#426).
   elsewhere.set({modes: hiddenModes, foreground: fg('S+', 5, 'ssh-keygen'), readingTerminal: false});
   await elsewhere.advance(5000);
-  assert.equal(elsewhere.watch.state.request, undefined);
+  assert.equal(elsewhere.watch.state.request?.mode, 'hidden');
+  assert.equal(elsewhere.watch.state.request?.confidence, 'likely');
 });
 
 test('watch: several questions in one command accumulate waiting time; completion closes an open wait', async () => {
@@ -476,11 +588,16 @@ test('protocol: input-state round-trips; unknown values are dropped, never guess
   assert.deepEqual([...parseClientFeatures((hello.message as {features?: string}).features)], ['input-state']);
   assert.deepEqual([...parseClientFeatures(undefined)], [], 'an older frontend says nothing and gets nothing new');
   // On-demand looks: a numbered request and its answer; only between peers that both listed 'input-look'.
-  for (const message of [{type: 'input-look', id: 7}, {type: 'input-looked', id: 7}] as const) {
+  for (const message of [{type: 'input-look', id: 7}, {type: 'input-looked', id: 7}, {type: 'input-looked', id: 8, result: 'hidden'}] as const) {
     const look = decodeMessage(encodeMessage(message).trimEnd());
     assert.ok(look.ok);
     assert.deepEqual(look.message, message);
   }
+  // What a look saw is one of a closed set; anything else is no answer, never guessed (#426).
+  assert.equal(lookResultFrom('hidden'), 'hidden');
+  assert.equal(lookResultFrom('visible'), 'visible');
+  assert.equal(lookResultFrom('maybe'), undefined);
+  assert.equal(lookResultFrom(undefined), undefined);
   assert.equal(decodeMessage(encodeMessage({type: 'input-look', id: 'x'} as never).trimEnd()).ok, false);
   assert.deepEqual([...parseClientFeatures('input-state,input-look')], ['input-state', 'input-look']);
   assert.ok(parseFeatures('queue,input-look').has('input-look'));

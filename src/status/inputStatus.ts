@@ -84,3 +84,22 @@ export function completionWaitFact(timing: InputTiming | undefined): string {
   if (!timing?.waits || timing.waitedMs < 1000) return '';
   return ` · ${formatDuration(timing.waitedMs)} waiting for input${timing.waits > 1 ? ` (${timing.waits} prompts)` : ''}`;
 }
+
+/** How to settle typing NMSh is holding because it cannot tell who reads it (#426): the composer's hint and the rows'. */
+export function heldInputActions(program: string): string {
+  return `Ctrl+S sends it to ${program} · Tab shows it · Esc discards it`;
+}
+
+/**
+ * The activity rows while typing is held without evidence of who reads it: what happened, then how to choose. Nothing
+ * typed is shown; the person decides, or later evidence does.
+ */
+export function heldInputRows(program: string, columns: number): [string, string] {
+  const attention = foreground(UI_COLORS.attention);
+  const secondary = foreground(UI_COLORS.secondary);
+  const head = `${inputGlyph({confidence: 'likely'})} Can't tell whether ${program} is reading your typing`;
+  const tail = ' · held, not shown';
+  const first = `${attention}${BOLD}${truncateText(head, columns)}${RESET}${displayWidth(head + tail) <= columns ? `${secondary}${tail}${RESET}` : ''}`;
+  const indent = '  ';
+  return [first, `${indent}${secondary}${truncateText(heldInputActions(program), Math.max(1, columns - indent.length))}${RESET}`];
+}
