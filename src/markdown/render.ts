@@ -158,7 +158,10 @@ function wrapAtoms(atoms: readonly Atom[], width: number, first: string, rest: s
       // Spaces never start a row and never trail one.
       if (empty) continue;
       const next = atoms[index + 1];
-      if (!next || used + 1 + displayWidth(next.text) > width) continue;
+      if (!next) continue;
+      // The next word does not fit after this space: it starts the next row (it may fit without the space, but must
+      // never be glued to the word before it).
+      if (used + 1 + displayWidth(next.text) > width) { push(); continue; }
       ansi += paintAtom(atom); plain += ' '; used += 1;
       continue;
     }
