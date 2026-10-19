@@ -439,6 +439,13 @@ const OWNERSHIP_LOOK_SLOW_MS = 800;
 const HIDDEN_ANSWER_TYPE_AHEAD_MS = 1000;
 /** How held keys end: on the evidence (route), dropped, sent to the program as typed, or shown in the composer. */
 type HoldSettle = 'route' | 'discard' | 'send' | 'reveal';
+/**
+ * The keys Tab replays when it shows held typing: text and the keys that edit it, never one that acts. A Ctrl+Q (queue),
+ * Ctrl+S, history, palette or failure key typed while the typing was held must not queue, send or run it (#426 gate).
+ */
+const REVEALABLE_KEYS = new Set<Key['kind']>(['text', 'paste', 'enter', 'newline', 'backspace', 'delete', 'deleteWord', 'deleteLineBefore',
+  'deleteLineAfter', 'left', 'right', 'wordLeft', 'wordRight', 'lineHome', 'lineEnd', 'bufferHome', 'bufferEnd', 'selectLeft', 'selectRight',
+  'selectWordLeft', 'selectWordRight', 'selectLineHome', 'selectLineEnd', 'selectBufferHome', 'selectBufferEnd', 'selectAll']);
 /** Keys held while NMSh looks at whether the running command reads input (#426). */
 interface OwnershipHold {
   keys: Key[];
@@ -914,8 +921,13 @@ export class TerminalApp {
    * type-ahead, and a look that still sees that question is not new evidence; a newer question ends this at once.
    */
   private hiddenAnswer?: {startId: number; at: number};
-  /** The running command's hidden question whose queued entries were last checked (a question is reported repeatedly). */
+  /** The running command's question whose queued entries were last checked (a question is reported repeatedly). */
   private hiddenQueueCheck?: {startId: number; since: number};
+  /**
+   * A composer draft typed during the running command before it asked for hidden input: it may be the password, typed
+   * before the prompt appeared. It is kept off the composer while the question is open and held at the prompt after.
+   */
+  private stashedDraft?: {startId: number; text: string; program: string};
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -4477,6 +4489,12 @@ export class TerminalApp {
     }
     // Keys still held for this command's look are settled now that it is over (#426).
     this.ownershipLook?.settle('route');
+    // A draft typed before this command asked for hidden input may be the password: held, never back in the composer.
+    if (this.stashedDraft?.startId === command.startId) {
+      const stashed = this.stashedDraft;
+      this.stashedDraft = undefined;
+      this.holdAtPrompt(stashed.text, stashed.program);
+    }
     // A command may have changed what workspace facts say (npm version, terraform workspace select, aws configure).
     this.contextEngine.invalidate('command');
     void this.refreshContext(cwd);
@@ -12028,23 +12046,25 @@ export class TerminalApp {
       this.runningDraft = undefined;
       this.session.write(typed);
     } else if (request && draft && !draft.typeAhead && draft.at >= request.since && this.editor.text) draft.answering = true;
-    if (request?.mode === 'hidden') this.holdQueuedReplies(request);
+    if (request?.mode === 'hidden') this.stashDraftTypedBefore(request);
+    if (request) this.holdQueuedReplies(request);
     // The evidence a held key waited for has arrived.
     if (request) this.ownershipLook?.settle('route');
     this.render();
   }
 
   /**
-   * A hidden question with no prompt can come after its reply was already typed and entered: with no question to
-   * answer yet, that Enter queued it as a command (#426, documented limit). When the command asks for hidden input, the
-   * entries queued while it ran may be that reply: they wait for the person's approval instead of running after it, so
-   * a password never runs as a shell command by itself. Entries queued before the command started are left as they
+   * A question can come after its reply was already typed and entered: with no question to answer yet (or one NMSh
+   * could not yet see, on a loaded machine), that Enter queued it as a command (#426, documented limit). When the
+   * command asks for input, the entries queued while it ran may be that reply: they wait for the person's approval
+   * instead of running after it, so a reply, or a password, never runs as a shell command by itself. Entries queued before the command started are left as they
    * are, and so are those queued while this question is already shown (Ctrl+Q): each question is checked once, when it
    * is first reported. Its `since` is no boundary: it can be when the shell went idle (a `sleep` before the `read`).
    */
   private holdQueuedReplies(request: InputRequest): void {
     const running = this.running;
     if (!running || !this.queueAvailable()) return;
+    const hidden = request.mode === 'hidden';
     if (this.hiddenQueueCheck?.startId === running.startId && this.hiddenQueueCheck.since === request.since) return;
     this.hiddenQueueCheck = {startId: running.startId, since: request.since};
     const typed = this.queueState.entries.filter(entry => entry.addedAt >= running.startedAt && entry.condition !== 'approve');
@@ -12053,12 +12073,64 @@ export class TerminalApp {
     if (this.queueConditionsAvailable()) {
       for (const entry of typed) this.session.queue({op: 'condition', id: entry.id, condition: 'approve'});
       const count = typed.length === 1 ? 'the command queued while it ran waits' : `the ${typed.length} commands queued while it ran wait`;
-      this.output.addFrontendInteraction(program, `${program} asked for hidden input; ${count} for your approval (/queue), in case one was its reply.`, INFO);
+      this.output.addFrontendInteraction(program, `${program} asked for ${hidden ? 'hidden ' : ''}input; ${count} for your approval (/queue), in case one was its reply.`, INFO);
     } else {
       // An older session service without per-entry approval: the whole queue waits instead.
       this.session.queue({op: 'pause'});
-      this.output.addFrontendInteraction(program, `${program} asked for hidden input; the queue is paused (/queue), in case a command queued while it ran was its reply.`, INFO);
+      this.output.addFrontendInteraction(program, `${program} asked for ${hidden ? 'hidden ' : ''}input; the queue is paused (/queue), in case a command queued while it ran was its reply.`, INFO);
     }
+  }
+
+  /**
+   * When the running command asks for hidden input, a draft typed in the composer during it, before the question,
+   * may be the password typed before the prompt appeared (a terminal's program would usually flush it). It leaves the
+   * composer, so it is neither shown nor sent as the answer, and is held at the prompt when the command ends; an Enter
+   * held with it was for that draft, never an empty answer for the question.
+   */
+  private stashDraftTypedBefore(request: InputRequest): void {
+    const running = this.running;
+    const draft = this.runningDraft;
+    // Type-ahead typed right after Ctrl+C or Ctrl+Z is the person's next command for the prompt (#436), not a reply.
+    if (!running || !draft || draft.typeAhead || draft.startId !== running.startId || draft.at >= request.since) return;
+    if (this.queueCompose || this.queueEdit || !this.editor.text) return;
+    const text = this.editor.text;
+    this.editor.clear();
+    this.runningDraft = undefined;
+    const program = running.command.trim().split(/\s+/u)[0] || 'the command';
+    this.stashedDraft = this.stashedDraft?.startId === running.startId
+      ? {...this.stashedDraft, text: `${this.stashedDraft.text}\n${text}`} : {startId: running.startId, text, program};
+    const hold = this.ownershipLook;
+    if (hold && !hold.atPrompt && hold.keys.every(key => key.kind === 'enter' || key.kind === 'newline')) hold.settle('discard');
+  }
+
+  /** Show held typing in the composer: its text and edits only (REVEALABLE_KEYS), and never its final Enter. */
+  private revealHeld(keys: readonly Key[]): void {
+    const shown = keys.filter(key => REVEALABLE_KEYS.has(key.kind));
+    let end = shown.length;
+    while (end > 0 && shown[end - 1]!.kind === 'enter') end -= 1;
+    this.replayingHeld = true;
+    try { for (const item of shown.slice(0, end)) this.handleKey(item.kind === 'enter' ? {kind: 'newline'} as Key : item); } finally { this.replayingHeld = false; }
+    this.render();
+  }
+
+  /** Hold text at the prompt, hidden, until the person shows it (Tab) or discards it (Esc, Ctrl+C); nothing else settles it. */
+  private holdAtPrompt(text: string, program: string): void {
+    const keys: Key[] = text.split('\n').flatMap((line, index) => index ? [{kind: 'newline'} as Key, {kind: 'text', value: line} as Key] : [{kind: 'text', value: line} as Key]);
+    const existing = this.ownershipLook;
+    if (existing?.atPrompt) { existing.keys.unshift(...keys); this.render(); return; }
+    if (existing) existing.settle('route');
+    let settled = false;
+    const hold: OwnershipHold = {keys, startId: -1, answering: false, slow: false, uncertain: true, ended: true, sawHidden: false,
+      sawAnsweredHidden: false, atPrompt: true, program, settle: how => {
+        if (settled || (how !== 'reveal' && how !== 'discard')) return;
+        settled = true;
+        if (this.ownershipLook === hold) this.ownershipLook = undefined;
+        if (how === 'reveal') { this.revealHeld(hold.keys); return; }
+        this.output.addFrontendInteraction(program, 'Your held typing was discarded, not sent or run.', INFO);
+        this.render();
+      }};
+    this.ownershipLook = hold;
+    this.render();
   }
 
   /**
@@ -12129,12 +12201,7 @@ export class TerminalApp {
         return;
       }
       if (how === 'reveal') {
-        // Shown for review, never routed: a final Enter is not replayed, earlier ones become new lines.
-        let end = keys.length;
-        while (end > 0 && keys[end - 1]!.kind === 'enter') end -= 1;
-        this.replayingHeld = true;
-        try { for (const item of keys.slice(0, end)) this.handleKey(item.kind === 'enter' ? {kind: 'newline'} as Key : item); } finally { this.replayingHeld = false; }
-        this.render();
+        this.revealHeld(keys);
         return;
       }
       // The command ended while NMSh looked. A reply to its open question is discarded, never run; so is typing held
