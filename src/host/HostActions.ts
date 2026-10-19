@@ -3,6 +3,7 @@ import {accessSync, constants, statSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {basename, delimiter, isAbsolute, join, resolve} from 'node:path';
 import {homedir} from 'node:os';
+import {installedTerminalEditors, terminalEditor, type TerminalEditorId} from './terminalEditors.js';
 
 /**
  * HostActions: delegate editor-native work to the editor around NMSh.
@@ -123,18 +124,20 @@ export function editorArguments(editor: readonly string[], target: SourceLocatio
   if (!target.line) return [...editor, target.path];
   if (['hx', 'helix'].includes(name)) return [...editor, location(target)];
   if (name === 'micro') return [...editor, `+${target.line}${target.column ? `:${target.column}` : ''}`, target.path];
+  // nano documents +LINE,COLUMN and Emacs +LINE:COLUMN; the others take only +LINE.
+  if (name === 'nano' && target.column) return [...editor, `+${target.line},${target.column}`, target.path];
+  if (['emacs', 'emacsclient'].includes(name) && target.column) return [...editor, `+${target.line}:${target.column}`, target.path];
   if (['vi', 'vim', 'nvim', 'view', 'nano', 'emacs', 'emacsclient', 'kak', 'pico', 'mg', 'joe'].includes(name)) return [...editor, `+${target.line}`, target.path];
   // Unknown editor: no guessed location flag; the file opens at its start.
   return [...editor, target.path];
 }
 
-function editorAdapter(editor: string[]): HostActionAdapter {
-  const label = editor[0] ?? 'editor';
+function editorAdapter(editor: readonly string[], shown = basename(editor[0] ?? 'editor')): HostActionAdapter {
   return {
-    id: 'editor', label: basename(label),
+    id: 'editor', label: shown,
     capabilities: {nativeFileOpen: true, nativeDirectoryOpen: false, nativeDiff: false},
-    openFile: target => ({kind: 'compose', argv: editorArguments(editor, target), label: basename(label)}),
-    openDirectory: () => ({kind: 'unsupported', reason: `${basename(label)} is a terminal editor; NMSh does not open folders in it. Use cd here, or an editor with a folder view.`}),
+    openFile: target => ({kind: 'compose', argv: editorArguments(editor, target), label: shown}),
+    openDirectory: () => ({kind: 'unsupported', reason: `${shown} is a terminal editor; NMSh does not open folders in it. Use cd here, or an editor with a folder view.`}),
     openDiff: () => ({kind: 'unsupported', reason: 'No editor with a native diff view is configured. Run git diff (or diff -u) here, or set Open with to Zed or VS Code.'}),
   };
 }
@@ -180,9 +183,10 @@ export function configuredEditor(env: NodeJS.ProcessEnv): string[] | undefined {
 
 /**
  * Pick the adapter: an explicit choice wins; otherwise the editor NMSh runs
- * inside (from its own terminal environment), then VISUAL/EDITOR.
+ * inside (from its own terminal environment), then VISUAL/EDITOR, then the
+ * terminal editor chosen in Settings (only when it is installed here).
  */
-export function resolveHostActions(openWith: OpenWith, host: HostEnvironment = systemHostEnvironment()): HostActionAdapter {
+export function resolveHostActions(openWith: OpenWith, host: HostEnvironment = systemHostEnvironment(), chosen: TerminalEditorId = 'environment'): HostActionAdapter {
   const program = host.env.TERM_PROGRAM;
   const inZed = program === 'zed' || Boolean(host.env.ZED_TERM);
   const inVsCode = program === 'vscode';
@@ -208,7 +212,21 @@ export function resolveHostActions(openWith: OpenWith, host: HostEnvironment = s
     }
     return editorAdapter(editor);
   }
-  return NONE;
+  return chosenEditorAdapter(chosen, host);
+}
+
+/** With VISUAL and EDITOR unset: the terminal editor chosen in Settings, or a factual message naming the installed ones. */
+function chosenEditorAdapter(chosen: TerminalEditorId, host: HostEnvironment): HostActionAdapter {
+  const editor = terminalEditor(chosen);
+  if (editor?.executable && editor.argv) {
+    if (host.which(editor.executable)) return editorAdapter(editor.argv, editor.label);
+    const reason = `${editor.label} (${editor.executable}) is chosen in Settings → Terminal editor but is not on PATH. Install it, choose another, or set VISUAL or EDITOR.`;
+    return {...NONE, openFile: () => ({kind: 'unsupported', reason})};
+  }
+  const installed = installedTerminalEditors(host);
+  if (!installed.length) return NONE;
+  const reason = `No editor is known here: not inside Zed or VS Code, and neither VISUAL nor EDITOR is set. Choose one in /settings → Terminal editor (installed here: ${installed.map(item => item.label).join(', ')}), or set VISUAL or EDITOR.`;
+  return {...NONE, openFile: () => ({kind: 'unsupported', reason})};
 }
 
 /** Launch a GUI editor detached, argv only. Resolves with a failure reason, never throws. */
@@ -280,4 +298,21 @@ export function resolveLocation(target: SourceLocation, cwd: string, home = home
   if (stat.isDirectory()) return {ok: true, kind: 'directory', location: {path}};
   if (!stat.isFile()) return {ok: false, reason: `${path} is not a regular file.`};
   return {ok: true, kind: 'file', location: {...target, path}};
+}
+
+/**
+ * What the Terminal editor chooser shows for the highlighted choice: the command /open would compose (nothing runs),
+ * and whether VISUAL/EDITOR overrides it.
+ */
+export function terminalEditorPreview(id: string, env: NodeJS.ProcessEnv): string[] {
+  const configured = configuredEditor(env);
+  const editor = terminalEditor(id);
+  const example = {path: 'README.md', line: 12, column: 5};
+  if (!editor?.argv) {
+    return configured ? [`VISUAL/EDITOR is ${configured.join(' ')}: /open README.md:12 composes ${editorArguments(configured, example).join(' ')}`]
+      : ['Neither VISUAL nor EDITOR is set: choose an editor here, or set one in your shell.'];
+  }
+  const lines = [`/open README.md:12:5 puts this in the composer for you to run: ${editorArguments(editor.argv, example).join(' ')}`];
+  if (configured) lines.push(`VISUAL/EDITOR (${configured.join(' ')}) is set and is used instead.`);
+  return lines;
 }

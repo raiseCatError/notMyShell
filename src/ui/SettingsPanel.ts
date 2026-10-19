@@ -52,6 +52,7 @@ import {framePanel, renderTabStrip} from './PanelShell.js';
 import {stepIndex, toggleValue} from './formControls.js';
 import {ASK_PRESENTATION_LABELS, ASK_PRESENTATIONS} from '../ask/AskPanel.js';
 import {displayWidth, highlightMatches, truncateAnsi} from '../util/text.js';
+import {TERMINAL_EDITORS} from '../host/terminalEditors.js';
 
 /** The three top-level views of the one shared panel behind /settings, /config, and /status. */
 export const SETTINGS_VIEWS = ['Settings', 'Status', 'Config'] as const;
@@ -91,7 +92,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor' | 'toolConfig' | 'tools'
   | 'setup' | 'setupQuick' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
 
 interface SettingsRowBase {
@@ -497,6 +498,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'openWith', label: 'Open with', description: 'Where /open and /open-diff hand files: the editor around NMSh (Auto), Zed, VS Code, or VISUAL/EDITOR', category: 'Sessions',
     values: OPEN_WITH_IDS, labels: ['Auto', 'Zed', 'VS Code', 'VISUAL / EDITOR'],
     get: config => config.openWith, set: (config, openWith) => ({...config, openWith})}),
+  {id: 'terminalEditor', label: 'Terminal editor', description: 'Used by /open and o in /view when VISUAL and EDITOR are not set: choose one installed here', category: 'Sessions',
+    control: 'child', destination: 'editor', value: config => TERMINAL_EDITORS.find(editor => editor.id === config.terminalEditor)?.label ?? 'VISUAL / EDITOR'},
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
     control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
@@ -677,7 +680,7 @@ export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
   glyphStyle: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
   promptVibrance: 'Appearance',
   showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
-  transcriptPresentation: 'Editor', openWith: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
+  transcriptPresentation: 'Editor', openWith: 'Editor', terminalEditor: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
   reducedMotion: 'Cursor & Motion', effectsOff: 'Cursor & Motion',
   shellBackend: 'Shell & Providers', suggestions: 'Shell & Providers',
   localUnderstanding: 'Local Understanding',
@@ -711,7 +714,7 @@ const CONFIG_ORDER: readonly string[] = [
   'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
   'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
-  'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
+  'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith', 'terminalEditor',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',
   'motion_rendering', 'motion_contextTransitions', 'motion_commandLaunch', 'motion_completionHighlight', 'motion_completionEffect', 'motion_cursorTravel', 'motion_eventFeedback', 'motion_intensity', 'motion_speed',
   'reducedMotion', 'effectsOff',

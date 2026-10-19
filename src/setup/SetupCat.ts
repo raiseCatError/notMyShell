@@ -415,6 +415,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
       : 'NMSh titles the window while it owns the screen; programs keep their own title while they run'},
     {row: configRow('agentActivity')},
     {row: configRow('openWith')},
+    routeRow('setupTerminalEditor', 'Terminal editor', 'For /open and o in /view when VISUAL and EDITOR are not set: choose one installed here', 'editor', 'Sessions'),
     {row: configRow('notifications')},
     {row: configRow('notifyAfter')},
     {row: configRow('notifyOnSuccess')},
@@ -501,6 +502,7 @@ export const SETUP_EQUIVALENTS: Readonly<Record<string, string>> = {
   provider: 'setupPromptProvider', welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', navigation: 'setupNavigation', picker: 'setupPicker',
   cursorSpeed: 'cursorAdvanced', cursorIntensity: 'cursorAdvanced', cursorTrail: 'cursorAdvanced', cursorParticles: 'cursorAdvanced',
   tools: 'setupToolChoice', themeStudio: 'setupThemeStudio', onboardingBackdrop: 'setupPresets', themeBridge: 'setupThemeBridge', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
+  terminalEditor: 'setupTerminalEditor',
 };
 
 /** Where each Settings entry point (a full panel) is reached from Setup: a section, or the route row that opens it. */
@@ -508,7 +510,7 @@ export const SETUP_ENTRY_COVERAGE: Readonly<Record<string, string>> = {
   appearance: 'setupHostWindow', glyph: 'glyphStyle', prompt: 'setupPromptModules', transcript: 'transcriptPresentation', syntax: 'syntaxHighlighting', keyboard: 'setupKeyboard',
   welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', picker: 'setupPicker', navigation: 'setupNavigation', layout: 'composerPosition', toolConfig: 'setupToolConfig', tools: 'setupBrowseTools', screensaver: 'idleTimeout', setup: 'setupToolChoice',
   cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
-  queue: 'queueTimeline', setupQuick: 'setupPresets',
+  queue: 'queueTimeline', setupQuick: 'setupPresets', editor: 'setupTerminalEditor',
 };
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {
