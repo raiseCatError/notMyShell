@@ -191,6 +191,32 @@ test('done before the prompt: plain type-ahead the look answered quickly is kept
   } finally { f.dispose(); }
 });
 
+test('type-ahead after answering a hidden question is kept when the command ends, though a look still sees that question', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('read -s x');
+    f.state({since: Date.now(), confidence: 'confirmed', mode: 'hidden'});
+    f.tick(200);
+    f.type(SECRET);
+    f.enter();
+    assert.equal(f.written.join(''), `${SECRET}\r`, 'the answer went to the hidden read');
+    f.tick(20);
+    // The next command, typed at once: the read has its answer but has not returned yet.
+    f.type('echo NEXT');
+    f.enter();
+    // A look still sees the question just answered (echo off), then the shell says the command is done.
+    f.answer('hidden');
+    await settled();
+    f.answer('idle');
+    await settled();
+    f.complete(0);
+    await settled();
+    assert.deepEqual(f.adds(), ['echo NEXT'], 'the type-ahead runs next, once; it is not discarded');
+    f.nowhere(SECRET, 'the answer itself');
+  } finally { f.dispose(); }
+});
+
 test('interrupt: Ctrl+C discards held typing; done, a late answer and a stale question after it change nothing', async t => {
   const f = fixture();
   try {
