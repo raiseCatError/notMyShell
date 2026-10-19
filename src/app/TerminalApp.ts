@@ -431,6 +431,8 @@ const STOP_TYPE_AHEAD_MS = 2000;
 const OWNERSHIP_LOOK_MS = 5000;
 /** A look still running after this long (a loaded machine) says so in the composer: the typing is kept, not lost. */
 const OWNERSHIP_LOOK_SLOW_MS = 800;
+/** Typing begun this soon after an answer to a hidden question is type-ahead for what comes next, not that reply. */
+const HIDDEN_ANSWER_TYPE_AHEAD_MS = 1000;
 /** How held keys end: on the evidence (route), dropped, sent to the program as typed, or shown in the composer. */
 type HoldSettle = 'route' | 'discard' | 'send' | 'reveal';
 /** Keys held while NMSh looks at whether the running command reads input (#426). */
@@ -894,8 +896,11 @@ export class TerminalApp {
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
    */
   private ownershipLook?: OwnershipHold;
-  /** The running command (its startId) whose hidden question NMSh has sent an answer to: later typing is type-ahead, not that reply. */
-  private hiddenAnsweredFor?: number;
+  /**
+   * When NMSh last sent an answer to the running command's hidden question. Typing that begins right after it is
+   * type-ahead, and a look that still sees that question is not new evidence; a newer question ends this at once.
+   */
+  private hiddenAnswer?: {startId: number; at: number};
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -11965,6 +11970,8 @@ export class TerminalApp {
   private onInputState(state: InputState): void {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
+    // A question newer than the hidden one NMSh answered: typing from now on may be its reply, not type-ahead.
+    if (state.request && this.hiddenAnswer && state.request.since > this.hiddenAnswer.at) this.hiddenAnswer = undefined;
     // A question that began before Ctrl+C or Ctrl+Z is the one the stop ended, reported late (the session sampled it
     // before it saw the stop): while typing is type-ahead for the prompt, it routes nothing to the program (#436). If it
     // is still the session's word when that window closes (the program kept reading through the stop), it applies
@@ -12099,7 +12106,10 @@ export class TerminalApp {
     bound.unref?.();
     const slow = setTimeout(() => { hold.slow = true; this.render(); }, OWNERSHIP_LOOK_SLOW_MS);
     slow.unref?.();
-    const afterHiddenAnswer = this.hiddenAnsweredFor === running.startId;
+    // Only typing begun just after the answer, with no newer question since, is type-ahead (#433 review): a second hidden
+    // question that NMSh has not reported yet must still count its reply as possibly a password.
+    const startedAt = Date.now();
+    const afterHiddenAnswer = () => this.hiddenAnswer?.startId === running.startId && startedAt - this.hiddenAnswer.at <= HIDDEN_ANSWER_TYPE_AHEAD_MS;
     const hold: OwnershipHold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, uncertain: false, ended: false, sawHidden: false, settle};
     this.ownershipLook = hold;
     // A look that saw nothing usable (a probe failed or timed out) gets one more look before the typing is left held:
@@ -12112,7 +12122,7 @@ export class TerminalApp {
       if (settled) return;
       // Hidden input seen after NMSh already answered this command's hidden question is that question, still open
       // until the read returns: the typing that follows the answer is type-ahead, not a reply.
-      if (result === 'hidden' && !afterHiddenAnswer) hold.sawHidden = true;
+      if (result === 'hidden' && !afterHiddenAnswer()) hold.sawHidden = true;
       // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
       // held by a command that ended apply now, not those for one still running.
       if (result === 'idle') hold.ended = true;
@@ -12145,7 +12155,7 @@ export class TerminalApp {
     const bytes = directKeyBytes(key);
     if (!bytes) return;
     const mode = this.inputState?.request?.mode;
-    if (mode === 'hidden' && /[\r\n]/u.test(bytes) && this.running) this.hiddenAnsweredFor = this.running.startId;
+    if (mode === 'hidden' && /[\r\n]/u.test(bytes) && this.running) this.hiddenAnswer = {startId: this.running.startId, at: Date.now()};
     this.session.write(bytes);
     // One key answers a key read; Enter ends a hidden line (as the session's watch also decides).
     if (mode === 'key' || /[\r\n]/u.test(bytes)) this.answerSent();

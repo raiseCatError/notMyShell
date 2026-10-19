@@ -217,6 +217,56 @@ test('type-ahead after answering a hidden question is kept when the command ends
   } finally { f.dispose(); }
 });
 
+test('review: a second hidden question after the first answer: its reply is never run when the command ends', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('read -s a; read -s -t 1 b');
+    f.state({since: Date.now(), confidence: 'confirmed', mode: 'hidden'});
+    f.tick(200);
+    f.type('first');
+    f.enter();
+    // The second read asks with no prompt; NMSh has not reported it yet when its reply is typed, well after the first.
+    f.tick(1500);
+    f.type(SECRET);
+    f.enter();
+    f.answer('hidden');
+    await settled();
+    f.answer('idle');
+    await settled();
+    f.complete(1);
+    await settled();
+    f.nowhere(SECRET, 'the second reply');
+    assert.match(f.transcript(), /discarded, not run/u);
+  } finally { f.dispose(); }
+});
+
+test('review: a new hidden question reported after the answer ends the grace at once', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('sudo -k true', 'Password:');
+    f.state({since: Date.now(), confidence: 'confirmed', mode: 'hidden'});
+    f.tick(200);
+    f.type('wrong');
+    f.enter();
+    f.tick(20);
+    // "Sorry, try again." and a new question, reported and then closed before the next typing (the probe lagged).
+    f.state({since: Date.now(), confidence: 'confirmed', mode: 'hidden'});
+    f.state();
+    f.tick(20);
+    f.type(SECRET);
+    f.enter();
+    f.answer('hidden');
+    await settled();
+    f.answer('idle');
+    await settled();
+    f.complete(1);
+    await settled();
+    f.nowhere(SECRET, 'the retry');
+  } finally { f.dispose(); }
+});
+
 test('interrupt: Ctrl+C discards held typing; done, a late answer and a stale question after it change nothing', async t => {
   const f = fixture();
   try {
