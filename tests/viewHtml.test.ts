@@ -131,6 +131,13 @@ test('F01 limits: deep nesting, many tags, long attributes and unclosed markup s
     for (const row of rows.slice(0, 200)) assert.ok(displayWidth(row.ansi) <= 40);
   }
   assert.match(plain(html('<div>'.repeat(100_000) + 'deep' + '</div>'.repeat(100_000))), /deep/u, 'content past the depth bound is still shown');
+  // Unclosed quotes and tags never make each tag rescan the rest: whole documents stay linear.
+  for (const [source, render] of [["<a x='".repeat(170_000), html], [('<a x="' + 'y'.repeat(4000)).repeat(250), html],
+    ['x <code>a '.repeat(6_000), markdown], ['x <script> '.repeat(6_000), markdown]] as const) {
+    const started = performance.now();
+    render(source, 80);
+    assert.ok(performance.now() - started < 2500, `linear: ${source.slice(0, 12)}…`);
+  }
 });
 
 test('F01: rendering HTML reads no files and makes no requests (the module imports nothing that could)', () => {

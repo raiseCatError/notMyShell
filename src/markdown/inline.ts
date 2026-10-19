@@ -163,7 +163,7 @@ function backtickRuns(source: string): Map<number, number[]> {
 
 function tokenize(source: string, options: InlineOptions): Token[] {
   const tokens: Token[] = [];
-  const lower = options.html ? source.toLowerCase() : '';
+  const closes = options.html ? closingTags(source) : () => -1;
   const runs = backtickRuns(source);
   /** Per run length, how many runs are already behind the scan position. */
   const consumed = new Map<number, number>();
@@ -213,7 +213,7 @@ function tokenize(source: string, options: InlineOptions): Token[] {
       const tag = options.html ? readTag(source, index) : undefined;
       if (tag && KNOWN.has(tag.name)) {
         flush();
-        index = htmlTag(tag, source, lower, tokens);
+        index = htmlTag(tag, source, closes, tokens);
         continue;
       }
     }
@@ -262,12 +262,28 @@ function tokenize(source: string, options: InlineOptions): Token[] {
   return tokens;
 }
 
+/**
+ * Where `</name` next appears at or after a position. Searches only move forward and each answer is remembered, so a
+ * run of unclosed tags (`<code>` after `<code>`) stays linear.
+ */
+function closingTags(source: string): (name: string, from: number) => number {
+  const lower = source.toLowerCase();
+  const found = new Map<string, number>();
+  return (name, from) => {
+    const known = found.get(name);
+    if (known !== undefined && (known < 0 || known >= from)) return known;
+    const at = lower.indexOf(`</${name}`, from);
+    found.set(name, at);
+    return at;
+  };
+}
+
 /** One HTML tag in html mode: its tokens, and where reading goes on. */
-function htmlTag(tag: NonNullable<ReturnType<typeof readTag>>, source: string, lower: string, tokens: Token[]): number {
+function htmlTag(tag: NonNullable<ReturnType<typeof readTag>>, source: string, closes: (name: string, from: number) => number, tokens: Token[]): number {
   const name = tag.name;
   // An element dropped with its content (a script, a style, a form control) leaves nothing, up to its end tag.
   if (!tag.closing && !tag.selfClosing && (DROPPED.has(name) || RAW_TEXT.has(name))) {
-    const close = lower.indexOf(`</${name}`, tag.end);
+    const close = closes(name, tag.end);
     const end = close < 0 ? -1 : source.indexOf('>', close);
     return end < 0 ? source.length : end + 1;
   }
@@ -281,7 +297,7 @@ function htmlTag(tag: NonNullable<ReturnType<typeof readTag>>, source: string, l
   if (name === 'input' && tag.attributes.type?.toLowerCase() === 'checkbox') { tokens.push({kind: 'text', text: 'checked' in tag.attributes ? '☑ ' : '☐ '}); return tag.end; }
   if (CODE_TAGS.has(name) && !tag.selfClosing) {
     // Code is literal: its text up to the end tag, any markup inside dropped, references decoded (safely).
-    const close = lower.indexOf(`</${name}`, tag.end);
+    const close = closes(name, tag.end);
     if (close < 0) return tag.end;
     const end = source.indexOf('>', close);
     const code = decodeEntities(source.slice(tag.end, close).replace(/<[^<>]{0,200}>/gu, '')).replace(/\s+/gu, ' ');

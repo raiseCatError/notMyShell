@@ -83,8 +83,10 @@ export function readTag(source: string, start: number): Tag | undefined {
       while (index < limit && SPACE.test(source[index]!)) index += 1;
       const quote = source[index];
       if (quote === '"' || quote === "'") {
-        const close = source.indexOf(quote, index + 1);
-        if (close < 0 || close >= limit) return undefined;
+        // Only within this tag's bound: an unclosed quote never makes one tag scan the rest of the document.
+        let close = index + 1;
+        while (close < limit && source[close] !== quote) close += 1;
+        if (close >= limit) return undefined;
         value = source.slice(index + 1, close);
         index = close + 1;
       } else {
