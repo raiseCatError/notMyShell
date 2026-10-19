@@ -426,3 +426,51 @@ test('gate: a visible reply queued before NMSh saw the read waits for approval o
     assert.deepEqual(f.dispatched, [], 'never run after the command');
   } finally { f.dispose(); }
 });
+
+/**
+ * #426 residual (v0.22 stabilization): a reply typed and entered before a question with no prompt existed is queued (NMSh
+ * cannot know). If that read gives up before any look sees it (a timed `read -t`, between looks that are seconds apart
+ * on a quiet command, or a program's read macOS cannot report) and the command succeeds, the entry used to run as a
+ * shell command: a password into the shell's history and its "command not found" output. A line typed while a command
+ * runs that does not start with a command this shell knows would only fail as a command; it now waits for approval
+ * instead of running by itself. Ordinary type-ahead (a real command) still runs after the command, as before.
+ */
+test('#426 residual: a reply queued before a timed prompt-less read NMSh never saw; the read gives up, the command succeeds: not run', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('sleep 1; read -t 1 QA_REPLY || true');
+    f.type(SECRET);
+    f.answer('visible'); await settled();
+    f.enter();
+    f.answer('visible'); await settled();
+    assert.deepEqual(f.adds(), [SECRET], 'queued (NMSh could not know)');
+    const entry = f.owner.state.entries.find(item => item.text === SECRET);
+    assert.equal(entry?.condition, 'approve', 'it waits for approval');
+    assert.match(f.transcript(), /does not start with a command/u, 'a note says why');
+    assert.equal(f.transcript().includes(SECRET), false, 'the note never repeats the text');
+    // No question was ever reported: the read gave up unseen, and the command succeeded.
+    f.tick(1500);
+    f.complete(0); await settled();
+    f.neverRun(SECRET, 'after the command succeeded');
+  } finally { f.dispose(); }
+});
+
+test('#426 residual: ordinary type-ahead is unchanged: commands, definitions and assignments typed while one runs still run after it', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('sleep 1; read -t 1 QA_REPLY || true');
+    const typed = ['ls -la', 'qfn() { echo "fn-$1"; }', 'QUEUE_VAR=kept', 'function qfn2; echo hi; end'];
+    for (const line of typed) {
+      f.type(line);
+      f.answer('visible'); await settled();
+      f.enter();
+      f.answer('visible'); await settled();
+    }
+    for (const line of typed) assert.equal(f.owner.state.entries.find(item => item.text === line)?.condition, undefined, `${line}: no approval asked`);
+    f.tick(1500);
+    f.complete(0); await settled();
+    assert.deepEqual(f.dispatched, ['ls -la']);
+  } finally { f.dispose(); }
+});

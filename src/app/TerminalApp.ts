@@ -11757,8 +11757,13 @@ export class TerminalApp {
     this.render();
   }
 
-  /** Add the composer's text to the queue. */
-  private enqueue(text: string): void {
+  /**
+   * Add the composer's text to the queue. `typedWhileRunning`: a plain Enter while a command runs, with no question
+   * NMSh could see. Such a line may be a reply to a read that has not asked yet (#426); if that read gives up unseen
+   * and the command succeeds, the line would run as a command. One that does not start with a command this shell
+   * knows would only fail as a command (a password would reach the shell's history), so it waits for approval instead.
+   */
+  private enqueue(text: string, typedWhileRunning = false): void {
     if (!this.queueAvailable()) {
       this.output.addFrontendInteraction('/queue', this.session.features.has('queue')
         ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
@@ -11766,7 +11771,14 @@ export class TerminalApp {
       return;
     }
     this.syncQueuePolicy();
-    this.session.queue({op: 'add', text});
+    const waits = typedWhileRunning && !this.startsWithCommand(text);
+    this.session.queue({op: 'add', text, ...(waits && this.queueConditionsAvailable() ? {condition: 'approve' as const} : {})});
+    if (waits) {
+      const program = commandWords(this.running?.command ?? '')[0] ?? 'the command';
+      if (!this.queueConditionsAvailable()) this.session.queue({op: 'pause'});
+      // The note never repeats the text: it may be a password.
+      this.output.addFrontendInteraction(program, `The line queued while ${program} runs does not start with a command this shell knows, so it may be a reply for ${program}; it ${this.queueConditionsAvailable() ? 'waits for your approval' : 'pauses the queue'} (/queue) instead of running by itself.`, INFO);
+    }
     this.sessionSubmissions.push({text, slash: false});
     if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
     this.editor.clear();
@@ -11774,6 +11786,22 @@ export class TerminalApp {
     this.runningDraft = undefined;
     this.queueCompose = false;
     this.render();
+  }
+
+  /**
+   * Whether a queued line's first command word is one this shell knows: an alias, function, builtin or keyword, or an
+   * executable by path or on PATH. A word not classified yet is checked against the shell's builtins and PATH. Shell
+   * syntax with no command word (an assignment, a group) and a function definition are the person's shell input.
+   */
+  private startsWithCommand(text: string): boolean {
+    const first = text.split('\n').find(line => line.trim()) ?? '';
+    if (/^\s*(?:function\s+\S|[A-Za-z_][\w.:-]*\s*\(\s*\))/u.test(first)) return true;
+    const token = this.highlighter.tokenize(graphemes(first), this.semanticService.cache)
+      .find(item => ['Command', 'KnownCommand', 'Builtin', 'Alias', 'Function', 'UnknownCommand'].includes(item.type));
+    if (!token) return true;
+    if (token.type === 'UnknownCommand') return false;
+    if (token.type !== 'Command') return true;
+    return token.text.includes('/') || shellAdapter(this.shellId).builtins.has(token.text) || Boolean(resolveCommand(token.text));
   }
 
   /**
@@ -11818,7 +11846,7 @@ export class TerminalApp {
         return;
       }
       if (!text.trim()) return;
-      this.enqueue(text);
+      this.enqueue(text, intent === 'enter');
       return;
     }
     if (intent === 'send') return;
@@ -12067,11 +12095,12 @@ export class TerminalApp {
     const hidden = request.mode === 'hidden';
     if (this.hiddenQueueCheck?.startId === running.startId && this.hiddenQueueCheck.since === request.since) return;
     this.hiddenQueueCheck = {startId: running.startId, since: request.since};
-    const typed = this.queueState.entries.filter(entry => entry.addedAt >= running.startedAt && entry.condition !== 'approve');
+    // Entries already waiting (a line that did not start with a command) are counted, not changed; approved ones are left.
+    const typed = this.queueState.entries.filter(entry => entry.addedAt >= running.startedAt && !(entry.condition === 'approve' && entry.approved));
     if (!typed.length) return;
     const program = commandWords(running.command)[0] ?? 'The command';
     if (this.queueConditionsAvailable()) {
-      for (const entry of typed) this.session.queue({op: 'condition', id: entry.id, condition: 'approve'});
+      for (const entry of typed) if (entry.condition !== 'approve') this.session.queue({op: 'condition', id: entry.id, condition: 'approve'});
       const count = typed.length === 1 ? 'the command queued while it ran waits' : `the ${typed.length} commands queued while it ran wait`;
       this.output.addFrontendInteraction(program, `${program} asked for ${hidden ? 'hidden ' : ''}input; ${count} for your approval (/queue), in case one was its reply.`, INFO);
     } else {

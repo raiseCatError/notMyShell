@@ -101,3 +101,58 @@ for (const shell of ['zsh', 'bash'] as const) {
     } finally { await sandbox.dispose(); }
   });
 }
+
+/**
+ * #426 residual, live: a reply typed and entered before a timed read with no prompt asks (here a program's read, which
+ * macOS cannot report at all). The read gives up and the command succeeds. The line used to run as a command; one that
+ * does not start with a command this shell knows now waits for approval, while a real command typed the same way still
+ * runs after it.
+ */
+const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
+const perl = ['/usr/bin/perl', '/opt/homebrew/bin/perl', '/usr/local/bin/perl'].find(existsSync);
+for (const shell of ['zsh', 'bash', 'fish'] as const) {
+  const available = supported && Boolean(perl) && (shell === 'zsh' || (shell === 'bash' ? bash : fish));
+  test(`live ${shell}: a reply entered before a timed read nobody saw: the read gives up, the command succeeds; never run, a real command still runs`, {skip: available ? false : `${shell} or perl not available`, timeout: 120_000}, async () => {
+    const sandbox = new LiveSandbox({provider: 'none', shellBackend: shell}, shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
+    if (shell !== 'fish') { const [rc, , content] = HISTORY[shell]; writeFileSync(join(sandbox.home, rc), content); }
+    const frontend = sandbox.launch([], {cols: 120, rows: 36});
+    // Answer the terminal queries Fish's reader waits for, as a real terminal does.
+    frontend.pty.onData(data => {
+      if (data.includes('\u001b[c') || data.includes('\u001b[0c')) frontend.pty.write('\u001b[?62;22c');
+      if (data.includes('\u001b[6n')) frontend.pty.write('\u001b[1;1R');
+    });
+    try {
+      await frontend.waitFor(/zsh|bash|fish/u);
+      await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 30_000, 'the first prompt');
+      await frontend.run('echo READY', /READY/u);
+      const records = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records);
+      const reading = `sleep 2; ${perl} -e 'alarm 1; <STDIN>'; true`;
+      // The control's command reads nothing: where the platform reports the read (Linux), every entry typed during a
+      // command that asked waits for approval by design, a real command too.
+      const quiet = 'sleep 2; true';
+      // The real command first: an entry left waiting for approval would hold anything queued after it.
+      for (const [typed, runs, command] of [['echo QA-NEXT-RAN', true, quiet], [SECRET, false, reading]] as const) {
+        const ran = async () => (await records()).filter(record => record.command === command).length;
+        const mark = frontend.mark;
+        const before = await ran();
+        frontend.pty.write(`${command}\r`);
+        await pause(500);
+        for (const char of typed) { frontend.pty.write(char); await pause(15); }
+        frontend.pty.write('\r');
+        await frontend.waitFor(/1 (?:queued|waiting)/u, mark, 10_000);
+        await until(async () => await ran() === before + 1, 20_000, 'the command to complete');
+        if (runs) {
+          await until(async () => (await records()).some(record => record.command === typed), 15_000, 'the real command to run after it');
+          continue;
+        }
+        // Anything that would run after it has had time to start.
+        await pause(2500);
+        assert.equal((await records()).some(record => record.command?.includes(SECRET)), false, 'never run: not in NMSh\'s journal');
+        assert.match(strip(frontend.output.slice(mark)), /does not start with a command this shell knows/u);
+        assert.doesNotMatch(strip(frontend.output.slice(mark)), new RegExp(`${SECRET}[^\\n]*(?:not found|No such|Unknown command)|(?:not found|No such|Unknown command)[^\\n]*${SECRET}`, 'u'),
+          'the shell never saw it as a command');
+        if (shell !== 'fish') assert.equal(readFileSync(join(sandbox.home, HISTORY[shell][1]), 'utf8').includes(SECRET), false, 'not in the shell\'s history');
+      }
+    } finally { await sandbox.dispose(); }
+  });
+}
