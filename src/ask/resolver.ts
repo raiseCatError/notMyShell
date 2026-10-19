@@ -5,7 +5,7 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
 import {resolveGit} from './gitAssist.js';
 import {browseOutcome, resolveFiles} from './fileAssist.js';
-import {resolveRecipe} from './recipes.js';
+import {matchRecipe, resolveRecipe} from './recipes.js';
 import {resolveProject} from './project.js';
 import {resolveLocalModel} from './localModel.js';
 import {resolveWatch} from './watchAssist.js';
@@ -113,6 +113,23 @@ export const CAPABILITIES: readonly Capability[] = [
 const UNSAFE = /\b(?:delete|remove|rm|wipe|erase|purge|destroy|nuke|reset --hard|hard reset|git reset|git clean|clean up untracked|force push|push|commit|chmod|chown|sudo|kill|uninstall|drop|format|overwrite|truncate|rewrite history|rebase|checkout --|discard)\b/u;
 /** Requests understood as writing or authoring, which Ask has no capability for. */
 const AUTHORING = /\b(?:write|create|generate|make|build|compile|refactor|fix|implement|send|email|translate)\b/u;
+/**
+ * Shell tasks Ask has no capability for (QA F04): changing files in bulk (convert, resize, rename…), or finding them by
+ * size, age or a count. Ask says so itself and never hands them to the optional intent model, which maps them to the
+ * nearest listed capability ("list files" for "convert every png here to webp"); with command suggestions on, the
+ * person's local model may suggest one command instead. Archives have recipes, and a destructive request stays a
+ * refusal (UNSAFE), so neither is matched here.
+ */
+const FILE_WORDS = String.raw`(?:files?|folders?|director(?:y|ies)|images?|photos?|pictures?|videos?|pngs?|jpe?gs?|gifs?|webps?|heics?|svgs?|pdfs?|csvs?|mp[34]s?|movs?|wavs?|logs?)`;
+const SHELL_TASKS = [
+  new RegExp(String.raw`^(?:(?:please|can you|could you|help me|i want to|i need to|how (?:do|can|would) i|how to)\s+)*(?:convert|resize|rename|crop|rotate|scale|shrink|optimi[sz]e|minify|transcode|encode|merge|combine|concatenate|split|dedupe|deduplicate|lowercase|uppercase)\b.*\b${FILE_WORDS}\b`, 'u'),
+  new RegExp(String.raw`^(?:please |can you |could you |help me )?turn (?:the |these |those |all |every |my )*(?:\w+ )?${FILE_WORDS} into\b`, 'u'),
+  new RegExp(String.raw`\b(?:duplicate|identical) ${FILE_WORDS}\b`, 'u'),
+  new RegExp(String.raw`\b${FILE_WORDS}\b.*\b(?:bigger|larger|smaller|older|newer) than\b|\b(?:biggest|largest|smallest|oldest|newest)\b.*\b${FILE_WORDS}\b`, 'u'),
+  new RegExp(String.raw`\b${FILE_WORDS}\b.*\b(?:changed|modified|edited|created) (?:in the last|since|today|yesterday|this week|last week)\b`, 'u'),
+  /^(?:please |how (?:do|can) i |how to )?count (?:the )?(?:lines|words|characters|files)\b/u,
+];
+export const isShellTask = (text: string): boolean => !UNSAFE.test(text) && SHELL_TASKS.some(pattern => pattern.test(text));
 /** Vague references that need context to resolve. */
 const VAGUE = /\b(?:thing|that one|the old one|the other one|from earlier|earlier|before|previous one|last one|it again)\b/u;
 
@@ -199,6 +216,9 @@ function resolveExact(raw: string, context: AskContext, state: ResolveState = {}
   // Homebrew from its own facts; install/upgrade/uninstall are typed proposals behind the final Yes.
   const packages = resolvePackage(text, context);
   if (packages) return packages;
+  if (isShellTask(text) && !matchRecipe(text)) {
+    return {kind: 'unsupported', shellTask: true, text: 'Ask doesn\'t run shell tasks like this one itself; it finds, opens, shows and switches things in NMSh.'};
+  }
   // Config files and verified edits (resolve → inspect → plan → preview → confirm); removal is answered, never planned.
   // "find files named config" is a file search, not a config request.
   if (/^(?:please )?(?:find|locate|search for|look for|show(?: me)?|list)\b.*\b(?:files?|folders?)\s+(?:named|called|matching)\b/u.test(text)) {

@@ -9736,15 +9736,19 @@ export class TerminalApp {
    */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const outcome = await this.resolveAskOwn(text, state);
-    if ((outcome.kind !== 'unclear' && outcome.kind !== 'unsupported') || this.promptConfiguration.askCommandSuggestions !== 'local' || this.askState !== state) return outcome;
+    if (outcome.kind !== 'unclear' && outcome.kind !== 'unsupported') return outcome;
+    if (this.promptConfiguration.askCommandSuggestions !== 'local' || this.askState !== state) {
+      return outcome.kind === 'unsupported' && outcome.shellTask
+        ? {...outcome, text: `${outcome.text}\nCommand suggestions (Settings → Ask) can suggest one command from your local model for you to check.`} : outcome;
+    }
     if (this.askStage) this.setAskStage('Asking your local model for a command');
     const result = await this.understanding.suggestCommand({text, shell: this.shellId, os: process.platform === 'darwin' ? 'macOS' : 'Linux'});
     if (this.askState !== state) return outcome;
     const next = outcome.kind === 'unclear' ? outcome.categories : undefined;
     if ('unavailable' in result) return {kind: 'answer', capability: 'help.command', text: result.unavailable, ...(next?.length ? {next} : {})};
-    // The model declined: Ask's own answer stands.
-    if (!result.suggestion) return outcome;
     const model = this.configuration.localUnderstanding.model?.label ?? 'local model';
+    // The model declined: Ask's own answer stands, saying so.
+    if (!result.suggestion) return {...outcome, text: `Your local model (${model}) suggested no command for this. ${outcome.text}`};
     return {kind: 'answer', capability: 'help.command', text: 'A suggested command, for you to check before running it yourself.',
       block: suggestionBlock(result.suggestion, model)};
   }
@@ -9756,7 +9760,9 @@ export class TerminalApp {
     const files = systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath, name => resolveCommand(name), commands.install);
     const deterministic = resolveRequest(text, context, {rejected: state.rejected}, commands, files);
     const deterministicRoute = () => { this.understanding.lastRoute = {route: 'deterministic', at: Date.now()}; return deterministic; };
-    if (!this.understanding.eligible('ask')) return deterministicRoute();
+    // A refusal, or something Ask does not do (a shell task), is an answer, not uncertainty: in any mode the intent
+    // model never re-reads it into the nearest capability it was offered (QA F04).
+    if (!this.understanding.eligible('ask') || deterministic.kind === 'unsafe' || deterministic.kind === 'unsupported') return deterministicRoute();
     // Auto: deterministic first; the model only when it is unsure. Always: the model first, still feeding deterministic builders.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
     if (!this.understanding.prefersModel && !unsure) return deterministicRoute();

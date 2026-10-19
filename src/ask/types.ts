@@ -159,7 +159,8 @@ export type AskOutcome =
     direct?: boolean}
   | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
   | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]; referents?: AskReferents}
-  | {kind: 'unsupported'; text: string; alternative?: AskOption}
+  /** shellTask: a task for a shell command (QA F04), which command suggestions may help with. */
+  | {kind: 'unsupported'; text: string; alternative?: AskOption; shellTask?: true}
   | {kind: 'unsafe'; text: string; alternative?: AskOption; referents?: AskReferents}
   | {kind: 'unclear'; text: string; categories: AskOption[]};
 
