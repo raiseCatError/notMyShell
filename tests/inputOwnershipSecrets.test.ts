@@ -319,3 +319,110 @@ test('a look slower than the slow mark after a hidden answer, then the command e
     assert.match(f.transcript(), /discarded, not run/u);
   } finally { f.dispose(); }
 });
+
+// ------------------------------------------------------------------ release gate review (v0.22.0, #444)
+
+test('gate: held typing is released only as typed text; a Ctrl+Q typed while held is not replayed by Tab, so nothing is queued or run', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    await secondReplyHeldAtPrompt(f, SECRET);
+    // Ctrl+Q at an idle prompt would queue the composer's text, and an idle queue runs it at once.
+    f.key('\u0011');
+    f.key(TAB);
+    await settled();
+    assert.equal(f.text(), SECRET, 'Tab shows the held text in the composer: the person chose to see it');
+    assert.deepEqual(f.adds(), [], 'not queued');
+    f.neverRun(SECRET, 'after Ctrl+Q and Tab');
+  } finally { f.dispose(); }
+});
+
+test('gate: while a command runs, a Ctrl+Q typed while typing is held is not replayed by Tab either', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('read -rs pw');
+    f.type(SECRET);
+    f.answer('unknown'); await settled();
+    f.answer('unknown'); await settled();
+    assert.match(f.screen(), /Can.t tell whether read is reading your typing/u);
+    f.key('\u0011');
+    f.key(TAB);
+    await settled();
+    assert.deepEqual(f.adds(), [], 'not queued');
+    f.complete(0); await settled();
+    f.neverRun(SECRET, 'after the command');
+  } finally { f.dispose(); }
+});
+
+/** A password typed (and, with `enter`, entered) before sudo prints its prompt; the person then answers the prompt. */
+async function typedBeforeThePrompt(f: ReturnType<typeof fixture>, enter: boolean) {
+  f.begin('sudo -k true');
+  f.tick(50);
+  f.type(SECRET);
+  f.answer('visible'); await settled();
+  if (enter) f.enter();
+  // sudo prints its prompt and turns echo off; NMSh sees the hidden question.
+  f.tick(300);
+  f.app['onShellData']('Password:');
+  if (enter) { f.answer('hidden'); await settled(); }
+  f.hidden(); await settled();
+  assert.equal(f.screen().includes(SECRET), false, 'not shown while the program asks');
+  f.type('pw');
+  f.enter();
+  f.complete(0); await settled();
+}
+
+test('gate: a password typed before the program asks is never left as a draft one Enter from running: held at the prompt', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    await typedBeforeThePrompt(f, false);
+    assert.equal(f.text(), '', 'not back in the composer');
+    assert.equal(f.screen().includes(SECRET), false, 'not shown again when the command ends');
+    assert.match(f.screen(), HELD, 'held for the person');
+    f.enter();
+    await settled();
+    f.neverRun(SECRET, 'after an Enter at the prompt');
+    f.app['handleKey']({kind: 'escape'});
+    f.nowhere(SECRET, 'after Esc');
+  } finally { f.dispose(); }
+});
+
+test('gate: a password and Enter typed before the program asks: not run, not left in the composer', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    await typedBeforeThePrompt(f, true);
+    assert.equal(f.text(), '', 'not back in the composer');
+    assert.equal(f.screen().includes(SECRET), false, 'not shown again');
+    f.enter();
+    await settled();
+    f.neverRun(SECRET, 'after an Enter at the prompt');
+    assert.deepEqual(f.adds(), []);
+  } finally { f.dispose(); }
+});
+
+test('gate: a visible reply queued before NMSh saw the read waits for approval once the question is seen; never run after it', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin(`read -r QA_REPLY; printf 'ANSWER=%s\\n' "$QA_REPLY"`);
+    // A loaded machine: the look cannot yet tell that the shell's builtin reads, so the Enter queues the reply.
+    f.type('hello');
+    f.answer('visible'); await settled();
+    f.enter();
+    f.answer('visible'); await settled();
+    assert.deepEqual(f.adds(), ['hello'], 'queued (documented limit under load)');
+    f.tick(1500);
+    f.state({since: Date.now() - 1400, confidence: 'likely', mode: 'line'});
+    await settled();
+    assert.equal(f.owner.state.entries.find(item => item.text === 'hello')?.condition, 'approve', 'it waits for approval');
+    assert.match(f.transcript(), /asked for input/u);
+    // The person answers again; the command succeeds; the reply is never run as a command.
+    f.type('hello');
+    f.enter();
+    f.complete(0); await settled();
+    assert.deepEqual(f.dispatched, [], 'never run after the command');
+  } finally { f.dispose(); }
+});
