@@ -29,18 +29,23 @@ const FISH_BUILTINS = new Set(['and', 'begin', 'bg', 'bind', 'block', 'break', '
   'math', 'not', 'or', 'path', 'printf', 'pwd', 'random', 'read', 'realpath', 'return', 'set', 'set_color', 'source', 'status', 'string', 'switch', 'test',
   'time', 'true', 'type', 'ulimit', 'wait', 'while', 'abbr', 'argparse']);
 
+/**
+ * One of NMSh's markers, written again once if the write fails. Fish 3 does not retry a terminal write that a signal
+ * interrupts (a window-size change while the write waits), and a lost marker leaves NMSh wrong about whether a command
+ * runs (#443). An interrupted write normally writes nothing (as in #443's trace), so the marker arrives once.
+ */
+export const FISH_MARK_FUNCTION = `function __nmsh_mark
+  printf $argv 2>/dev/null; or printf $argv
+end`;
+
 function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
   const sync = bridgeEnvPath ? '\n    nmsh_bridge_sync' : '';
   const marker = (body: string) => `__nmsh_mark '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed fish session bootstrap (private, per session)
 ${originalTerm ? `set -gx TERM ${fishQuote(originalTerm)}` : ''}
 set -g fish_greeting
-# One of NMSh's markers, written again once if the write fails. Fish 3 does not retry a terminal write that a signal
-# interrupts (a window-size change while the write waits), and a lost marker leaves NMSh wrong about whether a command
-# runs (#443). An interrupted write normally writes nothing (as in #443's trace), so the marker arrives once.
-function __nmsh_mark
-  printf $argv 2>/dev/null; or printf $argv
-end
+# NMSh's markers survive an interrupted write (#443).
+${FISH_MARK_FUNCTION}
 # Fish >= 4 only; NMSh shows its own suggestions.
 set -g fish_autosuggestion_enabled 0
 function fish_prompt
