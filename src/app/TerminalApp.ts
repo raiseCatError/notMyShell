@@ -939,9 +939,12 @@ export class TerminalApp {
    * Lines entered right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back (#426, #436). Held, never written
    * to the terminal, until the outcome is verified: the prompt (they run there, unless the program asked meanwhile),
    * a question asked after the stop (they are its reply), or the end of the stop window with the program still running
-   * (they are held for approval like any line typed while it runs).
+   * (they go to it; what it never reads is taken back at its end and held for approval). Also lines begun once the
+   * shell said the command is done (`done`): only the prompt settles those.
    */
   private stopAhead?: {startId: number; lines: string[]; program: string; timer?: NodeJS.Timeout; done: boolean};
+  /** Applies a question report held back during a stop window (see onInputState), once. */
+  private staleStopReport?: () => void;
   /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
   private replayTypedWhile?: string;
   /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
@@ -11802,6 +11805,8 @@ export class TerminalApp {
   private settleStopAhead(how: 'prompt' | 'asked' | 'window' | 'cancel' | 'drop', asked = false): void {
     const held = this.stopAhead;
     if (!held) return;
+    // A question held back during the window applies first, whichever timer fires first: the program still reads.
+    if (how === 'window') this.staleStopReport?.();
     if (how === 'window' && this.running?.startId === held.startId && this.inputState?.request) how = 'asked';
     if (how === 'window' && this.running?.startId !== held.startId) return;
     if (held.timer) clearTimeout(held.timer);
@@ -11809,9 +11814,12 @@ export class TerminalApp {
     if (how === 'drop') return;
     if (how === 'cancel') { this.editor.replaceText(held.lines.join('\n')); this.render(); return; }
     if (how === 'asked') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
-    // The program survived the stop and is still running, or asked something before it ended: no line is known to
-    // be for the prompt, so each waits for approval like any line typed while a command runs.
-    if (how === 'window' || asked) { for (const line of held.lines) this.enqueue(line, held.program); return; }
+    // The program survived the stop: the lines go to it, as a terminal delivers type-ahead (it may ask without NMSh
+    // seeing it: on macOS the ^C a terminal echoes ends the question-shaped line). Whatever it never reads, the shell
+    // takes back when the command ends, and it waits for approval there: never a command by itself.
+    if (how === 'window') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
+    // It asked something after the stop and then ended: no line is known to be for the prompt; each waits for approval.
+    if (asked) { for (const line of held.lines) this.enqueue(line, held.program); return; }
     // The verified prompt: the first line as if entered there, any others queued after it, in order.
     const [first, ...rest] = held.lines;
     if (this.editor.text || !first) { for (const line of held.lines) this.enqueue(line); return; }
@@ -12275,9 +12283,12 @@ export class TerminalApp {
       const {request: _ended, ...current} = state;
       const running = this.running;
       const reported = state;
-      const later = setTimeout(() => {
+      const apply = () => {
+        if (this.staleStopReport === apply) this.staleStopReport = undefined;
         if (this.running === running && this.inputState === current) this.onInputState(reported);
-      }, Math.max(0, stoppedAt + STOP_TYPE_AHEAD_MS - Date.now()));
+      };
+      this.staleStopReport = apply;
+      const later = setTimeout(apply, Math.max(0, stoppedAt + STOP_TYPE_AHEAD_MS - Date.now()));
       later.unref?.();
       state = current;
     }

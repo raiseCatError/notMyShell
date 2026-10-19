@@ -206,7 +206,7 @@ test('right after Ctrl+C, the program keeps running and asks: the line is its re
   } finally { f.dispose(); }
 });
 
-test('right after Ctrl+C, the program survives and nothing asks: when the stop window ends the line is held for approval', async t => {
+test('right after Ctrl+C, the program survives and nothing NMSh can see asks: when the stop window ends the line goes to it, as a terminal would', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -215,11 +215,14 @@ test('right after Ctrl+C, the program survives and nothing asks: when the stop w
     f.tick(50);
     f.type('123456');
     f.enter();
+    assert.equal(f.written.some(data => data.includes('123456')), false, 'not during the window');
     f.tick(2500);
     t.mock.timers.tick(2500);
     await settled();
-    assert.equal(f.entry('123456')?.condition, 'approve', 'held for approval');
-    assert.equal(f.written.some(data => data.includes('123456')), false);
+    // The program survived: it gets the line (on macOS NMSh cannot see a read after Ctrl+C echoed ^C onto its line).
+    // If it never reads it, the shell takes it back when the command ends and the owner holds it (unreadInputLive).
+    assert.equal(f.written.join(''), '123456\r');
+    assert.deepEqual(f.owner.state.entries, []);
     f.complete(0); await settled();
     assert.deepEqual(f.submitted, []);
     assert.deepEqual(f.dispatched, []);
@@ -324,5 +327,28 @@ test('a line started while the command still ran, entered after it said done: he
     f.complete(0); await settled();
     assert.deepEqual(f.submitted, []);
     assert.equal(f.entry('123456')?.condition, 'approve');
+  } finally { f.dispose(); }
+});
+
+test('right after Ctrl+C, the program kept reading the question it asked before the stop: when the window ends the line is its answer', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin("trap '' INT; read -r -p 'Still here? ' a");
+    const asked = Date.now();
+    f.state({since: asked, confidence: 'likely', mode: 'line'});
+    f.tick(500);
+    f.key('\u0003');
+    f.tick(20);
+    f.type('yes');
+    f.enter();
+    // The session reports the same question again (sampled around the stop), after the Enter: held back during the
+    // window, whatever order the two timers have.
+    f.tick(20);
+    f.state({since: asked, confidence: 'likely', mode: 'line'});
+    assert.deepEqual(f.written, [], 'nothing written during the stop window');
+    f.tick(2500); t.mock.timers.tick(2500); await settled();
+    assert.equal(f.written.join(''), 'yes\r', 'the program kept reading: the line is its answer');
+    assert.deepEqual(f.owner.state.entries, []);
   } finally { f.dispose(); }
 });

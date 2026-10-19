@@ -199,3 +199,21 @@ test('live zsh: a command typed right after Ctrl+C on a waiting question is kept
     assert.doesNotMatch(strip(frontend.output.slice(mark)), /reply was discarded/u, 'it was never taken for a reply');
   } finally { await sandbox.dispose(); }
 });
+
+test('live zsh: a program that survives Ctrl+C and asks gets the line typed right after it as its answer; it never runs as a command', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const {sandbox, frontend} = await start('zsh');
+  try {
+    const mark = frontend.mark;
+    const command = `bash -c 'trap "" INT; read -r -p "Still-$((1+1))? " a; echo "QA-GOT=$a"'`;
+    frontend.pty.write(`${command}\r`);
+    await frontend.waitFor(/Still-2\? /u, mark);
+    await pause(1200);
+    frontend.pty.write('\u0003');
+    await type(frontend, 'yes', 20);
+    frontend.pty.write('\r');
+    await frontend.waitFor(/QA-GOT=yes/u, mark, 15_000);
+    await until(async () => (await records(sandbox)).some(record => record.command === command), 15_000, 'the program to finish');
+    await pause(1500);
+    assert.equal((await records(sandbox)).some(record => record.command === 'yes'), false, 'never run as a command');
+  } finally { await sandbox.dispose(); }
+});

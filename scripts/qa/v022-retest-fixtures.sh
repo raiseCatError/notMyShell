@@ -105,5 +105,23 @@ echo QA-TIMED-DONE
 EOF
 chmod +x "$retest/timed-read.sh"
 
+# R5 (an answer the program never reads): a prompt that gives up after 2 s, then 3 s more of work.
+add "$retest/timed-prompt.sh" <<'EOF'
+#!/usr/bin/env bash
+read -t 2 -r -p 'QA code: ' code || true
+sleep 3
+echo QA-CODE-DONE
+EOF
+chmod +x "$retest/timed-prompt.sh"
+
+# R6 (a program that survives Ctrl+C and asks).
+add "$retest/survivor.sh" <<'EOF'
+#!/usr/bin/env bash
+trap '' INT
+read -r -p 'Still here? ' answer
+echo "QA-GOT=$answer"
+EOF
+chmod +x "$retest/survivor.sh"
+
 echo "Retest fixtures ready in $retest"
 echo "Start the retest build with: $root/nmsh2   (or: $root/nmsh2 fish, $root/nmsh2 bash)"
