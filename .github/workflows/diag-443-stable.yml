@@ -1,0 +1,41 @@
+# #443 diagnostic only (final v0.22 hardening). Runs on pushes to diag/443-* branches, never on master, dev or PRs.
+# Compares the release candidate's code (baseline, fa7ec665) with the hardened code on Ubuntu's Fish 3.7.
+name: Diagnose 443 (stable PTY size, Fish 3.7)
+on:
+  push:
+    branches: ['diag/443-*']
+permissions:
+  contents: read
+jobs:
+  loop:
+    name: Fish 3.7 ${{ matrix.build }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [baseline, fix]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+      - run: fish --version && uname -a
+      - name: Baseline sources (the candidate's src; the new tests stay)
+        if: matrix.build == 'baseline'
+        run: git checkout fa7ec6655cd614a11b214d6288636b2bd6fc21d9 -- src
+      - run: npm ci
+      - name: Loop
+        env:
+          NMSH_TEST_TMPDIR: /tmp
+        run: node --import=tsx scripts/diag/443-stable-loop.mjs 20 "$RUNNER_TEMP/diag" ${{ matrix.build }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-443-stable-${{ matrix.build }}
+          path: ${{ runner.temp }}/diag
+          retention-days: 7
