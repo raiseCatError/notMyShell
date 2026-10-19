@@ -65,10 +65,24 @@ Probes back off (every 10 s after a minute of quiet), and the first look comes 1
 typed in that time would be routed on no evidence. So the frontend holds the keys that decide where typing goes, the
 first key of a draft and an Enter that would queue, and asks the session to look now (`input-look`, answered by
 `input-looked` after any `input-state` the look produced). Keys typed right after Enter wait for the shell's exec first.
-The hold ends when the look is done, when evidence arrives, or after 800 ms, and the keys are then routed on what is
-known, in the order typed. A program that took the terminal meanwhile (Fish's reader) gets them as raw keys. Ctrl+C is
-never held, and typing right after Ctrl+C or Ctrl+Z stays type-ahead for the prompt. Both ends negotiate the feature;
-an older service is never asked and behaves as before.
+The hold ends when the look answers or evidence arrives. Until then nothing typed is drawn, sent or queued: the keys
+may be a hidden reply, and an Enter may answer the command or queue the next one (#426). The look says what it saw:
+`hidden` (echo off for line input), `visible` (the terminal echoes), `unknown` (no sample said how it echoes: a probe
+failed or timed out), `idle` (nothing runs) or `unavailable` (no way to look on this platform). `visible` routes the
+keys as before (a terminal would show them too); `hidden` comes with a hidden request, so they go straight to the
+program. Echo off with line input is a hidden request whatever else is known (confirmed when the group is idle,
+likely when it computes or the kernel says it is blocked elsewhere), so NMSh never draws what the terminal would not
+echo. An `unknown` answer gets one more look; if that is blind too, or no answer comes within 5 s, the keys stay held
+and hidden: the activity rows say `Can't tell whether <program> is reading your typing` and Ctrl+S sends it to the
+program, Tab shows it in the composer (for review; a final Enter is not replayed), Esc discards it. Later evidence
+decides it the same way. A look still running after 800 ms says `Checking whether … · your typing is kept`.
+
+A command that ends while its typing was held past 800 ms never runs it: NMSh never learned whether it was a reply
+(a timed `read -s` that gave up), so it is discarded with a note. A quick end (type-ahead after a short command) runs
+it as before. Ctrl+C discards held typing, as a terminal flushes its input queue on an interrupt, and is itself
+never held. A program that took the terminal meanwhile (Fish's reader) gets the keys as raw keys. An older service
+does not say what its look saw; its answers are routed as before. Typing right after Ctrl+C or Ctrl+Z stays
+type-ahead for the prompt. Both ends negotiate the feature; an older service is never asked and behaves as before.
 
 When an answer goes to the program (a key in key mode, Enter otherwise), the frontend counts the question as answered
 until the session reports again, so the next command typed at speed is routed on fresh evidence.
