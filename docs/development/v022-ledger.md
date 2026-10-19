@@ -115,7 +115,50 @@ Full canonical `npm run verify` (local, macOS 27, T7 scratch), with the load ave
 - **#437 CI on the combined head (`e2776680`)** failed `typingAfterRead` (the race #442 fixes) and Ubuntu Fish `inputOwnershipLive` (#443: Fish's reader marker never arrived; the typed answer stayed held, safely).
 - **#443:** three Ubuntu Fish 3.7.0 failures where output or NMSh's markers from Fish never reached NMSh, one with `write: Interrupted system call`. Not reproduced with Fish 4.9.3 on macOS. Unverified hypothesis: `SIGWINCH` from NMSh's terminal resizes interrupting Fish 3.7 writes.
 
-## Integration plan (after v0.21 ships; nothing merges before)
+## Release candidate v0.22.0 (2026-10-19)
+
+**Decision:** the maintainer changed the release strategy: ship the latest stable version, not every planned one.
+v0.21.0 (#429, CI green, never physically tested) is superseded and never published; v0.22.0 ships its work. No v0.23
+work exists (no branches, PRs or labels beyond planning), so v0.22 is the target. Feature freeze from here: only
+correctness, security, packaging and release-blocking fixes.
+
+**Integration:** `release/v0.22.0` = `dev` (`a8b383c2`) + #435, #433, #437, #442, #438, #441, #434, #439, #440 merged in
+that order with merge commits, then the combined `/view` editor test (#434 with #439) and one release-metadata commit
+(version 0.22.0, one `[0.22.0]` changelog section that says v0.21.0 was never published, status pointers, the
+consolidated physical QA walkthrough, this runbook). It does not contain `release/v0.21.0`'s two commits: only
+metadata (version 0.21.0, a `[0.21.0]` section), replaced here. Conflicts: the CHANGELOG for #439 and #440 (same rule as
+the candidate) and `tests/typingAfterRead.test.ts` for #442 (taken from #442, which carries #437's held outcome). Its
+tree differs from the green candidate `567cf533` only by the commits below plus #435's ledger commit.
+
+**Security review of hidden input (#426, #433, #437, #442), 2026-10-19:**
+- Boundary: NMSh routes typing while a command runs. A hidden reply must never be drawn, queued, written to the shell as
+  a command, logged or kept in history; an ordinary next command must never be lost.
+- Two paths still let a password run as a shell command on `567cf533`, both fixed in #437 (`6486d9c5`):
+  1. After NMSh answered a hidden question, a look that still saw hidden input was attributed to that question for 1 s;
+     if the command then ended, the held typing ran as the next command. A second question with no prompt that gave
+     up first (a timed read) is indistinguishable, and a time window is no proof. Such typing now waits at the prompt,
+     hidden, until the person shows it (Tab) or discards it (Esc, Ctrl+C). The window only separates a probable reply
+     (discarded) from unconfirmed typing (held); it never lets typing run.
+  2. A reply typed and entered before a question with no prompt existed is queued like any command (nothing asked
+     yet). When the command then asks for hidden input, the entries queued while it ran wait for approval (an older
+     service: the queue pauses). Live on `567cf533`, zsh and Bash: the second password of `read -rs a; sleep 3; read -rs
+     b` ran and entered NMSh's journal; with the fix it never runs and is not in the shell's history file.
+- Also: `NMSH_DEBUG_KEYS` never logs typing held at the prompt.
+- Verified: consecutive prompt-less hidden questions; a second one reported while the reply is held (it gets it); an
+  ordinary command after a hidden answer once echo is back (runs as type-ahead); a prompted `sudo` (unchanged); Ctrl+C
+  and Esc while held; a look slower than the slow mark; a next command starting while typing is held; late looks;
+  entries queued before the command or with Ctrl+Q during the question (left alone). Deterministic:
+  `tests/inputOwnershipSecrets.test.ts` (10; 6 failed before the fix). Live: `tests/inputOwnershipSecretsLive.test.ts`.
+- Remaining limits (documented in the changelog): a reply typed before a question with no prompt exists is drawn and
+  queued; if that question gives up before NMSh sees it and the command succeeds, the entry runs. zsh's single
+  `precmd` function and Fish's other `fish_postexec` handlers run before the done marker. An older session service
+  routes typing as before. Holding happens only when a look actually saw hidden input; on an idle machine at human
+  typing speed the prompted cases do not reach it.
+
+**Physical QA:** one consolidated walkthrough for the v0.22 build ([v0.22 physical QA](../testing/v022-physical-qa.md)),
+replacing v0.21's (never run) and the per-PR passes.
+
+## Integration plan (superseded: written for after v0.21 shipped)
 
 **Order:** #435 → #433 → #437 → #442 → #438 → #441 → #434 → #439 → #440.
 - **#437 now contains #433** (merged into it, `4556dfab`). Its combined fix (`e2776680`) settles held typing as typing for a command that ended when the shell says it is done, and keeps evidence of hidden input; see #437.
@@ -171,8 +214,8 @@ pass.
 
 ## Open risks
 
-- v0.21 unreleased: v0.22 cannot integrate into `dev` yet (see the rule above). All v0.22 PRs stay draft.
+- v0.21 is superseded; the v0.22 PRs land through `release/v0.22.0` and stay draft until the release PR merges.
 - #441 is based on #438 and must merge after it.
 - #439 and #434 both use the host-actions bridge; whichever merges second picks up the other.
 - #436 fixes two explained mechanisms; other timing races in input ownership may remain.
-- The changelog entries sit in `dev`'s `[Unreleased]` beside v0.21's and move at reconciliation.
+- #443 (Fish 3.7 on Linux, cause unknown) is open; a bounded CI loop investigates it.

@@ -1,5 +1,8 @@
 # v0.21.0 release runbook
 
+> **Superseded, never used.** v0.21.0 is not published on its own; its work ships in v0.22.0. Follow the
+> [v0.22.0 release runbook](v022-release-runbook.md). Do not tag v0.21.0 or merge #429.
+
 The exact steps from the v0.21 release candidate to a published v0.21.0, following the v0.20.0 release (PR #392,
 tag `v0.20.0` on its merge commit, Homebrew tap PR #3, website sync). State and evidence are in the
 [ledger](v021-ledger.md). **Nothing here runs without the maintainer's go-ahead after physical QA.** Tagging, the

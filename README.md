@@ -20,6 +20,8 @@
 
 Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
 
+Release candidate: v0.22.0 (`/view`, `/edit`, Semantic Output, `/track`, safer typing while commands run, history browsing, Ask command suggestions from your local model, more native modules and theme families) is on `release/v0.22.0` and is not published until its physical-terminal QA passes; it includes the v0.21.0 candidate, which will not be published separately. See the [changelog](CHANGELOG.md).
+
 ## See notMyShell in motion
 
 https://github.com/user-attachments/assets/7f2cbe74-ad86-4d13-bbe3-04e334cff81b
@@ -69,7 +71,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 ## Native modules and the Context Engine
 
-NMSh's shipped native module ecosystem uses trusted capabilities to resolve contextual facts and routes them to the Main Prompt, Context Rail or Right Context. For upcoming work, see the [open v0.21 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.21); candidate labels are planning signals, not release promises.
+NMSh's shipped native module ecosystem uses trusted capabilities to resolve contextual facts and routes them to the Main Prompt, Context Rail or Right Context. For upcoming work, see the [open v0.22 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.22); candidate labels are planning signals, not release promises.
 
 v0.17.0 introduced fact metadata, native module routing and the Context Rail. v0.18.0 adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
@@ -171,6 +173,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
+| Files and output (v0.22 candidate) | `/view` (files and completed output; `o` opens your editor), `/edit` (a small text file), `/track` (one live result of a command), `/copy --semantic` |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |

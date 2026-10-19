@@ -1,5 +1,10 @@
 # v0.21 ledger
 
+> **Superseded (2026-10-19): v0.21.0 is not published on its own.** The maintainer chose to ship the latest stable
+> version instead; v0.21's work ships in v0.22.0 (see the [v0.22 ledger](v022-ledger.md) and the
+> [v0.22.0 runbook](v022-release-runbook.md)). Draft #429 is closed as superseded when v0.22.0 ships, never merged; no v0.21.0
+> tag, release or changelog section exists. The record below is kept as evidence for the code v0.22 builds on.
+
 Durable state of the v0.21 candidate ([#410](https://github.com/raiseCatError/notMyShell/issues/410)) so a later
 session can resume without rediscovering it. Design and acceptance: [v0.21 design](../design/v021-terminal-intelligence.md).
 Automated results here are not physical-terminal validation.
@@ -255,9 +260,23 @@ collection 50 ms, every-module render 40 ms, configured completion warm 8.8 ms, 
 - #356 stays open: it was not reproduced, and passing its reproducer does not close it.
 - #410 tracks the release.
 
+## Final verification of the v0.21 candidate (2026-10-19)
+
+After a macOS kernel panic (memory pressure) the release state was reconciled; nothing was lost or half-run.
+
+- `release/v0.21.0` = `86bb3a6c` (#430 merged `dev` `a8b383c2`, with #425, #427 and #428). `master` (`6af5cbab`) is an
+  ancestor; no v0.22 commit is in the branch. Its code equals `a8033bbb`'s (only `docs/testing/v021-physical-qa.md`
+  differs, which no test reads), where local `verify:release` passed (3,141 passed, 0 failed, 2 skipped).
+- Dispatched CI on exactly `86bb3a6c`: [run 39215504453](https://github.com/raiseCatError/notMyShell/actions/runs/39215504453), all 13 jobs green.
+- Findings from the v0.22 work, checked on this code (all also in v0.20.0, none a v0.21 regression): #436 (a slow prompt
+  hook made the next command a discarded "reply"), #426 (under load a prompt-less `read -s` secret could be queued as a
+  command, shown in the queue and run after a successful exit; a prompted `sudo` was not affected), #443 (Fish 3.7 on
+  Linux, cause unknown). v0.22 fixes the first two; see its ledger for the security review.
+- Physical QA was never run on this build. It is part of [v0.22 physical QA](../testing/v022-physical-qa.md).
+
 ## Release readiness
 
-**Not released, and not ready to ship until physical QA passes.** Integration, exact-commit CI and the code review are
+**Superseded by v0.22.0; never released.** (Historical, as of the v0.21 audit:) Integration, exact-commit CI and the code review are
 done. Remaining gates, in order:
 
 1. Merge #425 and #427 into `dev` once their CI is green. This ledger's PR follows.
