@@ -345,7 +345,7 @@ import {liveSessionRows} from '../sessions/LiveSessionView.js';
 import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
-import {OLDER_SERVICE_SWITCH, serviceBuildNotice} from '../session/SocketSessionClient.js';
+import {OLDER_SERVICE_SWITCH, serviceBuildNotice, serviceInputNotice} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {AgentSessions, normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
@@ -1086,6 +1086,8 @@ export class TerminalApp {
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     const stale = connection?.mode === 'service' ? serviceBuildNotice(this.session.serviceBuild, this.buildIdentity) : undefined;
     if (stale) this.output.addFrontendInteraction('session', stale, INFO);
+    const routing = connection?.mode === 'service' ? serviceInputNotice(this.session.features) : undefined;
+    if (routing) this.output.addFrontendInteraction('session', routing, WARNING);
     this.beginStartupWatch(connection?.attached);
     this.session.start();
     void this.loadInstalledPacks();

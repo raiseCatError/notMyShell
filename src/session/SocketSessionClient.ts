@@ -144,6 +144,18 @@ export function serviceBuildNotice(serviceBuild: string | undefined, own: {versi
     + 'so fixes to how shells start are not in it yet. The service restarts by itself once every NMSh window and live session has ended.';
 }
 
+/**
+ * A session service without this release's look result (an older NMSh's, e.g. v0.20.0's) still decides who gets what
+ * is typed while a command runs, the way it did then: #426's and #436's protections are not active in its sessions.
+ * Said once per window, with when it ends; undefined for a service that has them.
+ */
+export function serviceInputNotice(features: ReadonlySet<string>): string | undefined {
+  if (features.has('input-look-result')) return undefined;
+  return 'This session\'s service is from an older NMSh, so what you type while a command runs is routed as that version did: '
+    + 'a password typed before a program asks for it can be shown, queued or run as a command. '
+    + 'The service restarts by itself once every NMSh window and live session has ended; new sessions then get the current protections.';
+}
+
 export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '
   + 'Its live sessions keep running; once they end, the next nmsh launch starts the current service.';
 
