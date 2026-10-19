@@ -4,7 +4,13 @@
  * replies and GitHub text, not a conformance implementation. Streaming-safe: an unclosed fence runs to the end and
  * is marked open, so a half-arrived reply still reads as code. Bounded in depth and lines; tabs are expected to be
  * expanded by the caller's display scrubber.
+ *
+ * With `html` (`/view`, QA F01), an HTML block (CommonMark's kinds: a raw block such as `<pre>`, a comment, a block-level
+ * tag, or one complete known tag alone on its line) runs to its end and becomes blocks through the HTML converter;
+ * Markdown between HTML blocks reads as Markdown, as on GitHub. Without it, HTML is paragraph text.
  */
+import {htmlToBlocks} from './html.js';
+import {BLOCK, KNOWN} from './markup.js';
 
 export type Alignment = 'left' | 'center' | 'right' | undefined;
 
@@ -133,13 +139,39 @@ function interrupts(line: string, next: string | undefined): boolean {
   return Boolean(line.includes('|') && next !== undefined && delimiterRow(next) && splitRow(line).length === delimiterRow(next)!.length);
 }
 
-export function parseBlocks(source: string): Block[] {
+export function parseBlocks(source: string, options: {html?: boolean} = {}): Block[] {
   const lines = source.replace(/\r\n?/gu, '\n').split('\n');
   if (lines.length > MAX_LINES) lines.length = MAX_LINES;
-  return parseLines(lines, 0);
+  return parseLines(lines, 0, Boolean(options.html));
 }
 
-function parseLines(lines: readonly string[], depth: number): Block[] {
+/** The kind of HTML block a line starts (CommonMark 1, 2, 6, 7), or undefined. */
+function htmlBlockKind(line: string): 1 | 2 | 6 | 7 | undefined {
+  if (indentOf(line) > 3) return undefined;
+  const text = line.trimStart();
+  if (text[0] !== '<') return undefined;
+  if (/^<(?:pre|script|style|textarea)(?:[\s>]|$)/iu.test(text)) return 1;
+  if (text.startsWith('<!--')) return 2;
+  const name = /^<\/?([A-Za-z][A-Za-z0-9-]{0,31})(?=[\s/>]|$)/u.exec(text)?.[1]?.toLowerCase();
+  if (!name) return undefined;
+  if (BLOCK.has(name)) return 6;
+  // One complete tag alone on its line (`<picture>`, `<img …>`): only names HTML has, so `<T>` stays text.
+  return KNOWN.has(name) && text.length <= 4096 && /^<[^<>]*>\s*$/u.test(text) ? 7 : undefined;
+}
+
+/** Index just past an HTML block starting at `start`: kinds 1 and 2 to their end marker, the others to a blank line. */
+function htmlBlockEnd(lines: readonly string[], start: number, kind: 1 | 2 | 6 | 7): number {
+  const closes = kind === 1 ? /<\/(?:pre|script|style|textarea)>/iu : kind === 2 ? /-->/u : undefined;
+  let index = start;
+  if (closes) {
+    for (; index < lines.length; index++) if (closes.test(lines[index]!) && (index > start || closes.test(lines[start]!.slice(4)))) return index + 1;
+    return index;
+  }
+  while (index < lines.length && !blank(lines[index]!)) index++;
+  return index;
+}
+
+function parseLines(lines: readonly string[], depth: number, html = false): Block[] {
   const blocks: Block[] = [];
   if (depth > MAX_DEPTH) {
     const text = lines.join('\n').trim();
@@ -165,6 +197,14 @@ function parseLines(lines: readonly string[], depth: number): Block[] {
       continue;
     }
 
+    const markup = html ? htmlBlockKind(line) : undefined;
+    if (markup) {
+      const end = htmlBlockEnd(lines, index, markup);
+      blocks.push(...htmlToBlocks(lines.slice(index, end).join('\n')));
+      index = end;
+      continue;
+    }
+
     const heading = headingOf(line);
     if (heading) { blocks.push({kind: 'heading', level: heading.level, text: heading.text}); index++; continue; }
 
@@ -181,13 +221,13 @@ function parseLines(lines: readonly string[], depth: number): Block[] {
         else break;
         index++;
       }
-      blocks.push({kind: 'quote', blocks: parseLines(inner, depth + 1)});
+      blocks.push({kind: 'quote', blocks: parseLines(inner, depth + 1, html)});
       continue;
     }
 
     const item = ITEM.exec(line);
     if (item) {
-      const parsed = parseList(lines, index, depth);
+      const parsed = parseList(lines, index, depth, html);
       blocks.push(parsed.block);
       index = parsed.next;
       continue;
@@ -238,7 +278,7 @@ function parseLines(lines: readonly string[], depth: number): Block[] {
   return blocks;
 }
 
-function parseList(lines: readonly string[], start: number, depth: number): {block: Extract<Block, {kind: 'list'}>; next: number} {
+function parseList(lines: readonly string[], start: number, depth: number, html: boolean): {block: Extract<Block, {kind: 'list'}>; next: number} {
   const first = ITEM.exec(lines[start]!)!;
   const ordered = /\d/u.test(first[2]!);
   const delimiter = ordered ? first[2]!.slice(-1) : first[2]!;
@@ -272,7 +312,7 @@ function parseList(lines: readonly string[], start: number, depth: number): {blo
     let task: ListItem['task'];
     const taskMatch = /^\[([ xX])\][ \t]+/u.exec(body[0] ?? '');
     if (taskMatch) { task = taskMatch[1] === ' ' ? 'open' : 'done'; body[0] = body[0]!.slice(taskMatch[0].length); }
-    items.push({...(ordered ? {number: Number(match[2]!.slice(0, -1))} : {}), ...(task ? {task} : {}), blocks: parseLines(body, depth + 1)});
+    items.push({...(ordered ? {number: Number(match[2]!.slice(0, -1))} : {}), ...(task ? {task} : {}), blocks: parseLines(body, depth + 1, html)});
   }
   return {block: {kind: 'list', ordered, start: items[0]?.number ?? 1, loose, items}, next: index};
 }

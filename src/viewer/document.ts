@@ -17,7 +17,8 @@ export const MAX_VIEW_LINES = 200_000;
 const SNIFF_BYTES = 8192;
 const CHUNK = 64 * 1024;
 
-export type DocumentFormat = 'text' | 'markdown' | 'diff';
+/** html: rendered natively, never run or loaded (QA F01). */
+export type DocumentFormat = 'text' | 'markdown' | 'html' | 'diff';
 
 export type DocumentOrigin =
   | {kind: 'file'; path: string; realPath: string; symlink: boolean; bytes: number; mtimeMs: number}
@@ -63,11 +64,12 @@ export function displayPath(path: string, home = homedir()): string {
 const FILE_NAMES: Record<string, string> = {makefile: 'makefile', gnumakefile: 'makefile', dockerfile: 'dockerfile', containerfile: 'dockerfile',
   '.bashrc': 'shell', '.zshrc': 'shell', '.zshenv': 'shell', '.profile': 'shell', '.bash_profile': 'shell', 'config.fish': 'fish', justfile: 'makefile'};
 
-/** How a file reads: Markdown and diffs by their extension, syntax roles by extension or well-known name. */
+/** How a file reads: Markdown, HTML and diffs by their extension, syntax roles by extension or well-known name. */
 export function formatForPath(path: string): {format: DocumentFormat; language?: string} {
   const name = basename(path).toLowerCase();
   const extension = extname(name).slice(1);
   if (extension === 'md' || extension === 'markdown' || extension === 'mdx') return {format: 'markdown', language: 'markdown'};
+  if (extension === 'html' || extension === 'htm' || extension === 'xhtml') return {format: 'html', language: languageId('html') ?? 'markup'};
   if (extension === 'diff' || extension === 'patch') return {format: 'diff', language: 'diff'};
   const language = languageId(FILE_NAMES[name] ?? extension);
   return {format: 'text', ...(language ? {language} : {})};

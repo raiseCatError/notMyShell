@@ -220,3 +220,15 @@ test('security: pathological lines parse and render in linear time', () => {
     assert.ok(Date.now() - started < 1500, `${JSON.stringify(input.slice(0, 20))}… took ${Date.now() - started} ms`);
   }
 });
+
+test('wrapping never glues two words: a word that fits only without the space before it starts the next row', () => {
+  // Found while testing /view's HTML (QA F01); present before it in every Markdown surface.
+  assert.deepEqual(renderMarkdown('aaaa bbbb', 8, {level: 'none'}).map(row => row.plain), ['aaaa', 'bbbb']);
+  assert.deepEqual(renderMarkdown('aaaa bbbb', 9, {level: 'none'}).map(row => row.plain), ['aaaa bbbb']);
+  const rows = renderMarkdown('[CI status](https://github.com/raiseCatError/notMyShell/actions) **A calmer terminal** for *zsh*, Bash and Fish.', 80, {level: 'truecolor'});
+  assert.deepEqual(rows.map(row => row.plain), ['CI status (https://github.com/raiseCatError/notMyShell/actions) A calmer', 'terminal for zsh, Bash and Fish.']);
+  for (const columns of [10, 17, 23, 40]) {
+    const text = 'one two three four five six seven eight nine ten';
+    assert.equal(renderMarkdown(text, columns, {level: 'none'}).map(row => row.plain).join(' '), text, `${columns}`);
+  }
+});
