@@ -32,10 +32,15 @@ jobs:
           chmod +x "$RUNNER_TEMP/wrap/fish"
           echo "$RUNNER_TEMP/wrap" >> "$GITHUB_PATH"
           echo "DIAG_TRACE_DIR=$RUNNER_TEMP/trace" >> "$GITHUB_ENV"
-      - name: Loop the Fish live tests
+      - name: Loop the Fish live tests (with a process watchdog)
         env:
           NMSH_TEST_TMPDIR: /tmp
-        run: node --import=tsx scripts/diag/443-loop.mjs 15 "$RUNNER_TEMP/diag"
+        run: |
+          mkdir -p "$RUNNER_TEMP/diag"
+          scripts/diag/443-watch.sh "$RUNNER_TEMP/diag/processes.log" &
+          watch=$!
+          node --import=tsx scripts/diag/443-loop.mjs 30 "$RUNNER_TEMP/diag"
+          kill $watch || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
