@@ -1,7 +1,7 @@
 // #443 diagnostic (not part of the product or the canonical suite): loop the live tests whose Fish cases lost Fish
 // output or NMSh markers on Ubuntu with Fish 3.7, and keep each failing iteration's report (and strace traces, when the
 // workflow wraps fish in strace). Usage: node --import=tsx scripts/diag/443-loop.mjs <iterations> <outDir>
-import {cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {runTestFiles} from '../test.mjs';
 
@@ -20,6 +20,15 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const ms = Date.now() - started;
   summary.push({iteration, code, ms});
   console.log(`iteration ${iteration}: exit ${code} in ${ms} ms`);
+  if (traces && existsSync(traces)) {
+    // Every interrupted write of an NMSh marker, with what Fish did next (a retry, an error message, nothing).
+    for (const name of readdirSync(traces)) {
+      const lines = readFileSync(join(traces, name), 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        if (/777;nmsh/u.test(line) && /ERESTART|EINTR/u.test(line)) appendFileSync(join(out, 'marker-interrupts.txt'), `== iteration ${iteration} ${name}\n${lines.slice(index, index + 14).join('\n')}\n`);
+      });
+    }
+  }
   if (code === 0) rmSync(join(out, `iteration-${iteration}.log`), {force: true});
   else if (traces && existsSync(traces)) cpSync(traces, join(out, `traces-${iteration}`), {recursive: true});
   if (lines.length) writeFileSync(join(out, `iteration-${iteration}.runner.txt`), lines.join('\n'));
