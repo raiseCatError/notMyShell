@@ -76,7 +76,8 @@ export class LiveSandbox {
   trackFrontend(pty: IPty): Frontend {
     const frontend = new Frontend(pty, async command =>
       (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length,
-    async () => (await this.sessions()).every(session => session.running === undefined));
+    // Only a sandbox's single session is this frontend's for certain; with several, another may run on purpose.
+    async () => { const sessions = await this.sessions(); return sessions.length !== 1 || sessions[0]!.running === undefined; });
     this.frontends.push(frontend);
     return frontend;
   }

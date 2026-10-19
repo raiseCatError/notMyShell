@@ -19,11 +19,9 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
  *   reads are taken back from the terminal when the command ends and wait for approval the same way.
  * Either way it must still run exactly once.
  */
-const HELD = /held, not run · Tab shows it · Esc discards it/u;
-const APPROVAL = /typed while \S+ ran|did not read some of your typing/u;
 
-async function showAndRunHeld(frontend: Frontend, mode: string, run: number, next: string, mark: number): Promise<void> {
-  if (!HELD.test(strip(frontend.output.slice(mark)))) {
+async function showAndRunHeld(frontend: Frontend, mode: string, run: number, next: string, mark: number, queued: boolean): Promise<void> {
+  if (queued) {
     assert.ok(mode === 'ahead', `only typing ahead while the read's command runs waits for approval (${mode}${run})`);
     const review = frontend.mark;
     frontend.pty.write('\r');
@@ -77,7 +75,8 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
         for (let run = 0; run < RUNS; run += 1) {
           const tag = `${mode}${run}`;
           const mark = frontend.mark;
-          frontend.pty.write(`${READ[shell](run % 2 === 1, tag)}\r`);
+          const reading = READ[shell](run % 2 === 1, tag);
+          frontend.pty.write(`${reading}\r`);
           // zsh and Bash print their prompt from the command text; wait for it past the echo and NMSh's own "Running" line.
           // Each prompt is unique and assembled at runtime: historical redraws and the echoed command cannot satisfy it.
           await frontend.waitFor(new RegExp(`Name-${tag}: `, 'u'), mark);
@@ -90,15 +89,18 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
           frontend.pty.write(`${next}\r`);
-          // NMSh's journal records the next command once the shell's prompt has returned after it. Screen text could match
-          // earlier: the queued command's row followed by an older "Completed" in a later redraw (seen in CI on #442).
-          await until(async () => await frontend.completions(next) > before || HELD.test(strip(frontend.output.slice(mark)))
-            || (APPROVAL.test(strip(frontend.output.slice(mark))) && /Completed|Command failed/u.test(strip(frontend.output.slice(mark)))), 10_000,
-            `completed journal for ${next}, or the command held`);
+          // NMSh's journal records a command once the shell's prompt has returned after it: deterministic, where screen
+          // text is not (a redraw repeats older rows and notes; seen in CI on #442 and #457). The read's command ends
+          // first; then the next one has run, or is held (in the owner's queue, or at the prompt).
+          await until(async () => await frontend.completions(next) > before || await frontend.completions(reading) > 0, 10_000,
+            `completed journal for ${reading}`);
           if (await frontend.completions(next) === before) {
-            await pause(300);
-            await showAndRunHeld(frontend, mode, run, next, mark);
-            await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after the person's choice`);
+            await pause(500);
+            if (await frontend.completions(next) === before) {
+              const queued = ((await sandbox.sessions())[0]?.queued ?? 0) > 0;
+              await showAndRunHeld(frontend, mode, run, next, mark, queued);
+              await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after the person's choice`);
+            }
           }
           assert.equal(await frontend.completions(next), before + 1, 'the next command ran once');
           const drawn = strip(frontend.output.slice(mark));
