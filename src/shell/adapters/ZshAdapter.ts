@@ -82,6 +82,14 @@ function nmsh_tty_echo {
 }
 
 ${bridgeEnvPath ? bridgeBootstrap('zsh', bridgeEnvPath) : ''}
+# The first prompt hook: the command is done (#436). Hooks after it (the person's, then NMSh's) may hold the
+# terminal for a while; nothing they do is the command reading input. It hands the status on to them unchanged.
+function nmsh_done {
+  local nmsh_status=$?
+  printf '\\e]777;nmsh;${token};done\\a'
+  return \$nmsh_status
+}
+
 function nmsh_precmd {
   local nmsh_status=$?
   nmsh_capture_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
@@ -94,7 +102,7 @@ function nmsh_precmd {
   # Themes such as Powerlevel10k move their own hook to the end of
   # precmd_functions every cycle; move ours back after it so the next cycle
   # still blanks last. Their prompt-spacing options must not return either.
-  precmd_functions=(\${precmd_functions:#nmsh_precmd} nmsh_precmd)
+  precmd_functions=(nmsh_done \${precmd_functions:#nmsh_(done|precmd)} nmsh_precmd)
   unsetopt prompt_cr prompt_sp
   nmsh_tty_echo -echo
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
@@ -116,6 +124,7 @@ ${shellKnowledgeBootstrap(join(stateDir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
+precmd_functions=(nmsh_done \${precmd_functions:#nmsh_done})
 
 # Startup is over: this shell has read its files. A zsh started from it (a tmux
 # pane, a nested shell) must be an ordinary zsh, not a second copy of this
