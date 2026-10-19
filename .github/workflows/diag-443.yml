@@ -1,0 +1,44 @@
+# #443 diagnostic only. Runs on pushes to diag/443-* branches (never on master, dev or pull requests).
+name: Diagnose 443 (Fish 3.7 output loss)
+on:
+  push:
+    branches: ['diag/443-*']
+permissions:
+  contents: read
+jobs:
+  loop:
+    name: Fish 3.7 loop (${{ matrix.trace }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        trace: [plain, strace]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+      - run: fish --version && uname -a && stty -a < /dev/null || true
+      - run: npm ci
+      - name: Wrap fish in strace (writes, reads, ioctls and every signal, per process)
+        if: matrix.trace == 'strace'
+        run: |
+          sudo apt-get install -y strace
+          mkdir -p "$RUNNER_TEMP/wrap" "$RUNNER_TEMP/trace"
+          printf '#!/bin/sh\nexec strace -ff -tt -qq -e trace=write,writev,read,ioctl -e signal=all -o "%s/fish" /usr/bin/fish "$@"\n' "$RUNNER_TEMP/trace" > "$RUNNER_TEMP/wrap/fish"
+          chmod +x "$RUNNER_TEMP/wrap/fish"
+          echo "$RUNNER_TEMP/wrap" >> "$GITHUB_PATH"
+          echo "DIAG_TRACE_DIR=$RUNNER_TEMP/trace" >> "$GITHUB_ENV"
+      - name: Loop the Fish live tests
+        env:
+          NMSH_TEST_TMPDIR: /tmp
+        run: node --import=tsx scripts/diag/443-loop.mjs 15 "$RUNNER_TEMP/diag"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-443-${{ matrix.trace }}
+          path: ${{ runner.temp }}/diag
+          retention-days: 7
