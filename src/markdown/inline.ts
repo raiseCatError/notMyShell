@@ -1,4 +1,5 @@
 import {safeHyperlinkTarget} from '../output/Hyperlinks.js';
+import {decodeEntities, decodeEntity, DROPPED, imageLabel, KNOWN, RAW_TEXT, readTag} from './markup.js';
 
 /**
  * Inline Markdown for untrusted text (agent replies, GitHub bodies): code spans, emphasis, strong, strikethrough,
@@ -6,6 +7,10 @@ import {safeHyperlinkTarget} from '../output/Hyperlinks.js';
  * module only decides styling. A link target is kept only when it is a safe http(s) URL, so a hostile
  * `[docs](javascript:...)` or `[x](file:///...)` renders as plain text. Parsing is linear and bounded: a span's
  * delimiters never nest more than a few levels and unmatched delimiters stay literal text.
+ *
+ * With `html` (what `/view` shows, QA F01) a few HTML tags are read too: b/strong, i/em, s/del, code/kbd, a (the same
+ * http(s)-only rule), img (its alt text), br, and script-like elements dropped with their content; any other known
+ * element's tags are dropped and its text kept, and an unknown `<word>` stays text. Without it, tags are text.
  */
 
 export interface InlineStyle {
@@ -38,28 +43,22 @@ function safeLink(url: string): string | undefined {
   return target && /^https?:/u.test(target) ? target : undefined;
 }
 
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}]/u;
-
-const ENTITIES: Record<string, string> = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', reg: '®', mdash: '—', ndash: '–', hellip: '…', rarr: '→', larr: '←', times: '×'};
-
-function decodeEntity(source: string, index: number): {text: string; length: number} | undefined {
-  const match = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z]{2,8}));/u.exec(source.slice(index, index + 12));
-  if (!match) return undefined;
-  if (match[3]) { const named = ENTITIES[match[3]]; return named ? {text: named, length: match[0].length} : undefined; }
-  const code = match[1] ? Number(match[1]) : parseInt(match[2]!, 16);
-  if (!code || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return undefined;
-  const text = String.fromCodePoint(code);
-  // An entity never smuggles in what the display scrubber removes: controls, bidi and other format characters
-  // (direction overrides, zero-width joiners), separators or private-use code points.
-  if (INVISIBLE.test(text)) return undefined;
-  return {text, length: match[0].length};
+export interface InlineOptions {
+  /** Read the HTML tags `/view` renders (see the module comment); otherwise tags are text. */
+  html?: boolean;
 }
 
 /** Raw tokens before emphasis resolution: literal text, finished spans (code, links) and delimiter runs. */
 type Token =
   | {kind: 'text'; text: string}
   | {kind: 'span'; span: InlineSpan[]}
-  | {kind: 'delim'; char: '*' | '_' | '~'; count: number; open: boolean; close: boolean};
+  | {kind: 'delim'; char: '*' | '_' | '~'; count: number; open: boolean; close: boolean}
+  /** An HTML start or end tag that styles what is between (html mode); `target` is a link's refused URL, shown as text. */
+  | {kind: 'tag'; style: 'strong' | 'em' | 'strike' | 'link'; open: boolean; link?: string; target?: string};
+
+const TAG_STYLES: Record<string, 'strong' | 'em' | 'strike' | 'link'> = {b: 'strong', strong: 'strong', i: 'em', em: 'em', cite: 'em', dfn: 'em', var: 'em',
+  s: 'strike', del: 'strike', strike: 'strike', a: 'link'};
+const CODE_TAGS = new Set(['code', 'kbd', 'samp', 'tt']);
 
 /** The text of a bracket pair starting at `start` (`[`), honoring one level of nested brackets and escapes. */
 function bracket(source: string, start: number): number {
@@ -162,8 +161,9 @@ function backtickRuns(source: string): Map<number, number[]> {
   return runs;
 }
 
-function tokenize(source: string): Token[] {
+function tokenize(source: string, options: InlineOptions): Token[] {
   const tokens: Token[] = [];
+  const lower = options.html ? source.toLowerCase() : '';
   const runs = backtickRuns(source);
   /** Per run length, how many runs are already behind the scan position. */
   const consumed = new Map<number, number>();
@@ -210,6 +210,12 @@ function tokenize(source: string): Token[] {
         index += auto[0].length;
         continue;
       }
+      const tag = options.html ? readTag(source, index) : undefined;
+      if (tag && KNOWN.has(tag.name)) {
+        flush();
+        index = htmlTag(tag, source, lower, tokens);
+        continue;
+      }
     }
     if (char === '!' && source[index + 1] === '[' || char === '[') {
       const image = char === '!';
@@ -222,7 +228,7 @@ function tokenize(source: string): Token[] {
         const url = safeLink(target.url);
         if (image) tokens.push({kind: 'span', span: [{text: label.trim() || 'image', style: {image: true}}]});
         else {
-          const inner = parseInline(label).map(span => ({text: span.text, style: {...span.style, ...(url && !span.style.code ? {link: url} : {})}}));
+          const inner = parseInline(label, options).map(span => ({text: span.text, style: {...span.style, ...(url && !span.style.code ? {link: url} : {})}}));
           // A link whose target was refused still shows its text, and the refused target as text so nothing is hidden.
           tokens.push({kind: 'span', span: url ? inner : [...inner, ...(target.url ? [{text: ` (${target.url.slice(0, 200)})`, style: {}}] : [])]});
         }
@@ -256,13 +262,49 @@ function tokenize(source: string): Token[] {
   return tokens;
 }
 
+/** One HTML tag in html mode: its tokens, and where reading goes on. */
+function htmlTag(tag: NonNullable<ReturnType<typeof readTag>>, source: string, lower: string, tokens: Token[]): number {
+  const name = tag.name;
+  // An element dropped with its content (a script, a style, a form control) leaves nothing, up to its end tag.
+  if (!tag.closing && !tag.selfClosing && (DROPPED.has(name) || RAW_TEXT.has(name))) {
+    const close = lower.indexOf(`</${name}`, tag.end);
+    const end = close < 0 ? -1 : source.indexOf('>', close);
+    return end < 0 ? source.length : end + 1;
+  }
+  if (tag.closing) {
+    const style = TAG_STYLES[name];
+    if (style) tokens.push({kind: 'tag', style, open: false});
+    return tag.end;
+  }
+  if (name === 'br') { tokens.push({kind: 'text', text: ' '}); return tag.end; }
+  if (name === 'img') { tokens.push({kind: 'span', span: [{text: imageLabel(tag.attributes), style: {image: true}}]}); return tag.end; }
+  if (name === 'input' && tag.attributes.type?.toLowerCase() === 'checkbox') { tokens.push({kind: 'text', text: 'checked' in tag.attributes ? '☑ ' : '☐ '}); return tag.end; }
+  if (CODE_TAGS.has(name) && !tag.selfClosing) {
+    // Code is literal: its text up to the end tag, any markup inside dropped, references decoded (safely).
+    const close = lower.indexOf(`</${name}`, tag.end);
+    if (close < 0) return tag.end;
+    const end = source.indexOf('>', close);
+    const code = decodeEntities(source.slice(tag.end, close).replace(/<[^<>]{0,200}>/gu, '')).replace(/\s+/gu, ' ');
+    if (code) tokens.push({kind: 'span', span: [{text: code, style: {code: true}}]});
+    return end < 0 ? source.length : end + 1;
+  }
+  const style = TAG_STYLES[name];
+  if (style === 'link') {
+    const target = decodeEntities(tag.attributes.href ?? '').trim();
+    const link = target ? safeLink(target) : undefined;
+    tokens.push({kind: 'tag', style, open: true, ...(link ? {link} : {}), ...(!link && target ? {target: target.slice(0, 200)} : {})});
+  } else if (style) tokens.push({kind: 'tag', style, open: true});
+  // Any other known element: its tags go, its text stays.
+  return tag.end;
+}
+
 /**
  * Resolve emphasis with a simplified CommonMark delimiter stack: a closer pairs with the nearest compatible opener of
  * the same character; two or more on both sides make strong, `~~` makes strikethrough. Unpaired delimiters become text.
  */
 function resolve(tokens: Token[]): InlineSpan[] {
   type Delim = {kind: 'delim'; char: '*' | '_' | '~'; count: number; length: number; open: boolean; close: boolean};
-  type Node = {kind: 'text'; text: string} | {kind: 'span'; span: InlineSpan[]} | Delim;
+  type Node = Exclude<Token, {kind: 'delim'}> | Delim;
   const nodes: Node[] = tokens.map(token => token.kind === 'delim' ? {...token, length: token.count} : token);
   type Wrap = {from: number; to: number; style: 'strong' | 'em' | 'strike'};
   const wraps: Wrap[] = [];
@@ -294,6 +336,9 @@ function resolve(tokens: Token[]): InlineSpan[] {
   }
   const spans: InlineSpan[] = [];
   const active = {strong: 0, em: 0, strike: 0};
+  // HTML tags (html mode) style what they enclose; links nest, the innermost wins.
+  const tagged = {strong: 0, em: 0, strike: 0};
+  const links: Array<{link?: string; target?: string}> = [];
   const starting = new Map<number, Wrap[]>(), ending = new Map<number, Wrap[]>();
   for (const wrap of wraps) {
     starting.set(wrap.from, [...(starting.get(wrap.from) ?? []), wrap]);
@@ -303,7 +348,21 @@ function resolve(tokens: Token[]): InlineSpan[] {
     // Leftover delimiter characters sit outside their pair: close before the closer, open after the opener.
     for (const wrap of ending.get(position) ?? []) active[wrap.style]--;
     const node = nodes[position]!;
-    const style: InlineStyle = {...(active.strong > 0 ? {strong: true} : {}), ...(active.em > 0 ? {em: true} : {}), ...(active.strike > 0 ? {strike: true} : {})};
+    if (node.kind === 'tag') {
+      if (node.style === 'link') {
+        if (node.open) links.push({...(node.link ? {link: node.link} : {}), ...(node.target ? {target: node.target} : {})});
+        else {
+          const closed = links.pop();
+          // A link whose target was refused still shows its text, and the refused target as text so nothing is hidden.
+          if (closed?.target) spans.push({text: ` (${closed.target})`, style: {}});
+        }
+      } else if (node.open) tagged[node.style]++;
+      else if (tagged[node.style] > 0) tagged[node.style]--;
+      continue;
+    }
+    const link = links.at(-1)?.link;
+    const style: InlineStyle = {...(active.strong + tagged.strong > 0 ? {strong: true} : {}), ...(active.em + tagged.em > 0 ? {em: true} : {}),
+      ...(active.strike + tagged.strike > 0 ? {strike: true} : {}), ...(link ? {link} : {})};
     if (node.kind === 'text') spans.push({text: node.text, style});
     else if (node.kind === 'span') for (const span of node.span) spans.push({text: span.text, style: {...style, ...span.style}});
     else if (node.count > 0) spans.push({text: node.char.repeat(node.count), style});
@@ -320,9 +379,9 @@ function resolve(tokens: Token[]): InlineSpan[] {
 }
 
 /** Inline spans for one paragraph's source text. Soft line breaks become spaces; text past the bound stays plain. */
-export function parseInline(source: string): InlineSpan[] {
+export function parseInline(source: string, options: InlineOptions = {}): InlineSpan[] {
   const bounded = source.length > MAX_INLINE ? source.slice(0, MAX_INLINE) : source;
-  const spans = resolve(tokenize(softBreaks(bounded)));
+  const spans = resolve(tokenize(softBreaks(bounded), options));
   if (bounded.length < source.length) spans.push({text: softBreaks(source.slice(MAX_INLINE)), style: {}});
   return spans;
 }
@@ -335,6 +394,6 @@ function softBreaks(text: string): string {
 }
 
 /** The text a reader sees, without styling (search, copy-visible, width measurement). */
-export function plainInline(source: string): string {
-  return parseInline(source).map(span => span.text).join('');
+export function plainInline(source: string, options: InlineOptions = {}): string {
+  return parseInline(source, options).map(span => span.text).join('');
 }

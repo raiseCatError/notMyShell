@@ -6,6 +6,7 @@ import type {SyntaxSgr} from '../input/syntaxTheme.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import {parseBlocks, type Alignment, type Block} from './blocks.js';
+import {htmlToBlocks} from './html.js';
 import {highlightCode, type CodeTokenKind} from './highlight.js';
 import {parseInline, plainInline, type InlineSpan, type InlineStyle} from './inline.js';
 
@@ -37,6 +38,8 @@ export interface MarkdownOptions {
   syntax?: SyntaxSgr;
   /** Base text role for prose (agent replies use primary; quieter contexts may pass secondary). */
   tone?: 'primary' | 'secondary';
+  /** Render HTML inside the Markdown (`/view`, QA F01); otherwise tags are shown as text. */
+  html?: boolean;
 }
 
 const RESET = '\u001b[0m';
@@ -54,6 +57,7 @@ interface Context {
   fg: (color: RgbColor) => string;
   tone: RgbColor;
   codeIndex: number;
+  html: boolean;
 }
 
 function glyph(context: Context, nerd: string, safe: string): string {
@@ -188,7 +192,7 @@ function wrapAtoms(atoms: readonly Atom[], width: number, first: string, rest: s
 
 function inlineRows(source: string, width: number, context: Context, base: string, first = '', rest = first): Array<{ansi: string; plain: string}> {
   // A hard break inside a paragraph is a new row with the same hanging indent.
-  return source.split('\n').flatMap((line, index) => wrapAtoms(atomsOf(parseInline(line), context, base), width, index === 0 ? first : rest, rest));
+  return source.split('\n').flatMap((line, index) => wrapAtoms(atomsOf(parseInline(line, {html: context.html}), context, base), width, index === 0 ? first : rest, rest));
 }
 
 // ---- Code ---------------------------------------------------------------------------------------------------------
@@ -216,7 +220,7 @@ function tokenSgr(kind: CodeTokenKind, context: Context): string {
 export function codeTokenStyle(kind: CodeTokenKind, options: {syntax?: SyntaxSgr; level?: ColorLevel} = {}): string {
   const level = options.level ?? colorLevel();
   return tokenSgr(kind, {level, safe: false, hyperlinks: false, ...(options.syntax ? {syntax: options.syntax} : {}),
-    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0});
+    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false});
 }
 
 function codeRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context): MarkdownRow[] {
@@ -264,11 +268,11 @@ function alignCell(text: string, width: number, align: Alignment): string {
 function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, context: Context): MarkdownRow[] {
   const columns = block.header.length;
   const all = [block.header, ...block.rows];
-  const natural = Array.from({length: columns}, (_, column) => Math.max(1, ...all.map(row => displayWidth(plainInline(row[column] ?? '')))));
+  const natural = Array.from({length: columns}, (_, column) => Math.max(1, ...all.map(row => displayWidth(plainInline(row[column] ?? '', {html: context.html})))));
   const separator = glyph(context, ' │ ', ' | ');
   const chrome = 3 * (columns - 1);
   const available = width - chrome;
-  const minimum = Array.from({length: columns}, (_, column) => Math.min(natural[column]!, Math.max(3, Math.min(10, ...[block.header[column] ?? ''].map(cell => displayWidth(plainInline(cell)))))));
+  const minimum = Array.from({length: columns}, (_, column) => Math.min(natural[column]!, Math.max(3, Math.min(10, ...[block.header[column] ?? ''].map(cell => displayWidth(plainInline(cell, {html: context.html})))))));
   if (available < minimum.reduce((a, b) => a + b, 0)) {
     // Too narrow for a grid: each row becomes a short record of "Header: value" lines.
     const rows: MarkdownRow[] = [];
@@ -276,7 +280,7 @@ function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, contex
     block.rows.forEach((row, index) => {
       if (index) rows.push({ansi: '', plain: '', kind: 'blank'});
       row.forEach((cell, column) => {
-        const label = plainInline(block.header[column] ?? '');
+        const label = plainInline(block.header[column] ?? '', {html: context.html});
         const lead = `${subtle}${label}:${RESET} `;
         for (const line of inlineRows(cell || '—', width, context, base, lead, '  ')) rows.push({...line, kind: 'table'});
       });
@@ -378,6 +382,15 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
 
 /** Rows for untrusted Markdown at `columns` cells. */
 export function renderMarkdown(source: string, columns: number, options: MarkdownOptions = {}): MarkdownRow[] {
+  return renderSource(source, columns, options, safe => parseBlocks(safe, {html: Boolean(options.html)}));
+}
+
+/** Rows for an untrusted HTML document at `columns` cells (`/view`, QA F01): its supported subset, never run or loaded. */
+export function renderHtml(source: string, columns: number, options: Omit<MarkdownOptions, 'html'> = {}): MarkdownRow[] {
+  return renderSource(source, columns, {...options, html: true}, htmlToBlocks);
+}
+
+function renderSource(source: string, columns: number, options: MarkdownOptions, parse: (safe: string) => Block[]): MarkdownRow[] {
   const width = Math.max(4, columns);
   const level = options.level ?? colorLevel();
   const context: Context = {
@@ -388,10 +401,11 @@ export function renderMarkdown(source: string, columns: number, options: Markdow
     fg: color => colorEscape(38, color, level),
     tone: options.tone === 'secondary' ? UI_COLORS.secondary : UI_COLORS.primary,
     codeIndex: 0,
+    html: Boolean(options.html),
   };
   // The renderer never trusts its caller to have scrubbed: terminal controls and bidi formatting go, tabs become spaces.
   const safe = source.split('\n').map(line => stripTerminalControls(line.replace(/\t/gu, '    '), Number.MAX_SAFE_INTEGER)).join('\n');
-  const rows = renderBlocks(parseBlocks(safe), width, context, 0);
+  const rows = renderBlocks(parse(safe), width, context, 0);
   while (rows.length && rows.at(-1)!.kind === 'blank') rows.pop();
   // A last line of defence: no row may exceed the width whatever a rule above computed.
   return rows.map(row => displayWidth(row.ansi) > width ? {...row, ansi: truncateAnsi(row.ansi, width)} : row);

@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import type {SyntaxSgr} from '../input/syntaxTheme.js';
 import {graphemes} from '../input/inputLayout.js';
-import {codeTokenStyle, renderMarkdown, type MarkdownRow} from '../markdown/render.js';
+import {codeTokenStyle, renderHtml, renderMarkdown, type MarkdownRow} from '../markdown/render.js';
 import {highlightCode, type CodeToken} from '../markdown/highlight.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {renderControlRows} from '../ui/controls.js';
@@ -14,9 +14,10 @@ import {formatBytes, inert, type ViewDocument} from './document.js';
 /**
  * The native read-only viewer (#397): one document in a full-height panel, never the transcript. Drawing is bounded
  * to what is visible: only the lines on screen are laid out, one wrapped line takes at most MAX_WRAP_ROWS rows, syntax
- * roles cover the first HIGHLIGHT_LINES lines and Markdown renders up to RENDER_MARKDOWN_BYTES. Every character is
- * drawn inert: control and format characters (bidi overrides, zero-width marks) are shown as visible marks and tabs
- * as spaces, and Markdown links are links only for the renderer's allowed targets.
+ * roles cover the first HIGHLIGHT_LINES lines and Markdown and HTML render up to RENDER_MARKDOWN_BYTES. Every character
+ * is drawn inert: control and format characters (bidi overrides, zero-width marks) are shown as visible marks and tabs
+ * as spaces, and links are links only for the renderer's allowed targets. HTML (a file, or inside Markdown) is
+ * rendered natively from its supported subset: never run, styled by CSS or loaded (QA F01).
  */
 
 const HIGHLIGHT_LINES = 20_000;
@@ -63,10 +64,15 @@ export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines:
 export interface ViewerLook {syntax?: SyntaxSgr; hyperlinks?: boolean}
 
 export function createViewer(document: ViewDocument): ViewerState {
-  const markdown = document.format === 'markdown' && Buffer.byteLength(document.text) <= RENDER_MARKDOWN_BYTES;
-  const note = document.format === 'markdown' && !markdown ? 'Too large to render: showing the Markdown source.' : undefined;
+  const renderable = renders(document);
+  const markdown = renderable && Buffer.byteLength(document.text) <= RENDER_MARKDOWN_BYTES;
+  const note = renderable && !markdown ? `Too large to render: showing the ${sourceName(document)} source.` : undefined;
   return {document, top: 0, sub: 0, left: 0, wrap: true, numbers: !markdown, rendered: markdown, ...(note ? {note} : {})};
 }
+
+/** Markdown and HTML have a rendered view beside their source. */
+const renders = (document: ViewDocument) => document.format === 'markdown' || document.format === 'html';
+const sourceName = (document: ViewDocument) => document.format === 'html' ? 'HTML' : 'Markdown';
 
 // ---- Text ---------------------------------------------------------------------------------------------------------
 
@@ -144,7 +150,8 @@ function gutterWidth(state: ViewerState): number {
 
 function markdownRows(state: ViewerState, width: number, look: ViewerLook): MarkdownRow[] {
   if (state.markdown?.width !== width) {
-    state.markdown = {width, rows: renderMarkdown(state.document.text, width, {...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks)})};
+    const options = {...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks)};
+    state.markdown = {width, rows: state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true})};
   }
   return state.markdown.rows;
 }
@@ -393,8 +400,8 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   else if ((key.kind === 'left' || key.kind === 'right') && !state.wrap && !state.rendered) state.left = Math.max(0, state.left + (key.kind === 'left' ? -HORIZONTAL_STEP : HORIZONTAL_STEP));
   else if (text === 'w' && !state.rendered) { state.wrap = !state.wrap; state.left = 0; state.sub = 0; clampTop(state, width, body, look); }
   else if (text === 'l' && !state.rendered) { state.numbers = !state.numbers; state.sub = 0; }
-  else if (text === 'm' && state.document.format === 'markdown') {
-    if (!state.rendered && Buffer.byteLength(state.document.text) > RENDER_MARKDOWN_BYTES) state.note = 'Too large to render: showing the Markdown source.';
+  else if (text === 'm' && renders(state.document)) {
+    if (!state.rendered && Buffer.byteLength(state.document.text) > RENDER_MARKDOWN_BYTES) state.note = `Too large to render: showing the ${sourceName(state.document)} source.`;
     else { state.rendered = !state.rendered; state.numbers = !state.rendered; state.top = 0; state.sub = 0; state.match = undefined; state.matchCount = undefined; }
   }
   else if (text === '/' || key.kind === 'find') state.input = {kind: 'search', value: state.query ?? ''};
@@ -416,7 +423,7 @@ function detail(document: ViewDocument): string {
     const status = document.origin.exitCode === undefined ? '' : ` · exit ${document.origin.exitCode}`;
     return `output ${document.origin.number}${status} · ${lines}${document.format === 'diff' ? ' · diff' : ''}`;
   }
-  const kind = document.format === 'markdown' ? 'Markdown' : document.format === 'diff' ? 'diff' : document.language ?? 'text';
+  const kind = document.format === 'markdown' ? 'Markdown' : document.format === 'html' ? 'HTML' : document.format === 'diff' ? 'diff' : document.language ?? 'text';
   const ending = document.lineEnding === 'crlf' ? ' · CRLF' : document.lineEnding === 'mixed' ? ' · mixed line endings' : '';
   const link = document.origin.symlink ? ` · → ${inert(document.origin.realPath)}` : '';
   return `${kind} · ${lines} · ${formatBytes(document.origin.bytes)}${ending}${link}`;
@@ -440,7 +447,7 @@ function controls(state: ViewerState, columns: number): string[] {
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
   return renderControlRows([
     ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
-    ...(state.document.format === 'markdown' ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
+    ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
     ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const, ['o', 'open in editor'] as const] : []), ['Esc', 'close'],
   ], width);
