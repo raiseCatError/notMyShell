@@ -424,6 +424,8 @@ const WARNING = lazyForeground(UI_COLORS.warning);
 const ERROR = lazyForeground(UI_COLORS.failure);
 /** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
 const STOP_TYPE_AHEAD_MS = 2000;
+/** The narrowest wait headline kept whole beside the queue's tail; narrower, the tail becomes a bare count. */
+const MIN_WAIT_HEADLINE = 18;
 /**
  * Keys held for an on-demand look at the running command's input state are routed when the look answers. A look is
  * itself bounded (two probes of at most 1.5 s each); this only guards against an answer that never comes.
@@ -11599,10 +11601,17 @@ export class TerminalApp {
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
       const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
-      const count = this.queueAvailable() ? this.queueState.entries.length : 0;
-      // The question keeps both rows; the queue is a count at the end of the headline, when it fits.
-      const tail = count ? `${SUBTLE} · ${queueGlyph()} ${count} queued${RESET}` : '';
-      if (tail && rows[0] !== undefined && displayWidth(stripAnsi(rows[0])) + displayWidth(stripAnsi(tail)) <= columns) rows[0] += tail;
+      const entries = this.queueAvailable() ? this.queueState.entries : [];
+      // The question keeps both rows and the queue's list steps aside (QA F03): the headline still says the queue is
+      // there, and when its entries now wait for approval. The headline is shortened before the tail is, and a bare
+      // count is the last resort, so the queue never seems to vanish.
+      if (entries.length && rows[0] !== undefined) {
+        const approval = entries.filter(entry => entry.condition === 'approve' && !entry.approved).length;
+        const tails = [`${queueGlyph()} ${entries.length} queued${approval ? ` · ${approval} for approval` : ''}`, `${queueGlyph()} ${entries.length}`];
+        const tail = tails.find(text => columns - displayWidth(text) - 3 >= MIN_WAIT_HEADLINE) ?? tails[1]!;
+        const room = Math.max(1, columns - displayWidth(tail) - 3);
+        rows[0] = `${truncateAnsi(rows[0], room)}${SUBTLE} · ${tail}${RESET}`;
+      }
       return rows.map(row => truncateAnsi(row, columns));
     }
     const activity = truncateAnsi(this.currentActivity(), columns);
