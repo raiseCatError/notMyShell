@@ -456,16 +456,19 @@ test('#426 residual: a reply queued before a timed prompt-less read NMSh never s
   } finally { f.dispose(); }
 });
 
-test('#426 residual: ordinary type-ahead is unchanged: a real command typed while one runs still runs after it', async t => {
+test('#426 residual: ordinary type-ahead is unchanged: commands, definitions and assignments typed while one runs still run after it', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('sleep 1; read -t 1 QA_REPLY || true');
-    f.type('ls -la');
-    f.answer('visible'); await settled();
-    f.enter();
-    f.answer('visible'); await settled();
-    assert.equal(f.owner.state.entries.find(item => item.text === 'ls -la')?.condition, undefined, 'no approval asked');
+    const typed = ['ls -la', 'qfn() { echo "fn-$1"; }', 'QUEUE_VAR=kept', 'function qfn2; echo hi; end'];
+    for (const line of typed) {
+      f.type(line);
+      f.answer('visible'); await settled();
+      f.enter();
+      f.answer('visible'); await settled();
+    }
+    for (const line of typed) assert.equal(f.owner.state.entries.find(item => item.text === line)?.condition, undefined, `${line}: no approval asked`);
     f.tick(1500);
     f.complete(0); await settled();
     assert.deepEqual(f.dispatched, ['ls -la']);

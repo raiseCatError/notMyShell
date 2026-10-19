@@ -126,10 +126,13 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 30_000, 'the first prompt');
       await frontend.run('echo READY', /READY/u);
       const records = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records);
-      const command = `sleep 2; ${perl} -e 'alarm 1; <STDIN>'; true`;
-      const ran = async () => (await records()).filter(record => record.command === command).length;
+      const reading = `sleep 2; ${perl} -e 'alarm 1; <STDIN>'; true`;
+      // The control's command reads nothing: where the platform reports the read (Linux), every entry typed during a
+      // command that asked waits for approval by design, a real command too.
+      const quiet = 'sleep 2; true';
       // The real command first: an entry left waiting for approval would hold anything queued after it.
-      for (const [typed, runs] of [['echo QA-NEXT-RAN', true], [SECRET, false]] as const) {
+      for (const [typed, runs, command] of [['echo QA-NEXT-RAN', true, quiet], [SECRET, false, reading]] as const) {
+        const ran = async () => (await records()).filter(record => record.command === command).length;
         const mark = frontend.mark;
         const before = await ran();
         frontend.pty.write(`${command}\r`);

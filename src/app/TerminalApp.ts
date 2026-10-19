@@ -11790,13 +11790,16 @@ export class TerminalApp {
 
   /**
    * Whether a queued line's first command word is one this shell knows: an alias, function, builtin or keyword, or an
-   * executable by path or on PATH. A word not classified yet is checked against the shell's builtins and PATH.
+   * executable by path or on PATH. A word not classified yet is checked against the shell's builtins and PATH. Shell
+   * syntax with no command word (an assignment, a group) and a function definition are the person's shell input.
    */
   private startsWithCommand(text: string): boolean {
     const first = text.split('\n').find(line => line.trim()) ?? '';
+    if (/^\s*(?:function\s+\S|[A-Za-z_][\w.:-]*\s*\(\s*\))/u.test(first)) return true;
     const token = this.highlighter.tokenize(graphemes(first), this.semanticService.cache)
       .find(item => ['Command', 'KnownCommand', 'Builtin', 'Alias', 'Function', 'UnknownCommand'].includes(item.type));
-    if (!token || token.type === 'UnknownCommand') return false;
+    if (!token) return true;
+    if (token.type === 'UnknownCommand') return false;
     if (token.type !== 'Command') return true;
     return token.text.includes('/') || shellAdapter(this.shellId).builtins.has(token.text) || Boolean(resolveCommand(token.text));
   }
