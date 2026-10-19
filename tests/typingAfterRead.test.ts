@@ -57,11 +57,17 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           // with no visible question, Enter queues the next command (that is the queue); an answer is only an answer
           // once the question is open.
           if (shell !== 'fish') await frontend.waitFor(new RegExp(`[Ww]aiting for input[^\\n]*[\\s\\S]*Name-${tag}:`, 'u'), mark);
+          const next = `echo NEXT-${tag}`;
+          const before = await frontend.completions(next);
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
-          frontend.pty.write(`echo NEXT-${tag}\r`);
-          await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u'), mark, 10_000);
-          assert.match(strip(frontend.output.slice(mark)), new RegExp(`got=v${tag}`, 'u'), 'the answer reached read');
+          frontend.pty.write(`${next}\r`);
+          // NMSh's journal records the next command once the shell's prompt has returned after it. Screen text could match
+          // earlier: the queued command's row followed by an older "Completed" in a later redraw (seen in CI on #442).
+          await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next}`);
+          const drawn = strip(frontend.output.slice(mark));
+          assert.match(drawn, new RegExp(`got=v${tag}`, 'u'), 'the answer reached read');
+          assert.match(drawn, new RegExp(`(?<!echo )NEXT-${tag}`, 'u'), 'and the next command ran');
         }
       }
     } finally { stop(); await sandbox.dispose(); }

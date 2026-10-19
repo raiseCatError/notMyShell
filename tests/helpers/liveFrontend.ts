@@ -174,6 +174,13 @@ export class Frontend {
 
   get mark(): number { return this.output.length; }
 
+  /**
+   * How many times NMSh has journaled this exact command as completed. The frontend writes that record when the
+   * shell's prompt returns, so waiting for it to grow is a deterministic end of the command, unlike screen text
+   * (a queue row or an older redrawn "Completed" can match before the command has finished).
+   */
+  completions(command: string): Promise<number> { return this.completedCount(command); }
+
   async waitFor(pattern: RegExp, from = 0, timeoutMs = 20000): Promise<void> {
     const started = Date.now();
     try {
