@@ -11,10 +11,11 @@ import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
  */
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 const supported = process.platform === 'darwin' || process.platform === 'linux';
-const COMMANDS = 12;
-const LINES = 400;
+const COMMANDS = 8;
+const LINES = 3000;
+const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
 
-test('live fish: builtin output arrives whole across many command starts and ends; no interrupted write', {skip: supported && fish ? false : 'fish not installed', timeout: 240_000}, async () => {
+test('live fish: builtin output arrives whole while NMSh\'s chrome changes under it; no interrupted write', {skip: supported && fish ? false : 'fish not installed', timeout: 300_000}, async () => {
   const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'fish'});
   const frontend = sandbox.launch([], {cols: 100, rows: 30});
   frontend.pty.onData(data => {
@@ -30,12 +31,22 @@ test('live fish: builtin output arrives whole across many command starts and end
       const command = `for i in (seq ${LINES}); echo OUT-${run}-$i; end; echo END-${run}`;
       const before = await frontend.completions(command);
       frontend.pty.write(`${command}\r`);
-      await until(async () => await frontend.completions(command) > before, 30_000, `command ${run} to complete`);
+      // While Fish writes, the composer grows and shrinks (Ctrl+J newlines, then Ctrl+U): the chrome NMSh used to
+      // follow with the shell's terminal size.
+      for (let churn = 0; churn < 6 && await frontend.completions(command) === before; churn += 1) {
+        frontend.pty.write('a\nb\nc\nd');
+        await pause(60);
+        frontend.pty.write('\u0015\u0015\u0015\u0015');
+        await pause(60);
+      }
+      await until(async () => await frontend.completions(command) > before, 60_000, `command ${run} to complete`);
+      frontend.pty.write('\u0015\u0015\u0015\u0015');
       const records = (await sandbox.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command);
       const output = records.at(-1)?.output ?? strip(frontend.output.slice(mark));
       const seen = new Set(output.match(new RegExp(`OUT-${run}-\\d+`, 'gu')) ?? []);
+      assert.doesNotMatch(output, /Interrupted system call/u, `command ${run}: no interrupted write`);
       assert.equal(seen.size, LINES, `command ${run}: every line of Fish's own output arrived`);
-      assert.doesNotMatch(output, /Interrupted system call/u);
+      await pause(300);
     }
   } finally { await sandbox.dispose(); }
 });
