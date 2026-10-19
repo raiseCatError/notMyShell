@@ -250,6 +250,7 @@ import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/r
 import {commandReference} from '../shell/CommandReference.js';
 import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/gitAssist.js';
 import {readGitFacts} from '../ask/git.js';
+import {suggestionBlock} from '../ask/commandSuggestions.js';
 import {configTargets, systemConfigEnvironment} from '../ask/configTargets.js';
 import {systemFileAssistEnvironment, validateAfterWrite} from '../ask/configAssist.js';
 import {formatterAllowed} from '../ask/repair.js';
@@ -9710,7 +9711,27 @@ export class TerminalApp {
   }
 
   /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
+  /**
+   * Ask's answer: its own resolver (and the optional intent model) first. Only what that cannot place (unclear or
+   * unsupported, never a refusal) may get one suggested command, and only when the person turned command suggestions
+   * on (#432). The suggestion is Copy/Insert only, labelled by NMSh; the model gets the request, shell and OS family.
+   */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
+    const outcome = await this.resolveAskOwn(text, state);
+    if ((outcome.kind !== 'unclear' && outcome.kind !== 'unsupported') || this.promptConfiguration.askCommandSuggestions !== 'local' || this.askState !== state) return outcome;
+    if (this.askStage) this.setAskStage('Asking your local model for a command');
+    const result = await this.understanding.suggestCommand({text, shell: this.shellId, os: process.platform === 'darwin' ? 'macOS' : 'Linux'});
+    if (this.askState !== state) return outcome;
+    const next = outcome.kind === 'unclear' ? outcome.categories : undefined;
+    if ('unavailable' in result) return {kind: 'answer', capability: 'help.command', text: result.unavailable, ...(next?.length ? {next} : {})};
+    // The model declined: Ask's own answer stands.
+    if (!result.suggestion) return outcome;
+    const model = this.configuration.localUnderstanding.model?.label ?? 'local model';
+    return {kind: 'answer', capability: 'help.command', text: 'A suggested command, for you to check before running it yourself.',
+      block: suggestionBlock(result.suggestion, model)};
+  }
+
+  private async resolveAskOwn(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
     const commands = this.askCommands();

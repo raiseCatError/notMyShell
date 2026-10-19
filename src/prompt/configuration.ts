@@ -591,6 +591,10 @@ export type OnboardingBackdrop = 'off' | 'subtle' | 'aurora';
 export const STARTING_POINT_IDS = ['recommended', 'minimal', 'customize', 'existing'] as const;
 export type StartingPointId = typeof STARTING_POINT_IDS[number];
 
+/** Where Ask's command suggestions come from: nowhere (default) or the person's local model (#432). */
+export type AskCommandSuggestions = 'off' | 'local';
+export const ASK_COMMAND_SUGGESTIONS: readonly AskCommandSuggestions[] = ['off', 'local'];
+
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
   /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
@@ -676,6 +680,11 @@ export interface PromptConfiguration {
   agentProfiles: AgentProfile[];
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
   askRecord: boolean;
+  /**
+   * Command suggestions in Ask (#432): off, or one suggested shell command from the person's local model when Ask's own
+   * resolver cannot place a request. Copy/Insert only, never run. Remote providers are a later, separately reviewed slice.
+   */
+  askCommandSuggestions: AskCommandSuggestions;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
   askPresentation: 'chat' | 'normal';
   /** Optional local language understanding; Auto by default (deterministic first, nothing downloads without consent). Folding stays opt-in. */
@@ -893,6 +902,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionNotices: true,
   copy: {...DEFAULT_COPY},
   askRecord: true,
+  askCommandSuggestions: 'off',
   askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
@@ -1014,7 +1024,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askCommandSuggestions: value.askCommandSuggestions === 'local' ? 'local' as const : 'off' as const, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',

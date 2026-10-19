@@ -295,6 +295,8 @@ Optional **local understanding** can help interpret requests when enabled. Auto 
 
 Model text is not directly executed as a shell command or filesystem operation. Configuration, mutation, and installation require confirmation of the exact action in Ask; destructive suggestions are Copy/Insert only. Copying or inserting a suggested command does not execute it. File plans and supported configuration still use their normal path, hash, and ownership checks.
 
+**Command suggestions** are optional and Off by default. When the person turns them on (Settings → Ask → Command suggestions → Local model), a request Ask's own resolver cannot place (never one it refused) may get one shell command from the local model. The model receives only the request text, the shell and the OS family; its answer is validated strictly (one plain line, no control or escape sequences), labelled by NMSh's own command classifier rather than the model, and offered for Copy or Insert only. Inserting places it in the composer unsent; only the person's Enter runs it.
+
 ## 20. Configuration and persistence
 
 Let `<NMSh config>` mean the directory selected by the shared path resolver:
