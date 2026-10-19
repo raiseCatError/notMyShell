@@ -1,7 +1,9 @@
 # v0.22 physical QA
 
 One walkthrough for the v0.22.0 release candidate (#444). It replaces [v0.21 physical QA](v021-physical-qa.md)
-(never run; v0.21.0 is not published) and the per-PR v0.22 passes. Nothing below has been run yet.
+(never run; v0.21.0 is not published) and the per-PR v0.22 passes. Sittings A and part of B were run on candidate
+`68c1cbb7` (results below); the person running QA then stopped repetitive manual testing, and the remaining passes are
+recorded as not run. Fixes made after that QA have their own short retests (see Retests after the stabilization fixes).
 
 - **What counts:** a person at a real terminal, with a real keyboard and pointer. Headless tests, synthetic keys and green
   CI do not count, and no row is marked from them.
@@ -38,32 +40,128 @@ One walkthrough for the v0.22.0 release candidate (#444). It replaces [v0.21 phy
 
 | Pass | Terminal | Shell | Commit | Result | Notes |
 |---|---|---|---|---|---|
-| A1 Progress (#388) | Ghostty | zsh | | Not run | |
-| A2 `/view` | Ghostty | zsh | | Not run | |
-| A3 `/edit` | Ghostty | zsh | | Not run | |
-| A4 Semantic Output | Ghostty | zsh | | Not run | |
-| A5 `/track` | Ghostty | zsh | | Not run | |
-| A6 Modules | Ghostty | zsh | | Not run | |
-| A7 Themes | Ghostty | zsh | | Not run | |
-| A8 History (#389) | Ghostty | zsh | | Not run | |
-| A9 Passwords and replies (#426) | Ghostty | zsh | | Not run | |
-| A10 Prompt hooks and Ctrl+C (#436) | Ghostty | zsh | | Not run | |
-| A11 Editors (#366) | Ghostty | zsh | | Not run | |
-| A12 Ask suggestions (#432) | Ghostty | zsh | | Not run | memory check first |
-| A13 Session lifecycle | Ghostty | zsh | | Not run | |
-| A14 No color and Safe glyphs | Ghostty | zsh | | Not run | |
-| B1 Progress | Terminal.app | Fish | | Not run | |
-| B3 `/edit` keys | Terminal.app | Fish | | Not run | |
-| B5 `/track` cleanup | Terminal.app | Fish | | Not run | |
-| B8 History | Terminal.app | Fish | | Not run | |
-| B9 Passwords and replies | Terminal.app | Fish | | Not run | |
-| B10 Prompt hooks and Ctrl+C | Terminal.app | Fish | | Not run | |
-| C2 `/view` rendering | Terminal.app | zsh | | Not run | |
-| C7 Themes, 256 colors | Terminal.app | zsh | | Not run | |
-| C9 Passwords and replies | Terminal.app | Bash | | Not run | |
-| C10 Prompt hooks and Ctrl+C | Terminal.app | Bash | | Not run | |
-| D11 Editor bridge | Zed | zsh | | Not run | required |
-| Z Supplementary | Zed | zsh | | Not run | not a release gate |
+| A1 Progress (#388) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A2 `/view` | Ghostty | zsh | 68c1cbb7 | PASS | embedded HTML shown literally: F01, see R3 |
+| A3 `/edit` | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A4 Semantic Output | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A5 `/track` | Ghostty | zsh | 68c1cbb7 | PASS | multi-line paste of /track lines: F02, see R2 |
+| A6 Modules | Ghostty | zsh | 68c1cbb7 | PASS | `cd` + `/modules` pasted: F02, see R2 |
+| A7 Themes | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A8 History (#389) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A9 Passwords and replies (#426) | Ghostty | zsh | 68c1cbb7 | PASS | step 9 (CPU load) not run (machine constraints); queue overview hidden during the wait: F03 |
+| A10 Prompt hooks and Ctrl+C (#436) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A11 Editors (#366) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A12 Ask suggestions (#432) | Ghostty | zsh | 68c1cbb7 | **FAIL** | the folder listing instead of a suggestion: F04 (#446), see R1 |
+| A13 Session lifecycle | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A14 No color and Safe glyphs | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| B1 Progress | Terminal.app | Fish | 68c1cbb7 | PASS |  |
+| B3 `/edit` keys | Terminal.app | Fish | 68c1cbb7 | PASS |  |
+| B5 `/track` cleanup | Terminal.app | Fish |  | NOT RUN | user waived/deferred further manual QA |
+| B8 History | Terminal.app | Fish |  | NOT RUN | user waived/deferred further manual QA |
+| B9 Passwords and replies | Terminal.app | Fish |  | NOT RUN | user waived/deferred; covered by R4 if run |
+| B10 Prompt hooks and Ctrl+C | Terminal.app | Fish |  | NOT RUN | user waived/deferred further manual QA |
+| C2 `/view` rendering | Terminal.app | zsh |  | NOT RUN | user waived/deferred further manual QA |
+| C7 Themes, 256 colors | Terminal.app | zsh |  | NOT RUN | user waived/deferred further manual QA |
+| C9 Passwords and replies | Terminal.app | Bash |  | NOT RUN | user waived/deferred; covered by R4 if run |
+| C10 Prompt hooks and Ctrl+C | Terminal.app | Bash |  | NOT RUN | user waived/deferred further manual QA |
+| D11 Editor bridge | Zed | zsh |  | NOT RUN | required; user waived/deferred |
+| Z Supplementary | Zed | zsh |  | NOT RUN | not a release gate |
+| R1 Ask suggestions (F04) | Ghostty | zsh |  | Not run | retest on the new candidate |
+| R2 Pasted NMSh commands (F02) | Ghostty | zsh |  | Not run | retest on the new candidate |
+| R3 HTML in `/view` (F01) | Ghostty | zsh |  | Not run | retest on the new candidate |
+| R4 Typing before an unseen read (#426) | Terminal.app | Fish, Bash |  | Not run | retest on the new candidate |
+
+**NOT RUN is not PASS.** The nine required passes above were not performed; if the release goes ahead without them, that
+is a recorded acceptance of their risk (below), not a result.
+
+### Reduced coverage: what is and is not proven
+
+- **Proven physically (Ghostty, zsh):** everything in sitting A except A12 (failed, now fixed: R1) and A9's load step.
+- **Not proven physically:** Fish and Bash input security (B9, C9) and prompt hooks (B10, C10), Fish `/track` process
+  cleanup (B5), Terminal.app's 256-color themes and `/view` drawing (C7, C2), Fish history (B8), and the Zed editor
+  bridge (D11). Ghostty passing does not cover them: input routing depends on the shell (Fish's reader and Bash's
+  `PROMPT_COMMAND` differ from zsh's hooks), and D11 is the only check of the Zed bridge.
+- **Automated cover for those:** live tests run real Fish and Bash on CI (macOS and Ubuntu) for the input, queue,
+  prompt-hook and typing-after-read paths, and locally on macOS for this candidate (Fish 4.9.3, Bash 5). They do not
+  exercise a person's timing, Terminal.app or Zed.
+- **Smallest meaningful remaining checks**, by unique risk: R4 (Fish and Bash typing security, about 10 min), D11 (Zed,
+  2 min), then B10 and C10 (prompt hooks in Fish and Bash, 4 min). B5, B8, C2 and C7 repeat Ghostty-proven drawing and
+  can reasonably be waived.
+
+## Retests after the stabilization fixes (about 30 minutes)
+
+The candidate changed after the QA above (fixes for F01–F04 and #426, #443; see the ledger). Only what those changes
+touch is retested; every other result above stands for the new candidate.
+
+**Build:** a separate QA build at the new candidate, so `68c1cbb7`'s build stays as it was:
+
+```sh
+git -C /Users/jaisukka/Projects/notMyShell fetch origin
+git -C /Users/jaisukka/Projects/notMyShell worktree add --detach /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/v022-qa2 origin/release/v0.22.0
+cd /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/v022-qa2 && t7run npm ci && t7run npm run build
+git rev-parse --short HEAD    # the commit in #444's latest "Candidate for physical QA" comment
+scripts/qa/v022-retest-fixtures.sh /Volumes/T7Tmp/ai-dev/q22 /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/v022-qa2
+```
+
+Launch with `/Volumes/T7Tmp/ai-dev/q22/nmsh2` (`nmsh2 fish`, `nmsh2 bash`): your QA configuration, the new build, its
+own session service. The welcome banner names the new build. If a window says its session service is from an older
+NMSh, `exit` every `nmsh2` window and start again.
+
+### R1 · Ask command suggestions (F04, replaces A12), Ghostty, zsh, 8 min
+0. Memory first, as in A12.
+1. Settings → Ask → Command suggestions **Off**. `/btw convert every png here to webp`: Ask says it doesn't run shell
+   tasks like this itself and names Settings → Ask → Command suggestions. No folder listing, no model asked.
+2. Command suggestions → **Local model** (local understanding Auto, your model set up in `/llm`). `cd retest/images`,
+   then `/btw convert every png here to webp`: one suggested command, `NMSh's check: …` first, then your model's words
+   in quotes with its name, and Copy and Insert only. The model may suggest an imprecise command or none ("suggested
+   no command for this"); either is a PASS for this step, a folder listing is a FAIL.
+3. Insert: the command waits in the composer, unsent (Esc clears it). Copy: only the clipboard changes.
+4. `/btw find files bigger than 100mb` and `/btw rename all .jpeg files to .jpg`: a suggestion (or "no command"),
+   never a listing, "Install which shell?" or a transcript search.
+5. `/btw delete all my files`: still refused; no suggestion.
+6. `/llm` → local understanding Off; `/btw convert every png here to webp`: says suggestions need local understanding
+   and how to turn it on. Finish with `/llm` → Stop model, and `cd ../..`.
+
+**PASS** if no step shows an unrelated screen, nothing runs without your Enter, and the refusal stands.
+
+### R2 · Pasted NMSh commands (F02), Ghostty, zsh, 4 min
+1. `pbcopy < retest/paste-mixed.txt`, paste (Cmd+V), Enter (inserts), Enter: nothing runs; the reviewed list opens
+   with `1 One at a time · 2 commands` and no Run as block or Queue choice. Enter: `cd modules/bun-app` waits in the
+   composer with `Pasted command 1 of 2 · Enter runs it · Esc stops`. Enter: it runs; `/modules` is then offered.
+   Enter: the Modules panel opens (no `zsh: no such file or directory`). Close it; `cd ../..`.
+2. `pbcopy < retest/paste-track.txt`, paste, Enter, Enter, Enter: each `/track …` is offered in turn and runs as its
+   own tracker on your Enter. `/track stop` each one.
+3. Paste `retest/paste-mixed.txt` again, Enter, Enter, Enter, then Esc while `cd …` waits: the composer empties and
+   nothing more is offered. A multi-line shell script with no NMSh line (`for i in 1 2` Ctrl+J `do echo $i` Ctrl+J
+   `done`) still runs as one command.
+
+**PASS** if no NMSh line ever reaches the shell and nothing runs without its own Enter.
+
+### R3 · HTML in `/view` (F01), Ghostty, zsh, 5 min
+1. `/view retest/README-html.md`: the logo and badge read `[image: QA logo]` and `[image: CI badge]`, the heading and
+   list render, **Bold words** are bold, `Ctrl`+`C` look like keys; no `<div>`, `<picture>`, `<img>`, `<p>` or `<kbd>`
+   text. `m` shows the source; `m` again returns.
+2. `/view retest/page.html`: heading, paragraph styles, the numbered list with its nested item, the table (Value
+   right-aligned), the code block, the quote, a rule, and `☑ done` / `☐ open`. `/` `nested` finds it. Narrow the window
+   to about 40 columns: it still fits.
+3. `/view retest/hostile.html`: `Hostile page` and `Visible text` only, plus `[image: local file reference]` and the two
+   links shown with their targets as text. Nothing else: no `QA-SCRIPT-RAN`, no title change, no screen clear, no
+   `QA-IFRAME`, no `/etc/passwd` contents, no network activity.
+4. A2 step 1 again (`/view view/README.md`) and step 4 (`view/hostile.txt`): unchanged.
+
+**PASS** if all hold.
+
+### R4 · Typing before a read nobody sees (#426), Terminal.app, Fish then Bash, 10 min
+Launch `nmsh2 fish`; then repeat in `nmsh2 bash`.
+1. `bash retest/timed-read.sh`, and during its 2 s sleep type `QRETESTQ` and Enter: `≡ 1 queued`, and a note says the
+   line does not start with a command this shell knows and waits for your approval (the note never shows the word).
+   `QA-TIMED-DONE` prints; the entry does **not** run. `/queue`: delete it.
+2. The same, typing `echo next-ok` instead: it runs once after `QA-TIMED-DONE`.
+3. A9 steps 2, 5 and 6 in that shell (Fish: `read --silent reply` for step 2).
+4. Fish: `history | head -30`; Bash: `history | tail -30`: no `QRETESTQ` or `QSECRETQ`.
+
+**PASS** if no reply word ever runs, is shown after its question appeared, or reaches history. This also covers the
+input-security part of B9 and C9.
 
 ## Sitting A: Ghostty, zsh (about 80 minutes; a break fits after A7)
 
@@ -182,12 +280,14 @@ Replies are made-up words, never a real password (only step 8 uses yours). `≡ 
    hidden input · held, not run · Tab shows it · Esc discards it`. Press Enter: nothing runs. Press Ctrl+Q, then Tab:
    `QSECRETQ` appears in the composer, unsent, and `≡` does not appear. Delete it (Ctrl+U).
 6. The same with Enter: `sh input/delayed-prompt.sh`, type `QSECRETQ` and Enter before the prompt. Nothing asks yet, so
-   it is queued (`≡ 1 queued`), as anything entered then is. When the prompt appears, a note says the command queued
-   while it ran waits for your approval, and the prompt is not answered with an empty line. Answer with `answer`:
+   it is queued (`≡ 1 queued`), as anything entered then is; since it does not start with a command, a note says at once
+   that it waits for your approval. When the prompt appears, a note says the command queued while it ran waits for your
+   approval, and the prompt is not answered with an empty line. Answer with `answer`:
    `got 6 characters`; the queued entry does not run. `/queue`: delete it. (If the Enter was still being checked when
    the prompt appeared, the word is held at the prompt instead: Esc says it was discarded, not sent or run.)
 7. `bash input/two-passwords.sh`: type `X` and Enter as soon as it starts; during its 3 s pause type a second word and
-   Enter. That word is shown and queued (NMSh cannot know yet). When the second read starts, a note says the command
+   Enter. That word is shown and queued (NMSh cannot know yet), waiting for approval because it is not a command. When
+   the second read starts, a note says the command
    queued while it ran waits for your approval. Type the second word again and Enter: `lengths 1/…`; the queued entry
    does not run. `/queue`: delete it.
 8. `sudo -k true`: your password never appears on screen or in the queue; a wrong password and the retry behave the

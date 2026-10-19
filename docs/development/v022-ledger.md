@@ -230,10 +230,11 @@ Findings for the planned performance and test-resource pass:
 - **Orphans:** processes from other worktrees' live sandboxes (two days old, reparented to `launchd`) were found before the panic, so interrupted runs can leave sandboxes behind. Sandbox teardown after a crash needs an owner-checked cleanup.
 - **Storage:** all scratch, caches and worktrees were on the T7. The internal SSD was at 96%, which leaves little room for swap.
 
-## Physical QA still required
+## Physical QA
 
-Checklist: [v0.22 physical QA](../testing/v022-physical-qa.md), one pass per PR. Nothing in v0.22 has had a physical
-pass.
+Recorded in [v0.22 physical QA](../testing/v022-physical-qa.md): sitting A (Ghostty, zsh) and B1, B3 (Terminal.app,
+Fish) on `68c1cbb7`; A12 failed (F04). Nine required passes were not run (the person running QA stopped repetitive
+manual testing): B5, B8, B9, B10, C2, C7, C9, C10, D11. Retests R1–R4 cover what changed afterwards.
 
 ## Open risks
 
@@ -242,3 +243,52 @@ pass.
 - #439 and #434 both use the host-actions bridge; whichever merges second picks up the other.
 - #436 fixes two explained mechanisms; other timing races in input ownership may remain.
 - #443 (Fish 3.7 on Linux, cause unknown) is open; a bounded CI loop investigates it.
+
+## Stabilization after physical QA (2026-10-19)
+
+Baseline verified first: `release/v0.22.0` = `68c1cbb7` locally and on origin, #444 draft and mergeable, the release
+worktree clean. Scratch on `T7Tmp` (`62D4E8A9-087C-4927-A62F-25BB88B7F1C7`, verified mounted). Work in new worktrees
+`…/v022-qafix`, `-426`, `-f03`, `-svc`, `v022-html`, `v022-integ`; `v022-qa` (the QA build of `68c1cbb7`) untouched.
+
+| Finding | Kind | Root cause | Fix | Issue / PR |
+| --- | --- | --- | --- | --- |
+| F04 Ask suggestions | QA failure (A12) | Shell tasks were `unclear`, so Auto let the intent model read them; Qwen3 0.6B answered `files.list` (0.99999) and NMSh answered "list files"; suggestions only follow `unclear` | Shell tasks recognised (`unsupported`, never re-read by the model in Auto or Always); suggestions Off says where they are; a declining model says so | #446 / #447 |
+| F02 Pasted NMSh commands | QA bug | Enter submits the composer as one unit: a block starting with `/` was one broken slash command, any other block went to the shell whole | A mixed block opens the reviewed list; One at a time offers each command unsent, next after success, Esc stops | #450 / #451 |
+| F03 Queue during a wait | QA UX | Intentional (the question takes the rows), but the headline omitted the approval state and dropped the queue on narrow screens | `≡ 2 queued · 2 for approval`, headline shortened first, bare count last | #452 / #453 |
+| F01 HTML in `/view` | Requested feature | — | Native, bounded, never-run HTML subset for HTML files and HTML in Markdown (`/view` only) | #454 / #455 |
+| Markdown wrap | Bug found testing F01 | A word that fit only without the space was glued to the previous one | Next word starts the next row | in #455 |
+| #426 residual | Security | A line typed before an unseen timed read ran as a command when the command succeeded (reproduced live, zsh/Bash/Fish) | A line not starting with a known command waits for approval | #426 / #448 |
+| #426 older service | Clarity | A window never said an older service lacks the protections | Warning keyed on `input-look-result` | #456 |
+| #443 Fish 3 markers | Reliability | Fish 3 drops an EINTR'd builtin write and prints the error; #445's single retry printed it and lost a marker interrupted twice | Fish 3 markers via `printf | cat` (cat ignores SIGWINCH, retries EINTR) | #443 / #449 |
+
+Evidence:
+- **F04** reproduced with the real model through the real Ask path (`/Volumes/T7Tmp/ai-dev/scratch/v022-qafix/probe-f04`).
+  After the fix the QA request gets a suggestion; the model's command quality is low (`convert -density 100 -quality 100
+  *png* webp`).
+- **#426:** the live test fails first on zsh, Bash and Fish (the reply entered NMSh's journal); 7/7 after.
+- **#443:** an LD_PRELOAD shim fails terminal writes with EINTR on CI's Ubuntu Fish 3.7.0. Markers survive 1, 2 and 50
+  interruptions with no error shown; the same harness shows #445's helper losing a marker interrupted twice. The
+  diagnostic loop on the new helper (run 39252443113): 60/60, 0 interrupted marker writes recorded (before #445: 3/30
+  and 2/30 failures). Fish's own builtin output can still lose a write: documented, not fixed (the cause, resizing the
+  PTY on layout changes, is the post-release fix).
+- **Integration** (`integration/v022-stabilization`): #448, #449, #456, #447, #451, #453, then #455 last (revertible as
+  one merge). One conflict, in `routeComposer`: #451's review first, then #448's enqueue rule.
+- **PR CI:** all seven fix PRs green. #453's first macOS run failed `inputOwnershipLive` zsh (a waiting read's answer
+  timed out); its change only affects the wait headline when entries are queued (none in that test), and the rerun
+  passed: the known load race, recorded here, not hidden.
+- **Verification on the integrated tree:** typecheck; 140 deterministic files 1,134 pass, 0 fail, 7 skipped;
+  live 45/45 (secrets, ownership, prompt hooks, typing after read, queue, paste batch, queue conditions, viewer).
+  Sequential, concurrency 1, memory 36–45% free.
+- **Statuses:**
+  - #436: the two mechanisms stay fixed; prompt-hook live tests pass. Remaining: zsh's single `precmd` and Fish's
+    other `fish_postexec` handlers run before the done marker.
+  - #356: not reproduced; no new evidence, left deferred.
+  - #445: superseded on Fish 3 by #449; still the Fish 4 path.
+
+Decisions and risks:
+- F01 is included (opt-in to `/view`; agent replies unchanged), merged last so it can be reverted alone. A2 and C2 need
+  R3.
+- Ask suggestions now work as designed; their usefulness depends on the model. The release scope is unchanged (off by
+  default, local model only), with the quality limit in Known limitations.
+- Lesson: `git stash` does not take untracked files. One test file was swept into another branch's commit, amended
+  out and force-pushed with a lease (#448, `31fab989` → `3d606e7a`); each branch now has its own worktree.
