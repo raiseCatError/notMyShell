@@ -518,6 +518,8 @@ export class TerminalApp {
   private readonly historyService = new HistoryService();
   /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
   private readonly composerHistory = new ComposerHistory();
+  /** The composer shows an entry recalled by Up/Down and the person has done nothing else since (#389). */
+  private historyBrowsing = false;
   /**
    * What was submitted in this NMSh session, for recall only. NMSh slash
    * commands live here and nowhere else: never zsh, Atuin or other history.
@@ -2464,6 +2466,9 @@ export class TerminalApp {
       if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(); }
       return;
     }
+    // Anything but Up/Down (typing, pasting, deleting, moving the caret, selecting) makes a recalled command a draft:
+    // Up/Down move within it again, and the next recall starts a fresh snapshot (#389).
+    if (key.kind !== 'up' && key.kind !== 'down') this.historyBrowsing = false;
     if (key.kind === 'selectAll') {
       if (!this.running) this.editor.selectAll();
       return;
@@ -2541,8 +2546,7 @@ export class TerminalApp {
       else this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
     } else if (key.kind === 'up' && isSlash && !searchSurface && suggestions.length > 0 && this.leaveSlashMenu()) {
       // Left the slash menu; fall through to history recall below.
-      const {columns} = this.dimensions();
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
+      this.historyStep('up');
     } else if (key.kind === 'complete') {
       const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
       if (action === 'shell-suggestion') {
@@ -2642,22 +2646,20 @@ export class TerminalApp {
     else if (key.kind === 'selectWordLeft') this.editor.selectWordLeft();
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
-      const {columns} = this.dimensions();
       // Spatial focus: the shelf sits above the composer. Only an already visible shelf, from a completely idle
       // composer; a hidden shelf is never revealed by ↑, which stays shell history.
       if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
       // Then the background task bar (only from an idle composer, only when tasks are shown), then history.
       if (this.enterBackgroundBar(key)) return;
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
+      this.historyStep('up');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       if (this.enterBackgroundBar(key)) return;
       this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
-      const {columns} = this.dimensions();
       // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (↑ then focuses it).
       if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
-      if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('next');
+      this.historyStep('down');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
       this.editor.selectDown(this.inputColumns(columns), this.railInputPrefix(columns));
@@ -2746,8 +2748,28 @@ export class TerminalApp {
       : this.composerHistory.next(current);
     if (text === undefined) return;
     this.editor.replaceText(text);
+    // Past the newest entry the draft returns and browsing ends; otherwise the composer shows a recalled entry.
+    this.historyBrowsing = this.composerHistory.active;
     this.selectedSuggestion = 0;
     this.shellSuggestions = [];
+  }
+
+  /**
+   * Up/Down in the shell composer (#389). While it shows an unchanged recalled entry, each press is one history entry,
+   * however many explicit or wrapped rows the entry has. Otherwise the caret moves between visual rows first, and
+   * crossing the first or last row enters or leaves history, as for any draft.
+   */
+  private historyStep(direction: 'up' | 'down'): void {
+    const eligible = this.composerHistoryEligible();
+    if (this.historyBrowsing && eligible && this.composerHistory.showing(this.editor.text)) {
+      this.recallHistory(direction === 'up' ? 'previous' : 'next');
+      return;
+    }
+    this.historyBrowsing = false;
+    const {columns} = this.dimensions();
+    const moved = direction === 'up' ? this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns))
+      : this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns));
+    if (!moved && eligible) this.recallHistory(direction === 'up' ? 'previous' : 'next');
   }
 
   private async fetchSuggestions(): Promise<void> {
