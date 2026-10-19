@@ -202,13 +202,20 @@ test('live: a program waiting for a line gets Enter; Ctrl+Q queues; Ctrl+S sends
     frontend.pty.write(`read 'x?Name: '; echo got=$x\r`);
     await frontend.waitFor(/[◆◇] (?:Probably w|W)aiting for input[\s\S]*Name:/u, mark);
     await frontend.waitFor(/Type your answer · Enter sends it to zsh · Ctrl\+Q queues a command/u, mark);
-    frontend.pty.write('echo QUEUED-AFTER-READ\u0011');
+    // The output (QUEUED-AFTER-READ) never appears in the command's own text, which the queue list shows while it waits.
+    const queued = 'printf "QUEUED-%s\\n" AFTER-READ';
+    const before = await frontend.completions(queued);
+    frontend.pty.write(`${queued}\u0011`);
     await frontend.waitFor(/≡ 1 queued|≡ Queued \(1\)/u, mark);
     frontend.pty.write('alice\r');
     await frontend.waitFor(/got=alice[\s\S]*QUEUED-AFTER-READ/u, mark, 20_000);
-    assert.doesNotMatch(drawn(frontend, mark), /got=echo/u, 'the queued command never reached read');
+    // Then its journal record, written once the shell's prompt has returned: cat is typed at an idle prompt, not queued
+    // behind a command that is still finishing (#441's CI run hit that window).
+    await until(async () => await frontend.completions(queued) > before, 20_000, `completed journal for ${queued}`);
+    assert.doesNotMatch(drawn(frontend, mark), /got=printf/u, 'the queued command never reached read');
 
-    // cat reads stdin with no prompt: NMSh cannot tell it waits, so Enter queues; Ctrl+S sends the line to cat.
+    // cat reads stdin with no prompt. macOS cannot tell it waits; Linux's kernel report can, after the first look. Either
+    // way typing stays in the composer and Ctrl+S sends the line to cat.
     mark = frontend.mark;
     frontend.pty.write('cat\r');
     await frontend.waitFor(/Running cat/u, mark);
