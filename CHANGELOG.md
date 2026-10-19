@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Up and Down step through history one command at a time, however many lines a command has** ([#389](https://github.com/raiseCatError/notMyShell/issues/389)). Once Up has recalled a command, each Up or Down moves to the next older or newer command, even when the recalled one spans several lines or wraps; before, a recalled five-line command took five extra presses to pass. Typing, pasting, deleting, moving the caret or selecting in a recalled command makes it a draft again, where Up and Down move between its lines as before, and Down past the newest command restores exactly what you had typed. Editing a fresh multi-line draft is unchanged.
+  - While you step through history, the bottom composer rule shows where you are: `History 2/120`, counted back from the newest command. It sits on a rule that is already there (the top one when the bottom one is not free), in the same subtle color as other text on those rules, and never covers Keep Awake or the prompt. It never adds a row or moves anything; with no free rule, or no room on it, it is not shown.
 
 ### Fixed
 
