@@ -943,6 +943,11 @@ export class TerminalApp {
    * shell said the command is done (`done`): only the prompt settles those.
    */
   private stopAhead?: {startId: number; lines: string[]; program: string; timer?: NodeJS.Timeout; done: boolean};
+  /**
+   * The question an answer was just sent to. A report of it sampled before the session saw the answer can arrive
+   * after it: it is stale, and must not send the next command's keys to the program (a new question starts later).
+   */
+  private answeredQuestion?: {startId: number; since: number};
   /** Applies a question report held back during a stop window (see onInputState), once. */
   private staleStopReport?: () => void;
   /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
@@ -2516,7 +2521,7 @@ export class TerminalApp {
         this.session.interrupt();
         // Ctrl+C ends a waiting question: what is typed next is for the prompt, never a reply to discard.
         this.runningDraft = undefined;
-        this.answerSent();
+        this.answerSent(true);
       } else {
         this.editor.clear();
         this.selectedSuggestion = 0;
@@ -2534,7 +2539,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(); }
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(true); }
       return;
     }
     // Anything but Up/Down (typing, pasting, deleting, moving the caret, selecting) makes a recalled command a draft:
@@ -12272,6 +12277,11 @@ export class TerminalApp {
   private onInputState(state: InputState): void {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
+    // The question just answered, reported late: it is answered (#426). A later one is new.
+    if (state.request && this.answeredQuestion?.startId === this.running.startId && state.request.since <= this.answeredQuestion.since) {
+      const {request: _answered, ...rest} = state;
+      state = rest;
+    }
     // A question newer than the hidden one NMSh answered: typing from now on may be its reply, not type-ahead.
     if (state.request && this.hiddenAnswer && state.request.since > this.hiddenAnswer.at) this.hiddenAnswer = undefined;
     // A question that began before Ctrl+C or Ctrl+Z is the one the stop ended, reported late (the session sampled it
@@ -12557,7 +12567,7 @@ export class TerminalApp {
     if (key.kind === 'interrupt') {
       if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
       this.session.interrupt();
-      this.answerSent();
+      this.answerSent(true);
       return;
     }
     if (key.kind === 'eof') { this.session.endInput(); return; }
@@ -12575,8 +12585,11 @@ export class TerminalApp {
    * keys typed next (the next command, at typing speed) are routed on fresh evidence, never on the question that was
    * just answered, so they never reach a program that stopped reading or a shell prompt NMSh does not draw.
    */
-  private answerSent(): void {
-    if (this.inputState?.request) this.inputState = {timing: this.inputState.timing};
+  private answerSent(stopped = false): void {
+    const request = this.inputState?.request;
+    // A stop is no answer: a program that reads through Ctrl+C still asks the same question (#436).
+    if (request && this.running && !stopped) this.answeredQuestion = {startId: this.running.startId, since: request.since};
+    if (request) this.inputState = {timing: this.inputState!.timing};
     this.commandLine.reset();
   }
 

@@ -352,3 +352,24 @@ test('right after Ctrl+C, the program kept reading the question it asked before 
     assert.deepEqual(f.owner.state.entries, []);
   } finally { f.dispose(); }
 });
+
+test('a stale report of the hidden question just answered never sends the next command\'s keys to the program', async t => {
+  const f = fixture();
+  try {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    f.begin('read -s pw; echo done');
+    const since = Date.now();
+    f.state({since, confidence: 'confirmed', mode: 'hidden'});
+    f.tick(200);
+    f.type('pw');
+    f.enter();
+    assert.equal(f.written.join(''), 'pw\r', 'the answer went to the program');
+    // The session sampled the question before it saw the Enter; that report arrives now.
+    f.state({since, confidence: 'confirmed', mode: 'hidden'});
+    f.type('echo NEXT');
+    assert.equal(f.written.join(''), 'pw\r', 'not one key of the next command went to the program as a hidden reply');
+    // A new question (asked after the answer) still gets typing directly.
+    f.tick(300);
+    f.state({since: Date.now(), confidence: 'confirmed', mode: 'hidden'});
+  } finally { f.dispose(); }
+});
