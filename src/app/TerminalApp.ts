@@ -10738,6 +10738,25 @@ export class TerminalApp {
   }
 
   /**
+   * Rows of the shell's terminal (#443). Each resize signals the foreground job (SIGWINCH), and Fish 3 loses a terminal
+   * write that signal interrupts, so the size never follows NMSh's own chrome: it is the transcript capacity of a
+   * reference layout for this window and these settings (a running command's activity row, a one-line composer, no
+   * menu, inspector, notice or panel). The transcript region may then be shorter than the terminal, as it already is
+   * under Dock Top or with the queue's list: the newest rows show. While a command runs only a real change of the window
+   * (onResize, or the end of a full-screen handover, both reset lastPtyRows) or of its width resizes its terminal.
+   */
+  private ptyRows(columns: number, rows: number): number {
+    if (this.running && this.lastPtyRows && this.lastPtyColumns === columns) return this.lastPtyRows;
+    const height = this.stripActive(columns, rows) ? rows - 1 : rows;
+    const transcriptRows = this.output.wrapped(columns).length;
+    return planScreen({rows: height, inputRows: 1, suggestions: 0, inspectorRows: 0, running: true, detached: false, hasOutput: true,
+      composerPosition: this.promptConfiguration.composerPosition, panelPosition: this.panelPositionInEffect(), transcriptRows,
+      contextPlacement: this.promptConfiguration.placement, hasVisibleContext: this.hasVisibleProviderPrompt(),
+      composerLayout: this.effectivePromptProvider === 'none' ? 'oneLine' : this.promptConfiguration.composerLayout,
+      composerDividers: this.promptConfiguration.composerDividers, railPresentation: this.preparedRail(columns).presentation}).ptyRows;
+  }
+
+  /**
    * The expanded queue (header and list) when the screen has room, else undefined (the one-line row says it). Room
    * follows the terminal's height: up to three commands from 24 rows, two from 18, none below. Hidden while a
    * program waits for input: its question stays next to the composer.
@@ -10858,11 +10877,12 @@ export class TerminalApp {
     const menuOverflow = completionMenu && plan.suggestionCount > 1 && availableSuggestions.length > plan.suggestionCount;
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, menuOverflow ? plan.suggestionCount - 1 : plan.suggestionCount);
     const hiddenBelow = menuOverflow ? availableSuggestions.length - suggestionView.start - suggestionView.items.length : 0;
-    if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
-      this.lastPtyRows = plan.ptyRows;
+    const ptyRows = this.ptyRows(columns, rows);
+    if (this.lastPtyRows !== ptyRows || this.lastPtyColumns !== columns) {
+      this.lastPtyRows = ptyRows;
       this.lastPtyColumns = columns;
-      this.session.resize(columns, plan.ptyRows);
-      this.output.setScreenRows(plan.ptyRows);
+      this.session.resize(columns, ptyRows);
+      this.output.setScreenRows(ptyRows);
       this.output.setScreenColumns(columns);
     }
 
