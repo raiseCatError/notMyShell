@@ -209,17 +209,20 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     let seen: TerminalModes | undefined;
     for (let sample = 0; sample < 2; sample += 1) {
       while (this.probing) await this.probing;
-      if (this.disposed || !this.running || this.done) return 'idle';
+      if (this.disposed || !this.running || this.done) break;
       if (!this.options.probe) return 'unavailable';
       this.followUp = false;
       seen = (await this.look(true))?.modes ?? seen;
-      if (!this.followUp || this.request) break;
+      if (!this.followUp || this.request || this.done) break;
       await new Promise<void>(done => { this.setTimer(done, FOLLOW_UP_MS); });
     }
-    if (this.disposed || !this.running || this.done) return 'idle';
-    if (this.request?.mode === 'hidden') return 'hidden';
-    if (!seen) return 'unknown';
-    return seen.canonical && !seen.echo ? 'hidden' : 'visible';
+    if (this.disposed) return 'idle';
+    // Seen hidden input is reported even when the command finished during the look (#436's done): the typing may have
+    // been a password for it, and the frontend then discards it rather than run it as the next command.
+    if (this.request?.mode === 'hidden' || (seen && seen.canonical && !seen.echo)) return 'hidden';
+    // Done (its prompt hooks run) or over: the shell owns typing again.
+    if (!this.running || this.done) return 'idle';
+    return seen ? 'visible' : 'unknown';
   }
 
   dispose(): void {
@@ -279,7 +282,9 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     const probing = (async () => { try { sample = await probe({tty}); } catch { sample = undefined; } })();
     this.probing = probing;
     try { await probing; } finally { this.probing = undefined; }
-    if (this.disposed || !this.running || this.done) return undefined;
+    if (this.disposed || !this.running) return undefined;
+    // The command finished during the probe: nothing is applied or scheduled, but the sample is still evidence.
+    if (this.done) return sample;
     if (generation === this.generation && sample) this.apply(sample, this.now());
     this.schedule();
     return sample;

@@ -441,6 +441,10 @@ interface OwnershipHold {
   slow: boolean;
   /** No usable evidence: the typing stays held and hidden until evidence arrives or the person chooses. */
   uncertain: boolean;
+  /** The session said nothing runs any more (the shell's done marker): the command ended, though its prompt is still coming (#436). */
+  ended: boolean;
+  /** A look saw hidden input: the typing may be a password, so a command that ends never runs it. */
+  sawHidden: boolean;
   settle: (how: HoldSettle) => void;
 }
 /** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
@@ -11948,8 +11952,8 @@ export class TerminalApp {
       clearTimeout(bound);
       clearTimeout(slow);
       if (this.ownershipLook === hold) this.ownershipLook = undefined;
-      const ended = this.running?.startId !== running.startId;
-      const doubted = hold.slow || hold.uncertain;
+      const ended = hold.ended || this.running?.startId !== running.startId;
+      const doubted = hold.slow || hold.uncertain || hold.sawHidden;
       if (how === 'discard') {
         if (doubted) discarded('Your held typing was discarded, not sent or run.');
         this.render();
@@ -12006,7 +12010,7 @@ export class TerminalApp {
     bound.unref?.();
     const slow = setTimeout(() => { hold.slow = true; this.render(); }, OWNERSHIP_LOOK_SLOW_MS);
     slow.unref?.();
-    const hold: OwnershipHold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, uncertain: false, settle};
+    const hold: OwnershipHold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, uncertain: false, ended: false, sawHidden: false, settle};
     this.ownershipLook = hold;
     // A look that saw nothing usable (a probe failed or timed out) gets one more look before the typing is left held:
     // gathering evidence once more, not waiting longer. An older service does not say what it saw: its answer is
@@ -12016,6 +12020,10 @@ export class TerminalApp {
     const look = () => void this.lookWhenStarted(running.startId, deadline).then(answered, () => answered('unknown'));
     const answered = (result: LookResult | undefined) => {
       if (settled) return;
+      if (result === 'hidden') hold.sawHidden = true;
+      // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
+      // held by a command that ended apply now, not those for one still running.
+      if (result === 'idle') hold.ended = true;
       const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request)
         || (result === undefined && this.session.features.has('input-look-result'));
       if (!blind) settle('route');
