@@ -25,7 +25,8 @@ for (const shell of ['zsh','bash','fish'] as const) {
         frontend.pty.write(holding + '\r');
         await frontend.waitFor(/CHAIN-HOLD/u, mark);
         const commands = [`cd '${join(sandbox.home,'sub')}'`, `printf 'PERSIST:%s\\n' "$PWD"`];
-        for (const command of commands) frontend.pty.write(command+'\r');
+        // Ctrl+Q queues each to run after (#426: a plain Enter would hold it for approval).
+        for (const command of commands) frontend.pty.write(command+'\u0011');
         await until(async () => (await sandbox.sessions())[0]?.queued === 2, 10_000, 'two queued entries');
         if (policy === 'pause') {
           await frontend.run('/qp', /Queue paused/u);

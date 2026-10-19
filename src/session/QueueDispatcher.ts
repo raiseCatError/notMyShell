@@ -6,6 +6,30 @@ import {EventEmitter} from 'node:events';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CommandQueue, type QueueEntry, type QueueOp, type QueueState} from './CommandQueue.js';
 
+/** At most this many held lines from one command's unread typing; the rest is dropped, never run. */
+export const UNREAD_LINE_LIMIT = 10;
+
+/**
+ * Lines from typing a command never read (#426), as the person would have seen them on a terminal's line: Backspace,
+ * Ctrl+U and Ctrl+W applied, terminal sequences (arrow keys, a terminal's replies) and other control bytes dropped.
+ * A trailing line without Enter is a line too. Empty lines hold nothing.
+ */
+export function unreadLines(text: string): string[] {
+  const lines: string[] = [];
+  let line = '';
+  const flush = () => { if (line.trim()) lines.push(line); line = ''; };
+  const chars = Array.from(text.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[PX^_][^\u001b]*(?:\u001b\\)?|O.|.)?/gu, ''));
+  for (const char of chars) {
+    if (char === '\r' || char === '\n') flush();
+    else if (char === '\u007f' || char === '\b') line = Array.from(line).slice(0, -1).join('');
+    else if (char === '\u0015') line = '';
+    else if (char === '\u0017') line = line.replace(/\S+\s*$/u, '');
+    else if (char === '\t' || !/[\u0000-\u001f\u007f-\u009f]/u.test(char)) line += char;
+  }
+  flush();
+  return lines.slice(0, UNREAD_LINE_LIMIT);
+}
+
 /** What the dispatcher needs from a shell session (ShellSession implements it). */
 export interface QueueShell {
   submit(command: string): void;
@@ -148,6 +172,19 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.settleTimeline();
     this.emit('state', this.state, {});
     this.dispatch();
+  }
+
+  /**
+   * Typing the command `program` never read, which the shell took out of its terminal when the command finished
+   * (#426): each line is held for the person's approval, never run by itself. Returns how many lines are held.
+   */
+  holdUnread(text: string, program: string): number {
+    let held = 0;
+    for (const line of unreadLines(text)) {
+      this.request({op: 'add', text: line, typedWhile: program.slice(0, 64) || 'the command'});
+      held += 1;
+    }
+    return held;
   }
 
   /** The session now runs a different shell: nothing queued for the old one runs until the person resumes. */

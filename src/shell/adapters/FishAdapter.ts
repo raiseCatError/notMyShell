@@ -5,7 +5,7 @@ import {runExternal} from '../../providers/providers.js';
 import {completionLabel, filterCompletions, type CompletionCandidate, type CompletionContext, type CompletionKind, type CompletionSource} from '../completion.js';
 import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
-import {fishQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
+import {fishQuote, UNREAD_DRAIN_SCRIPT, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
 import {fishEnvironmentSnapshot} from '../../context/shellEnvironment.js';
@@ -47,7 +47,8 @@ else
   end
 end`;
 
-function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
+function bootstrap(context: LaunchContext, originalTerm: string | undefined): string {
+  const {token, knowledgePath, bridgeEnvPath} = context;
   const sync = bridgeEnvPath ? '\n    nmsh_bridge_sync' : '';
   const marker = (body: string) => `__nmsh_mark '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed fish session bootstrap (private, per session)
@@ -108,6 +109,13 @@ function __nmsh_postexec --on-event fish_postexec
   set -l nmsh_status $status
   # The command is done (#436): nothing until the prompt marker is its input.
   ${marker('done')}
+  # Input NMSh delivered to the command that it never read: taken out of the terminal before Fish's reader starts,
+  # and handed to NMSh to hold for approval; it never runs as a command (#426).
+  if test -s ${fishQuote(context.unreadFlag ?? '')}
+    set -l nmsh_unread (command sh -c ${fishQuote(UNREAD_DRAIN_SCRIPT)} </dev/tty 2>/dev/null)
+    printf '' > ${fishQuote(context.unreadFlag ?? '')}
+    test -n "$nmsh_unread"; and ${marker('unread;%s')} $nmsh_unread
+  end
   __nmsh_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} $nmsh_status "$PWD"
 end

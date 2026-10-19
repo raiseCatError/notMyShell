@@ -145,15 +145,18 @@ export function serviceBuildNotice(serviceBuild: string | undefined, own: {versi
 }
 
 /**
- * A session service without this release's look result (an older NMSh's, e.g. v0.20.0's) still decides who gets what
- * is typed while a command runs, the way it did then: #426's and #436's protections are not active in its sessions.
- * Said once per window, with when it ends; undefined for a service that has them.
+ * A session service without this release's look result (an older NMSh's, e.g. v0.20.0's) cannot say what a look saw,
+ * and its shells lack this release's prompt-hook marker and the end-of-command hold of unread typing (#426, #436).
+ * This window fails closed instead (see TerminalApp): typing while a command runs with no question is held, not shown,
+ * until the person sends (Ctrl+S), shows (Tab) or discards (Esc) it, and a line entered then waits for approval. Said
+ * once per window, with what remains and when it ends; undefined for a service that has the protections.
  */
 export function serviceInputNotice(features: ReadonlySet<string>): string | undefined {
   if (features.has('input-look-result')) return undefined;
-  return 'This session\'s service is from an older NMSh, so what you type while a command runs is routed as that version did: '
-    + 'a password typed before a program asks for it can be shown, queued or run as a command. '
-    + 'The service restarts by itself once every NMSh window and live session has ended; new sessions then get the current protections.';
+  return 'This session\'s service is from an older NMSh, which cannot tell this window who reads what you type while a command runs. '
+    + 'So typing then is held, not shown, until you choose (Ctrl+S sends it, Tab shows it, Esc discards it), and a line entered then waits for your approval. '
+    + 'Typing a program receives but never reads can still reach the shell there. '
+    + 'The service restarts by itself once every NMSh window and live session has ended; new sessions then get every protection.';
 }
 
 export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '

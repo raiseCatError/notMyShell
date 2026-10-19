@@ -41,7 +41,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       let mark = first.mark;
       first.pty.write(`${failed.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
-      first.pty.write(`${afterFailure}\r`);
+      first.pty.write(`${afterFailure}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
@@ -57,14 +57,14 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = first.mark;
       first.pty.write(`sleep ${duration}\r`);
       await until(() => inForeground(duration), 20_000, 'sleep owns input before interrupt');
-      first.pty.write(`${afterInterrupt}\r`);
+      first.pty.write(`${afterInterrupt}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
       first.pty.write('w');
       await first.waitFor(/runs even after a failure/u, mark);
       first.pty.write('\u001b[27u');
-      await first.waitFor(/Enter queues the next command/u, mark);
+      await first.waitFor(/Enter holds it for approval · Ctrl\+Q runs it after/u, mark);
       first.pty.write('\u0003');
       await first.waitFor(/Queue paused:[\s\S]*was interrupted/u, mark);
       await first.run('echo AFTER-INTERRUPT', /AFTER-INTERRUPT/u);
@@ -77,7 +77,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = first.mark;
       first.pty.write(`${gated.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
-      first.pty.write(`${approved}\r`);
+      first.pty.write(`${approved}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);

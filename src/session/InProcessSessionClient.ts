@@ -61,6 +61,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     shell.on('startup', tail => this.emit('startup', tail));
     shell.on('inputRejected', (data, submission) => this.emit('inputRejected', data, submission));
     shell.on('inputState', state => this.emit('inputState', state));
+    shell.on('unread', (text, program) => { this.dispatcher.holdUnread(text, program); });
     shell.on('exit', event => { this.dispatcher.onShellExit(); void this.tasks.shutdown(); this.emit('exit', event); });
   }
 

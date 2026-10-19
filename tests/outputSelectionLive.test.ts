@@ -27,7 +27,7 @@ for (const shellBackend of ['zsh', 'bash', 'fish'] as const) {
       assert.equal(read(), 'a\tb\n日本語\n\n');
       mark = frontend.mark; frontend.pty.write('sleep 1\r');
       await frontend.waitFor(/Running sleep 1/u, mark);
-      frontend.pty.write('seq 1 400\r');
+      frontend.pty.write('seq 1 400\u0011');
       await until(async () => (await sandbox.transcripts().list()).some(session => session.transcript.records.some(record => record.command === 'seq 1 400' && record.queued === true)), 15_000, 'queued output to complete');
       const queued = (await sandbox.transcripts().list()).flatMap(session => session.transcript.records).find(record => record.command === 'seq 1 400')!;
       assert.equal(queued.expanded, false, 'Slice 2C queued output remains folded before selection');

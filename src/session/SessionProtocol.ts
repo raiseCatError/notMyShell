@@ -357,7 +357,9 @@ function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined 
     case 'add': {
       if (text_ === undefined) return undefined;
       const condition = queueConditionFrom(value.condition);
-      return value.condition !== undefined && !condition ? undefined : {op: 'add', text: text_, ...(condition ? {condition} : {})};
+      const typedWhile = typedWhileFrom(value.typedWhile);
+      if ((value.condition !== undefined && !condition) || (value.typedWhile !== undefined && !typedWhile)) return undefined;
+      return {op: 'add', text: text_, ...(condition ? {condition} : {}), ...(typedWhile ? {typedWhile} : {})};
     }
     case 'condition': {
       const condition = queueConditionFrom(value.condition);
@@ -384,6 +386,10 @@ function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined 
 
 const queueConditionFrom = (value: unknown): QueueCondition | undefined => value === 'always' || value === 'approve' ? value : undefined;
 
+/** A program name for a held line: printable, bounded; anything with control characters is refused, never cleaned. */
+const typedWhileFrom = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() && !/[\u0000-\u001f\u007f-\u009f]/u.test(value) ? value.slice(0, 64) : undefined;
+
 const PAUSE_REASONS = ['user', 'failed', 'interrupted', 'shell-switched', 'restored'] as const;
 
 function queueEntryFrom(raw: unknown): QueueEntry | undefined {
@@ -391,7 +397,10 @@ function queueEntryFrom(raw: unknown): QueueEntry | undefined {
   const item = raw as Record<string, unknown>;
   if (!Number.isSafeInteger(item.id) || typeof item.text !== 'string' || item.text.length > ENTRY_LIMIT || !Number.isSafeInteger(item.addedAt)) return undefined;
   const condition = queueConditionFrom(item.condition);
-  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})};
+  const typedWhile = typedWhileFrom(item.typedWhile);
+  if (item.typedWhile !== undefined && !typedWhile) return undefined;
+  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {}),
+    ...(typedWhile ? {typedWhile} : {})};
 }
 
 /** The queue a queue-state message describes; anything malformed is dropped, never guessed. */

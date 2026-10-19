@@ -7,7 +7,7 @@ import {shellKnowledgeBootstrap} from '../ShellKnowledge.js';
 import {resolveZsh} from '../zshExecutable.js';
 import {parseZshHistoryInChunks} from '../HistoryService.js';
 import {ShellCompletionSource} from '../CompletionService.js';
-import type {LaunchContext, ShellAdapter, ShellLaunch} from './ShellAdapter.js';
+import {UNREAD_DRAIN_SCRIPT, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 const ZSH_BUILTINS = new Set(['alias', 'autoload', 'bg', 'bindkey', 'builtin', 'cd', 'command', 'echo', 'emulate', 'eval', 'exec', 'exit', 'export', 'fc', 'fg',
@@ -33,7 +33,7 @@ export const zshAdapter: ShellAdapter = {
   unavailableReason(env) {
     try { resolveZsh(env); return undefined; } catch (error) { return error instanceof Error ? error.message : 'zsh was not found'; }
   },
-  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath}: LaunchContext): ShellLaunch {
+  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath, unreadFlag}: LaunchContext): ShellLaunch {
     // Proxy .zshenv
     writeFileSync(join(stateDir, '.zshenv'), `
 if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
@@ -87,6 +87,14 @@ ${bridgeEnvPath ? bridgeBootstrap('zsh', bridgeEnvPath) : ''}
 function nmsh_done {
   local nmsh_status=$?
   printf '\\e]777;nmsh;${token};done\\a'
+  # Input NMSh delivered to the command that it never read is taken out of the terminal here, before this shell reads
+  # its next command line, and handed to NMSh to hold for approval: it never runs as a command (#426).
+  if [[ -s ${shellQuote(unreadFlag ?? '')} ]]; then
+    local nmsh_unread
+    nmsh_unread=\$(command sh -c ${shellQuote(UNREAD_DRAIN_SCRIPT)} </dev/tty 2>/dev/null)
+    : >| ${shellQuote(unreadFlag ?? '')}
+    [[ -n \$nmsh_unread ]] && printf '\\e]777;nmsh;${token};unread;%s\\a' "\$nmsh_unread"
+  fi
   return \$nmsh_status
 }
 

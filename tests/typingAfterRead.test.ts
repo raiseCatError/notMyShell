@@ -11,14 +11,26 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
  * still runs. Fish is not held to type-ahead during `read`: fish 4 itself drops keys that are already queued when its
  * reader starts a terminal query, with any terminal (see docs/development/fish-typeahead.md).
  *
- * One outcome besides running at once is correct (#426 review, #437): a command typed during a hidden read's answer,
- * when a look still saw hidden input and the read's command then ended, may be a reply to a second question with no
- * prompt. NMSh holds it at the prompt, never run by itself; the person's Tab shows it and their Enter runs it. It must
- * still run exactly once, and only typing ahead during a hidden read may be held. (Without #437 it is never held.)
+ * Two outcomes besides running at once are correct, and only for typing ahead while the read's command still runs:
+ * - (#426 review, #437) a command typed during a hidden read's answer, when a look still saw hidden input and the
+ *   command then ended, may be a reply to a second question with no prompt: held at the prompt, Tab shows it, Enter runs it;
+ * - (#426 hardening) a line entered while the command still runs may be a reply to a read NMSh never saw: it waits for
+ *   approval (Enter reviews, Enter approves), never run by itself. On Fish the keys reach Fish's reader; those it never
+ *   reads are taken back from the terminal when the command ends and wait for approval the same way.
+ * Either way it must still run exactly once.
  */
 const HELD = /held, not run · Tab shows it · Esc discards it/u;
+const APPROVAL = /typed while \S+ ran|did not read some of your typing/u;
 
 async function showAndRunHeld(frontend: Frontend, mode: string, run: number, next: string, mark: number): Promise<void> {
+  if (!HELD.test(strip(frontend.output.slice(mark)))) {
+    assert.ok(mode === 'ahead', `only typing ahead while the read's command runs waits for approval (${mode}${run})`);
+    const review = frontend.mark;
+    frontend.pty.write('\r');
+    await frontend.waitFor(/Approve and run this command\?/u, review, 10_000);
+    frontend.pty.write('\r');
+    return;
+  }
   assert.ok(mode === 'ahead' && run % 2 === 1, `only typing ahead during a hidden read is held (${mode}${run})`);
   assert.equal(new RegExp(`(?<!echo )${next.slice('echo '.length)}`, 'u').test(strip(frontend.output.slice(mark))), false, 'held, it has not run');
   const shown = frontend.mark;
@@ -31,6 +43,7 @@ const bash = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/usr/bin/bash', 
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 const RUNS = 6;
+const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
 
 /** Answers device attributes and cursor position the way a terminal does: after it has read the query. */
 function answerQueries(frontend: Frontend): () => void {
@@ -79,11 +92,13 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           frontend.pty.write(`${next}\r`);
           // NMSh's journal records the next command once the shell's prompt has returned after it. Screen text could match
           // earlier: the queued command's row followed by an older "Completed" in a later redraw (seen in CI on #442).
-          await until(async () => await frontend.completions(next) > before || HELD.test(strip(frontend.output.slice(mark))), 10_000,
+          await until(async () => await frontend.completions(next) > before || HELD.test(strip(frontend.output.slice(mark)))
+            || (APPROVAL.test(strip(frontend.output.slice(mark))) && /Completed|Command failed/u.test(strip(frontend.output.slice(mark)))), 10_000,
             `completed journal for ${next}, or the command held`);
           if (await frontend.completions(next) === before) {
+            await pause(300);
             await showAndRunHeld(frontend, mode, run, next, mark);
-            await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after Tab and Enter`);
+            await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after the person's choice`);
           }
           assert.equal(await frontend.completions(next), before + 1, 'the next command ran once');
           const drawn = strip(frontend.output.slice(mark));

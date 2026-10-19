@@ -53,7 +53,7 @@ const CHECK_STATE: Record<Shell, string> = {
 
 for (const shell of ['zsh', 'bash', 'fish'] as const) {
   const available = supported && (shell === 'zsh' || (shell === 'bash' ? bash : fish));
-  test(`live ${shell}: Enter while a command runs queues; entries run in order in the same shell, keeping its state`, {skip: available ? false : `${shell} not installed`, timeout: 120_000}, async () => {
+  test(`live ${shell}: Ctrl+Q while a command runs queues; entries run in order in the same shell, keeping its state`, {skip: available ? false : `${shell} not installed`, timeout: 120_000}, async () => {
     const {sandbox, frontend} = await start(shell);
     try {
       await frontend.run('mkdir -p sub', /❯/u);
@@ -64,15 +64,16 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       const holding = `sh -c 'printf "STATE-%s\\n" HOLD; until test -f "$1"; do sleep 0.05; done' nmsh-fixture "${release}"`;
       frontend.pty.write(`${holding}\r`);
       await frontend.waitFor(/STATE-HOLD/u, mark);
+      // Ctrl+Q queues a command to run after (#426: a plain Enter holds the line for approval).
       for (const line of [...SET_STATE[shell], CHECK_STATE[shell]]) {
-        frontend.pty.write(`${line}\r`);
+        frontend.pty.write(`${line}\u0011`);
         await pause(80);
       }
       // Room for the list (30 rows): what runs next, in order.
       // (A redraw writes only the rows that changed, so the header and the list rows are checked apart.)
       await frontend.waitFor(/› cd sub +Next/u, mark);
       await frontend.waitFor(/Queue · 6 commands/u, mark);
-      assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sh/u, 'the empty composer says what Enter does');
+      assert.match(drawn(frontend, mark), /Enter holds it for approval · Ctrl\+Q runs it after · Ctrl\+S sends to sh/u, 'the empty composer says what Enter and Ctrl+Q do');
       writeFileSync(release, '');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
       const commands = [holding, ...SET_STATE[shell], CHECK_STATE[shell]];
@@ -89,7 +90,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
 
 for (const shell of ['zsh', 'bash', 'fish'] as const) {
   const available = supported && (shell === 'zsh' || (shell === 'bash' ? bash : fish));
-  test(`live ${shell}: while a command runs, Up/Down recall executed commands in the composer; only Enter changes the queue`, {skip: available ? false : `${shell} not installed`, timeout: 120_000}, async () => {
+  test(`live ${shell}: while a command runs, Up/Down recall executed commands in the composer; only Ctrl+Q changes the queue`, {skip: available ? false : `${shell} not installed`, timeout: 120_000}, async () => {
     const {sandbox, frontend} = await start(shell);
     const release = join(sandbox.home, 'history-release');
     try {
@@ -102,8 +103,8 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       const holding = `sh -c 'printf "HOLD-%s\\n" READY; n=0; until test -f "$1" || [ "$n" -ge 2400 ]; do sleep 0.05; n=$((n+1)); done' nmsh-fixture "${release}"`;
       frontend.pty.write(`${holding}\r`);
       await frontend.waitFor(/HOLD-READY/u, mark);
-      // Enter while a command runs still queues, exactly as before: the queue row appears.
-      frontend.pty.write('echo QUEUED-NEXT\r');
+      // Ctrl+Q while a command runs queues it: the queue row appears.
+      frontend.pty.write('echo QUEUED-NEXT\u0011');
       await frontend.waitFor(/› echo QUEUED-NEXT/u, mark);
       // While the command runs, Up/Down browse executed commands in the composer; nothing is enqueued by navigating.
       frontend.pty.write('echo DRAFT-KEEP');
@@ -129,7 +130,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       await frontend.waitFor(/❯ echo DRAFT-KEEP/u, step, 8_000);
       assert.doesNotMatch(drawn(frontend, mark), /› echo RECALL-/u, 'navigation alone never queued a recalled command');
       assert.match(drawn(frontend, mark), /› echo QUEUED-NEXT/u, 'the queue row is still the one explicit entry');
-      // Ctrl+U clears the draft; a fresh Up and an explicit Enter queue the recalled command.
+      // Ctrl+U clears the draft; a fresh Up and an explicit Ctrl+Q queue the recalled command.
       frontend.pty.write('\u0015');
       await pause(300);
       step = frontend.mark;
@@ -139,7 +140,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       frontend.pty.write('\u001b[A');
       await frontend.waitFor(/❯ echo RECALL-TWO/u, step);
       step = frontend.mark;
-      frontend.pty.write('\r');
+      frontend.pty.write('\u0011');
       await pause(500);
       // /queue keeps the keyboard for its own list: both entries are queued, Up/Down select, and the composer never recalls.
       step = frontend.mark;
@@ -176,7 +177,7 @@ test('live: a failed command pauses the queue with its reason; nothing after it 
     const mark = frontend.mark;
     frontend.pty.write(`sh -c 'sleep 1; exit 3'\r`);
     await frontend.waitFor(/Running sh -c/u, mark);
-    frontend.pty.write(`touch ${marker}\r`);
+    frontend.pty.write(`touch ${marker}\u0011`);
     // Said once where it happened; the queue's row carries what waits and what to do, not the same sentence again.
     await frontend.waitFor(/Queue paused: sh -c 'sleep 1; exit 3' failed \(exit 3\)\./u, mark, 20_000);
     await frontend.waitFor(/Queue paused · 1 pending[\s\S]*Enter to review/u, mark);
@@ -272,7 +273,7 @@ test('live: Ctrl+C pauses what was queued behind the interrupted command', {skip
     const mark = frontend.mark;
     frontend.pty.write('sleep 30\r');
     await frontend.waitFor(/Running sleep 30/u, mark);
-    frontend.pty.write(`touch ${marker}\r`);
+    frontend.pty.write(`touch ${marker}\u0011`);
     await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('\u0003');
     await frontend.waitFor(/Queue paused: sleep 30 was interrupted/u, mark, 20_000);
@@ -308,7 +309,7 @@ test('live: after Ctrl+Z or Ctrl+C, what you type next is for the shell prompt, 
   } finally { await sandbox.dispose(); }
 });
 
-test('live: a program that survives Ctrl+C gets ordinary routing again: later typing queues, it is never sent into the program', {skip: supported && bash ? false : 'Bash 4.4+ not installed', timeout: 120_000}, async () => {
+test('live: a program that survives Ctrl+C gets ordinary routing again: a later line is held for approval, never sent into the program or run', {skip: supported && bash ? false : 'Bash 4.4+ not installed', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     const mark = frontend.mark;
@@ -321,10 +322,12 @@ test('live: a program that survives Ctrl+C gets ordinary routing again: later ty
     frontend.pty.write('\u0003');
     await pause(4200);
     frontend.pty.write('echo LATER\r');
-    await frontend.waitFor(/› echo LATER +Next/u, mark);
+    await frontend.waitFor(/typed while \S+ ran/u, mark);
     writeFileSync(release, '');
-    await frontend.waitFor(/SURVIVED[\s\S]*LATER/u, mark, 20_000);
+    await frontend.waitFor(/SURVIVED/u, mark, 20_000);
+    await pause(1500);
     assert.doesNotMatch(drawn(frontend, mark), /GOT=echo LATER/u, 'nothing typed after the window reached the program');
+    assert.doesNotMatch(drawn(frontend, mark), /(?<!echo )LATER\s*\n[\s\S]*from queue/u, 'and it did not run by itself');
   } finally { await sandbox.dispose(); }
 });
 
@@ -337,13 +340,13 @@ test('live: a multi-line paste queues as one entry and runs once, as one block',
     const executions = join(sandbox.home, 'multiline-executions');
     const block = `for i in 1 2; do\n  echo "LINE-$i"; printf '%s\\n' "$i" >> '${executions}'\ndone`;
     frontend.pty.write('\u001b[200~' + block + '\u001b[201~');
-    // NMSh's paste review comes first; Enter inserts the paste into the composer, and only the next Enter queues it.
+    // NMSh's paste review comes first; Enter inserts the paste into the composer, and only Ctrl+Q queues it.
     await frontend.waitFor(/Enter insert · R review(?: · B queue as commands)? · Esc cancel/u, mark);
     frontend.pty.write('\r');
     await frontend.waitFor(/❯ for i in 1 2; do/u, mark);
     await pause(300);
     assert.doesNotMatch(drawn(frontend, mark), /≡ Queued|Queue · \d+ commands/u, 'a paste never queues by itself');
-    frontend.pty.write('\r');
+    frontend.pty.write('\u0011');
     await frontend.waitFor(/› for i in 1 2; do \(\+2 lines\).*Next/u, mark);
     await frontend.waitFor(/LINE-1[\s\S]*LINE-2[\s\S]*from queue/u, mark, 20_000);
     // Changed-row terminal writes may repaint output when chrome changes. Execution evidence comes from the
@@ -390,8 +393,8 @@ test('live: the queue belongs to the session: it survives detach and reattach an
     const mark = first.mark;
     first.pty.write('sleep 4\r');
     await first.waitFor(/Running sleep 4/u, mark);
-    first.pty.write(`touch ${marker}\r`);
-    first.pty.write('sleep 6\r');
+    first.pty.write(`touch ${marker}\u0011`);
+    first.pty.write('sleep 6\u0011');
     await first.waitFor(/Queue · 3 commands/u, mark);
     const [session] = await sandbox.sessions();
     first.pty.kill('SIGKILL');
@@ -410,7 +413,7 @@ test('live: narrow, NO_COLOR and Safe glyphs keep the queue legible', {skip: sup
     const mark = frontend.mark;
     frontend.pty.write('sleep 3\r');
     await frontend.waitFor(/Running/u, mark);
-    frontend.pty.write('echo NARROW-QUEUED\r');
+    frontend.pty.write('echo NARROW-QUEUED\u0011');
     // 40 columns: the entry's text is cut to fit, never wrapped into the composer.
     await frontend.waitFor(/> echo NARR.*Next/u, mark);
     assert.doesNotMatch(drawn(frontend, mark), /≡|⏸/u, 'Safe glyphs only');

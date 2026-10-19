@@ -243,7 +243,8 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) test(`real ${shell} queued
       const foregroundDone = f.run('sleep 1.5');
       await started;
       f.app['editor'].replaceText('seq 1 450');
-      f.app['handleKey']({kind: 'enter'});
+      // Ctrl+Q queues a command to run after (#426: a plain Enter would hold the line for approval).
+      f.app['handleKey']({kind: 'queueCommand'});
       const deadline = Date.now() + 10000;
       // enqueue() clears the editor synchronously but the entry itself arrives with the session's queueState
       // event; under load the two observables can separate by a task tick, so wait for both (still bounded).
