@@ -144,11 +144,11 @@ export async function loadFileDocument(input: string, cwd: string, options: {hom
       // Never split a UTF-8 sequence: step back over continuation bytes.
       while (cut > 0 && (bytes[cut]! & 0xc0) === 0x80) cut -= 1;
       bytes = bytes.subarray(0, cut);
-      notes.push(`Showing the first ${formatBytes(cut)} of ${formatBytes(info.size)}; open it with less or an editor for the rest.`);
+      notes.push(`Showing the first ${formatBytes(cut)} of ${formatBytes(info.size)}; press o to open it in your editor, or use less, for the rest.`);
     }
     const sniff = bytes.subarray(0, SNIFF_BYTES);
     if ((sniff[0] === 0xff && sniff[1] === 0xfe) || (sniff[0] === 0xfe && sniff[1] === 0xff)) {
-      return {ok: false, reason: `${shown} is UTF-16 text, which /view does not decode; try less or an editor.`};
+      return {ok: false, reason: `${shown} is UTF-16 text, which /view does not decode; try less, or /open it in your editor.`};
     }
     if (sniff.includes(0)) return {ok: false, reason: `${shown} looks binary (it contains NUL bytes); /view shows text only.`};
     if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bytes = bytes.subarray(3);
@@ -162,7 +162,7 @@ export async function loadFileDocument(input: string, cwd: string, options: {hom
     const maxLines = options.maxLines ?? MAX_VIEW_LINES;
     if (lines.length > maxLines) {
       complete = false;
-      notes.push(`Showing the first ${maxLines.toLocaleString('en-US')} lines; open it with less or an editor for the rest.`);
+      notes.push(`Showing the first ${maxLines.toLocaleString('en-US')} lines; press o to open it in your editor, or use less, for the rest.`);
       lines = lines.slice(0, maxLines);
       text = lines.join(lineEnding === 'crlf' ? '\r\n' : '\n');
     }

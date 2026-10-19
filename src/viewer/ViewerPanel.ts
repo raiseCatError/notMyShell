@@ -56,7 +56,9 @@ export interface ViewerState {
   markdown?: {width: number; rows: MarkdownRow[]};
 }
 
-export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number} | {kind: 'edit'; path: string};
+export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number} | {kind: 'edit'; path: string}
+  /** The file shown, for the person's own editor (the /open bridge); line is the first line on screen, when it is one. */
+  | {kind: 'open'; path: string; line?: number};
 
 export interface ViewerLook {syntax?: SyntaxSgr; hyperlinks?: boolean}
 
@@ -401,6 +403,8 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   else if (text === 'N' && state.query) step(state, -1, width, body, look);
   else if (text === 'c') return {kind: 'copy', text: state.document.text, lines: state.document.lines.length};
   else if (text === 'e' && state.document.origin.kind === 'file') return {kind: 'edit', path: state.document.origin.path};
+  // Rendered Markdown rows are not source lines: the file then opens at its start.
+  else if (text === 'o' && state.document.origin.kind === 'file') return {kind: 'open', path: state.document.origin.path, ...(state.rendered ? {} : {line: state.top + 1})};
   return undefined;
 }
 
@@ -438,7 +442,7 @@ function controls(state: ViewerState, columns: number): string[] {
     ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(state.document.format === 'markdown' ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
-    ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const] : []), ['Esc', 'close'],
+    ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const, ['o', 'open in editor'] as const] : []), ['Esc', 'close'],
   ], width);
 }
 
