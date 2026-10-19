@@ -278,7 +278,7 @@ import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -2102,6 +2102,11 @@ export class TerminalApp {
           this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
         }
         done();
+      } else if (action?.kind === 'steps') {
+        // One at a time (QA F02): each command waits in the composer, unsent, and runs only on the person's Enter.
+        this.pasteSteps = {items: batchTexts(review), next: 0, running: false};
+        done();
+        this.offerPasteStep();
       } else if (action?.kind === 'block') {
         done();
         void this.runReviewedBlock(batchBlockText(review));
@@ -2162,6 +2167,12 @@ export class TerminalApp {
       }
       // Any other key (typing, editing) invalidates the paste preview and continues normal processing
       this.pastePreview = undefined;
+    }
+    if (key.kind === 'escape' && this.pasteSteps && !this.pasteSteps.running && this.editor.text && !this.hasModalInput()) {
+      this.stopPasteSteps('Stopped');
+      this.editor.clear();
+      this.render();
+      return;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
     if (this.background.panel) { this.handleBackgroundPanelKey(key); return; }
@@ -3531,8 +3542,12 @@ export class TerminalApp {
     if (!(slash?.kind === 'ask' && !this.promptConfiguration.askRecord)) this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
     if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
 
+    const step = this.pasteSteps && !this.pasteSteps.running ? this.pasteSteps : undefined;
+    if (step) step.running = true;
     if (slash) {
       await this.runSlash(command, slash);
+      // NMSh's own command has done its part; one that started a shell command is followed at its prompt.
+      if (step && step === this.pasteSteps && !this.running) this.pasteStepDone(true);
       this.render();
       return;
     }
@@ -4349,6 +4364,12 @@ export class TerminalApp {
   }
 
   private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
+    const step = this.pasteSteps?.running && this.running ? this.pasteSteps : undefined;
+    this.shellPrompt(exitCode, cwd, at);
+    if (step && step === this.pasteSteps) this.pasteStepDone(exitCode === 0);
+  }
+
+  private shellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
     this.completionService.invalidate();
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
@@ -8230,7 +8251,7 @@ export class TerminalApp {
     const now = Date.now();
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
-    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns)];
     const background = this.backgroundRows(columns);
     return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
@@ -8251,7 +8272,7 @@ export class TerminalApp {
    * show the review. A boundary the shell does not accept means command separation is refused with a clear explanation,
    * while still providing Run as block, Edit, or Cancel choices.
    */
-  private async openBatchReview(text: string): Promise<void> {
+  private async openBatchReview(text: string, current: () => boolean = () => this.pastePreview?.text === text): Promise<void> {
     const shell = this.batchShell();
     if (!shell) return;
     const capacity = Math.max(0, QUEUE_LIMIT - this.queueState.entries.length);
@@ -8263,16 +8284,72 @@ export class TerminalApp {
       return;
     }
     const check = await verifyCommands(batchTexts(review), shell);
-    if (this.stopped || this.pastePreview?.text !== text) return;
+    if (this.stopped || !current()) return;
     if (check.ok) {
       review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · ');
       this.batchReview = review;
     } else {
       this.batchReview = createBatchReviewWithRefusal(text, shell, capacity, check.reason);
-      this.pastePreview = {...this.pastePreview, batch: false};
+      if (this.pastePreview) this.pastePreview = {...this.pastePreview, batch: false};
       if (this.pasteReview) this.pasteReview.batch = false;
     }
     this.render();
+  }
+
+  /**
+   * QA F02: Enter on text the shell grammar splits into several statements, one of them an NMSh command (a pasted
+   * `cd …` then `/modules`, four `/track` lines, or the same typed with Ctrl+J). Submitted as it is, the shell would get
+   * NMSh's lines (zsh: "no such file or directory: /modules") or the block would be one broken slash command. Nothing
+   * is submitted or queued: the text opens the reviewed list, whose one-at-a-time choice offers each command in turn.
+   */
+  private reviewMixedBlock(text: string): boolean {
+    const shell = this.batchShell();
+    if (!shell || !text.includes('\n')) return false;
+    const review = createBatchReview(text, shell, QUEUE_LIMIT);
+    if (!review || !hasNmshCommand(review)) return false;
+    this.editor.clear();
+    this.composerHistory.reset();
+    this.runningDraft = undefined;
+    this.pendingMixedBlock = text;
+    void this.openBatchReview(text, () => this.pendingMixedBlock === text).finally(() => { if (this.pendingMixedBlock === text) this.pendingMixedBlock = undefined; });
+    this.render();
+    return true;
+  }
+
+  /** The next pasted command, unsent, when the composer is free; the last one ends the list. */
+  private offerPasteStep(): void {
+    const steps = this.pasteSteps;
+    if (!steps || steps.running || this.running || this.editor.text) return;
+    const item = steps.items[steps.next];
+    if (item === undefined) { this.pasteSteps = undefined; return; }
+    steps.next += 1;
+    this.editor.insertPaste(item);
+    this.composerHistory.reset();
+  }
+
+  /** A pasted command finished: the next is offered after a success; a failure stops the rest, as the queue pauses. */
+  private pasteStepDone(ok: boolean): void {
+    const steps = this.pasteSteps;
+    if (!steps) return;
+    steps.running = false;
+    if (!ok) { this.stopPasteSteps('That command did not succeed'); return; }
+    if (steps.next >= steps.items.length) { this.pasteSteps = undefined; return; }
+    this.offerPasteStep();
+  }
+
+  private stopPasteSteps(why: string): void {
+    const steps = this.pasteSteps;
+    this.pasteSteps = undefined;
+    if (!steps) return;
+    const left = steps.items.length - steps.next;
+    if (left > 0) this.output.addFrontendInteraction('pasted commands', `${why}; the ${left === 1 ? 'next pasted command was' : `${left} pasted commands after it were`} not offered.`, INFO);
+  }
+
+  /** The one-at-a-time strip above the composer: which pasted command waits there, and how to stop. */
+  private pasteStepRows(columns: number): string[] {
+    const steps = this.pasteSteps;
+    if (!steps || steps.running || !this.editor.text || this.running) return [];
+    return [truncateAnsi(`${SUBTLE}Pasted command ${steps.next} of ${steps.items.length} · Enter runs it · Esc stops${RESET}`, columns)];
   }
 
   /**
@@ -9335,6 +9412,10 @@ export class TerminalApp {
   /** The one place the clipboard is read (only /ps calls it). */
   private readClipboardText: () => Promise<string> = () => readClipboard();
   private pasteReview?: PasteReviewState;
+  /** A mixed block from the composer whose reviewed list is being prepared (QA F02). */
+  private pendingMixedBlock?: string;
+  /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
+  private pasteSteps?: {items: string[]; next: number; running: boolean};
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -11854,10 +11935,12 @@ export class TerminalApp {
         return;
       }
       if (!text.trim()) return;
+      if (this.reviewMixedBlock(text)) return;
       this.enqueue(text, intent === 'enter');
       return;
     }
     if (intent === 'send') return;
+    if (this.reviewMixedBlock(text)) return;
     if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
     const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
