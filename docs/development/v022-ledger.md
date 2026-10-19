@@ -359,8 +359,16 @@ person resizing the window while Fish 3 writes its own output can still lose par
 | `ptyStableSize` | 6 UI-only resizes | 0 |
 | Related deterministic suites (63 files) | — | 628 tests, 0 failed after updating 8 old-policy assertions |
 | Related live suites, sequential, macOS | — | all pass after updating queue tests to Ctrl+Q (see commits) |
+| `ptyResizeLive` SIGWINCH from NMSh's chrome (zsh / Bash / Fish 4) | 2 / 2 / 3 | 0 / 0 / 0 (1 per real window resize on both) |
+| Fish 3.7 loop, Ubuntu (run 39290923773), 20 iterations | integrity test 20/20 pass | 11 Fish tests × 20 iterations, 0 failures |
+| PR CI on `3a176a48` (run 39292927580) | — | all jobs green (macOS and Ubuntu shards, Node 22, Verify 22/26) |
 
-Bugs this pass introduced and fixed before integration, all found by tests: a held head blocked prompt submissions;
+The Fish 3.7 integrity stress test (Fish builtin output while NMSh's composer churns) did **not** reproduce output loss
+on the baseline either, so it shows no rate improvement by itself. The claim for #443 rests on the removed cause: the
+deterministic and live signal counts above, with the causal trace already recorded on the issue.
+
+Bugs this pass introduced and fixed before integration, all found by tests (CI found the last; every test that raced a
+command's prompt by typing the next command at once now waits for that prompt or uses Ctrl+Q): a held head blocked prompt submissions;
 typing during a slow prompt hook was held (A10 step 3); a survivor of Ctrl+C on macOS did not get its answer; a stale
 hidden report split fast type-ahead (CI).
 
