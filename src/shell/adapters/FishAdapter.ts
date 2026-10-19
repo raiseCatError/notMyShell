@@ -86,6 +86,8 @@ function __nmsh_preexec --on-event fish_preexec
 end
 function __nmsh_postexec --on-event fish_postexec
   set -l nmsh_status $status
+  # The command is done (#436): nothing until the prompt marker is its input.
+  ${marker('done')}
   __nmsh_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} $nmsh_status "$PWD"
 end

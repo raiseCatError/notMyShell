@@ -10,7 +10,22 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
  * command the moment the previous one is shown complete, with no pause; zsh and Bash also type ahead while `read`
  * still runs. Fish is not held to type-ahead during `read`: fish 4 itself drops keys that are already queued when its
  * reader starts a terminal query, with any terminal (see docs/development/fish-typeahead.md).
+ *
+ * One outcome besides running at once is correct (#426 review): a command typed during a hidden read's answer, when a
+ * look still saw hidden input and the read's command then ended, may be a reply to a second question with no prompt.
+ * NMSh holds it at the prompt, never run by itself; the person's Tab shows it and their Enter runs it. It must still
+ * run exactly once, and only typing ahead during a hidden read may be held.
  */
+const HELD = /held, not run · Tab shows it · Esc discards it/u;
+
+async function showAndRunHeld(frontend: Frontend, mode: string, run: number, next: string, mark: number): Promise<void> {
+  assert.ok(mode === 'ahead' && run % 2 === 1, `only typing ahead during a hidden read is held (${mode}${run})`);
+  assert.equal(new RegExp(`(?<!echo )${next.slice('echo '.length)}`, 'u').test(strip(frontend.output.slice(mark))), false, 'held, it has not run');
+  const shown = frontend.mark;
+  frontend.pty.write('\t');
+  await frontend.waitFor(new RegExp(next.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'), shown, 10_000);
+  frontend.pty.write('\r');
+}
 const bash = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/usr/bin/bash', '/bin/bash']
   .find(path => existsSync(path) && /version (?:4\.[4-9]|[5-9]\.)/u.test(spawnSync(path, ['--version'], {encoding: 'utf8'}).stdout ?? ''));
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
@@ -60,7 +75,11 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
           frontend.pty.write(`echo NEXT-${tag}\r`);
-          await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u'), mark, 10_000);
+          await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed|${HELD.source}`, 'u'), mark, 10_000);
+          if (HELD.test(strip(frontend.output.slice(mark))) && !new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u').test(strip(frontend.output.slice(mark)))) {
+            await showAndRunHeld(frontend, mode, run, `echo NEXT-${tag}`, mark);
+            await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u'), mark, 10_000);
+          }
           assert.match(strip(frontend.output.slice(mark)), new RegExp(`got=v${tag}`, 'u'), 'the answer reached read');
         }
       }

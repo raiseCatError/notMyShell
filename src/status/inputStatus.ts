@@ -91,6 +91,14 @@ export function heldInputActions(program: string): string {
 }
 
 /**
+ * Typing held at the prompt (#426): the command ended right after hidden input, and NMSh could not tell whether the
+ * typing was the next command or a reply to a question with no prompt. Nothing typed is shown until the person chooses.
+ */
+export function heldAtPromptActions(program: string): string {
+  return `Typed during ${program}'s hidden input · held, not run · Tab shows it · Esc discards it`;
+}
+
+/**
  * The activity rows while typing is held without evidence of who reads it: what happened, then how to choose. Nothing
  * typed is shown; the person decides, or later evidence does.
  */

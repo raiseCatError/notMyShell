@@ -76,6 +76,8 @@ const defaultTimer = (callback: () => void, ms: number) => {
 export class InputWatch extends EventEmitter<InputWatchEvents> {
   private running?: {command: string; since: number};
   private reader = false;
+  /** The shell said the command is done and runs its prompt hooks: nothing until its prompt is the command's input. */
+  private done = false;
   private readonly line = new OpenLine();
   private readonly screen = new AlternateScreenTracker();
   private request?: InputRequest;
@@ -133,8 +135,22 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.emit('change', this.state);
   }
 
+  /**
+   * The shell's first prompt hook ran: the command has finished (#436). A slow hook holds the terminal, idle, exactly
+   * as a builtin read does, so from here to the prompt nothing is sampled and a sample already under way is dropped.
+   */
+  onDone(at = this.now()): void {
+    if (!this.running || this.done) return;
+    this.done = true;
+    this.cancelTimer?.();
+    this.cancelTimer = undefined;
+    this.generation += 1;
+    if (this.request) this.closeWait(at, true);
+  }
+
   onExec(command: string, at = this.now()): void {
     this.reader = false;
+    this.done = false;
     this.closeWait(at, false);
     this.running = {command, since: at};
     this.waitedMs = 0;
@@ -172,6 +188,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
 
   /** The command finished (the shell is back at its prompt): close any wait; the final timing stays readable. */
   onPrompt(at = this.now()): void {
+    this.done = false;
     if (!this.running) return;
     this.closeWait(at, false);
     this.running = undefined;
@@ -192,17 +209,20 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     let seen: TerminalModes | undefined;
     for (let sample = 0; sample < 2; sample += 1) {
       while (this.probing) await this.probing;
-      if (this.disposed || !this.running) return 'idle';
+      if (this.disposed || !this.running || this.done) break;
       if (!this.options.probe) return 'unavailable';
       this.followUp = false;
       seen = (await this.look(true))?.modes ?? seen;
-      if (!this.followUp || this.request) break;
+      if (!this.followUp || this.request || this.done) break;
       await new Promise<void>(done => { this.setTimer(done, FOLLOW_UP_MS); });
     }
-    if (this.disposed || !this.running) return 'idle';
-    if (this.request?.mode === 'hidden') return 'hidden';
-    if (!seen) return 'unknown';
-    return seen.canonical && !seen.echo ? 'hidden' : 'visible';
+    if (this.disposed) return 'idle';
+    // Seen hidden input is reported even when the command finished during the look (#436's done): the typing may have
+    // been a password for it, and the frontend then discards it rather than run it as the next command.
+    if (this.request?.mode === 'hidden' || (seen && seen.canonical && !seen.echo)) return 'hidden';
+    // Done (its prompt hooks run) or over: the shell owns typing again.
+    if (!this.running || this.done) return 'idle';
+    return seen ? 'visible' : 'unknown';
   }
 
   dispose(): void {
@@ -236,7 +256,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   private schedule(): void {
     this.cancelTimer?.();
     this.cancelTimer = undefined;
-    if (this.disposed || !this.running || !this.options.probe) return;
+    if (this.disposed || !this.running || this.done || !this.options.probe) return;
     const quiet = this.now() - this.lastActivity;
     const planned = this.looks === 0 ? (this.line.open ? FIRST_LOOK_OPEN_MS : FIRST_LOOK_MS)
       : LOOKS_MS[this.looks - 1] ?? (quiet > SLOW_LOOK_AFTER_MS ? SLOW_LOOK_MS : STEADY_LOOK_MS);
@@ -246,7 +266,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
 
   /** One sample, returned even when newer output made it stale; onDemand looks (lookNow) leave the back-off as it was. */
   private async look(onDemand = false): Promise<TerminalSample | undefined> {
-    if (this.disposed || !this.running || this.probing) return undefined;
+    if (this.disposed || !this.running || this.done || this.probing) return undefined;
     if (!onDemand) this.looks += 1;
     if (this.ownsTerminal) {
       if (this.request) this.closeWait(this.now(), true);
@@ -263,6 +283,8 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.probing = probing;
     try { await probing; } finally { this.probing = undefined; }
     if (this.disposed || !this.running) return undefined;
+    // The command finished during the probe: nothing is applied or scheduled, but the sample is still evidence.
+    if (this.done) return sample;
     if (generation === this.generation && sample) this.apply(sample, this.now());
     this.schedule();
     return sample;
@@ -270,7 +292,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
 
   /** Decide from one sample. Exposed for tests through InputWatch.evaluate. */
   apply(sample: TerminalSample, now: number): void {
-    if (!this.running || this.ownsTerminal) return;
+    if (!this.running || this.done || this.ownsTerminal) return;
     const busy = this.busy(sample.foreground, now);
     this.followUp = false;
     const next = this.decide(sample, busy, now);
