@@ -22,6 +22,9 @@ const settled = () => new Promise(done => setImmediate(done));
 
 function fixture() {
   const frame = executionFrameFixture(110, 34);
+  // zsh's grammar, which every CI runner has: the reviewed list is offered only after the shell itself parse-checks
+  // each command (fail closed), and the fixture's own shell (Fish) is not installed everywhere.
+  frame.app['shellId'] = 'zsh';
   const submitted: string[] = [];
   const slashes: string[] = [];
   const queueOps: QueueOp[] = [];
@@ -183,13 +186,13 @@ test('F02: typed with Ctrl+J, or entered while a command runs, a mixed block is 
 test('F02: multi-line shell text is unchanged: a script, a heredoc with a slash line inside, and a single NMSh command', async () => {
   const f = fixture();
   try {
-    const script = 'for f in a b\n  echo $f\nend';
+    const script = 'for f in a b; do\n  echo $f\ndone';
     f.app['editor'].insertPaste(script);
     f.enter(); await settled();
     assert.equal(f.app['batchReview'], undefined);
     assert.equal(f.submitted.length, 1, 'a script runs as one command, as before');
     f.complete(0);
-    // This session's shell is Fish (no heredocs): a quoted line is text in every shell.
+    // A quoted line is text in every shell.
     const quoted = "printf '%s\\n' 'first\n/track ls\nlast'";
     f.app['editor'].insertPaste(quoted);
     f.enter(); await settled();
