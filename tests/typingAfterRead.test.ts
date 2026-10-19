@@ -11,10 +11,10 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
  * still runs. Fish is not held to type-ahead during `read`: fish 4 itself drops keys that are already queued when its
  * reader starts a terminal query, with any terminal (see docs/development/fish-typeahead.md).
  *
- * One outcome besides running at once is correct (#426 review): a command typed during a hidden read's answer, when a
- * look still saw hidden input and the read's command then ended, may be a reply to a second question with no prompt.
- * NMSh holds it at the prompt, never run by itself; the person's Tab shows it and their Enter runs it. It must still
- * run exactly once, and only typing ahead during a hidden read may be held.
+ * One outcome besides running at once is correct (#426 review, #437): a command typed during a hidden read's answer,
+ * when a look still saw hidden input and the read's command then ended, may be a reply to a second question with no
+ * prompt. NMSh holds it at the prompt, never run by itself; the person's Tab shows it and their Enter runs it. It must
+ * still run exactly once, and only typing ahead during a hidden read may be held. (Without #437 it is never held.)
  */
 const HELD = /held, not run · Tab shows it · Esc discards it/u;
 
@@ -72,15 +72,23 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           // with no visible question, Enter queues the next command (that is the queue); an answer is only an answer
           // once the question is open.
           if (shell !== 'fish') await frontend.waitFor(new RegExp(`[Ww]aiting for input[^\\n]*[\\s\\S]*Name-${tag}:`, 'u'), mark);
+          const next = `echo NEXT-${tag}`;
+          const before = await frontend.completions(next);
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
-          frontend.pty.write(`echo NEXT-${tag}\r`);
-          await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed|${HELD.source}`, 'u'), mark, 10_000);
-          if (HELD.test(strip(frontend.output.slice(mark))) && !new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u').test(strip(frontend.output.slice(mark)))) {
-            await showAndRunHeld(frontend, mode, run, `echo NEXT-${tag}`, mark);
-            await frontend.waitFor(new RegExp(`NEXT-${tag}[\\s\\S]*Completed`, 'u'), mark, 10_000);
+          frontend.pty.write(`${next}\r`);
+          // NMSh's journal records the next command once the shell's prompt has returned after it. Screen text could match
+          // earlier: the queued command's row followed by an older "Completed" in a later redraw (seen in CI on #442).
+          await until(async () => await frontend.completions(next) > before || HELD.test(strip(frontend.output.slice(mark))), 10_000,
+            `completed journal for ${next}, or the command held`);
+          if (await frontend.completions(next) === before) {
+            await showAndRunHeld(frontend, mode, run, next, mark);
+            await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after Tab and Enter`);
           }
-          assert.match(strip(frontend.output.slice(mark)), new RegExp(`got=v${tag}`, 'u'), 'the answer reached read');
+          assert.equal(await frontend.completions(next), before + 1, 'the next command ran once');
+          const drawn = strip(frontend.output.slice(mark));
+          assert.match(drawn, new RegExp(`got=v${tag}`, 'u'), 'the answer reached read');
+          assert.match(drawn, new RegExp(`(?<!echo )NEXT-${tag}`, 'u'), 'and the next command ran');
         }
       }
     } finally { stop(); await sandbox.dispose(); }
