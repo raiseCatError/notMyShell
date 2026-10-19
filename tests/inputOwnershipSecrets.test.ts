@@ -201,7 +201,7 @@ test('a second hidden question NMSh sees while the reply is held gets it, never 
   } finally { f.dispose(); }
 });
 
-test('an ordinary command typed after a hidden answer, once the terminal echoes again, is type-ahead: never held, never discarded', async t => {
+test('an ordinary command typed after a hidden answer, once the terminal echoes again: drawn, never discarded; Enter holds it for approval, Ctrl+Q runs it after', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -216,10 +216,24 @@ test('an ordinary command typed after a hidden answer, once the terminal echoes 
     f.enter();
     f.answer('visible');
     await settled();
-    assert.deepEqual(f.adds(), ['make test'], 'queued for after the command');
+    assert.deepEqual(f.adds(), ['make test'], 'kept in the queue, not discarded');
+    assert.equal(f.owner.state.entries[0]?.condition, 'approve', 'a plain Enter while sudo runs holds it for approval');
+    f.type('make lint');
+    f.answer('visible');
+    await settled();
+    f.key('\u0011');
     f.complete(0);
     await settled();
-    assert.deepEqual(f.dispatched, ['make test'], 'and runs after it, once');
+    assert.deepEqual(f.dispatched, [], 'the held line is first, so nothing runs before the person approves it');
+    f.enter();
+    f.tick(1000);
+    f.enter();
+    await settled();
+    assert.deepEqual(f.dispatched, ['make test'], 'approved, it runs once');
+    f.begin('make test');
+    f.complete(0);
+    await settled();
+    assert.deepEqual(f.dispatched, ['make test', 'make lint'], 'and the Ctrl+Q command after it, in order, with no approval');
     assert.doesNotMatch(f.screen(), HELD);
   } finally { f.dispose(); }
 });
@@ -447,7 +461,7 @@ test('#426 residual: a reply queued before a timed prompt-less read NMSh never s
     assert.deepEqual(f.adds(), [SECRET], 'queued (NMSh could not know)');
     const entry = f.owner.state.entries.find(item => item.text === SECRET);
     assert.equal(entry?.condition, 'approve', 'it waits for approval');
-    assert.match(f.transcript(), /does not start with a command/u, 'a note says why');
+    assert.match(f.transcript(), /never runs by itself/u, 'a note says why');
     assert.equal(f.transcript().includes(SECRET), false, 'the note never repeats the text');
     // No question was ever reported: the read gave up unseen, and the command succeeded.
     f.tick(1500);
@@ -456,7 +470,7 @@ test('#426 residual: a reply queued before a timed prompt-less read NMSh never s
   } finally { f.dispose(); }
 });
 
-test('#426 residual: ordinary type-ahead is unchanged: commands, definitions and assignments typed while one runs still run after it', async t => {
+test('#426 residual: Ctrl+Q type-ahead is unchanged: commands, definitions and assignments queued with it while one runs still run after it', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -465,8 +479,7 @@ test('#426 residual: ordinary type-ahead is unchanged: commands, definitions and
     for (const line of typed) {
       f.type(line);
       f.answer('visible'); await settled();
-      f.enter();
-      f.answer('visible'); await settled();
+      f.key('\u0011');
     }
     for (const line of typed) assert.equal(f.owner.state.entries.find(item => item.text === line)?.condition, undefined, `${line}: no approval asked`);
     f.tick(1500);

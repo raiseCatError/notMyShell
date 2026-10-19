@@ -16,6 +16,11 @@ export type ProtocolEvent =
    */
   | {kind: 'done'}
   | {kind: 'marker'; marker: ShellMarker}
+  /**
+   * The first prompt hook took out of the terminal what the finished command never read (#426): bytes NMSh delivered
+   * to it (an answer, keys for its interface). The shell never reads them as a command; NMSh holds them for approval.
+   */
+  | {kind: 'unread'; text: string}
   /** zsh preexec: a command line is about to run in the foreground. */
   | {kind: 'exec'; command: string; historyAllowed?: number};
 
@@ -87,6 +92,12 @@ export class ShellProtocolDecoder {
   private emit(payload: string, events: ProtocolEvent[]): void {
     if (payload === 'reader') { events.push({kind: 'reader'}); return; }
     if (payload === 'done') { events.push({kind: 'done'}); return; }
+    if (payload.startsWith('unread;')) {
+      const hex = payload.slice(7);
+      // Exactly the bytes, or nothing: a malformed payload is never guessed at, and never output either.
+      if (hex && hex.length % 2 === 0 && /^[0-9a-f]+$/u.test(hex)) events.push({kind: 'unread', text: Buffer.from(hex, 'hex').toString('utf8')});
+      return;
+    }
     if (/^exec2;[01];/u.test(payload)) {
       events.push({kind: 'exec', command: payload.slice(8), historyAllowed: Number(payload[6])});
       return;

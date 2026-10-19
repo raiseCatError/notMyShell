@@ -4,6 +4,8 @@ One walkthrough for the v0.22.0 release candidate (#444). It replaces [v0.21 phy
 (never run; v0.21.0 is not published) and the per-PR v0.22 passes. Sittings A and part of B were run on candidate
 `68c1cbb7` (results below); the person running QA then stopped repetitive manual testing, and the remaining passes are
 recorded as not run. Fixes made after that QA have their own short retests (see Retests after the stabilization fixes).
+The final hardening pass (#457) then changed how typing while a command runs is routed and how NMSh sizes the shell's
+terminal: A1, A9, A10 and B1 no longer stand for the new candidate and are replaced by R5–R7.
 
 - **What counts:** a person at a real terminal, with a real keyboard and pointer. Headless tests, synthetic keys and green
   CI do not count, and no row is marked from them.
@@ -40,7 +42,7 @@ recorded as not run. Fixes made after that QA have their own short retests (see 
 
 | Pass | Terminal | Shell | Commit | Result | Notes |
 |---|---|---|---|---|---|
-| A1 Progress (#388) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A1 Progress (#388) | Ghostty | zsh | 68c1cbb7 | PASS | steps 1–3 and 6 superseded by R7 (shell terminal size changed, #457) |
 | A2 `/view` | Ghostty | zsh | 68c1cbb7 | PASS | embedded HTML shown literally: F01, see R3 |
 | A3 `/edit` | Ghostty | zsh | 68c1cbb7 | PASS |  |
 | A4 Semantic Output | Ghostty | zsh | 68c1cbb7 | PASS |  |
@@ -48,13 +50,13 @@ recorded as not run. Fixes made after that QA have their own short retests (see 
 | A6 Modules | Ghostty | zsh | 68c1cbb7 | PASS | `cd` + `/modules` pasted: F02, see R2 |
 | A7 Themes | Ghostty | zsh | 68c1cbb7 | PASS |  |
 | A8 History (#389) | Ghostty | zsh | 68c1cbb7 | PASS |  |
-| A9 Passwords and replies (#426) | Ghostty | zsh | 68c1cbb7 | PASS | step 9 (CPU load) not run (machine constraints); queue overview hidden during the wait: F03 |
-| A10 Prompt hooks and Ctrl+C (#436) | Ghostty | zsh | 68c1cbb7 | PASS |  |
+| A9 Passwords and replies (#426) | Ghostty | zsh | 68c1cbb7 | PASS | step 9 (CPU load) not run (machine constraints); queue overview hidden during the wait: F03. Superseded by R5 (routing changed, #457) |
+| A10 Prompt hooks and Ctrl+C (#436) | Ghostty | zsh | 68c1cbb7 | PASS | superseded by R6 (routing changed, #457) |
 | A11 Editors (#366) | Ghostty | zsh | 68c1cbb7 | PASS |  |
 | A12 Ask suggestions (#432) | Ghostty | zsh | 68c1cbb7 | **FAIL** | the folder listing instead of a suggestion: F04 (#446), see R1 |
 | A13 Session lifecycle | Ghostty | zsh | 68c1cbb7 | PASS |  |
 | A14 No color and Safe glyphs | Ghostty | zsh | 68c1cbb7 | PASS |  |
-| B1 Progress | Terminal.app | Fish | 68c1cbb7 | PASS |  |
+| B1 Progress | Terminal.app | Fish | 68c1cbb7 | PASS | superseded by R7 step 4 (#457) |
 | B3 `/edit` keys | Terminal.app | Fish | 68c1cbb7 | PASS |  |
 | B5 `/track` cleanup | Terminal.app | Fish |  | NOT RUN | user waived/deferred further manual QA |
 | B8 History | Terminal.app | Fish |  | NOT RUN | user waived/deferred further manual QA |
@@ -69,7 +71,10 @@ recorded as not run. Fixes made after that QA have their own short retests (see 
 | R1 Ask suggestions (F04) | Ghostty | zsh |  | Not run | retest on the new candidate |
 | R2 Pasted NMSh commands (F02) | Ghostty | zsh |  | Not run | retest on the new candidate |
 | R3 HTML in `/view` (F01) | Ghostty | zsh |  | Not run | retest on the new candidate |
-| R4 Typing before an unseen read (#426) | Terminal.app | Fish, Bash |  | Not run | retest on the new candidate |
+| R4 Typing while a command runs (#426, #436) | Terminal.app | Fish, Bash |  | Not run | retest on the new candidate (rewritten for #457) |
+| R5 Passwords and replies (#426, replaces A9) | Ghostty | zsh |  | Not run | retest on the new candidate |
+| R6 Prompt hooks and Ctrl+C (#436, replaces A10) | Ghostty | zsh |  | Not run | retest on the new candidate |
+| R7 Progress and window size (#443, replaces A1 1–3, 6 and B1) | Ghostty, Terminal.app | zsh, Fish |  | Not run | retest on the new candidate |
 
 **NOT RUN is not PASS.** The nine required passes above were not performed; if the release goes ahead without them, that
 is a recorded acceptance of their risk (below), not a result.
@@ -88,10 +93,13 @@ is a recorded acceptance of their risk (below), not a result.
   2 min), then B10 and C10 (prompt hooks in Fish and Bash, 4 min). B5, B8, C2 and C7 repeat Ghostty-proven drawing and
   can reasonably be waived.
 
-## Retests after the stabilization fixes (about 30 minutes)
+## Retests after the stabilization fixes (about 60 minutes)
 
-The candidate changed after the QA above (fixes for F01–F04 and #426, #443; see the ledger). Only what those changes
-touch is retested; every other result above stands for the new candidate.
+The candidate changed after the QA above (fixes for F01–F04 and #426, #443; then the hardening pass #457; see the ledger).
+Only what those changes touch is retested; every other result above stands for the new candidate. **What changed for
+you in #457:** while a command runs, a plain Enter holds the line for your approval (shown as `(typed while … ran)`,
+never by its text) and **Ctrl+Q** queues a command to run after; a line typed right after Ctrl+C runs once the prompt is
+back; typing a program never reads is taken back when it ends and waits for approval.
 
 **Build:** a separate QA build at the new candidate, so `68c1cbb7`'s build stays as it was:
 
@@ -151,17 +159,61 @@ NMSh, `exit` every `nmsh2` window and start again.
 
 **PASS** if all hold.
 
-### R4 · Typing before a read nobody sees (#426), Terminal.app, Fish then Bash, 10 min
+### R4 · Typing while a command runs (#426, #436), Terminal.app, Fish then Bash, 12 min
 Launch `nmsh2 fish`; then repeat in `nmsh2 bash`.
-1. `bash retest/timed-read.sh`, and during its 2 s sleep type `QRETESTQ` and Enter: `≡ 1 queued`, and a note says the
-   line does not start with a command this shell knows and waits for your approval (the note never shows the word).
-   `QA-TIMED-DONE` prints; the entry does **not** run. `/queue`: delete it.
-2. The same, typing `echo next-ok` instead: it runs once after `QA-TIMED-DONE`.
-3. A9 steps 2, 5 and 6 in that shell (Fish: `read --silent reply` for step 2).
-4. Fish: `history | head -30`; Bash: `history | tail -30`: no `QRETESTQ` or `QSECRETQ`.
+1. R5 steps 2, 3 and 4 in that shell.
+2. R5 step 5 (`bash retest/timed-prompt.sh`).
+3. R6 steps 1 and 3; for step 4 in Fish use `function qa_slow --on-event fish_prompt; sleep 2; end` (undo with
+   `functions -e qa_slow`), in Bash `source input/slow-hook.bash`.
+4. Fish: `history | head -30`; Bash: `history | tail -30`: no `QRETESTQ`, `123456` or other reply word.
 
-**PASS** if no reply word ever runs, is shown after its question appeared, or reaches history. This also covers the
-input-security part of B9 and C9.
+**PASS** if no reply word ever runs by itself or reaches history, and every command you meant (Ctrl+Q, approved, or
+typed after Ctrl+C or during a slow hook) runs exactly once. This also covers the input-security part of B9 and C9.
+
+### R5 · Passwords and replies (#426, replaces A9), Ghostty, zsh, 14 min
+Replies are made-up words, never a real password (only step 8 uses yours).
+1. A9 steps 1 and 2 (a waiting `read`, a hidden `read -rs`): unchanged.
+2. `sleep 5`: the empty composer says `Enter holds it for approval · Ctrl+Q runs it after · Ctrl+S sends to sleep`. Type
+   `echo next` and Enter: a note says the line may be sleep's reply and never runs by itself; the queue shows
+   `(typed while sleep ran)`, not the text. When `sleep` ends nothing runs. Empty Enter: the review opens without the
+   text; Tab shows `echo next`; Enter approves: it runs once.
+3. `sleep 5`, type `echo after` and **Ctrl+Q**: it runs after `sleep`, no approval asked.
+4. `bash retest/timed-read.sh`; during its 2 s sleep type `ls` and Enter, then `QRETESTQ` and Enter. `QA-TIMED-DONE`
+   prints; neither runs (no listing, no `command not found`). `/queue`: both show as `(typed while bash ran)`; delete
+   them. A command typed at the prompt meanwhile runs at once (the held lines never block it).
+5. `bash retest/timed-prompt.sh`: `QA code:` appears and gives up after 2 s. Then (within its 3 s) type `123456` and
+   Enter. `QA-CODE-DONE` prints; `123456` never runs; a note says bash did not read some of your typing and it waits
+   for your approval. `/queue`: delete it.
+6. A9 step 5 (typed before the prompt, no Enter): unchanged.
+7. `sh input/delayed-prompt.sh`, type `QSECRETQ` and Enter before the prompt: it is held for approval at once (the note
+   never shows it). When `QA-Password:` appears, answer `answer`: `got 6 characters`; the held line never runs.
+   `/queue`: delete it.
+8. A9 step 8 (`sudo -k true` with your password): unchanged.
+9. `fc -ln -30`: none of the reply words, only the commands you ran or approved.
+
+**PASS** if no reply or password word is ever shown after its question appeared, run without your approval, or in
+history. **FAIL** with a screenshot and `fc -ln -30`.
+
+### R6 · Prompt hooks and Ctrl+C (#436, replaces A10), Ghostty, zsh, 6 min
+1. `sleep 30`, Ctrl+C, then at once `echo after` and Enter: the composer may say `Runs at the prompt once sleep stops`;
+   `after` runs once, as its own command, when the prompt is back.
+2. `read -r x`, Ctrl+C, then at once `echo after` and Enter: the same.
+3. `bash retest/survivor.sh` (it ignores Ctrl+C): Ctrl+C, then at once `yes` and Enter: about 2 s after the Ctrl+C the
+   line reaches it as its answer (`QA-GOT=yes`); `yes` never runs as a command.
+4. `source input/slow-hook.zsh`. Run `true`, and before the prompt returns (2 s) type `echo after` and Enter: it runs
+   once at the prompt, whole (never `cho after` or `command not found`), never held for approval, and NMSh never says
+   `true` is waiting for input. Three times. Undo: `precmd_functions=(${precmd_functions:#qa_slow_hook})`.
+
+### R7 · Progress and window size (#443, replaces A1 steps 1–3 and 6, and B1), 8 min
+1. Ghostty, zsh: A1 steps 1, 2, 3 and 6.
+2. `sh -c 'trap "echo QA-WINCH" WINCH; sleep 10'`. While it runs, paste three lines (Enter inserts them, the composer
+   grows), press Enter (held for approval), and run `/queue` then Esc: no `QA-WINCH`. Then resize the window: `QA-WINCH`
+   while you drag. `/queue`: delete the held line.
+3. `vim view/tabs.txt`, resize the window, `:q`: vim redraws at the new size and the composer returns.
+4. Terminal.app, `nmsh2 fish`: A1 steps 2, 3, 5 and 6 (as B1).
+
+**PASS** if progress reads as in A1, only real window resizes reach the program, and full-screen programs use the
+whole window.
 
 ## Sitting A: Ghostty, zsh (about 80 minutes; a break fits after A7)
 
@@ -266,6 +318,8 @@ Run `echo one`, a two-line command (`echo two` Ctrl+J `echo three`, Enter) and `
 5. `sleep 10`, then Up: history recalls into the composer for the next command, never into `sleep`.
 
 ### A9 · Passwords and replies (#426), 12 min
+*Run on `68c1cbb7`; for the hardened candidate, R5 replaces it (steps 3, 6 and 7 describe the old routing).*
+
 Replies are made-up words, never a real password (only step 8 uses yours). `≡ 1 queued` is the queue's count.
 
 1. `read -r reply; echo got=$reply`: type `hello` and Enter **at once**: `got=hello`; `≡` never appears. Again after a
@@ -303,6 +357,8 @@ Replies are made-up words, never a real password (only step 8 uses yours). `≡ 
 history (step 10). **FAIL** with a screenshot and `fc -ln -30`.
 
 ### A10 · Prompt hooks and Ctrl+C (#436), 4 min
+*Run on `68c1cbb7`; for the hardened candidate, R6 replaces it.*
+
 1. `sleep 30`, Ctrl+C, then at once `echo after` and Enter: `after` once, as its own command.
 2. `read -r x`, Ctrl+C, then at once `echo after` and Enter: the same.
 3. `source input/slow-hook.zsh`. Run `true`, and before the prompt returns (2 s) type `echo after` and Enter: it runs

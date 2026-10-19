@@ -76,7 +76,10 @@ test('Dock Top render, cursor, mouse hover/click and PTY rows all follow the pla
     const input = regionOf(plan, 'input')!;
     assert.ok(input.top < plan.transcript.top, 'composer above transcript');
     assert.equal(frame.cursorRow, terminalRowFromScreen(input.top));
-    assert.equal(sizes.at(-1), plan.ptyRows);
+    // The shell's terminal is the reference layout's capacity (#443): never more rows than this frame's transcript can
+    // hold, and the same whatever chrome the frame has.
+    assert.equal(sizes.at(-1), app['ptyRows'](80, 20));
+    assert.ok(sizes.at(-1)! <= plan.ptyRows);
     const wrapped = app['output'].wrapped(80);
     const lastRow = plan.transcript.top + plan.transcript.height - 1;
     assert.equal(stripAnsi(frame.rows[lastRow]!), wrapped.at(-1)!.plain, 'newest output at the transcript bottom');

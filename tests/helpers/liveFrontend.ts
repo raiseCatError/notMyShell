@@ -75,7 +75,9 @@ export class LiveSandbox {
   /** Include externally launched PTYs in the same lifecycle, e.g. built CLI and screen fixtures. */
   trackFrontend(pty: IPty): Frontend {
     const frontend = new Frontend(pty, async command =>
-      (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length);
+      (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length,
+    // Only a sandbox's single session is this frontend's for certain; with several, another may run on purpose.
+    async () => { const sessions = await this.sessions(); return sessions.length !== 1 || sessions[0]!.running === undefined; });
     this.frontends.push(frontend);
     return frontend;
   }
@@ -167,7 +169,8 @@ export class Frontend {
   exitSignal: number | undefined;
   readonly exited: Promise<number>;
 
-  constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>) {
+  constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>,
+    private readonly shellsIdle: () => Promise<boolean> = async () => true) {
     pty.onData(data => { this.output += data; });
     this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; this.exitSignal = event.signal; resolve(event.exitCode); }));
   }
@@ -196,6 +199,13 @@ export class Frontend {
   }
 
   async run(command: string, expect: RegExp, {completion = true} = {}): Promise<void> {
+    // At the prompt, as a person types a command they mean to run (#426): a line typed while another command still
+    // runs waits for approval, so a test that just started one (an approval, an answer) waits for its prompt first.
+    // Tests that mean to queue use Ctrl+Q.
+    if (!parseSlashCommand(command) && !(await this.shellsIdle())) {
+      await until(() => this.shellsIdle(), 30_000, `the prompt before ${command}`);
+      await new Promise(done => setTimeout(done, 250));
+    }
     const mark = this.mark;
     const completed = await this.completedCount(command);
     this.pty.write(`${command}\r`);

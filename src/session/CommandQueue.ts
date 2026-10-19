@@ -25,6 +25,12 @@ export interface QueueEntry {
   condition?: QueueCondition;
   /** `approve` entries only: approved by the person for this text; editing the entry withdraws it. */
   approved?: boolean;
+  /**
+   * The program that was running when this line was entered with a plain Enter, or that never read it (#426). NMSh had
+   * no evidence whether the line was that program's reply (a password, a one-time code, `yes`) or the next command,
+   * so it is quarantined: it always waits for approval, and its text is shown only when the person asks.
+   */
+  typedWhile?: string;
 }
 
 /** Why the queue does not run its next entry by itself. */
@@ -54,7 +60,8 @@ export interface QueueState {
 
 export type QueueOp = (
   | {op: 'failure-policy'; policy: QueueFailurePolicy}
-  | {op: 'add'; text: string; condition?: QueueCondition}
+  /** typedWhile: a line typed while that program ran; the owner makes it wait for approval, whatever else is asked. */
+  | {op: 'add'; text: string; condition?: QueueCondition; typedWhile?: string}
   /** Set (or with no condition, clear) when an entry may run. Withdraws any approval. */
   | {op: 'condition'; id: number; condition?: QueueCondition}
   /** Approve the entry that is waiting for approval, exactly as it stands. */
@@ -111,7 +118,10 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
         if (change.text.length > ENTRY_LIMIT) return 'That command is too long to queue.';
         if (this.entries.length >= QUEUE_LIMIT) return `The queue holds at most ${QUEUE_LIMIT} commands.`;
         if (this.bytes() + Buffer.byteLength(change.text) > QUEUE_BYTES_LIMIT) return 'The queue is full; run or remove some commands first.';
-        this.entries.push({id: this.nextId++, text: change.text, addedAt: this.now(), ...(change.condition ? {condition: change.condition} : {})});
+        // The quarantine is the owner's rule, not a frontend's choice: a line typed while a program ran never runs unapproved.
+        const condition = change.typedWhile ? 'approve' : change.condition;
+        this.entries.push({id: this.nextId++, text: change.text, addedAt: this.now(), ...(condition ? {condition} : {}),
+          ...(change.typedWhile ? {typedWhile: change.typedWhile} : {})});
         break;
       }
       case 'edit': {
@@ -123,12 +133,15 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
         // Approval is for the exact text that was approved.
         if (entry.text !== change.text) delete entry.approved;
         entry.text = change.text;
+        // The person has seen and edited it: it is their line now, shown as text, and still waits for their approval.
+        delete entry.typedWhile;
         if (this.editing === change.id) this.editing = undefined;
         break;
       }
       case 'condition': {
         const entry = this.entries.find(item => item.id === change.id);
         if (!entry) return 'That command already ran or was removed.';
+        if (entry.typedWhile && change.condition !== 'approve') return 'A line typed while a program ran only runs once you approve it.';
         if (change.condition) entry.condition = change.condition; else delete entry.condition;
         delete entry.approved;
         break;

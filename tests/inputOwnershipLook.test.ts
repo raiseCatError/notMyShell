@@ -69,7 +69,7 @@ function fixture() {
     assert.equal(submitted.some(entry => entry.includes(secret)), false, `${what}: not run as a command`);
     assert.equal(transcript().includes(secret), false, `${what}: not in the transcript`);
   };
-  return {...frame, written, submitted, slowLooks, quickLooks, type, enter, text, adds, screen, transcript, found, nowhere,
+  return {...frame, queueOps, written, submitted, slowLooks, quickLooks, type, enter, text, adds, screen, transcript, found, nowhere,
     interrupts: () => interrupts, looks: () => looks, settle: (result: LookResult | undefined) => settle(result)};
 }
 
@@ -271,7 +271,7 @@ test('#426: a look that saw the terminal echoing routes type-ahead at once; no h
   } finally { f.dispose(); }
 });
 
-test('#426: an older service (a look with no result) routes as before', async t => {
+test('#426: an older service (a look with no result) fails closed: its typing stays held, never routed on no evidence', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -280,8 +280,8 @@ test('#426: an older service (a look with no result) routes as before', async t 
     f.begin('sleep 30');
     f.type('echo next');
     await settled();
-    assert.equal(f.text(), 'echo next');
-    assert.doesNotMatch(f.screen(), HELD);
+    assert.equal(f.text(), '', 'not drawn: the older service cannot say whether sleep reads it');
+    assert.match(f.screen(), HELD);
     // The same silent answer from a service that does say what it saw (the socket closed mid-look) is not evidence.
     const g = fixture();
     try {
@@ -329,7 +329,7 @@ test('#426: an answer to a question the program printed goes as soon as the look
   } finally { f.dispose(); }
 });
 
-test('#426: a command that ends quickly while keys are held: the type-ahead runs as the next command, once', async t => {
+test('#426: a command that ends quickly while keys are held: the line was entered while it ran, so it is held for approval, not run', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -340,8 +340,10 @@ test('#426: a command that ends quickly while keys are held: the type-ahead runs
     f.complete(0);
     f.settle('idle');
     await settled();
-    assert.deepEqual(f.adds(), [], 'the command is over: nothing is queued');
-    assert.deepEqual(f.submitted, ['echo after'], 'the line runs as the next command, as Enter at the prompt does');
+    assert.deepEqual(f.adds(), ['echo after'], 'held in the queue');
+    assert.deepEqual(f.queueOps.find(op => op.op === 'add'), {op: 'add', text: 'echo after', condition: 'approve', typedWhile: 'ls'},
+      'its Enter was pressed while ls ran: it waits for approval');
+    assert.deepEqual(f.submitted, [], 'never submitted at the prompt by itself');
     assert.deepEqual(f.written, []);
   } finally { f.dispose(); }
 });

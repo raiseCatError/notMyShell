@@ -35,7 +35,23 @@ export interface LaunchContext {
   knowledgePath: string;
   /** NMSh Theme Bridge environment file for this shell syntax, applied from the prompt hook when present. */
   bridgeEnvPath?: string;
+  /**
+   * Non-empty once NMSh delivered input to the running command (#426). The first prompt hook then runs
+   * UNREAD_DRAIN_SCRIPT on the terminal, empties this file and reports what it took as an `unread` marker (hex).
+   */
+  unreadFlag?: string;
 }
+
+/**
+ * Takes out of the terminal what the finished command never read and prints it as hex (#426): an answer for a read that
+ * gave up, keys typed into a program as it exited, a partial line. Without this the shell would read a whole line as
+ * its next command, or glue a partial one onto the command NMSh submits next. Plain POSIX tools; run only when NMSh
+ * delivered input to the command, with the terminal as stdin. Non-canonical with VMIN=0/VTIME=0, a read returns what is
+ * there and then end-of-file, so it never waits. Immune to SIGTTOU/SIGTTIN: the hook may run before the shell has the
+ * terminal back, and then it takes nothing rather than stopping. Bounded: 64 KiB reported, the rest discarded.
+ */
+export const UNREAD_DRAIN_SCRIPT = 'trap "" TTOU TTIN; s=$(stty -g 2>/dev/null) || exit 0; stty -icanon -echo min 0 time 0 2>/dev/null || exit 0; '
+  + '{ head -c 65536 | od -An -v -tx1 | tr -d " \\n"; cat >/dev/null; }; stty "$s" 2>/dev/null';
 
 export interface ShellLaunch {
   executable: string;

@@ -886,7 +886,11 @@ export class TerminalApp {
      * for the shell's prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop
      * causes. Only for STOP_TYPE_AHEAD_MS: a program that survives the signal (a REPL, a remote shell) gets the
      * ordinary routing again, so later typing is never sent into it unasked. */
-    stoppedAt?: number};
+    stoppedAt?: number;
+    /** A question was reported after Ctrl+C or Ctrl+Z: the program survived the stop and asked (#426). */
+    askedAfterStop?: boolean;
+    /** A look found the command done (the shell's authenticated done marker; its prompt hooks may still run). */
+    done?: boolean};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -912,7 +916,8 @@ export class TerminalApp {
    * are type-ahead for the shell and stay in the composer.
    */
   /** typeAhead: begun right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back: never a reply (#436). */
-  private runningDraft?: {startId: number; at: number; answering: boolean; typeAhead: boolean};
+  /** afterDone: begun once the shell said the command is done (a look answered idle): type-ahead for the prompt. */
+  private runningDraft?: {startId: number; at: number; answering: boolean; typeAhead: boolean; afterDone?: boolean};
   /**
    * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
@@ -930,6 +935,27 @@ export class TerminalApp {
    * before the prompt appeared. It is kept off the composer while the question is open and held at the prompt after.
    */
   private stashedDraft?: {startId: number; text: string; program: string};
+  /**
+   * Lines entered right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back (#426, #436). Held, never written
+   * to the terminal, until the outcome is verified: the prompt (they run there, unless the program asked meanwhile),
+   * a question asked after the stop (they are its reply), or the end of the stop window with the program still running
+   * (they go to it; what it never reads is taken back at its end and held for approval). Also lines begun once the
+   * shell said the command is done (`done`): only the prompt settles those.
+   */
+  private stopAhead?: {startId: number; lines: string[]; program: string; timer?: NodeJS.Timeout; done: boolean};
+  /**
+   * The question an answer was just sent to. A report of it sampled before the session saw the answer can arrive
+   * after it: it is stale, and must not send the next command's keys to the program (a new question starts later).
+   */
+  private answeredQuestion?: {startId: number; since: number};
+  /** Applies a question report held back during a stop window (see onInputState), once. */
+  private staleStopReport?: () => void;
+  /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
+  private replayTypedWhile?: string;
+  /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
+  private readonly revealedQueue = new Set<number>();
+  /** Held lines this window added and has not yet seen in the owner's state (so others are the owner's, #426). */
+  private ownHeldAdds = 0;
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -2008,7 +2034,7 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
-      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.queueState.entries.map(entry => entry.text)}); }
+      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.shownQueue().entries.filter(entry => !entry.typedWhile || this.revealedQueue.has(entry.id)).map(entry => entry.text)}); }
       this.render();
       return;
     }
@@ -2415,6 +2441,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (key.kind === 'escape' && this.stopAhead && !this.editor.text) { this.settleStopAhead('cancel'); return; }
     if (key.kind === 'escape' && this.queueCompose) {
       this.queueCompose = false;
       this.editor.clear();
@@ -2435,7 +2462,8 @@ export class TerminalApp {
     if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
       // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt, not a reply.
       const typeAhead = this.justStopped();
-      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !typeAhead, typeAhead};
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !typeAhead, typeAhead,
+        ...(this.running.done ? {afterDone: true} : {})};
     }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
@@ -2493,7 +2521,7 @@ export class TerminalApp {
         this.session.interrupt();
         // Ctrl+C ends a waiting question: what is typed next is for the prompt, never a reply to discard.
         this.runningDraft = undefined;
-        this.answerSent();
+        this.answerSent(true);
       } else {
         this.editor.clear();
         this.selectedSuggestion = 0;
@@ -2511,7 +2539,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(); }
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(true); }
       return;
     }
     // Anything but Up/Down (typing, pasting, deleting, moving the caret, selecting) makes a recalled command a draft:
@@ -4514,6 +4542,8 @@ export class TerminalApp {
     }
     // Keys still held for this command's look are settled now that it is over (#426).
     this.ownershipLook?.settle('route');
+    if (this.stopAhead?.startId === command.startId) this.settleStopAhead('prompt', Boolean(command.askedAfterStop));
+    else this.settleStopAhead('drop');
     // A draft typed before this command asked for hidden input may be the password: held, never back in the composer.
     if (this.stashedDraft?.startId === command.startId) {
       const stashed = this.stashedDraft;
@@ -5342,7 +5372,7 @@ export class TerminalApp {
     if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
     if (this.queueHistoryPanel) return framePanel(renderQueueHistoryPanel(this.queueHistoryPanel, this.queueState, columns, this.dimensions().rows - 4), columns);
-    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.shownQueue(), this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -10720,6 +10750,25 @@ export class TerminalApp {
   }
 
   /**
+   * Rows of the shell's terminal (#443). Each resize signals the foreground job (SIGWINCH), and Fish 3 loses a terminal
+   * write that signal interrupts, so the size never follows NMSh's own chrome: it is the transcript capacity of a
+   * reference layout for this window and these settings (a running command's activity row, a one-line composer, no
+   * menu, inspector, notice or panel). The transcript region may then be shorter than the terminal, as it already is
+   * under Dock Top or with the queue's list: the newest rows show. While a command runs only a real change of the window
+   * (onResize, or the end of a full-screen handover, both reset lastPtyRows) or of its width resizes its terminal.
+   */
+  private ptyRows(columns: number, rows: number): number {
+    if (this.running && this.lastPtyRows && this.lastPtyColumns === columns) return this.lastPtyRows;
+    const height = this.stripActive(columns, rows) ? rows - 1 : rows;
+    const transcriptRows = this.output.wrapped(columns).length;
+    return planScreen({rows: height, inputRows: 1, suggestions: 0, inspectorRows: 0, running: true, detached: false, hasOutput: true,
+      composerPosition: this.promptConfiguration.composerPosition, panelPosition: this.panelPositionInEffect(), transcriptRows,
+      contextPlacement: this.promptConfiguration.placement, hasVisibleContext: this.hasVisibleProviderPrompt(),
+      composerLayout: this.effectivePromptProvider === 'none' ? 'oneLine' : this.promptConfiguration.composerLayout,
+      composerDividers: this.promptConfiguration.composerDividers, railPresentation: this.preparedRail(columns).presentation}).ptyRows;
+  }
+
+  /**
    * The expanded queue (header and list) when the screen has room, else undefined (the one-line row says it). Room
    * follows the terminal's height: up to three commands from 24 rows, two from 18, none below. Hidden while a
    * program waits for input: its question stays next to the composer.
@@ -10734,7 +10783,7 @@ export class TerminalApp {
     if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
     const review = this.queueReview?.kind;
     const now = this.activityAnimationNow || Date.now();
-    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {now, animate: this.decorativeMotionAllowed() && colorLevel() !== 'none' && colorLevel() !== 'ansi16' && getCurrentGlyphMode() !== 'safe', treatment: this.promptConfiguration.presentation,
+    return budget >= 2 ? queueBlock(this.shownQueue(), columns, budget, {now, animate: this.decorativeMotionAllowed() && colorLevel() !== 'none' && colorLevel() !== 'ansi16' && getCurrentGlyphMode() !== 'safe', treatment: this.promptConfiguration.presentation,
       liveTimeline: this.promptConfiguration.queue.liveTimeline, recentResults: this.promptConfiguration.queue.recentResults, upcoming: this.promptConfiguration.queue.upcoming,
       row: (key, index) => this.queueVisibleRows.set(key, index),
       animationElapsed: this.running ? presentationAnimationElapsed(now - this.running.startedAt) : 0,
@@ -10803,6 +10852,9 @@ export class TerminalApp {
     } else if (value === 'e') {
       this.queueReview = undefined;
       this.beginQueueEdit(review.id);
+    } else if (key.kind === 'complete' && review.kind === 'approve') {
+      // The person asks to see a held line before deciding; nothing else ever shows it.
+      this.revealedQueue.add(review.id);
     }
     this.render();
   }
@@ -10837,11 +10889,12 @@ export class TerminalApp {
     const menuOverflow = completionMenu && plan.suggestionCount > 1 && availableSuggestions.length > plan.suggestionCount;
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, menuOverflow ? plan.suggestionCount - 1 : plan.suggestionCount);
     const hiddenBelow = menuOverflow ? availableSuggestions.length - suggestionView.start - suggestionView.items.length : 0;
-    if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
-      this.lastPtyRows = plan.ptyRows;
+    const ptyRows = this.ptyRows(columns, rows);
+    if (this.lastPtyRows !== ptyRows || this.lastPtyColumns !== columns) {
+      this.lastPtyRows = ptyRows;
       this.lastPtyColumns = columns;
-      this.session.resize(columns, plan.ptyRows);
-      this.output.setScreenRows(plan.ptyRows);
+      this.session.resize(columns, ptyRows);
+      this.output.setScreenRows(ptyRows);
       this.output.setScreenColumns(columns);
     }
 
@@ -11676,7 +11729,7 @@ export class TerminalApp {
       const summary = this.running && !ownsRunning ? this.currentActivity() : phraseFits ? combined : factual;
       const timing = elapsed === undefined ? '' : `${formatDuration(elapsed)} current command${waitedDetail(this.inputState, Date.now(), elapsed)}`;
       const expressive = phrase && !phraseFits ? `${phrase}${timing ? ` · ${SECONDARY}${timing}${RESET}` : ''}` : `${SECONDARY}${timing}${RESET}`;
-      const hint = this.queueReview ? queueRow(this.queueState, columns, {review: this.queueReview.kind}) : this.queueAffordance() ? `${SUBTLE}${columns < 45 ? 'Enter reviews · /q' : 'Enter to review · Esc to review clear · /queue'}${RESET}` : expressive;
+      const hint = this.queueReview ? queueRow(this.shownQueue(), columns, {review: this.queueReview.kind}) : this.queueAffordance() ? `${SUBTLE}${columns < 45 ? 'Enter reviews · /q' : 'Enter to review · Esc to review clear · /queue'}${RESET}` : expressive;
       const concise = displayWidth(hint ?? '') <= columns ? hint : phrase && elapsed !== undefined ? `${phrase} · ${SECONDARY}${formatDuration(elapsed)}${RESET}` : hint;
       return [truncateAnsi(summary, columns), concise ? truncateAnsi(concise, columns) : ''];
     }
@@ -11713,6 +11766,9 @@ export class TerminalApp {
   private composerHint(): {text: string; waiting: boolean} | undefined {
     // Typing held when a command ended right after its hidden input: whatever runs now, only the person settles it.
     if (this.ownershipLook?.atPrompt && !this.passthrough) return {text: heldAtPromptActions(this.ownershipLook.program), waiting: true};
+    if (this.stopAhead && this.running?.startId === this.stopAhead.startId && !this.editor.text) {
+      return {text: `${this.stopAhead.done ? 'Runs when the prompt is back' : `Runs at the prompt once ${this.stopAhead.program} stops`} · Esc takes it back`, waiting: false};
+    }
     if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
@@ -11724,7 +11780,57 @@ export class TerminalApp {
     // as a line.
     if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
     if (!this.queueAvailable()) return undefined;
-    return {text: `Enter queues the next command · Ctrl+S sends to ${program}`, waiting: false};
+    return {text: `Enter holds it for approval · Ctrl+Q runs it after · Ctrl+S sends to ${program}`, waiting: false};
+  }
+
+  /**
+   * A line entered right after Ctrl+C or Ctrl+Z (see stopAhead). It is never written while the stopped command still
+   * owns the terminal: a survivor that never asks would leave it in the terminal, and the shell would then run it.
+   */
+  private holdForStop(text: string, done = false): void {
+    const running = this.running!;
+    this.editor.clear();
+    this.runningDraft = undefined;
+    if (this.stopAhead?.startId === running.startId) { this.stopAhead.lines.push(text); this.render(); return; }
+    const program = commandWords(running.command)[0] ?? 'the command';
+    // A done command only has its prompt left to come: nothing but that prompt settles the line, never time.
+    let timer: NodeJS.Timeout | undefined;
+    if (!done) {
+      timer = setTimeout(() => this.settleStopAhead('window'), Math.max(0, (running.stoppedAt ?? Date.now()) + STOP_TYPE_AHEAD_MS - Date.now()));
+      timer.unref?.();
+    }
+    this.stopAhead = {startId: running.startId, lines: [text], program, ...(timer ? {timer} : {}), done};
+    this.render();
+  }
+
+  /**
+   * Where the lines held after a stop go, once that is known: `prompt` (the stopped command ended), `asked` (it survived
+   * and asks now: its reply), `window` (the stop window ended), `cancel` (Esc: back to the composer), `drop`.
+   */
+  private settleStopAhead(how: 'prompt' | 'asked' | 'window' | 'cancel' | 'drop', asked = false): void {
+    const held = this.stopAhead;
+    if (!held) return;
+    // A question held back during the window applies first, whichever timer fires first: the program still reads.
+    if (how === 'window') this.staleStopReport?.();
+    if (how === 'window' && this.running?.startId === held.startId && this.inputState?.request) how = 'asked';
+    if (how === 'window' && this.running?.startId !== held.startId) return;
+    if (held.timer) clearTimeout(held.timer);
+    this.stopAhead = undefined;
+    if (how === 'drop') return;
+    if (how === 'cancel') { this.editor.replaceText(held.lines.join('\n')); this.render(); return; }
+    if (how === 'asked') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
+    // The program survived the stop: the lines go to it, as a terminal delivers type-ahead (it may ask without NMSh
+    // seeing it: on macOS the ^C a terminal echoes ends the question-shaped line). Whatever it never reads, the shell
+    // takes back when the command ends, and it waits for approval there: never a command by itself.
+    if (how === 'window') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
+    // It asked something after the stop and then ended: no line is known to be for the prompt; each waits for approval.
+    if (asked) { for (const line of held.lines) this.enqueue(line, held.program); return; }
+    // The verified prompt: the first line as if entered there, any others queued after it, in order.
+    const [first, ...rest] = held.lines;
+    if (this.editor.text || !first) { for (const line of held.lines) this.enqueue(line); return; }
+    this.editor.replaceText(first);
+    this.routeComposer('enter');
+    for (const line of rest) this.enqueue(line);
   }
 
   /** Ctrl+C or Ctrl+Z was sent moments ago: typing is type-ahead for the prompt the stop brings back. */
@@ -11740,6 +11846,17 @@ export class TerminalApp {
    */
   private answersByDefault(): boolean {
     return Boolean(this.inputState?.request) || (this.commandLine.open && promptShaped(this.commandLine.line));
+  }
+
+  /**
+   * The queue as drawn (#426): a held line (typedWhile) appears as where it came from, never as its text, until the
+   * person asks to see it (Tab in its review, or editing it). Every queue surface draws this; actions use the real state.
+   */
+  private shownQueue(state: QueueState = this.queueState): QueueState {
+    if (!state.entries.some(entry => entry.typedWhile && !this.revealedQueue.has(entry.id))) return state;
+    const reviewing = this.queueReview?.kind === 'approve' ? this.queueReview.id : undefined;
+    return {...state, entries: state.entries.map(entry => entry.typedWhile && !this.revealedQueue.has(entry.id)
+      ? {...entry, text: `(typed while ${entry.typedWhile} ran${entry.id === reviewing ? ' · Tab shows it' : ''})`} : entry)};
   }
 
   /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
@@ -11764,13 +11881,13 @@ export class TerminalApp {
         const cause = pause.reason === 'failed' ? `exit ${pause.exitCode} · ${pauseReason(pause)}` : pause.reason === 'user' ? 'Paused manually' : pauseReason(pause);
         return truncateAnsi(`${STOPPED}${cause}${RESET}${SUBTLE} · ${this.queueState.entries.length} waiting${RESET}`, columns);
       }
-      const next = this.queueState.entries[0]!;
+      const next = this.shownQueue().entries[0]!;
       const tail = ` · ${next.condition === 'approve' && !next.approved ? 'Approval' : 'Next'} · ${this.queueState.entries.length} pending`;
       return truncateAnsi(`${SECONDARY}${GLYPHS.selection} ${queuePreview(next.text, Math.max(1, columns - displayWidth(tail) - 2))}${SUBTLE}${tail}${RESET}`, columns);
     }
     if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
     const affordance = this.queueAffordance();
-    return queueRow(this.queueState, columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
+    return queueRow(this.shownQueue(), columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
   }
 
   private onQueueState(state: QueueState, news: QueueNews): void {
@@ -11778,6 +11895,7 @@ export class TerminalApp {
     const previous = this.queueState;
     if (staleQueueSnapshot(previous, state)) return;
     this.queueState = state;
+    this.noteHeldLines(previous, state);
     const pause = this.pendingQueuePause;
     if (pause && (news.refused || pause.revision === undefined || (state.revision !== undefined && state.revision > pause.revision))) {
       this.pendingQueuePause = undefined;
@@ -11856,12 +11974,36 @@ export class TerminalApp {
   }
 
   /**
-   * Add the composer's text to the queue. `typedWhileRunning`: a plain Enter while a command runs, with no question
-   * NMSh could see. Such a line may be a reply to a read that has not asked yet (#426); if that read gives up unseen
-   * and the command succeeds, the line would run as a command. One that does not start with a command this shell
-   * knows would only fail as a command (a password would reach the shell's history), so it waits for approval instead.
+   * Held lines (typedWhile) that appeared in the owner's queue (#426). Those this window did not add are typing a
+   * command never read, which the owner took back from the terminal when it ended: said once, without their text. With
+   * queueing off they would wait unseen, so they are removed instead. Reveals end with their entries.
    */
-  private enqueue(text: string, typedWhileRunning = false): void {
+  private noteHeldLines(previous: QueueState, state: QueueState): void {
+    for (const id of this.revealedQueue) if (!state.entries.some(entry => entry.id === id)) this.revealedQueue.delete(id);
+    const known = new Set(previous.entries.map(entry => entry.id));
+    const fresh = state.entries.filter(entry => entry.typedWhile && !known.has(entry.id));
+    const own = Math.min(this.ownHeldAdds, fresh.length);
+    this.ownHeldAdds -= own;
+    const owner = fresh.slice(own);
+    if (!owner.length) return;
+    const program = owner[0]!.typedWhile!;
+    if (!this.queueAvailable() && this.session.features.has('queue')) {
+      for (const entry of owner) this.session.queue({op: 'remove', id: entry.id});
+      this.output.addFrontendInteraction(program, `${program} did not read some of your typing; it was discarded, not run.`, INFO);
+      return;
+    }
+    this.output.addFrontendInteraction(program, `${program} did not read some of your typing; it never runs by itself and waits for your approval (/queue).`, INFO);
+  }
+
+  /**
+   * Add the composer's text to the queue. `typedWhile`: the program that ran when this line was entered with a plain
+   * Enter, with no question NMSh could see (#426). The line may be that program's reply to a read NMSh never saw (a timed
+   * read that gave up between looks, any program's read on macOS), and nothing about its text says otherwise: `yes`, a
+   * one-time code and `ls` are all valid replies. So it is quarantined: the owner holds it for the person's approval,
+   * it is shown by where it came from rather than by its text, and it is never offered again by Up. Ctrl+Q (no
+   * typedWhile) is the explicit way to queue a command to run after.
+   */
+  private enqueue(text: string, typedWhile?: string): void {
     if (!this.queueAvailable()) {
       this.output.addFrontendInteraction('/queue', this.session.features.has('queue')
         ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
@@ -11869,37 +12011,24 @@ export class TerminalApp {
       return;
     }
     this.syncQueuePolicy();
-    const waits = typedWhileRunning && !this.startsWithCommand(text);
-    this.session.queue({op: 'add', text, ...(waits && this.queueConditionsAvailable() ? {condition: 'approve' as const} : {})});
-    if (waits) {
-      const program = commandWords(this.running?.command ?? '')[0] ?? 'the command';
-      if (!this.queueConditionsAvailable()) this.session.queue({op: 'pause'});
+    if (typedWhile === undefined) {
+      this.session.queue({op: 'add', text});
+      this.sessionSubmissions.push({text, slash: false});
+      if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+    } else {
+      const conditions = this.queueConditionsAvailable();
+      // A service without per-entry approval pauses the whole queue first, so nothing runs before the pause lands.
+      if (!conditions) this.session.queue({op: 'pause'});
+      this.session.queue({op: 'add', text, ...(conditions ? {condition: 'approve' as const, typedWhile} : {})});
+      if (conditions) this.ownHeldAdds += 1;
       // The note never repeats the text: it may be a password.
-      this.output.addFrontendInteraction(program, `The line queued while ${program} runs does not start with a command this shell knows, so it may be a reply for ${program}; it ${this.queueConditionsAvailable() ? 'waits for your approval' : 'pauses the queue'} (/queue) instead of running by itself.`, INFO);
+      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after.`, INFO);
     }
-    this.sessionSubmissions.push({text, slash: false});
-    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
     this.editor.clear();
     this.composerHistory.reset();
     this.runningDraft = undefined;
     this.queueCompose = false;
     this.render();
-  }
-
-  /**
-   * Whether a queued line's first command word is one this shell knows: an alias, function, builtin or keyword, or an
-   * executable by path or on PATH. A word not classified yet is checked against the shell's builtins and PATH. Shell
-   * syntax with no command word (an assignment, a group) and a function definition are the person's shell input.
-   */
-  private startsWithCommand(text: string): boolean {
-    const first = text.split('\n').find(line => line.trim()) ?? '';
-    if (/^\s*(?:function\s+\S|[A-Za-z_][\w.:-]*\s*\(\s*\))/u.test(first)) return true;
-    const token = this.highlighter.tokenize(graphemes(first), this.semanticService.cache)
-      .find(item => ['Command', 'KnownCommand', 'Builtin', 'Alias', 'Function', 'UnknownCommand'].includes(item.type));
-    if (!token) return true;
-    if (token.type === 'UnknownCommand') return false;
-    if (token.type !== 'Command') return true;
-    return token.text.includes('/') || shellAdapter(this.shellId).builtins.has(token.text) || Boolean(resolveCommand(token.text));
   }
 
   /**
@@ -11935,6 +12064,11 @@ export class TerminalApp {
       }
       // A rapid second Enter after confirming a queue review is not an answer for the command it just started.
       if (intent === 'enter' && !text.trim() && Date.now() - this.queueConfirmedAt < QUEUE_CONFIRM_SETTLE_MS) return;
+      // Right after Ctrl+C or Ctrl+Z, a line is for the prompt the stop brings back; it waits for that to be verified.
+      // So is a line begun once the shell said the command is done (its prompt hooks run): no program is left to read
+      // it, and it is no reply (#436). One begun before that may be a reply, and is held for approval below.
+      const afterDone = Boolean(this.running.done && this.runningDraft?.startId === this.running.startId && this.runningDraft.afterDone);
+      if (intent === 'enter' && text.trim() && (this.justStopped() || afterDone) && !this.answersByDefault() && !this.passthrough) { this.holdForStop(text, afterDone && !this.justStopped()); return; }
       const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
@@ -11945,10 +12079,12 @@ export class TerminalApp {
       }
       if (!text.trim()) return;
       if (this.reviewMixedBlock(text)) return;
-      this.enqueue(text, intent === 'enter');
+      this.enqueue(text, intent === 'enter' ? commandWords(this.running.command)[0] ?? 'the command' : undefined);
       return;
     }
     if (intent === 'send') return;
+    // Held keys replayed after their command ended: this Enter was pressed while it ran, so it is no command (#426).
+    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.replayTypedWhile); return; }
     if (this.reviewMixedBlock(text)) return;
     if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
@@ -11958,7 +12094,11 @@ export class TerminalApp {
       this.render();
       return;
     }
-    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
+    // A held line waiting for approval at the head runs nothing by itself, so it never holds the prompt: a command you
+    // submit there runs now (#426). Anything behind the held line waits for it either way.
+    const head = this.queueState.entries[0];
+    const held = Boolean(head && head.condition === 'approve' && !head.approved);
+    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused && !held))) {
       this.enqueue(text);
       return;
     }
@@ -12137,6 +12277,11 @@ export class TerminalApp {
   private onInputState(state: InputState): void {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
+    // The question just answered, reported late: it is answered (#426). A later one is new.
+    if (state.request && this.answeredQuestion?.startId === this.running.startId && state.request.since <= this.answeredQuestion.since) {
+      const {request: _answered, ...rest} = state;
+      state = rest;
+    }
     // A question newer than the hidden one NMSh answered: typing from now on may be its reply, not type-ahead.
     if (state.request && this.hiddenAnswer && state.request.since > this.hiddenAnswer.at) this.hiddenAnswer = undefined;
     // A question that began before Ctrl+C or Ctrl+Z is the one the stop ended, reported late (the session sampled it
@@ -12148,13 +12293,22 @@ export class TerminalApp {
       const {request: _ended, ...current} = state;
       const running = this.running;
       const reported = state;
-      const later = setTimeout(() => {
+      const apply = () => {
+        if (this.staleStopReport === apply) this.staleStopReport = undefined;
         if (this.running === running && this.inputState === current) this.onInputState(reported);
-      }, Math.max(0, stoppedAt + STOP_TYPE_AHEAD_MS - Date.now()));
+      };
+      this.staleStopReport = apply;
+      const later = setTimeout(apply, Math.max(0, stoppedAt + STOP_TYPE_AHEAD_MS - Date.now()));
       later.unref?.();
       state = current;
     }
     this.inputState = state;
+    // The shell said the command is done: typing begun from now on is for the prompt, never a reply (#426, #436).
+    if (state.done) this.running.done = true;
+    if (state.request && stoppedAt !== undefined && state.request.since >= stoppedAt) {
+      this.running.askedAfterStop = true;
+      if (this.stopAhead?.startId === this.running.startId) this.settleStopAhead('asked');
+    }
     const draft = this.runningDraft;
     if (state.terminalOwner) {
       // A native reader took the terminal: what was typed for this command after it started is its input, as a
@@ -12351,7 +12505,9 @@ export class TerminalApp {
         return;
       }
       this.replayingHeld = true;
-      try { for (const item of keys) this.handleKey(item); } finally { this.replayingHeld = false; }
+      // Keys typed while the command ran: an Enter among them never runs a command at the prompt (#426).
+      if (ended) this.replayTypedWhile = program;
+      try { for (const item of keys) this.handleKey(item); } finally { this.replayingHeld = false; this.replayTypedWhile = undefined; }
       this.render();
     };
     // No usable evidence yet: keep the typing held and hidden, and say so (never route it on a guess).
@@ -12373,8 +12529,8 @@ export class TerminalApp {
       sawHidden: false, sawAnsweredHidden: false, atPrompt: false, program, settle};
     this.ownershipLook = hold;
     // A look that saw nothing usable (a probe failed or timed out) gets one more look before the typing is left held:
-    // gathering evidence once more, not waiting longer. An older service does not say what it saw: its answer is
-    // routed as it always was (documented limit).
+    // gathering evidence once more, not waiting longer. An older service never says what it saw, so its typing is left
+    // held the same way: fail closed, never routed on no evidence (#426).
     let relooked = false;
     const deadline = Date.now() + OWNERSHIP_LOOK_MS;
     const look = () => void this.lookWhenStarted(running.startId, deadline).then(answered, () => answered('unknown'));
@@ -12385,10 +12541,12 @@ export class TerminalApp {
       // typing is not a known reply (not discarded) and not known type-ahead (never run by itself if the command ends).
       if (result === 'hidden') { if (afterHiddenAnswer()) hold.sawAnsweredHidden = true; else hold.sawHidden = true; }
       // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
-      // held by a command that ended apply now, not those for one still running.
+      // held by a command that ended apply now, not those for one still running. Typing is type-ahead for the prompt
+      // only when the shell's done marker reached this window before it began (InputState.done): a look's idle says
+      // when the look sampled, not when the key was pressed.
       if (result === 'idle') hold.ended = true;
-      const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request)
-        || (result === undefined && this.session.features.has('input-look-result'));
+      // An older service never says what it saw: that is no evidence either, so its typing stays held (fail closed).
+      const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request) || result === undefined;
       if (!blind) settle('route');
       else if (!relooked && this.running?.startId === running.startId) { relooked = true; look(); }
       else doubt();
@@ -12409,7 +12567,7 @@ export class TerminalApp {
     if (key.kind === 'interrupt') {
       if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
       this.session.interrupt();
-      this.answerSent();
+      this.answerSent(true);
       return;
     }
     if (key.kind === 'eof') { this.session.endInput(); return; }
@@ -12427,8 +12585,11 @@ export class TerminalApp {
    * keys typed next (the next command, at typing speed) are routed on fresh evidence, never on the question that was
    * just answered, so they never reach a program that stopped reading or a shell prompt NMSh does not draw.
    */
-  private answerSent(): void {
-    if (this.inputState?.request) this.inputState = {timing: this.inputState.timing};
+  private answerSent(stopped = false): void {
+    const request = this.inputState?.request;
+    // A stop is no answer: a program that reads through Ctrl+C still asks the same question (#436).
+    if (request && this.running && !stopped) this.answeredQuestion = {startId: this.running.startId, since: request.since};
+    if (request) this.inputState = {timing: this.inputState!.timing};
     this.commandLine.reset();
   }
 

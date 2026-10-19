@@ -43,7 +43,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         let mark = frontend.mark;
         frontend.pty.write('sleep 2\r');
         await frontend.waitFor(/Running sleep 2|Cooking|[A-Z][a-z]+…/u, mark);
-        frontend.pty.write(`touch ${marker}\r`);
+        frontend.pty.write(`touch ${marker}\u0011`);
         await frontend.waitFor(/› touch .*Next/u, mark);
         frontend.pty.write('/queue\r');
         await frontend.waitFor(/Command queue[\s\S]*touch/u, mark);
@@ -72,7 +72,7 @@ test('live: "runs even after a failure" goes on after a plain failure; the defau
     const mark = frontend.mark;
     frontend.pty.write(`sh -c 'sleep 1; exit 3'\r`);
     await frontend.waitFor(/Running sh -c|[A-Z][a-z]+…/u, mark);
-    frontend.pty.write(`touch ${cleanup}\r`);
+    frontend.pty.write(`touch ${cleanup}\u0011`);
     await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('/queue\r');
     await frontend.waitFor(/Command queue/u, mark);

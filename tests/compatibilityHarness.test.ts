@@ -143,6 +143,9 @@ test('raw job-control, EOF and arrow bytes reach a full-screen program unchanged
     app.pty.write('\u001b[1;5C'); await app.waitFor(/INTERACTIVE-BYTES-1b5b313b3543/, mark);
     app.pty.write('q');
     await app.waitFor(/INTERACTIVE-EXIT-0/, mark);
+    // The prompt first: keys typed into the program as it exits are its own, and what it never read is taken back and
+    // held for approval when its command ends (#426), never run.
+    await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15_000, 'the prompt after the program');
     await app.run('echo AFTER-RAW', /AFTER-RAW/);
   } finally { await sandbox.dispose(); }
 });

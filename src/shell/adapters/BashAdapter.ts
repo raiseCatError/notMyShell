@@ -6,7 +6,7 @@ import {runExternal} from '../../providers/providers.js';
 import {completionLabel, filterCompletions, type CompletionCandidate, type CompletionContext, type CompletionKind, type CompletionSource} from '../completion.js';
 import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
-import {posixQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
+import {posixQuote, UNREAD_DRAIN_SCRIPT, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
 import {bashEnvironmentSnapshot} from '../../context/shellEnvironment.js';
@@ -108,6 +108,14 @@ __nmsh_precmd() {
   local nmsh_status=$? nmsh_command
   # The command is done (#436): the prompt hooks below may hold the terminal; nothing they do is its input.
   ${marker('done')}
+  # Input NMSh delivered to the command that it never read: taken out of the terminal before Bash reads its next
+  # command line, and handed to NMSh to hold for approval; it never runs as a command (#426).
+  if [[ -s ${posixQuote(context.unreadFlag ?? '')} ]]; then
+    local nmsh_unread
+    nmsh_unread=$(builtin command sh -c ${posixQuote(UNREAD_DRAIN_SCRIPT)} </dev/tty 2>/dev/null)
+    : >| ${posixQuote(context.unreadFlag ?? '')}
+    [[ -n $nmsh_unread ]] && ${marker('unread;%s')} "$nmsh_unread"
+  fi
   for nmsh_command in "\${__nmsh_user_prompt_command[@]}"; do
     [[ -n $nmsh_command ]] || continue
     __nmsh_set_status "$nmsh_status"
