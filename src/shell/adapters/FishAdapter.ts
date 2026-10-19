@@ -30,12 +30,21 @@ const FISH_BUILTINS = new Set(['and', 'begin', 'bg', 'bind', 'block', 'break', '
   'time', 'true', 'type', 'ulimit', 'wait', 'while', 'abbr', 'argparse']);
 
 /**
- * One of NMSh's markers, written again once if the write fails. Fish 3 does not retry a terminal write that a signal
- * interrupts (a window-size change while the write waits), and a lost marker leaves NMSh wrong about whether a command
- * runs (#443). An interrupted write normally writes nothing (as in #443's trace), so the marker arrives once.
+ * One of NMSh's markers. Fish 3 does not retry a terminal write that a signal interrupts (a window-size change while
+ * the write waits): it prints "write: Interrupted system call" on its own stderr and the bytes are gone, and a lost
+ * marker leaves NMSh wrong about whether a command runs (#443). Retrying in Fish still printed that error, and a burst
+ * of resizes could interrupt every retry. On Fish 3 the marker goes through `cat` instead: printf only fills a pipe (a
+ * few bytes, never blocked), and cat, which ignores the window-size signal and retries an interrupted write, writes
+ * it to the terminal. The marker travels on stdin, never in a process's arguments. Fish 4 retries by itself.
  */
-export const FISH_MARK_FUNCTION = `function __nmsh_mark
-  printf $argv 2>/dev/null; or printf $argv
+export const FISH_MARK_FUNCTION = `if string match -qr '^[0-3]\\.' -- $version; and command -q cat
+  function __nmsh_mark
+    printf $argv | command cat
+  end
+else
+  function __nmsh_mark
+    printf $argv 2>/dev/null; or printf $argv
+  end
 end`;
 
 function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
