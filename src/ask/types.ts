@@ -94,7 +94,8 @@ export interface CommandBlock {
   argv: string[];
   /** Indices of argv that are placeholders, never filled by guessing. */
   placeholders?: number[];
-  provenance: 'reference' | 'context';
+  /** suggested: a command the person's local model proposed (#432); Copy/Insert only, its risk labelled by NMSh. */
+  provenance: 'reference' | 'context' | 'suggested';
   risk: ActionRisk;
   /** One line under the command: what it does here. */
   note?: string;

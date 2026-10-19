@@ -2,7 +2,7 @@ import type {Reasoning} from './runtimes.js';
 import type {LocalUnderstandingSettings} from '../prompt/configuration.js';
 import {discoverLocal, systemDiscoveryAdapters, type DiscoveryAdapters, type FoundModel, type FoundRuntime} from './discovery.js';
 import {ModelClient, type ModelStatus} from './ModelClient.js';
-import {validateFoldHint, validateInterpretation, type FoldHint, type FoldRequest, type IntentInterpretation, type IntentRequest} from './tasks.js';
+import {validateCommandSuggestion, validateFoldHint, validateInterpretation, type CommandRequest, type CommandSuggestion, type FoldHint, type FoldRequest, type IntentInterpretation, type IntentRequest} from './tasks.js';
 
 export type UnderstandingScope = 'ask' | 'folding';
 export const SCOPE_LABELS: Record<UnderstandingScope, string> = {ask: 'Ask', folding: 'Smart Folding'};
@@ -59,6 +59,31 @@ export class LocalUnderstanding {
       const used = output === undefined ? reasoning : client.lastReasoning;
       this.lastInference = {label: `Ask intent · ${used === 'thinking' ? 'thinking retry' : 'non-thinking'}`, at: Date.now(), ok: Boolean(interpretation)};
       return interpretation;
+    } finally { this.activeSince = undefined; }
+  }
+
+  /**
+   * One suggested shell command for an Ask request (#432), only when command suggestions are set to the local model
+   * and a model is chosen. The request carries the text, the shell and the OS family only. Returns the validated
+   * suggestion, null when the model declined, or a reason it could not be asked; never a command NMSh runs.
+   */
+  async suggestCommand(request: CommandRequest): Promise<{suggestion: CommandSuggestion | null} | {unavailable: string}> {
+    const settings = this.settings();
+    if (settings.mode === 'off') return {unavailable: 'Command suggestions use your local model, and local understanding is Off. Turn it on in /llm.'};
+    if (!settings.model) return {unavailable: 'Command suggestions use your local model, and none is chosen yet. Choose one in /llm.'};
+    this.requests += 1;
+    this.activeSince = Date.now();
+    try {
+      const client = this.connection();
+      const output = await client.infer('command', request, {priority: 'interactive', mode: settings.mode, model: settings.model, timeoutMs: 20_000, reasoning: 'fast'});
+      if (output === undefined) {
+        return {unavailable: client.protocol !== undefined && !client.features.has('command')
+          ? 'The local model service was started by an older NMSh and cannot suggest commands; it restarts on its own once idle.'
+          : 'The local model did not answer in time.'};
+      }
+      const suggestion = validateCommandSuggestion(output);
+      this.lastInference = {label: 'Ask command suggestion · non-thinking', at: Date.now(), ok: suggestion !== undefined};
+      return suggestion === undefined ? {unavailable: 'The local model\'s answer was not a single plain command; nothing is shown.'} : {suggestion};
     } finally { this.activeSince = undefined; }
   }
 

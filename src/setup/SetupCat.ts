@@ -432,6 +432,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('localUnderstanding'), note: draft => localUnderstandingNote(draft)},
     {row: configRow('localUnderstandingAsk'), note: () => 'Improve Ask understanding'},
     {row: configRow('localUnderstandingFolding'), note: () => 'Improve Smart Folding'},
+    {row: configRow('askCommandSuggestions'), note: draft => draft.askCommandSuggestions === 'local'
+      ? 'Local model: a request Ask cannot place may get one suggested command, labelled by NMSh, to copy or insert. It never runs'
+      : 'Off: Ask answers on its own; nothing is sent to a model for commands'},
   ]},
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),
