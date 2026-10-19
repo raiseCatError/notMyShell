@@ -229,7 +229,9 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
     await run('echo SIZE-$(stty size | tr " " x)', /SIZE-\d+x100/);
     pty.resize(120, 40);
     await until(async () => { const mark = output.length; pty.write('echo SIZE-$(stty size | tr " " x)\r');
-      try { await until(() => /SIZE-\d+x120/u.test(plain(mark)), 2000); return true; } catch { return false; } }, 20000, 'resize reached the shell');
+      try { await until(() => /SIZE-\d+x120[\s\S]*Completed/u.test(plain(mark)), 2000); return true; } catch { return false; } }, 20000, 'resize reached the shell');
+    // Each probe is entered at the prompt; one entered while an earlier probe still ran is held (#426), never run.
+    await new Promise(done => setTimeout(done, 500));
     const duration = uniqueSleep(176);
     pty.write(`sleep ${duration}\r`);
     await until(() => inForeground(duration), 20000, 'sleep in the foreground');
