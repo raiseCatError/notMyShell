@@ -50,6 +50,14 @@ cat > "$work/input/plain-read.sh" <<'EOF'
 # A line read with no prompt.
 read -r reply; printf 'reply was %s\n' "$reply"
 EOF
+cat > "$work/input/delayed-prompt.sh" <<'EOF'
+#!/bin/sh
+# As sudo does: two seconds of work, then a prompt and a read with echo off. Type before the prompt appears.
+sleep 2
+printf 'QA-Password: '
+stty -echo; IFS= read -r secret; stty echo; printf '\n'
+printf 'got %s characters\n' "${#secret}"
+EOF
 chmod +x "$work/input/"*.sh
 
 # 10. Prompt hooks (#436): source it in a session to make that session's prompt hook take 2 seconds.

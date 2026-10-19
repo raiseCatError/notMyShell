@@ -155,6 +155,29 @@ tree differs from the green candidate `567cf533` only by the commits below plus 
   routes typing as before. Holding happens only when a look actually saw hidden input; on an idle machine at human
   typing speed the prompted cases do not reach it.
 
+**Release gate review of `ab5390a4` (2026-10-19, after CI was green):** the candidate was **not releasable**. Probes on
+the exact candidate (deterministic fixture, then live zsh and Bash) found four more routes, all fixed in #437
+(`6ebf3832`, live test `271e67bb`) with regressions that fail first:
+1. Tab on held typing replayed every held key: a Ctrl+Q typed while held queued the revealed text, and an idle queue ran
+   it at once (at the prompt, and while a command ran). Tab now replays only text and editing keys.
+2. A password typed in the composer before the program printed its prompt (`sudo`) stayed the draft: hidden while asked,
+   shown again after, one Enter from running. Live on `ab5390a4`: it ran and entered NMSh's journal. It now leaves the
+   composer when the hidden question appears and is held at the prompt when the command ends; type-ahead typed right
+   after Ctrl+C stays the next command (#436).
+3. The same with its Enter: the Enter went to `sudo` as an empty answer and the password was drawn during the retry. An
+   Enter held with such a draft is now dropped.
+4. A visible reply queued before NMSh saw a line `read` (CI's first-attempt failure) ran after the command succeeded.
+   The approval rule for entries queued while a command ran now covers every question NMSh sees.
+- Checked and clean: typed input is never logged (the session backlog keeps output, executed command lines and prompts
+  only; `NMSH_DEBUG_KEYS` skips running and held input); queue entries that never run leave no text (skipped entries are
+  counted, summaries hold executed commands); composer drafts and session submissions stay in memory; held typing has no
+  timer or later look that releases it.
+- #443's consequence was re-assessed: a lost Fish 3 marker can make NMSh treat a running program as the idle shell, so
+  what is typed for it would be drawn in the composer (by analysis; not observed). Markers are now written again once
+  when a write fails (#445). Output loss remains documented.
+- Remaining limits, worded in the changelog by case: a reply to a `read` NMSh has not seen yet, input entered before any
+  question, hidden input, history, prompt hooks.
+
 **Physical QA:** one consolidated walkthrough for the v0.22 build ([v0.22 physical QA](../testing/v022-physical-qa.md)),
 replacing v0.21's (never run) and the per-PR passes.
 
