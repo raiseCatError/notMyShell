@@ -292,3 +292,89 @@ Decisions and risks:
   default, local model only), with the quality limit in Known limitations.
 - Lesson: `git stash` does not take untracked files. One test file was swept into another branch's commit, amended
   out and force-pushed with a lease (#448, `31fab989` → `3d606e7a`); each branch now has its own worktree.
+
+## Final hardening pass (2026-10-19, #457)
+
+Baseline `release/v0.22.0` = `fa7ec665`; work in `…/worktrees/notMyShell/v022-harden` (branch `fix/v022-harden`), baseline
+evidence in `…/v022-harden-base` (detached at `fa7ec665`, scratch copies of the new tests, never committed). Scratch
+volume `T7Tmp` verified (`62D4E8A9-087C-4927-A62F-25BB88B7F1C7`).
+
+**Maintainer decisions** (asked before any routing change, as a redesign of the queue's typing UX):
+- While a command runs and NMSh sees no question, a plain Enter **quarantines** the line (held for approval, shown by
+  where it came from); **Ctrl+Q** is the explicit run-after. Chosen over "only Ctrl+Q queues" and "hold at the prompt".
+- An **older session service** fails closed and keeps its sessions (rather than running new sessions in-process).
+
+### #426: exact root cause
+
+NMSh cannot observe every read: a prompt-less read that gives up between looks, and any program's read on macOS, are
+invisible. Two independent routes then turned a reply into a shell command:
+1. **Withheld input.** A plain Enter while a command ran queued the line in the owner's queue to run by itself after a
+   successful command. #448 held only lines whose first word was not a known command, so a reply that is itself a
+   command (`yes`, `ls`, `sudo`), a code or an assignment still ran. Keys held for an ownership look whose command ended
+   were also replayed at the prompt, so their Enter submitted the line directly.
+2. **Delivered input.** Bytes NMSh wrote to the PTY for a program (an answer to a question that had just expired, keys
+   in passthrough, a hidden reply after a read timed out) and that the program never read stayed in the terminal's
+   input queue. The shell (zsh and Bash read commands in canonical mode, Fish's reader in raw mode) then read a whole line
+   as its next command and glued a partial line onto the next submission. Reproduced on `fa7ec665`, all three shells:
+   `["sleep 1","echo QZ-RAN","QZSECRETecho NEXT"]`.
+
+### What changed architecturally
+
+Execution now depends on the input's lifecycle, never on its text. A line runs as a command only when it is submitted at
+a verified prompt, queued with Ctrl+Q, or approved:
+- **Withheld lines** carry `typedWhile` (`CommandQueue`): the *owner* forces approval and refuses to clear it; every
+  queue surface masks the text until Tab (`shownQueue`); Up never recalls it; held-look replays keep the rule
+  (`replayTypedWhile`); a held head never blocks a command submitted at the prompt.
+- **Delivered bytes never outlive their command:** `ShellSession` writes a per-session flag before the first byte it
+  delivers to a running command; each shell's first prompt hook, if the flag is set, drains the terminal
+  (`UNREAD_DRAIN_SCRIPT`: `stty -icanon min 0 time 0`, `head`, `od`, immune to SIGTTOU/SIGTTIN, 64 KiB) and reports it in an
+  authenticated `unread` marker; the owner holds each line (`QueueDispatcher.holdUnread`, `unreadLines`). Input that
+  arrives after the done marker is held, never written.
+- **Epochs and verified transitions:** the shell's `done` marker now reaches windows in the input state; a draft begun
+  after it is type-ahead for the prompt (held, never written, run at the verified prompt), one begun before it is held.
+  Lines typed in the Ctrl+C/Ctrl+Z window are held until the outcome is verified (prompt → run; a question → its reply;
+  still running when the window closes → delivered, so unread bytes fall to the drain). A late report of the question
+  just answered is dropped (it re-armed direct input and split the next command). Ctrl+C is no answer.
+- **Older services** (no look result) fail closed: no evidence means held, hidden.
+
+### #443: exact root cause and change
+
+`TerminalApp.render` resized the PTY to `plan.ptyRows`, the current frame's transcript capacity, so the activity row at
+each command start and end, a growing composer, menus, notices, the inspector and Settings each sent SIGWINCH to the
+foreground job; Fish 3 drops a builtin write it interrupts. The rows now come from a reference layout (`ptyRows()`), and
+while a command runs only `onResize` (a real window change) or the end of a full-screen handover resizes. Deterministic:
+6 UI-only resizes in one sequence on `fa7ec665`, 0 now. Live (`ptyResizeLive`, zsh/Bash/Fish 4): 0 signals from chrome,
+exactly 1 per window resize.
+
+**Fundamental limit:** Fish 3 does not restart a write that SIGWINCH interrupts. NMSh no longer causes the signal; a
+person resizing the window while Fish 3 writes its own output can still lose part of it, as in any terminal.
+
+### Evidence
+
+| Check | `fa7ec665` | `fix/v022-harden` |
+| --- | --- | --- |
+| `inputQuarantine` (deterministic) | 15 of 19 fail | 25/25 |
+| Live reply `ls` before an unseen timed read (zsh, Bash, Fish) | runs, journaled | held, never runs |
+| Unread line + partial secret (zsh, Bash, Fish) | `echo QZ-RAN` ran; `QZSECRETecho NEXT` ran | held; next command whole (`unreadInputLive` 13/13) |
+| `ptyStableSize` | 6 UI-only resizes | 0 |
+| Related deterministic suites (63 files) | — | 628 tests, 0 failed after updating 8 old-policy assertions |
+| Related live suites, sequential, macOS | — | all pass after updating queue tests to Ctrl+Q (see commits) |
+
+Bugs this pass introduced and fixed before integration, all found by tests: a held head blocked prompt submissions;
+typing during a slow prompt hook was held (A10 step 3); a survivor of Ctrl+C on macOS did not get its answer; a stale
+hidden report split fast type-ahead (CI).
+
+### Remaining risks
+- A sub-millisecond window between the shell finishing a command and the service reading its done marker: input the
+  frontend sends then can reach the shell (bytes in the kernel cannot be recalled).
+- A line typed right after Ctrl+C for a question the program asks unseen, which then gives up before the program ends,
+  runs at the prompt.
+- Older (v0.20) services: no drain or done marker; typing a program never reads can reach the shell there.
+- The approval review hides the text by default; approving without Tab runs text the person has not re-read.
+- zsh's single `precmd` and Fish's other `fish_postexec` handlers still run before the done marker (now only a UX
+  limit: typing then is held, never run).
+
+### Usability tradeoffs
+Plain-Enter type-ahead needs an approval (two keys) or Ctrl+Q; keys typed into a program as it exits wait for approval;
+the transcript can be a few rows shorter than the shell's terminal while chrome is open. Cost: one `sh`/`stty`/`head`/`od`
+chain at a prompt only after a command NMSh delivered input to.
