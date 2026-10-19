@@ -807,8 +807,26 @@ export class TerminalApp {
 
   private edgeAccessory(kind: 'composerBorder' | 'separator', plan: ScreenPlan, now = Date.now()): {ansi: string; width: number} | undefined {
     const view = this.awakeViewNow(now);
-    if (!view || plan.awake?.slot !== (kind === 'composerBorder' ? 'topEdge' : 'bottomEdge')) return undefined;
+    if (!view || plan.awake?.slot !== (kind === 'composerBorder' ? 'topEdge' : 'bottomEdge')) return this.historyEdge(kind, plan);
     return plan.awake.expandedOnEdge && view.expanded ? view.expanded : view.compact;
+  }
+
+  /**
+   * History n/N while Up/Down browse an unchanged recalled entry (#389): on the bottom composer edge, or the top one
+   * when that is the free one, never over Keep Awake or a header prompt. It never gets a row of its own, so with no
+   * free edge (or no room on it; renderComposerEdge checks the width) it is simply not shown.
+   */
+  private historyEdge(kind: 'composerBorder' | 'separator', plan: ScreenPlan): {ansi: string; width: number} | undefined {
+    if (!this.historyBrowsing || plan.panelActive) return undefined;
+    const at = this.composerHistory.position(this.editor.text);
+    if (!at) return undefined;
+    const edges = composerEdgeStates(plan, this.promptConfiguration.placement);
+    const awake = plan.awake?.slot;
+    const free = edges.bottomEdge === 'available' && awake !== 'bottomEdge' ? 'separator'
+      : edges.topEdge === 'available' && awake !== 'topEdge' ? 'composerBorder' : undefined;
+    if (free !== kind) return undefined;
+    const text = `History ${at.position}/${at.total}`;
+    return {ansi: `${SUBTLE}${text}${RESET}`, width: displayWidth(text)};
   }
 
   private handleKeepAwakeSlash(command: string, slash: Extract<ParsedSlashCommand, {kind: 'keepAwake'}>): void {
