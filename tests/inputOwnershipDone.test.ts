@@ -191,7 +191,7 @@ test('done before the prompt: plain type-ahead the look answered quickly is kept
   } finally { f.dispose(); }
 });
 
-test('type-ahead after answering a hidden question is kept when the command ends, though a look still sees that question', async t => {
+test('type-ahead after answering a hidden question, while a look still sees hidden input, is never run or dropped: it waits for the person', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -205,14 +205,22 @@ test('type-ahead after answering a hidden question is kept when the command ends
     // The next command, typed at once: the read has its answer but has not returned yet.
     f.type('echo NEXT');
     f.enter();
-    // A look still sees the question just answered (echo off), then the shell says the command is done.
+    // A look still sees hidden input (the question just answered, or a second one with no prompt: NMSh cannot tell),
+    // then the shell says the command is done. A time window after the answer is no proof that this is not a reply.
     f.answer('hidden');
     await settled();
     f.answer('idle');
     await settled();
     f.complete(0);
     await settled();
-    assert.deepEqual(f.adds(), ['echo NEXT'], 'the type-ahead runs next, once; it is not discarded');
+    assert.deepEqual(f.adds(), [], 'not queued');
+    assert.deepEqual(f.submitted, [], 'not run by itself');
+    assert.equal(f.text(), '', 'not drawn');
+    assert.match(f.screen(), /held, not run · Tab shows it · Esc discards it/u, 'kept for the person, who knows what it was');
+    f.app['onInput']('\t');
+    assert.equal(f.text(), 'echo NEXT', 'Tab shows it in the composer');
+    f.enter();
+    assert.deepEqual(f.submitted, ['echo NEXT'], 'an ordinary command is never lost: it runs once, on the person\'s Enter');
     f.nowhere(SECRET, 'the answer itself');
   } finally { f.dispose(); }
 });

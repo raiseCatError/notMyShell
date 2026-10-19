@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.22.0] - Unreleased (release candidate)
+
+**Native viewing and editing, Semantic Output, `/track` and input you can trust.** NMSh still runs your real zsh, Bash or Fish in one persistent session. This release reads files and completed output without leaving it (`/view`), makes a quick edit to a small text file (`/edit`) or opens it in your own editor, puts a test run's or a build's counts and failures in one row above its raw output (Semantic Output), and keeps one live, refreshed result of a command in the transcript (`/track`). Typing while a command runs now goes where it belongs on evidence only: a password is never shown, queued or run as a command because NMSh could not yet tell who reads it, and a slow prompt hook no longer eats the next command. Up and Down step through history one command at a time with the position shown, Ask can suggest a command from your local model (never run for you), and there are Bun, Nix shell and container modules, `/modules explain` and five more theme families.
+
+v0.21.0 was prepared as a release candidate ([#429](https://github.com/raiseCatError/notMyShell/pull/429)) but never published; its work first ships here, so this section lists everything since v0.20.0.
+
+This is a release candidate: it is published only after its physical-terminal QA passes ([v0.22 physical QA](docs/testing/v022-physical-qa.md); state and evidence in the [v0.22 ledger](docs/development/v022-ledger.md)).
+
 ### Added
 
 - **`/view`, a native read-only viewer** for files and completed output ([#397](https://github.com/raiseCatError/notMyShell/issues/397)). `/view README.md` opens a file relative to the shell's directory (`~` for home): Markdown renders (`m` shows the source), source files get syntax colors and line numbers, `.diff`/`.patch` files and `git diff`/`git show` output read as diffs. `/view N` opens completed output N (numbered as `/copy` numbers it) and `/view` the latest; Actions → View output does the same for a block. Find with `/` and `n`/`N`, go to a line with `:`, `w` toggles wrapping (Left/Right scroll sideways), `l` line numbers, `c` copies the whole text, Esc closes. Viewing never changes the file or the transcript.
@@ -35,8 +43,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Paste review and `/track`: a redirect into a file is recognized wherever `>/dev/null` also appears (`echo x > ~/.zshrc 2>/dev/null` was labelled read-only), and `>|` is a redirection, not a pipe.
 - `/track` and `/watch` no longer start, without asking, commands that change things through the network or another command: `env <command>`, `NAME=value` prefixes, git's `-c`/`--ext-diff`, `npm publish`/`login`/`x`, `pnpm dlx`, `ssh`, `curl -X POST`/`-d`/`-o file`, plain `wget`; options that write files (`git … --output`, `sort -o`, `jest -u`, `--fix`) are refused. Read-only probes (`ping`, `dig`, `nc -z`, a curl GET) still start at once, and `npm test 2>&1` is no longer refused as a background job ([#393](https://github.com/raiseCatError/notMyShell/issues/393)).
 - `/track stop` and a closing window end every process a tracked command left in its process group, including one that ignored TERM; a tracker whose directory disappeared names it instead of reporting `spawn /bin/sh ENOENT`.
-- Typing while a command runs can no longer be shown, queued or run as a command before NMSh knows whether that command reads it ([#426](https://github.com/raiseCatError/notMyShell/issues/426)). On a heavily loaded machine a reply typed right after starting a prompt-less read (`read -r reply`, `read -s`) used to be queued, and a password could be queued as a shell command or shown in the composer. Keys now wait for NMSh's check (`Checking whether … · your typing is kept` after 0.8 s). When the check cannot tell, the typing stays held and hidden — `Can't tell whether <program> is reading your typing` — until you choose: Ctrl+S sends it to the program, Tab shows it in the composer, Esc discards it. Input with echo turned off is never drawn, whatever else NMSh knows. Ctrl+C discards held typing, as a terminal flushes its input. When a command ends while typing is held for its check, including before its prompt returns while the shell's prompt hooks run, typing that may have been a reply or a password is discarded with a note, never run; plain type-ahead that the check cleared at once stays for the next command. Type-ahead on an idle machine is unchanged.
 - A command typed while the shell was showing its prompt again (after Ctrl+C, or after any command when a prompt hook is slow, as a heavy theme or `nvm` can be) no longer loses its beginning ([#436](https://github.com/raiseCatError/notMyShell/issues/436)). NMSh no longer reads the shell's own prompt hooks as the finished command waiting for input (`Probably waiting for input` while the prompt came back), and a late report of the question Ctrl+C ended no longer turns what you typed after it into a discarded reply; the rest of the line used to run on its own (`cho Y …`, command not found).
+
+### Security
+
+- **Passwords and other replies are never shown, queued or run as a command on a guess.** Typing while a command runs can no longer be shown, queued or run as a command before NMSh knows whether that command reads it ([#426](https://github.com/raiseCatError/notMyShell/issues/426)). On a heavily loaded machine a reply typed right after starting a prompt-less read (`read -r reply`, `read -s`) used to be queued, and a password could be queued as a shell command or shown in the composer. Keys now wait for NMSh's check (`Checking whether … · your typing is kept` after 0.8 s). When the check cannot tell, the typing stays held and hidden — `Can't tell whether <program> is reading your typing` — until you choose: Ctrl+S sends it to the program, Tab shows it in the composer, Esc discards it. Input with echo turned off is never drawn, whatever else NMSh knows. Ctrl+C discards held typing, as a terminal flushes its input. When a command ends while typing is held for its check, including before its prompt returns while the shell's prompt hooks run, typing that may have been a reply or a password is discarded with a note, never run; plain type-ahead that the check cleared at once stays for the next command. After NMSh answers a hidden question, typing that a check still finds next to hidden input may be the reply to a second question with no prompt: if the command ends first, it waits at the prompt, hidden (`held, not run · Tab shows it · Esc discards it`), and only your Tab and Enter run it. A reply typed and entered before a question with no prompt existed is queued like any command (NMSh could not know); once the command asks for hidden input, the commands queued while it ran wait for your approval instead of running after it. Type-ahead on an idle machine is unchanged.
+
+### Compatibility
+- Node.js 22 or newer; zsh, Bash 4.4+ and Fish, as in v0.20.0. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- The session protocol is unchanged (version 2): a session service started by v0.20.0 keeps serving the sessions it owns, and new windows attach to it. `/view`, `/edit`, `/track`, Semantic Output, history browsing, the new modules and themes work at once. The input protections (#426, #436) and the background-task fix need a session service and shells started by this release.
+- `/track` needs `sh` and POSIX process groups (macOS, Linux, WSL 2). Ask's command suggestions need a local model set up in `/llm`.
+
+### Upgrade notes
+- **From v0.20.0** (v0.21.0 was never published): settings, themes, modules, sessions and history carry over; existing theme ids and saved choices are unchanged, and Lavender stays the default.
+- Semantic Output is on for every configuration that has not turned it off (Settings → Transcript → Semantic Output). The Bun, Nix shell and container modules are off until enabled in `/modules`; Ask's command suggestions are off until Settings → Ask → Command suggestions → Local model.
+- End the sessions of a v0.20 session service (or restart it once they end) to get the input protections and the background-task fix.
+- Homebrew: `brew upgrade raiseCatError/tap/nmsh` installs whatever version the tap's formula points to; check `nmsh --version`.
+
+### Known limitations
+- `/track` is window-owned: trackers stop with the window that started them, and a resumed session shows the last result, not a live one. Samples run `sh -c` with the shell's PATH, not its aliases or functions.
+- Semantic Output is a first phase: built-in recognizers only (no `jc`, `delta` or other external providers), the raw output is not fully collapsed behind the reading, and find searches the raw output only.
+- `/edit` does not carry over extended attributes or ACLs, and unsaved text is lost if the window itself closes; the size and file-kind limits are listed under Added.
+- Progress redraws: absolute cursor rows (`CSI H`/`f`/`d`) are not mapped and scroll regions are not emulated ([#388](https://github.com/raiseCatError/notMyShell/issues/388)).
+- `/modules explain` covers the Context Rail and Status Strip; the Main Prompt has no per-segment truncation trace ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Oxocarbon, GitHub Primer, Material/Palenight and Monokai are deferred, with reasons in `docs/design/theme-families.md` ([#401](https://github.com/raiseCatError/notMyShell/issues/401)).
+- Input while a command runs ([#426](https://github.com/raiseCatError/notMyShell/issues/426), [#436](https://github.com/raiseCatError/notMyShell/issues/436)): a reply typed before a question with no prompt exists is shown in the composer and queued, as any typing while a command runs is; it no longer runs by itself once the command asks for hidden input, but if such a question gives up before NMSh sees it (a timed read) and the command then succeeds, the queued entry runs. zsh's single `precmd` function and Fish's other `fish_postexec` handlers run before NMSh's done marker, so a slow hook there can still be read as the command waiting. A session service from v0.20 routes typing as before.
+- Keys typed *during* a Fish `read` stay subject to Fish's own editor queries ([#356](https://github.com/raiseCatError/notMyShell/issues/356)).
+- Ask's command suggestions use your local model only; remote providers are not part of this release ([#432](https://github.com/raiseCatError/notMyShell/issues/432)).
+- Linux stays beta: automated CI on Ubuntu and Fedora, no physical pass. With Fish 3.7 on Linux, CI has occasionally seen a command's output or one of NMSh's shell markers not arrive; the cause is being investigated ([#443](https://github.com/raiseCatError/notMyShell/issues/443); not seen with Fish 4 on macOS). Everything listed under v0.20.0's known limitations still applies.
 
 ## [0.20.0] - 2026-10-18
 
@@ -641,6 +675,7 @@ Session & Interaction UX, plus the appearance and customization system.
 - Process cleanup teardown to safely kill detached helper shells and delete temporary configuration directories during testing.
 
 [Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...HEAD
+[0.22.0]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...release/v0.22.0
 [0.20.0]: https://github.com/raiseCatError/notMyShell/compare/v0.18.0...v0.20.0
 [0.18.0]: https://github.com/raiseCatError/notMyShell/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/raiseCatError/notMyShell/compare/v0.16.0...v0.17.0

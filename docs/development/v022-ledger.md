@@ -22,8 +22,10 @@ acceptance: [v0.22 design](../design/v022-daily-use.md). Automated results here 
 | --- | --- | --- | --- | --- |
 | 0 | Design, ledger, NL proposal | #431, #432 | `docs/v022-design` / #435 (this ledger's PR) | Draft PR |
 | R1 | Input ownership under load | #426 | `fix/v022-input-ownership-look` / #433 | Draft PR; redesigned after review (held keys never fall through on a timeout) |
-| R3 | Type-ahead eaten after Ctrl+C or a slow prompt hook | #436 | `fix/v022-ctrlc-type-ahead` / #437 | Draft PR; two mechanisms reproduced and fixed, the race family not declared solved |
+| R3 | Type-ahead eaten after Ctrl+C or a slow prompt hook | #436 | `fix/v022-ctrlc-type-ahead` / #437, based on #433 | Draft PR; two mechanisms reproduced and fixed, the race family not declared solved; carries the combined #433 + #437 fix |
+| T1 | Live tests wait for NMSh's journal, not screen text | — | `fix/v022-queue-live-sync` / #442 | Draft PR, test only; CI green |
 | R2 | Fish keys after a handed-over read | #356 | — | Not reproduced (32/32 at 8×); left open, deferred |
+| — | Fish 3.7 on Linux: output and markers from Fish sometimes lost | #443 | — | Seen 3 times in CI; not reproduced; cause unverified |
 | U1 | `/view` → open in editor | #366 | `feature/v022-view-open-editor` / #434 | Draft PR |
 | D1 | History browsing, one step per entry | #389 | `feature/v022-history-browse` / #438 | Draft PR (approved as D1) |
 | D1b | `History n/N` on a free composer rule | #389 | `feature/v022-history-position` / #441, based on #438 | Draft PR |
@@ -82,8 +84,11 @@ Full canonical `npm run verify` (local, macOS 27, T7 scratch), with the load ave
 | #434 | `5d81d93e` | 3,148 tests, 3,146 pass, 2 skipped, 0 failed (load 4–13) |
 | #438 | `29d73a69` | 3,143 pass, 1 live timeout (load 9–20); 16/16 rerun at load 5 |
 | #439 | `4ab9f44a` | 3 Setup coverage failures (fixed in `898fbc33`), 2 live timeouts (16/16 rerun); a fresh full run is pending |
-| #440 | `c1a30017` | pending |
+| #437 | `83135298` (again) | 9 failures, none in #437's logic: 7 startup or teardown timeouts (including #437's own Bash slow-hook test, which stalled before the shell started), 1 frontend that did not exit, and the known #426 queued answer (this branch does not contain #433). Not clean evidence; a rerun is owed |
+| #440 | `c1a30017` | not valid evidence: 113 failures under memory exhaustion (about 100 MB free, heavy swap), almost all startup timeouts plus starved benchmarks; a rerun is owed |
 | #441 | `48f70e96` | pending; the new tests and nearby suites pass |
+| #437 | `e2776680` (with #433) | combined: deterministic input suites 61/61, live `promptHookLive` 2/2 and `inputOwnershipLive` 6/6 (load 15–30, under 100 MB free); full run not repeated under memory pressure |
+| #442 | `815ecc52` | `commandQueueLive` 19/19, `typingAfterRead` 3/3, forced-delay variants pass; CI green |
 
 - **CI:**
   - #434, #437, #438, #439 and #440: green.
@@ -103,6 +108,105 @@ Full canonical `npm run verify` (local, macOS 27, T7 scratch), with the load ave
   - Spotlight indexing (`mds_stores`) and load above about 20 stall live-test startup on every build.
   - Live tests started while another full run is going time out waiting for the first prompt.
 
+- **#441 CI (`48f70e96`)** failed two live tests. Both are explained; neither is caused by #441.
+  - **macOS:** `inputOwnershipLive` zsh, the answer to a read queued: #426's signature, and #441's base does not contain #433. The same failure appears in CI on `feature/v021-themes` (`7d8e1529`) and `stabilize/v0.19.0` (`bcc8e760`).
+  - **Ubuntu:** `commandQueueLive` never saw `Running cat`. A race in the test, reproduced on `a8b383c2` and on #441: its wait matched the queued command's text in the queue list before that command's prompt returned (53→83 ms on `dev`, 701→901 ms on #441), so `cat` was queued and the queue row replaced `Running cat`. Fixed in #442.
+- **#442 found the same class of race in `typingAfterRead`** (macOS CI): the wait matched before NMSh's journal recorded the command (6/6 rounds on `dev`), reproduced with a read whose output comes 1 s late. #442 makes both tests wait for the journal record; CI green on `815ecc52`.
+- **#437 CI on the combined head (`e2776680`)** failed `typingAfterRead` (the race #442 fixes) and Ubuntu Fish `inputOwnershipLive` (#443: Fish's reader marker never arrived; the typed answer stayed held, safely).
+- **#443:** three Ubuntu Fish 3.7.0 failures where output or NMSh's markers from Fish never reached NMSh, one with `write: Interrupted system call`. Not reproduced with Fish 4.9.3 on macOS. Unverified hypothesis: `SIGWINCH` from NMSh's terminal resizes interrupting Fish 3.7 writes.
+
+## Release candidate v0.22.0 (2026-10-19)
+
+**Decision:** the maintainer changed the release strategy: ship the latest stable version, not every planned one.
+v0.21.0 (#429, CI green, never physically tested) is superseded and never published; v0.22.0 ships its work. No v0.23
+work exists (no branches, PRs or labels beyond planning), so v0.22 is the target. Feature freeze from here: only
+correctness, security, packaging and release-blocking fixes.
+
+**Integration:** `release/v0.22.0` = `dev` (`a8b383c2`) + #435, #433, #437, #442, #438, #441, #434, #439, #440 merged in
+that order with merge commits, then the combined `/view` editor test (#434 with #439) and one release-metadata commit
+(version 0.22.0, one `[0.22.0]` changelog section that says v0.21.0 was never published, status pointers, the
+consolidated physical QA walkthrough, this runbook). It does not contain `release/v0.21.0`'s two commits: only
+metadata (version 0.21.0, a `[0.21.0]` section), replaced here. Conflicts: the CHANGELOG for #439 and #440 (same rule as
+the candidate) and `tests/typingAfterRead.test.ts` for #442 (taken from #442, which carries #437's held outcome). Its
+tree differs from the green candidate `567cf533` only by the commits below plus #435's ledger commit.
+
+**Security review of hidden input (#426, #433, #437, #442), 2026-10-19:**
+- Boundary: NMSh routes typing while a command runs. A hidden reply must never be drawn, queued, written to the shell as
+  a command, logged or kept in history; an ordinary next command must never be lost.
+- Two paths still let a password run as a shell command on `567cf533`, both fixed in #437 (`6486d9c5`):
+  1. After NMSh answered a hidden question, a look that still saw hidden input was attributed to that question for 1 s;
+     if the command then ended, the held typing ran as the next command. A second question with no prompt that gave
+     up first (a timed read) is indistinguishable, and a time window is no proof. Such typing now waits at the prompt,
+     hidden, until the person shows it (Tab) or discards it (Esc, Ctrl+C). The window only separates a probable reply
+     (discarded) from unconfirmed typing (held); it never lets typing run.
+  2. A reply typed and entered before a question with no prompt existed is queued like any command (nothing asked
+     yet). When the command then asks for hidden input, the entries queued while it ran wait for approval (an older
+     service: the queue pauses). Live on `567cf533`, zsh and Bash: the second password of `read -rs a; sleep 3; read -rs
+     b` ran and entered NMSh's journal; with the fix it never runs and is not in the shell's history file.
+- Also: `NMSH_DEBUG_KEYS` never logs typing held at the prompt.
+- Verified: consecutive prompt-less hidden questions; a second one reported while the reply is held (it gets it); an
+  ordinary command after a hidden answer once echo is back (runs as type-ahead); a prompted `sudo` (unchanged); Ctrl+C
+  and Esc while held; a look slower than the slow mark; a next command starting while typing is held; late looks;
+  entries queued before the command or with Ctrl+Q during the question (left alone). Deterministic:
+  `tests/inputOwnershipSecrets.test.ts` (10; 6 failed before the fix). Live: `tests/inputOwnershipSecretsLive.test.ts`.
+- Remaining limits (documented in the changelog): a reply typed before a question with no prompt exists is drawn and
+  queued; if that question gives up before NMSh sees it and the command succeeds, the entry runs. zsh's single
+  `precmd` function and Fish's other `fish_postexec` handlers run before the done marker. An older session service
+  routes typing as before. Holding happens only when a look actually saw hidden input; on an idle machine at human
+  typing speed the prompted cases do not reach it.
+
+**Physical QA:** one consolidated walkthrough for the v0.22 build ([v0.22 physical QA](../testing/v022-physical-qa.md)),
+replacing v0.21's (never run) and the per-PR passes.
+
+## Integration plan (superseded: written for after v0.21 shipped)
+
+**Order:** #435 → #433 → #437 → #442 → #438 → #441 → #434 → #439 → #440.
+- **#437 now contains #433** (merged into it, `4556dfab`). Its combined fix (`e2776680`) settles held typing as typing for a command that ended when the shell says it is done, and keeps evidence of hidden input; see #437.
+- **#441 is based on #438.** Retarget it to `dev` once #438 is in.
+- **#442 goes early,** so that later CI runs are meaningful.
+- **#439 after #434.** Then add the combined test kept in scratch (`zzViewChosenEditor`): `o` in `/view` composes the chosen terminal editor's command. It passes on the candidate.
+
+**Candidate, built 2026-10-19:** `integration/v022-candidate` = `a8b383c2` plus the nine merges in that order. First head `56da3c56`; after #437's two follow-ups (merged in again), head `567cf533`, tree `2b23866e`. Pushed, with no PR.
+- **Conflicts:** the CHANGELOG only, for #439 and #440. Rule: keep every line, and put the incoming bullets at the end of the section they belong to.
+- **Verified on the candidate:**
+  - type check: clean;
+  - deterministic suites: 61/61 (input ownership, including the combined tests), 83/83 (history, indicator, Keep Awake, composer, viewer, editors) and 199/199 (Ask with its coverage audit, Setup, Settings, providers);
+  - live: `promptHookLive` 2/2, `typingAfterRead` 3/3, `inputOwnershipLive` 6/6, `commandQueueLive` 19/19;
+  - the combined `/view` editor check: passes.
+- **First CI run** ([39196110708](https://github.com/raiseCatError/notMyShell/actions/runs/39196110708), `56da3c56`): all jobs green except Ubuntu shard 2. `typingAfterRead` zsh timed out waiting for the journal record of `echo NEXT-ahead3` after a `read -s`.
+  - **Not a flake:** a regression in #437's combined fix. Type-ahead after answering a hidden question was discarded, because a look still saw the answered question.
+  - **Fixed in #437 (`e391bcb0`);** the automated security review then found that grace unbounded (a second hidden question's reply could run), fixed in `807d3c03`.
+  - Regression tests for all three cases; input suites 64/64.
+- **Second CI run** ([39197269209](https://github.com/raiseCatError/notMyShell/actions/runs/39197269209), `567cf533`): **all green**. Every job passed: Detect, Quality, Node 22, Tests on macOS and Ubuntu (both shards), the Fedora subset, timing smoke on both, and Verify 22.x and 26.x.
+- **Not run:** a full local `npm run verify`, since this 8 GB machine already panicked under memory pressure (see below).
+
+**When v0.21 ships:**
+1. Rebuild the candidate from the released `dev`. `[Unreleased]` becomes `[0.21.0]`, and v0.22's entries move into a new `[Unreleased]`.
+2. Run `npm run verify` and `verify:release` on its head at reasonable memory (several GB free, no swap storm), CI, and physical QA passes 1–6.
+3. Land the PRs in the same order, with the same resolutions.
+4. Before announcing, confirm that `dev`'s tree equals the tested head's tree (`git rev-parse HEAD^{tree}`). Any difference means another pass.
+
+**Separate, later slice: remote bring-your-own-key providers for Ask (#432).** These are Anthropic and OpenAI-compatible, configured by environment-variable name only, after a security and credential-handling review. They are not part of the combined pass above.
+
+## Crash recovery (2026-10-19) and findings for the test-resource pass
+
+The machine (8 GB) had a kernel panic: a watchdog timeout with compressed memory full, ten swapfiles and low swap. No v0.22 work was lost.
+- **Recovered:**
+  - every branch matched its remote;
+  - the candidate was intact;
+  - this ledger's edits were uncommitted but intact;
+  - the scratch evidence was complete, with nothing written after the reboot;
+  - no test of this workstream was running at the panic;
+  - `git fsck --connectivity-only` found no missing objects.
+
+Findings for the planned performance and test-resource pass:
+- **Local full runs on 8 GB are not trustworthy beside other agents and Chrome.** Two of them in this session were wrecked by memory exhaustion (113 and 29 failures, almost all startup timeouts and starved benchmarks). Focused files, one at a time, plus CI gave clean results.
+- **Running focused tests while a full run is going** starved both. Runs should be strictly sequential, and a full run should refuse to start below a memory threshold.
+- **Live tests spawn a frontend, a session service and a shell each.** With the runner's concurrency on top, they are the main memory cost; a cap tied to free memory would help.
+- **Screen-text waits are fragile under load.** The journal (`Frontend.completions`) is the deterministic signal; other screen-text waits should move to it.
+- **Orphans:** processes from other worktrees' live sandboxes (two days old, reparented to `launchd`) were found before the panic, so interrupted runs can leave sandboxes behind. Sandbox teardown after a crash needs an owner-checked cleanup.
+- **Storage:** all scratch, caches and worktrees were on the T7. The internal SSD was at 96%, which leaves little room for swap.
+
 ## Physical QA still required
 
 Checklist: [v0.22 physical QA](../testing/v022-physical-qa.md), one pass per PR. Nothing in v0.22 has had a physical
@@ -110,8 +214,8 @@ pass.
 
 ## Open risks
 
-- v0.21 unreleased: v0.22 cannot integrate into `dev` yet (see the rule above). All v0.22 PRs stay draft.
+- v0.21 is superseded; the v0.22 PRs land through `release/v0.22.0` and stay draft until the release PR merges.
 - #441 is based on #438 and must merge after it.
 - #439 and #434 both use the host-actions bridge; whichever merges second picks up the other.
 - #436 fixes two explained mechanisms; other timing races in input ownership may remain.
-- The changelog entries sit in `dev`'s `[Unreleased]` beside v0.21's and move at reconciliation.
+- #443 (Fish 3.7 on Linux, cause unknown) is open; a bounded CI loop investigates it.

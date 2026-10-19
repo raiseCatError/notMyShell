@@ -31,7 +31,12 @@ interface Scene {
 interface Frame { rows: string[]; plain: string[]; plan: ScreenPlan; cursorRow: number; cursorColumn: number }
 
 function frame(scene: Scene = {}): Frame {
-  const app = new TerminalApp() as any;
+  // The one-line prompt shows the directory NMSh started in: a fixed one, so a long checkout path never wraps the
+  // recalled command onto a second row and changes what these frames compare.
+  const started = process.cwd();
+  process.chdir('/');
+  let app: any;
+  try { app = new TerminalApp(); } finally { process.chdir(started); }
   const columns = scene.columns ?? 80;
   try {
     Object.defineProperty(app, 'dimensions', {value: () => ({columns, rows: 20})});

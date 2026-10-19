@@ -1,5 +1,8 @@
 # v0.21 physical QA
 
+> **Superseded, never run.** v0.21.0 was not published on its own: its work ships in v0.22.0, and its physical QA
+> is part of [v0.22 physical QA](v022-physical-qa.md), run once on the v0.22 build. Nothing in this file was recorded.
+
 ## Status
 
 - **Candidate, not released.** Every v0.21 slice is merged into `dev` (#411–#424, `433af8fd`); see the
