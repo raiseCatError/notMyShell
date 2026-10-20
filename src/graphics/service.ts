@@ -10,6 +10,7 @@ import {encodePng} from './pngEncode.js';
 import {ImageError, type ImageInfo, type Raster} from './raster.js';
 import {fitCells, scaleBox} from './scale.js';
 import {encodeSixel} from './sixel.js';
+import {FrameStream} from './stream.js';
 import {renderCells} from './unicode.js';
 
 /**
@@ -316,6 +317,22 @@ export class GraphicsService {
   forgetUploads(): void {
     this.uploads.clear();
     this.uploadSize = 0;
+  }
+
+  /**
+   * A stream for live frames (a browser page): it uploads through this service's host and id allocator and deletes its own
+   * pictures on `dispose()`. `owner` is only for the caller's bookkeeping; the stream owns what it uploads. After `releaseAll`
+   * or `forgetUploads` a stream's pictures are gone: call `stream.forget()` so its next frame uploads again.
+   */
+  openStream(owner: unknown): FrameStream {
+    void owner;
+    return new FrameStream({
+      decision: () => this.host.decision(),
+      send: data => this.host.send(data),
+      allocateId: () => this.allocateId(),
+      color: () => this.host.color(),
+      safeGlyphs: () => this.host.safeGlyphs(),
+    });
   }
 
   clearCache(): void { this.cache.clear(); this.cacheSize = 0; }
