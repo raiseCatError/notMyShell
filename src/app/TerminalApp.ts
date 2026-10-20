@@ -73,7 +73,7 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, typ
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {displayPath, loadFileDocument, outputDocument} from '../viewer/document.js';
+import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
@@ -120,9 +120,9 @@ import {
   customColorEditor,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
-import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
+import {basename, delimiter, dirname, extname, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
@@ -274,7 +274,7 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
-import {runDoctor} from '../doctor/doctor.js';
+import {runDoctor, type DoctorCheck} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchNoticeRows, watchPanelKey, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
@@ -293,7 +293,12 @@ import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
-import {configureTextSizing} from '../ui/textSizing.js';
+import {configureTextSizing, describeTextSizing, textSizingEnabled} from '../ui/textSizing.js';
+import {decideGraphics, describeGraphics} from '../graphics/capabilities.js';
+import {GraphicsService, type GraphicsHost} from '../graphics/service.js';
+import {ImageError} from '../graphics/raster.js';
+import {DocumentImages, documentRoot} from '../viewer/documentImages.js';
+import {createImageView, IMAGE_EXTENSIONS, imageViewKey, renderImageView, showImage, siblingImages, type ImageViewState} from '../viewer/ImagePanel.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
@@ -399,7 +404,7 @@ import type {WorkspaceEffect} from './workspaceHost.js';
 import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
-import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
+import {defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -1288,6 +1293,8 @@ export class TerminalApp {
    * byte goes to the program. Reclaimed in onShellPrompt.
    */
   private handOverTerminal(restore = ''): void {
+    // Images uploaded to the terminal are deleted before a program takes the screen.
+    this.graphics?.releaseAll();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
     this.outputProcessing.set(true);
     // A reply still arriving belongs to the program, which now receives every byte anyway.
@@ -1771,6 +1778,15 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.imageView) {
+      const view = this.imageView;
+      const action = imageViewKey(view, key);
+      if (action?.kind === 'close') this.closeImageView();
+      else if (action?.kind === 'load') void this.loadImageEntry(view, action.index);
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      this.render();
+      return;
+    }
     if (this.viewer) {
       const viewer = this.viewer;
       const {columns, rows} = this.dimensions();
@@ -1778,6 +1794,7 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
       else if (action?.kind === 'open') void this.openFromViewer(viewer, action);
+      else if (action?.kind === 'image') void this.openDocumentImage(viewer, action.index);
       else if (action?.kind === 'copy') {
         void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
@@ -3798,15 +3815,99 @@ export class TerminalApp {
   }
 
   private viewerLook(): ViewerLook {
-    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks};
+    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), sized: textSizingEnabled()};
   }
 
-  /**
-   * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
-   * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
-   */
+  /** The graphics service, created on first use; its host answers from the live capabilities and settings. */
+  private graphicsService(): GraphicsService {
+    if (this.graphics) return this.graphics;
+    const host: GraphicsHost = {
+      decision: () => {
+        const {columns, rows} = this.dimensions();
+        return decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows});
+      },
+      send: data => this.renderer.sendRaw(data),
+      scratchDir: () => {
+        const directory = join(defaultRuntimeDir(), 'images');
+        try { ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(directory, {recursive: true, mode: 0o700}); } catch { /* the converter reports it */ }
+        return directory;
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+    };
+    this.graphics = new GraphicsService(host);
+    return this.graphics;
+  }
+
+  /** Close the document's images (their uploads go with them) when no document is open. */
+  private releaseViewerImages(): void {
+    this.viewerImages?.close();
+    this.viewerImages = undefined;
+  }
+
+  /** `/view image.png`: the image viewer, with the folder's other images a keypress away. */
+  private async openImageViewer(path: string, command: string): Promise<void> {
+    const {entries, index} = await siblingImages(path);
+    if (this.stopped || this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    const view = createImageView(entries, index);
+    this.imageView = view;
+    this.render();
+    await this.loadImageEntry(view, index, command);
+  }
+
+  private async loadImageEntry(view: ImageViewState, index: number, command = '/view'): Promise<void> {
+    const entry = view.entries[index];
+    if (!entry) return;
+    view.loading = true;
+    this.render();
+    try {
+      const image = await this.graphicsService().load(entry.path);
+      if (this.imageView === view && !this.stopped) showImage(view, index, image);
+    } catch (error) {
+      if (this.imageView === view && !this.stopped) showImage(view, index, undefined, error instanceof ImageError ? error.message : `${command}: the image could not be read.`);
+    }
+    this.render();
+  }
+
+  /** The image viewer for image `index` of the open document; Esc comes back to the document where it was. */
+  private async openDocumentImage(viewer: ViewerState, index: number): Promise<void> {
+    const images = this.viewerImages;
+    if (!images) return;
+    const list = images.list().filter(item => item.path);
+    const position = list.findIndex(item => item.index === index);
+    if (position < 0) { viewer.note = images.list().find(item => item.index === index)?.note ?? 'That image cannot be shown.'; this.render(); return; }
+    const view = createImageView(list.map(item => ({path: item.path!, name: item.path!.split('/').pop() ?? 'image', alt: item.alt})), position, {returnTo: viewer});
+    this.viewer = undefined;
+    this.imageView = view;
+    await this.loadImageEntry(view, position);
+  }
+
+  private closeImageView(): void {
+    const view = this.imageView;
+    if (!view) return;
+    this.imageView = undefined;
+    this.graphics?.releaseOwner(view.owner);
+    if (view.returnTo) this.viewer = view.returnTo;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** The image viewer's overlay (iTerm2, Sixel) at its screen cells, or none. */
+  private imageOverlay(plan: ScreenPlan, region: {top: number; height: number} | undefined): ImageOverlay | undefined {
+    const placed = this.imageView?.overlay;
+    if (!placed || !region || !plan.panelActive) return undefined;
+    const row = region.top + placed.y + (plan.panelPosition === 'top' ? -1 : 0);
+    if (row < region.top || row + placed.placement.size.rows > region.top + region.height) return undefined;
+    const column = placed.x + (this.workspace.open ? this.workspaceColumns().center.x : 0);
+    return {key: placed.placement.key, row, column, size: placed.placement.size, transmit: placed.placement.transmit, place: placed.placement.place, cleanup: placed.placement.cleanup};
+  }
+
   /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
   private syncTypography(): void {
+    if (this.viewerImages && !this.viewer && !this.imageView) this.releaseViewerImages();
     const capabilities = this.host.capabilities;
     const key = `${this.promptConfiguration.textSizing}|${capabilities.textSizing?.scale ?? '-'}|${capabilities.textSizing?.width ?? '-'}`;
     if (key === this.typographyKey) return;
@@ -3897,6 +3998,10 @@ export class TerminalApp {
     if (restore) { this.returnFromPanel(); this.render(); }
   }
 
+  /**
+   * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
+   * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
+   */
   private openViewer(target: string, command: string): void {
     this.viewerLoad?.abort();
     this.viewerLoad = undefined;
@@ -3910,16 +4015,32 @@ export class TerminalApp {
       this.openOutputViewer(record);
       return;
     }
+    // A picture opens in the image viewer; its text cannot be shown (binary), and SVG is source text, never drawn.
+    const imagePath = resolveViewPath(target, this.shellCwd);
+    if (IMAGE_EXTENSIONS.has(extname(imagePath).slice(1).toLowerCase())) { void this.openImageViewer(imagePath, command); return; }
     const load = new AbortController();
     this.viewerLoad = load;
-    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(result => {
+    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(async result => {
       if (this.viewerLoad !== load || this.stopped) return;
+      if (!result.ok) { this.viewerLoad = undefined; this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Images of a Markdown or HTML file: found, resolved inside its folder or project and loaded within a short deadline.
+      let images: DocumentImages | undefined;
+      const document = result.document;
+      if ((document.format === 'markdown' || document.format === 'html') && document.origin.kind === 'file' && this.promptConfiguration.graphicsMode !== 'off') {
+        const base = dirname(document.origin.realPath);
+        images = new DocumentImages(this.graphicsService(), base, await documentRoot(base), () => { if (!this.stopped) this.render(); });
+        images.collect(document);
+        if (images.count) await images.load(1200);
+      }
+      if (this.viewerLoad !== load || this.stopped) { images?.close(); return; }
       this.viewerLoad = undefined;
-      if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
       // Another panel opened while the file was read: it keeps the keys; the file is not opened over it.
-      if (this.hasModalInput()) return;
+      if (this.hasModalInput()) { images?.close(); return; }
       this.panelOrigin = undefined;
-      this.viewer = createViewer(result.document);
+      this.releaseViewerImages();
+      if (images?.count) this.viewerImages = images;
+      else images?.close();
+      this.viewer = createViewer(document);
       this.render();
     });
   }
@@ -5364,7 +5485,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5408,7 +5529,8 @@ export class TerminalApp {
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
-    if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
+    if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
+    if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
@@ -9151,6 +9273,17 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refreshing' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the ${noun} on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
+  /** What the graphics service and the typography backend decided, and why, as /doctor rows under the host terminal. */
+  private graphicsDoctorChecks(): DoctorCheck[] {
+    const section = 'Host terminal';
+    const {columns, rows} = this.dimensions();
+    const lines = describeGraphics(decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows}));
+    return [
+      {section, label: lines[0]!, state: 'info', detail: lines.slice(1).join(' · ')},
+      {section, label: describeTextSizing({setting: this.promptConfiguration.textSizing, capabilities: this.host.capabilities, env: process.env}), state: 'info'},
+    ];
+  }
+
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
   private async openDoctor(): Promise<void> {
     this.panelOrigin = undefined;
@@ -9186,7 +9319,7 @@ export class TerminalApp {
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
         ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
-      if (this.doctorPanel === panel) { panel.checks = checks; panel.selected = 0; }
+      if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks()]; panel.selected = 0; }
     } finally { clock?.(); }
     this.render();
   }
@@ -9572,6 +9705,11 @@ export class TerminalApp {
   /** Sized-text blocks the active panel asked for this frame, relative to its rows (placed by render). */
   private panelBlocks: TextOverlay[] = [];
   private typographyKey = '';
+  /** The one graphics service: every image NMSh draws goes through it. */
+  private graphics?: GraphicsService;
+  /** The images of the open document (Markdown or HTML) and the standalone image viewer. */
+  private viewerImages?: DocumentImages;
+  private imageView?: ImageViewState;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -11186,7 +11324,7 @@ export class TerminalApp {
       // Flow can scroll the input row off screen.
       cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
-    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
+    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns) ?? this.imageOverlay(plan, panelRegion));
     this.renderer.setTextBlocks(this.panelTextBlocks(plan, panelRegion));
     this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
@@ -12955,6 +13093,8 @@ export class TerminalApp {
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
     this.closeArcade(false);
+    this.releaseViewerImages();
+    this.graphics?.releaseAll();
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();

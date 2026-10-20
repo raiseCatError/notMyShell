@@ -78,6 +78,8 @@ export interface Placement {
   lines: string[];
   overlay?: PlacementOverlay;
   owner: unknown;
+  /** Identifies the upload behind it (Kitty placeholders), for `keepOnly`. */
+  key?: string;
 }
 
 export interface PlaceRequest {
@@ -226,7 +228,7 @@ export class GraphicsService {
     }
     upload.owners.add(request.owner);
     upload.at = ++this.clock;
-    return {kind: 'kitty-placeholder', columns: box.columns, rows: box.rows, lines: placeholderRows(upload.id, box.columns, box.rows), owner: request.owner};
+    return {kind: 'kitty-placeholder', columns: box.columns, rows: box.rows, lines: placeholderRows(upload.id, box.columns, box.rows), owner: request.owner, key};
   }
 
   private overlayPlacement(image: LoadedImage, source: Raster, box: {columns: number; rows: number}, cell: {width: number; height: number}, request: PlaceRequest, mode: 'kitty' | 'iterm2' | 'sixel'): Placement {
@@ -288,6 +290,16 @@ export class GraphicsService {
   /** Everything one surface showed: deleted from the terminal unless another owner still shows it. */
   releaseOwner(owner: unknown): void {
     for (const [key, upload] of [...this.uploads]) {
+      upload.owners.delete(owner);
+      if (upload.owners.size === 0) this.drop(key);
+    }
+  }
+
+  /** An owner that redraws (zoom, pan, resize) keeps only the uploads its current placements use; the rest are deleted now. */
+  keepOnly(owner: unknown, keys: readonly string[]): void {
+    const keep = new Set(keys);
+    for (const [key, upload] of [...this.uploads]) {
+      if (!upload.owners.has(owner) || keep.has(key)) continue;
       upload.owners.delete(owner);
       if (upload.owners.size === 0) this.drop(key);
     }
