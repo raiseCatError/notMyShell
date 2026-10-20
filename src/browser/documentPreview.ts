@@ -51,6 +51,8 @@ export class BrowserPreviewView implements PreviewView {
   private finding: {value: string} | undefined;
   private disposed = false;
   private document: PreviewDocument;
+  /** Refreshes and trust changes run one at a time, in the order they were asked for. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   private constructor(private readonly deps: DocumentPreviewDeps, document: PreviewDocument) {
     this.document = document;
@@ -70,22 +72,37 @@ export class BrowserPreviewView implements PreviewView {
     return view;
   }
 
+  /** Whether scripts are on for the page being shown (what the page is actually served and run with). */
+  get trusted(): boolean { return this.document.trusted; }
+
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
   /** Replace the served page with the buffer's text now and reload it. Never reads or writes the file. */
-  async refresh(text: string): Promise<void> {
-    if (this.disposed || !this.handle) return;
-    this.document = {...this.document, text};
-    this.handle.update(this.deps.html(text));
-    await this.deps.session.reload();
+  refresh(text: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.disposed || !this.handle) return;
+      this.document = {...this.document, text};
+      this.handle.update(this.deps.html(text));
+      await this.deps.session.reload();
+    });
   }
 
   /** Turn scripts on or off for this file: the page is served and loaded again under the new rules. */
-  async setTrusted(trusted: boolean, text: string): Promise<void> {
-    if (this.disposed) return;
-    this.document = {...this.document, trusted, text};
-    this.handle?.dispose();
-    this.handle = await this.deps.previews.serve({html: this.deps.html(text), root: this.document.root, trusted, name: this.document.name});
-    await this.deps.session.setScripts(trusted);
-    await this.deps.session.navigate(this.handle.url);
+  setTrusted(trusted: boolean, text: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.disposed) return;
+      // Scripts go off before anything else changes, so a failure part-way never leaves them on.
+      if (!trusted) await this.deps.session.setScripts(false);
+      this.document = {...this.document, trusted, text};
+      this.handle?.dispose();
+      this.handle = await this.deps.previews.serve({html: this.deps.html(text), root: this.document.root, trusted, name: this.document.name});
+      if (trusted) await this.deps.session.setScripts(true);
+      await this.deps.session.navigate(this.handle.url);
+    });
   }
 
   problems(): ReadonlyArray<{path: string; reason: string}> { return this.handle?.problems() ?? []; }

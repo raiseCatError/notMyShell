@@ -4069,6 +4069,8 @@ export class TerminalApp {
       if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
       if (this.docSession !== session || session.mode !== 'preview') { view.dispose(); return; }
       session.preview = view;
+      // The person may have turned scripts on or off while the preview was starting: what runs must match what the screen says.
+      if (view.trusted !== session.trusted) void view.setTrusted(session.trusted, bufferText(session.editor));
     } catch (error) {
       session.note = `${error instanceof Error ? error.message : 'The browser preview could not start.'} Showing NMSh's own preview.`;
     } finally {

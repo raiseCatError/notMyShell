@@ -110,7 +110,10 @@ test('README: local images are drawn where they are written, remote and escaping
     ].join('\n'));
     f.app['shellCwd'] = join(f.dir, 'docs');
     await f.view('README.md');
-    await settle(() => Boolean(f.app['viewer']));
+    await settle(() => Boolean(f.app['docSession']));
+    f.key({kind: 'text', value: 'h'});
+    await settle(() => Boolean(f.app['viewerImages']) && f.app['viewerImages'].version > 1);
+    await new Promise(done => setTimeout(done, 100));
     const text = f.screen();
     assert.match(text, /Project/u);
     assert.doesNotMatch(text, /\[image: Logo\]/u, 'the logo is drawn, not named');
@@ -125,10 +128,12 @@ test('README: local images are drawn where they are written, remote and escaping
     await settle(() => Boolean(f.app['imageView'] && !f.app['imageView'].loading));
     assert.match(f.screen(), /Logo \(logo\.png\)|logo\.png/u);
     f.key({kind: 'escape'});
-    assert.ok(f.app['viewer'], 'back in the document');
+    assert.ok(f.app['docSession'], 'back in the document, as it was');
+    assert.equal(f.app['docSession'].mode, 'preview');
     assert.match(f.screen(), /Project/u);
     f.key({kind: 'escape'});
-    assert.equal(f.app['viewer'], undefined);
+    f.key({kind: 'escape'});
+    assert.equal(f.app['docSession'], undefined);
     assert.equal(f.app['viewerImages'], undefined, 'closing the document closes its images');
   } finally { f.done(); }
 });
@@ -140,7 +145,8 @@ test('Images off: a README shows placeholders only and nothing is decoded', asyn
     writeFileSync(join(f.dir, 'README.md'), '# Hi\n\n![Logo](logo.png)\n');
     f.app['promptConfiguration'].graphicsMode = 'off';
     await f.view('README.md');
-    await settle(() => Boolean(f.app['viewer']));
+    await settle(() => Boolean(f.app['docSession']));
+    f.key({kind: 'text', value: 'h'});
     assert.match(f.screen(), /\[image: Logo\]/u);
     assert.equal(f.app['graphics']?.stats().cached ?? 0, 0);
   } finally { f.done(); }

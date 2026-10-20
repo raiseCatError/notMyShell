@@ -176,3 +176,21 @@ test('inside the document session the find prompt keeps Esc, and Esc otherwise r
   assert.equal(session.mode, 'source');
   r.view.dispose();
 });
+
+test('trust changes and refreshes run one at a time, scripts go off first, and a trust change made while starting is reconciled', async () => {
+  const r = await opened();
+  const order: string[] = [];
+  const page = r.page();
+  const original = page.setScripts.bind(page);
+  page.setScripts = async (enabled: boolean) => { order.push(`scripts:${enabled}`); await original(enabled); };
+  const first = r.view.setTrusted(true, '<h1>Hi</h1>');
+  const second = r.view.setTrusted(false, '<h1>Hi</h1>');
+  const third = r.view.refresh('<h1>Later</h1>');
+  await Promise.all([first, second, third]);
+  assert.deepEqual(order, ['scripts:true', 'scripts:false'], 'applied in the order asked');
+  assert.equal(r.view.trusted, false, 'the last request wins');
+  assert.equal(r.previews.handles.at(-1)!.html, '<html><h1>Later</h1></html>');
+  const stale = r.previews.handles.slice(0, -1);
+  assert.ok(stale.every(handle => handle.disposed), 'every replaced address stops working');
+  r.view.dispose();
+});
