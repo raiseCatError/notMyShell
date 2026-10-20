@@ -49,6 +49,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/game dash', insertion: '/game dash', description: 'Vespyr Dash: a rhythm platformer over spikes and gaps. Space or ↑ jumps'},
   {name: '/game sudoku', insertion: '/game sudoku', description: 'Classic Sudoku with notes, hints, undo and best times'},
   {name: '/game vespyr-doku', insertion: '/game vespyr-doku', description: 'Vespyr Doku: one cat in every row, column and colored region, none touching'},
+  {name: '/browser', insertion: '/browser', description: 'A real browser (Chromium) in NMSh: /browser · /browser https://example.com · /browser ./index.html. Needs an installed Chrome or Chromium; nothing is downloaded'},
   {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
   {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
@@ -181,6 +182,8 @@ export type ParsedSlashCommand =
   | {kind: 'compare'; first?: number; second?: number; error?: string}
   /** /view [path | N]: a file (relative to the shell's directory, ~ for home), output N as /copy numbers it, or the latest output. */
   | {kind: 'view'; target: string}
+  /** /browser [address | path]: the real browser panel (Chromium, started on demand). */
+  | {kind: 'browser'; target: string}
   /** /games, /game and /arcade are one command: the hub, or a game by id or alias. */
   | {kind: 'arcade'; game?: string}
   /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
@@ -280,6 +283,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const clips = /^\/clips(?:\s+suggestions\s+(on|off))?\s*$/u.exec(input);
   if (clips) return {kind: 'clips', ...(clips[1] ? {suggestions: clips[1] === 'on'} : {})};
   if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
+  const browser = /^\/browser(?:\s+([\s\S]*))?$/u.exec(input);
+  if (browser) return {kind: 'browser', target: (browser[1] ?? '').trim()};
   const arcade = /^\/(?:games|game|arcade)(?:\s+(.*?))?\s*$/u.exec(input);
   if (arcade) return {kind: 'arcade', ...(arcade[1] ? {game: arcade[1]} : {})};
   const view = /^\/view(?:\s+([\s\S]*))?$/u.exec(input);

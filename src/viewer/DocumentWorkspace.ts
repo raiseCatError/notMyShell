@@ -31,6 +31,8 @@ export interface PreviewView {
   dispose(): void;
   /** One short line for the status row (zoom, find count, a refused link). */
   status(): string | undefined;
+  /** The preview is reading text (a find prompt): every key, Esc included, belongs to it. */
+  capturing(): boolean;
 }
 
 export interface DocumentSession {
@@ -132,6 +134,8 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
     return fromEditor(state, editorKey(editor, key, columns, height));
   }
 
+  // A find prompt in the browser preview owns its keys.
+  if (state.mode === 'preview' && state.preview?.capturing()) { state.preview.key(key); return undefined; }
   // Navigation (source and preview).
   const searching = Boolean(state.viewer.input) && state.mode === 'source';
   if (!searching) {

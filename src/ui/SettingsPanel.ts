@@ -16,7 +16,7 @@ import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
 import {renderControls} from './controls.js';
-import {COPY_MODES, COPY_MODE_LABELS, GRAPHICS_MODES, TEXT_SIZING_SETTINGS} from '../prompt/configuration.js';
+import {BROWSER_SETTINGS, COPY_MODES, COPY_MODE_LABELS, GRAPHICS_MODES, TEXT_SIZING_SETTINGS} from '../prompt/configuration.js';
 import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
@@ -346,6 +346,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'textSizing', label: 'Text sizing', description: 'Larger headings and counters in documents, games and celebrations where your terminal proved it can scale text (Kitty\'s text sizing protocol). Off keeps ordinary text; Enhanced scales more, still only where verified', category: 'General',
     values: TEXT_SIZING_SETTINGS, labels: ['Auto', 'Off', 'Enhanced'],
     get: config => config.textSizing, set: (config, textSizing) => ({...config, textSizing})}),
+  enumRow({id: 'browser', label: 'Real browser', description: 'Use an installed Chrome or Chromium for /browser and for rendered Markdown and HTML previews. It starts only when needed and stops when idle; nothing is downloaded. Off keeps NMSh\'s own renderer and disables /browser', category: 'General',
+    values: BROWSER_SETTINGS, labels: ['Auto', 'Off'],
+    get: config => config.browser, set: (config, browser) => ({...config, browser})}),
   enumRow({id: 'onboardingBackdrop', label: 'Starting point backdrop', description: 'The sky behind the starting-point selector (/startup): the real Aurora, subtle, or off. A cycles it there too', category: 'General',
     values: ['aurora', 'subtle', 'off'] as const, labels: ['Aurora on', 'Subtle', 'Off'],
     get: config => config.onboardingBackdrop, set: (config, onboardingBackdrop) => ({...config, onboardingBackdrop})}),
@@ -686,7 +689,7 @@ export const CONFIG_GROUPS = ['General', 'Appearance', 'Prompt & Composer', 'Edi
 export type ConfigGroup = typeof CONFIG_GROUPS[number];
 
 export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
-  glyphStyle: 'General', graphicsMode: 'General', textSizing: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
+  glyphStyle: 'General', graphicsMode: 'General', textSizing: 'General', browser: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
   promptVibrance: 'Appearance',
   showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
   transcriptPresentation: 'Editor', openWith: 'Editor', terminalEditor: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
@@ -720,7 +723,7 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
-  'glyphStyle', 'graphicsMode', 'textSizing', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
+  'glyphStyle', 'graphicsMode', 'textSizing', 'browser', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
   'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith', 'terminalEditor',

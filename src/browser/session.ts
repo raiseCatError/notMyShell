@@ -1,6 +1,6 @@
 import type {FrameStream} from '../graphics/stream.js';
 import {plainText, popupAddress} from './address.js';
-import type {BrowserEngine, BrowserPage, Frame, KeyEventInput, MouseEventInput, PageEvent, Viewport} from './types.js';
+import type {BrowserEngine, BrowserPage, Frame, KeyEventInput, MouseEventInput, PageEvent, PageKind, Viewport} from './types.js';
 
 /**
  * The tabs of one /browser panel, without any drawing. It owns the pages the engine opened, one `FrameStream` per tab, the
@@ -66,6 +66,9 @@ export type OpenResult = {ok: true} | {ok: false; reason: string};
 
 interface Tab {
   id: number;
+  /** `preview` tabs are document previews (local only, scripts off unless trusted); the default is a web page. */
+  kind?: PageKind;
+  scripts?: boolean;
   page?: BrowserPage;
   stream: FrameStream;
   lines: string[];
@@ -90,6 +93,7 @@ export class BrowserSession {
   private area = {columns: 80, rows: 24};
   private cellSize: {width: number; height: number};
   private resizeTimer: unknown;
+  private lastBlocked_: {url: string; reason: string} | undefined;
   private changeTimer: unknown;
   private lastChange = -Infinity;
   private listeners = new Set<() => void>();
@@ -105,6 +109,8 @@ export class BrowserSession {
   // ---- reading ---------------------------------------------------------------------------------------------------
 
   get count(): number { return this.tabs_.length; }
+  /** The address of the last link or request a preview refused, for "open this in /browser". */
+  get lastBlocked(): {url: string; reason: string} | undefined { return this.lastBlocked_; }
   get activeIndex(): number { return this.active_; }
 
   view(): TabView[] { return this.tabs_.map(viewOf); }
@@ -165,7 +171,7 @@ export class BrowserSession {
 
   // ---- tabs ------------------------------------------------------------------------------------------------------
 
-  async open(url = 'about:blank', options: {background?: boolean} = {}): Promise<OpenResult> {
+  async open(url = 'about:blank', options: {background?: boolean; kind?: PageKind; scripts?: boolean} = {}): Promise<OpenResult> {
     if (this.disposed) return {ok: false, reason: 'The browser is closed.'};
     if (this.tabs_.length >= MAX_TABS) {
       const reason = `${MAX_TABS} tabs are open. Close one first.`;
@@ -173,6 +179,8 @@ export class BrowserSession {
       return {ok: false, reason};
     }
     const tab = this.makeTab(url);
+    if (options.kind) tab.kind = options.kind;
+    if (options.scripts !== undefined) tab.scripts = options.scripts;
     this.tabs_.push(tab);
     if (!options.background) this.activateTab(tab);
     this.touch();
@@ -189,7 +197,8 @@ export class BrowserSession {
     let page: BrowserPage;
     try {
       page = await this.options.engine.open({
-        kind: 'web', url, viewport: this.viewport(),
+        kind: tab.kind ?? 'web', url, viewport: this.viewport(),
+        ...(tab.scripts !== undefined ? {scripts: tab.scripts} : {}),
         ...(this.options.colorScheme ? {colorScheme: this.options.colorScheme} : {}),
         ...(this.options.reducedMotion !== undefined ? {reducedMotion: this.options.reducedMotion} : {}),
       });
@@ -314,10 +323,11 @@ export class BrowserSession {
       case 'loading': tab.loading = event.loading; break;
       case 'editable': tab.editable = event.editable; break;
       case 'dialog': this.setNotice(`The page showed ${event.kind === 'beforeunload' ? 'a leave prompt' : `an ${event.kind}`}: ${plainText(event.message, 80)}`); break;
-      case 'blocked': this.setNotice(`Blocked: ${plainText(event.reason, 80)}`); break;
+      case 'blocked': this.lastBlocked_ = {url: event.url, reason: event.reason}; this.setNotice(`Blocked: ${plainText(event.reason, 80)}`); break;
       case 'download-blocked': this.setNotice('A download was blocked. NMSh does not save files from pages.'); break;
       case 'popup': {
         const url = popupAddress(event.url);
+        if (tab.kind === 'preview') { this.lastBlocked_ = {url: event.url, reason: 'a link in a preview does not open in place'}; this.setNotice('A link was not followed: the preview shows this document only.'); break; }
         if (url === undefined) this.setNotice('A popup to an address that cannot open here was blocked.');
         else if (this.tabs_.length >= MAX_TABS) this.setNotice(`A popup was blocked: ${MAX_TABS} tabs are open.`);
         else void this.open(url);
@@ -415,6 +425,13 @@ export class BrowserSession {
   back(): Promise<void> { return this.act(page => page.back()); }
   forward(): Promise<void> { return this.act(page => page.forward()); }
   stop(): Promise<void> { return this.act(page => page.stop()); }
+
+  /** Turn scripts on or off for the active page (the engine reloads it under the new rule). */
+  async setScripts(enabled: boolean): Promise<void> {
+    const tab = this.tabs_[this.active_];
+    if (tab) tab.scripts = enabled;
+    await this.act(page => page.setScripts(enabled));
+  }
 
   async reload(options: {hard?: boolean} = {}): Promise<void> {
     const tab = this.tabs_[this.active_];
