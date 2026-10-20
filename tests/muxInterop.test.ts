@@ -282,12 +282,17 @@ test('mouse-enabled tmux client detach/reattach preserves one attached NMSh and 
       const second = attach();
       await second.waitFor(/❯/);
       const mark = second.mark;
-      second.pty.write(`${quote(process.execPath)} ${quote(fixture)} fullscreen\r`);
+      const fullscreen = `${quote(process.execPath)} ${quote(fixture)} fullscreen`;
+      second.pty.write(`${fullscreen}\r`);
       await second.waitFor(/INTERACTIVE-READY-fullscreen/, mark);
       second.pty.resize(82, 28);
       await second.waitFor(/INTERACTIVE-SIZE-27x82/, mark); // tmux reserves its status row.
       second.pty.write('q');
       await second.waitFor(/INTERACTIVE-EXIT-0/, mark);
+      // The program's exit is not NMSh's: a line typed before NMSh has seen the command end is held for approval (#426), as
+      // designed. Wait for the journal to record the command, as the less section above does.
+      await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+        .some(record => record.command === fullscreen), 20000, 'fullscreen completion journal');
       await pane.run('echo AFTER-TMUX-CLIENT', /AFTER-TMUX-CLIENT/);
       assert.equal((await sandbox.sessions())[0]!.id, live!.id);
     } finally { pane.kill(); await sandbox.dispose(); }
