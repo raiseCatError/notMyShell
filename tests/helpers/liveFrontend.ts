@@ -23,6 +23,22 @@ export async function until(check: () => boolean | Promise<boolean>, timeoutMs =
   }
 }
 
+/** What a screen-driven wait saw, for a timeout message: repeated redraw rows collapsed, and which of the words it looked for appeared. */
+export function describeScreen(text: string, words: string[] = []): string {
+  const lines: string[] = [];
+  let repeats = 0;
+  for (const raw of text.split(/\r?\n|\r/u)) {
+    const line = raw.replace(/ {2,}/gu, ' ').trim();
+    if (!line) continue;
+    if (line === lines.at(-1)) { repeats += 1; continue; }
+    if (repeats) { lines[lines.length - 1] += `  (x${repeats + 1})`; repeats = 0; }
+    lines.push(line);
+  }
+  if (repeats) lines[lines.length - 1] += `  (x${repeats + 1})`;
+  const seen = words.map(word => `${word}:${text.includes(word) ? 'yes' : 'no'}`).join(' ');
+  return `${seen}${seen ? '; ' : ''}${lines.length} distinct rows, last 60:\n${lines.slice(-60).join('\n')}`;
+}
+
 export function processAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }

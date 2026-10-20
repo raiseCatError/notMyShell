@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
+import {describeScreen, LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
 
 /**
  * Keys typed right after a `read` must never be lost (the Fish keystroke loss): through the real composer, PTY and
@@ -100,7 +100,7 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
               const queued = ((await sandbox.sessions())[0]?.queued ?? 0) > 0;
               await showAndRunHeld(frontend, mode, run, next, mark, queued);
               await until(async () => await frontend.completions(next) > before, 10_000,
-                () => `completed journal for ${next} after the person's choice (${queued ? 'queued' : 'held at the prompt'}); the screen since the read began:\n${strip(frontend.output.slice(mark)).slice(-3000)}`);
+                () => `completed journal for ${next} after the person's choice (${queued ? 'queued' : 'held at the prompt'}); the screen since the read began:\n${describeScreen(strip(frontend.output.slice(mark)), ['Approve and run', 'waits for your approval', 'got='])}`);
             }
           }
           assert.equal(await frontend.completions(next), before + 1, 'the next command ran once');
