@@ -48,7 +48,7 @@ export function chromeSkipReason(): Promise<string | undefined> {
       return `the browser cannot start here: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
       await engine.shutdown();
-      fs.rmSync(dir, {recursive: true, force: true});
+      fs.rmSync(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 200});
     }
   })();
   return probe;
@@ -87,7 +87,7 @@ export function createLab(options: {idleMs?: number} = {}): Lab {
     async dispose() {
       await engine.shutdown();
       await previews.close();
-      fs.rmSync(dir, {recursive: true, force: true});
+      fs.rmSync(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 200});
     }
   };
   return lab;
