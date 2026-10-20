@@ -114,7 +114,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records);
       for (const command of [afterFailure, approved]) {
         const matches = records.filter(record => record.command === command);
-        assert.equal(matches.length, 1, 'each reviewed command recorded once');
+        assert.equal(matches.length, 1, `each reviewed command recorded once: ${command} among ${JSON.stringify(records.map(record => [record.command, record.exitCode]))}`);
         assert.equal(matches[0]!.historicalContext?.cwd, join(sandbox.home, 'scope'), 'the queue keeps the real shell directory');
         assert.match(matches[0]!.lifecycleText, /from queue/u);
       }
