@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {displayWidth, truncateText} from '../util/text.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {createImageOverlay, iterm2Image, kittyDelete, kittyTransmit, type ImageOverlay} from '../presentation/ImageSurface.js';
 import type {GraphicsDecision} from './capabilities.js';
@@ -124,16 +125,26 @@ export class GraphicsService {
     if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed) && !/^[a-z]:[\\/]/iu.test(trimmed)) {
       throw new ImageError('unsafe', /^https?:/iu.test(trimmed) ? 'Remote images are never fetched automatically.' : 'Only local image files are shown.');
     }
-    if (trimmed.includes('\0') || trimmed.startsWith('//')) throw new ImageError('unsafe', 'The image path is not valid.');
     let decoded = trimmed;
     try { decoded = decodeURI(trimmed); } catch { /* keep the literal text */ }
+    // Network-style and malformed paths are refused before any filesystem call (a UNC-style path would otherwise be probed).
+    for (const text of [trimmed, decoded]) {
+      if (text.includes('\0') || text.startsWith('//') || text.startsWith('\\') || /^[\\/]{2}/u.test(text)) throw new ImageError('unsafe', 'The image path is not valid.');
+    }
+    const outside = () => new ImageError('unsafe', 'The image lies outside this document\'s folder or project, so it is not shown.');
+    const inside = (target: string, within: string): boolean => {
+      const relative = path.relative(within, target);
+      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    };
     const candidate = path.resolve(base, decoded.split(/[?#]/u)[0]!);
+    // Lexical containment first, so whether a path outside the root exists is never revealed; then again on the real path.
+    const lexicalRoot = path.resolve(root);
+    const realRoot = await fs.realpath(root).catch(() => lexicalRoot);
+    if (!inside(candidate, lexicalRoot) && !inside(candidate, realRoot)) throw outside();
     let real: string;
     try { real = await fs.realpath(candidate); }
     catch { throw new ImageError('unavailable', 'The image file was not found.'); }
-    const realRoot = await fs.realpath(root).catch(() => root);
-    const relative = path.relative(realRoot, real);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new ImageError('unsafe', 'The image lies outside this document\'s folder or project, so it is not shown.');
+    if (!inside(real, realRoot)) throw outside();
     return real;
   }
 
@@ -149,7 +160,7 @@ export class GraphicsService {
     const stored = longest > this.limits.storeLongSide
       ? scaleBox(raster, Math.max(1, Math.round((raster.width * this.limits.storeLongSide) / longest)), Math.max(1, Math.round((raster.height * this.limits.storeLongSide) / longest)))
       : raster;
-    const image: LoadedImage = {key, name: path.basename(realPath), path: realPath, info, raster: stored, fileBytes: stat.size};
+    const image: LoadedImage = {key, name: safeName(path.basename(realPath)), path: realPath, info, raster: stored, fileBytes: stat.size};
     this.remember(image);
     return image;
   }
@@ -182,7 +193,7 @@ export class GraphicsService {
     const mode = decision.backend;
     const useText = request.surface === 'inline' || decision.inline === 'placeholder';
 
-    if (mode === 'off') return this.textPlacement(image, box, request.owner);
+    if (mode === 'off') return this.textPlacement(image, limit, request.owner);
     if (mode === 'kitty' && useText && decision.inline === 'placeholder') return this.kittyPlacement(image, source, box, cell, request);
     if (request.surface === 'viewer' && (mode === 'kitty' || mode === 'iterm2' || mode === 'sixel')) return this.overlayPlacement(image, source, box, cell, request, mode);
     return this.artPlacement(image, source, box, request.owner);
@@ -196,7 +207,8 @@ export class GraphicsService {
   }
 
   private textPlacement(image: LoadedImage, box: {columns: number; rows: number}, owner: unknown): Placement {
-    return {kind: 'text', columns: box.columns, rows: 1, lines: [`[image: ${image.name}]`], owner};
+    const label = `[image: ${image.name}]`;
+    return {kind: 'text', columns: Math.min(box.columns, displayWidth(label)), rows: 1, lines: [truncateText(label, Math.max(4, box.columns))], owner};
   }
 
   private kittyPlacement(image: LoadedImage, source: Raster, box: {columns: number; rows: number}, cell: {width: number; height: number}, request: PlaceRequest): Placement {
@@ -299,6 +311,11 @@ export class GraphicsService {
   stats(): {cached: number; cacheBytes: number; uploads: number; uploadBytes: number} {
     return {cached: this.cache.size, cacheBytes: this.cacheSize, uploads: this.uploads.size, uploadBytes: this.uploadSize};
   }
+}
+
+/** A file name made safe to draw: control, format and separator characters (an escape in a name!) become marks. */
+export function safeName(name: string): string {
+  return name.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/gu, character => (character === '\u001b' ? '␛' : '·')).slice(0, 200);
 }
 
 function cropKey(crop: PlaceRequest['crop']): string {

@@ -58,6 +58,13 @@ test('references: remote, data and escaping paths are refused; local ones resolv
     await assert.rejects(GraphicsService.resolveReference('link/secret.png', base, root), /outside this document/u, 'a symlink out of the root is followed to its real place and refused');
     await assert.rejects(GraphicsService.resolveReference(join(f.dir, 'outside', 'secret.png'), base, root), /outside this document/u);
     await assert.rejects(GraphicsService.resolveReference('missing.png', base, root), (error: unknown) => error instanceof ImageError && error.code === 'unavailable');
+    // The same answer whether or not a path outside the root exists: nothing is learned about it.
+    for (const outside of ['../nope/none.png', '../outside/secret.png', '/etc/passwd', '/definitely/not/here.png']) {
+      await assert.rejects(GraphicsService.resolveReference(outside, base, root), (error: unknown) => error instanceof ImageError && error.code === 'unsafe', outside);
+    }
+    for (const unc of ['\\\\server\\share\\x.png', '\\\\?\\C:\\x.png']) {
+      await assert.rejects(GraphicsService.resolveReference(unc, base, root), (error: unknown) => error instanceof ImageError && error.code === 'unsafe', unc);
+    }
     assert.ok((await GraphicsService.resolveReference('../outside/secret.png', base, f.dir)).endsWith('outside/secret.png'), 'a wider root allows it');
   } finally { f.done(); }
 });
@@ -150,6 +157,21 @@ test('character art: Zed, tmux, NO_COLOR and forced Unicode draw rows of exactly
       if (name.startsWith('safe glyphs')) assert.ok(placement.lines.every(line => /^[\x20-\x7e]*$/u.test(stripAnsi(line))), 'Safe Glyphs: printable ASCII only');
     } finally { f.done(); }
   }
+});
+
+test('a file name with control characters is made safe wherever it is shown', async () => {
+  const f = fixture({mode: 'off'});
+  try {
+    const nasty = join(f.dir, 'a\u001b]0;pwned\u0007b.png');
+    writeFileSync(nasty, encodePng(raster(4, 4)));
+    const image = await f.service.load(nasty);
+    assert.doesNotMatch(image.name, /[\u0000-\u001f\u007f-\u009f]/u);
+    const placement = f.service.place(image, {columns: 40, rows: 10, owner: {}, surface: 'inline'});
+    assert.doesNotMatch(placement.lines.join('\n'), /[\u0000-\u001f\u007f-\u009f]/u);
+    assert.ok(placement.lines.every(line => displayWidth(line) <= 40));
+    const narrow = f.service.place(image, {columns: 10, rows: 10, owner: {}, surface: 'inline'});
+    assert.ok(narrow.lines.every(line => displayWidth(line) <= 10), 'the label is cut to the width');
+  } finally { f.done(); }
 });
 
 test('off: a placeholder line names the image; nothing is decoded into cells or sent', async () => {
