@@ -264,8 +264,11 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     routeRow('setupPresets', 'Starting point', 'NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing · /startup', 'setupQuick', 'General'),
     {row: configRow('panelPosition'), note: draft => draft.panelPosition === 'top' ? 'Panels like this one sit at the top of the screen' : 'Panels like this one sit at the bottom of the screen'},
   ]},
-  {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
+  {id: 'terminal', title: 'Terminal', intro: ['Glyphs, images, sized headings and the browser your terminal can show.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
+    {row: configRow('graphicsMode')},
+    {row: configRow('textSizing')},
+    {row: configRow('browser')},
   ]},
   // Look: the theme first, then what depends on it (text, chrome), then Chroma, the one place it is chosen, with its
   // own rows under it. Motion-wide switches (Reduced Motion, Decorative effects) are on the Motion step.
