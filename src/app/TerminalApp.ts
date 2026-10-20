@@ -293,6 +293,8 @@ import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
+import {configureTextSizing} from '../ui/textSizing.js';
+import type {TextOverlay} from '../arcade/Canvas.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
@@ -3803,6 +3805,27 @@ export class TerminalApp {
    * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
    * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
    */
+  /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
+  private syncTypography(): void {
+    const capabilities = this.host.capabilities;
+    const key = `${this.promptConfiguration.textSizing}|${capabilities.textSizing?.scale ?? '-'}|${capabilities.textSizing?.width ?? '-'}`;
+    if (key === this.typographyKey) return;
+    this.typographyKey = key;
+    configureTextSizing({setting: this.promptConfiguration.textSizing, capabilities, env: process.env});
+  }
+
+  /** The panel's sized-text blocks at screen cells: only blocks that lie wholly inside the panel are ever placed. */
+  private panelTextBlocks(plan: ScreenPlan, region: {top: number; height: number} | undefined): Array<{row: number; column: number; columns: number; rows: number; sequence: string}> {
+    if (!region || !plan.panelActive || !this.panelBlocks.length) return [];
+    const shift = plan.panelPosition === 'top' ? -1 : 0;
+    const columnShift = this.workspace.open ? this.workspaceColumns().center.x : 0;
+    return this.panelBlocks.flatMap(block => {
+      const row = region.top + block.y + shift;
+      return row >= region.top && row + block.rows <= region.top + region.height
+        ? [{row, column: block.x + columnShift, columns: block.columns, rows: block.rows, sequence: block.sequence}] : [];
+    });
+  }
+
   // ---- Vespyr Arcade ------------------------------------------------------------------------------------------
 
   private arcadeEnvironment(): ArcadeEnvironment {
@@ -5357,6 +5380,7 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
+    this.panelBlocks = [];
     const minimum = this.panelMinimum();
     const {rows} = this.dimensions();
     if (minimum && !fits(minimum, columns, rows)) {
@@ -5383,7 +5407,7 @@ export class TerminalApp {
     if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
-    if (this.arcade) return this.arcade.session.render().rows;
+    if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
     if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
@@ -9545,6 +9569,9 @@ export class TerminalApp {
   /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
   private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number};
   private arcadeStore?: ArcadeStore;
+  /** Sized-text blocks the active panel asked for this frame, relative to its rows (placed by render). */
+  private panelBlocks: TextOverlay[] = [];
+  private typographyKey = '';
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -10957,6 +10984,7 @@ export class TerminalApp {
   }
 
   private render(): void {
+    this.syncTypography();
     this.reconcileOutputNavigation();
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
@@ -11159,6 +11187,7 @@ export class TerminalApp {
       cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
     this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
+    this.renderer.setTextBlocks(this.panelTextBlocks(plan, panelRegion));
     this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;

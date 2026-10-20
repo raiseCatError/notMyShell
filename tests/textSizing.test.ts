@@ -165,3 +165,35 @@ test('renderer: nothing is written while a program owns the screen, and a block 
   r.instance.render(r.frame(['top', '', '', 'bottom']));
   assert.match(r.writes.join(''), /\u001b\]66;s=2;Hello/u);
 });
+
+// ---- the app: a panel's sized title reaches the renderer at the right screen cell ------------------------------------
+
+import {executionFrameFixture} from './support/executionTimelineFrames.js';
+import {stripAnsi} from '../src/util/text.js';
+
+test('app: with verified scaling the arcade hub title is placed as a sized block inside the panel, and plain text otherwise', async () => {
+  const frame = executionFrameFixture(110, 34);
+  const app = frame.app;
+  const placed: TextBlock[][] = [];
+  const original = app['renderer'].setTextBlocks.bind(app['renderer']);
+  app['renderer'].setTextBlocks = (blocks: readonly TextBlock[]) => { placed.push([...blocks]); original(blocks); };
+  try {
+    app['host'].capabilities = {...app['host'].capabilities, textSizing: {scale: true, width: true}};
+    app['typographyKey'] = '';
+    process.env.TERM_PROGRAM = process.env.TERM_PROGRAM === 'ghostty' ? 'kitty' : process.env.TERM_PROGRAM;
+    await app['runSlash']('/games', {kind: 'arcade'});
+    frame.capture();
+    const withBlock = placed.at(-1)!;
+    const title = withBlock.find(block => block.sequence.includes('Vespyr Arcade'));
+    assert.ok(title, 'the hub title is a sized block');
+    assert.match(title!.sequence, /\u001b\]66;s=2;Vespyr Arcade\u001b\\/u, 'the panel has no room for 3x here, so 2x');
+    const rows = frame.capture().frame.rows.map(row => stripAnsi(row));
+    for (let row = title!.row; row < title!.row + title!.rows; row += 1) {
+      assert.equal(rows[row]!.slice(title!.column, title!.column + title!.columns).trim(), '', 'the cells under the block are blank, so the terminal draws it on clean cells');
+    }
+    app['promptConfiguration'].textSizing = 'off';
+    frame.capture();
+    assert.deepEqual(placed.at(-1), [], 'turning Text sizing off removes the block and draws the title as ordinary text');
+    assert.match(frame.capture().frame.rows.map(row => stripAnsi(row)).join('\n'), /Vespyr Arcade/u);
+  } finally { frame.dispose(); reset(); }
+});

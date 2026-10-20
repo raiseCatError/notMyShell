@@ -49,6 +49,8 @@ export interface TextOverlay {
   rows: number;
   /** The escape that draws the block when the cursor is at its top-left cell. */
   sequence: string;
+  /** Colors and weight to draw it with (the host turns them into an SGR prefix at the terminal's color level). */
+  style?: Style;
 }
 
 export class Canvas {
@@ -218,7 +220,7 @@ export class Canvas {
    */
   typeBlock(block: TypeBlock, x: number, y: number, style: Style = {}): void {
     if (block.sized && x >= 0 && y >= 0 && x + block.sized.columns <= this.width && y + block.sized.rows <= this.height) {
-      this.overlay({x, y, columns: block.sized.columns, rows: block.sized.rows, sequence: block.sized.sequence});
+      this.overlay({x, y, columns: block.sized.columns, rows: block.sized.rows, sequence: block.sized.sequence, style});
       return;
     }
     block.plain.forEach((row, index) => this.text(x, y + index, row, style));
@@ -247,6 +249,20 @@ export class Canvas {
   /** Rows as plain text (no escapes), for tests and screenshots. */
   plain(options: EncodeOptions = {color: 'none', safe: false}): string[] {
     return this.rows(options).map(row => row.replace(/\u001b\[[0-9;]*m/gu, ''));
+  }
+
+  /** The SGR prefix for a style at an encoding (for sized-text blocks the host draws itself), and the reset that ends it. */
+  static styleEscape(style: Style, options: EncodeOptions): string {
+    let out = '';
+    if (style.bold) out += '\u001b[1m';
+    if (style.dim) out += '\u001b[2m';
+    if (style.italic) out += '\u001b[3m';
+    if (style.underline) out += '\u001b[4m';
+    if (options.color !== 'none') {
+      if (style.fg) out += colorEscape(38, style.fg, options.color);
+      if (style.bg) out += colorEscape(48, style.bg, options.color);
+    }
+    return out;
   }
 
   private encodeRow(y: number, options: EncodeOptions): string {

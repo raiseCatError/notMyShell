@@ -261,14 +261,16 @@ export class ArcadeSession {
     let overlays: TextOverlay[] = [];
     let hints: readonly ControlHint[];
     if (this.screen === 'hub' || !this.game || !this.canvas) {
-      body = this.hubRows(palette, encode);
+      const hub = this.hubRows(palette, encode);
+      body = hub.rows;
+      overlays = hub.overlays;
       hints = [{keys: '↑↓', action: 'choose'}, {keys: 'Enter', action: 'play'}, {keys: '1-5', action: 'jump'}, {keys: 'Esc', action: 'close'}];
     } else {
       this.game.render(this.canvas, this.alpha, palette);
       if (this.screen === 'paused') this.drawCard(this.canvas, palette, 'Paused', [], this.menu!);
       else if (this.screen === 'over') this.drawOver(this.canvas, palette);
       body = this.canvas.rows(encode);
-      overlays = this.canvas.overlays.map(block => ({...block, y: block.y + 1}));
+      overlays = this.canvas.overlays.map(block => ({...block, y: block.y + 1, sequence: `${Canvas.styleEscape(block.style ?? {}, encode)}${block.sequence}\u001b[0m`}));
       hints = this.screen === 'playing' ? this.game.hints() : [{keys: '↑↓', action: 'choose'}, {keys: 'Enter', action: 'select'}, {keys: 'Esc', action: this.screen === 'paused' ? 'resume' : 'arcade'}];
     }
     const footer = renderControlRows(hints.map(hint => [hint.keys, hint.action] as const), this.columns).slice(0, this.footerRows());
@@ -277,7 +279,7 @@ export class ArcadeSession {
     return {rows: rows.slice(0, this.rowsAvailable), overlays};
   }
 
-  private hubRows(palette: ArcadePalette, encode: {color: ColorLevel; safe: boolean}): string[] {
+  private hubRows(palette: ArcadePalette, encode: {color: ColorLevel; safe: boolean}): {rows: string[]; overlays: TextOverlay[]} {
     const width = this.columns;
     const height = Math.max(4, this.rowsAvailable - 1 - this.footerRows());
     const canvas = new Canvas(width, height);
@@ -324,7 +326,8 @@ export class ArcadeSession {
         this.describe(canvas, palette, chosen, 2, detailY, width - 4, height);
       }
     }
-    return canvas.rows(encode);
+    const overlays = canvas.overlays.map(block => ({...block, y: block.y + 1, sequence: `${Canvas.styleEscape(block.style ?? {}, encode)}${block.sequence}\u001b[0m`}));
+    return {rows: canvas.rows(encode), overlays};
   }
 
   private describe(canvas: Canvas, palette: ArcadePalette, game: GameDefinition, x: number, y: number, width: number, height: number): void {
