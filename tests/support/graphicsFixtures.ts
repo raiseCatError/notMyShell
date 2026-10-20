@@ -41,4 +41,3 @@ export function withOrientation(file: Uint8Array, orientation: number, little = 
   const header = Buffer.from([0xff, 0xe1, (body.length + 2) >> 8, (body.length + 2) & 255]);
   return concat([file.subarray(0, 2), header, body, file.subarray(2)]);
 }
-
