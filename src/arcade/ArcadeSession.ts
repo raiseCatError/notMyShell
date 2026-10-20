@@ -215,7 +215,7 @@ export class ArcadeSession {
     const game = this.game!;
     // Esc pauses a running game and leaves a game that has not started; every other key belongs to the game.
     if (key.kind === 'escape' && game.status === 'playing') { game.pause(); this.showPause(); return 'handled'; }
-    if (key.kind === 'text' && key.value.toLowerCase() === 'p' && game.status === 'playing' && game.stepsPerSecond > 0) { game.pause(); this.showPause(); return 'handled'; }
+    if (key.kind === 'text' && key.value.toLowerCase() === 'p' && game.status === 'playing') { game.pause(); this.showPause(); return 'handled'; }
     const outcome = game.key(key);
     if (outcome === 'exit') return 'close';
     if (outcome === 'back' || (key.kind === 'escape' && outcome === 'ignored')) { this.leaveGame(); return 'handled'; }
