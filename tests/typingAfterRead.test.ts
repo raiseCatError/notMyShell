@@ -99,7 +99,8 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
             if (await frontend.completions(next) === before) {
               const queued = ((await sandbox.sessions())[0]?.queued ?? 0) > 0;
               await showAndRunHeld(frontend, mode, run, next, mark, queued);
-              await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next} after the person's choice`);
+              await until(async () => await frontend.completions(next) > before, 10_000,
+                () => `completed journal for ${next} after the person's choice (${queued ? 'queued' : 'held at the prompt'}); the screen since the read began:\n${strip(frontend.output.slice(mark)).slice(-3000)}`);
             }
           }
           assert.equal(await frontend.completions(next), before + 1, 'the next command ran once');

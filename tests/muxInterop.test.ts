@@ -220,7 +220,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
-  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${plain(from).slice(-800)}`);
+  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${plain(from).replace(/ {2,}/gu, ' ').slice(-3000)}`);
   // Each command's own completion row before the next is typed: a line typed while one still runs waits for approval (#426).
   const run = async (command: string, expect: RegExp) => { const mark = output.length; pty.write(`${command}\r`); await waitFor(new RegExp(`${expect.source}[\\s\\S]*Completed`, expect.flags), mark); };
   try {
