@@ -258,5 +258,3 @@ test('readImageFile: regular files only, size bounded, FIFOs and directories ref
     fs.rmSync(dir, {recursive: true, force: true});
   }
 });
-
-

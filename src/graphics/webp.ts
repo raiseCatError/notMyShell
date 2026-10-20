@@ -114,4 +114,3 @@ async function readBounded(file: string): Promise<Uint8Array | undefined> {
     await handle?.close().catch(() => undefined);
   }
 }
-
