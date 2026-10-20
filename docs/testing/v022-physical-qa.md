@@ -75,6 +75,13 @@ terminal: A1, A9, A10 and B1 no longer stand for the new candidate and are repla
 | R5 Passwords and replies (#426, replaces A9) | Ghostty | zsh |  | Not run | retest on the new candidate |
 | R6 Prompt hooks and Ctrl+C (#436, replaces A10) | Ghostty | zsh |  | Not run | retest on the new candidate |
 | R7 Progress and window size (#443, replaces A1 1–3, 6 and B1) | Ghostty, Terminal.app | zsh, Fish |  | Not run | retest on the new candidate |
+| F1 Multiline modes | Ghostty | zsh |  | NOT RUN | final additions |
+| F2 Images (Kitty graphics) | Ghostty | zsh |  | NOT RUN | final additions |
+| F3 Images (character art) | Zed | zsh |  | NOT RUN | final additions |
+| F4 Text sizing | Ghostty, Kitty | zsh |  | NOT RUN | Auto expected off in Ghostty; Kitty not available here |
+| F5 Document workspace | Ghostty or Zed | zsh |  | NOT RUN | final additions |
+| F6 `/browser` | Ghostty, Zed | zsh |  | NOT RUN | needs an installed Chrome or Chromium |
+| F7 Vespyr Arcade | Ghostty, Zed | zsh |  | NOT RUN | final additions |
 
 **NOT RUN is not PASS.** The nine required passes above were not performed; if the release goes ahead without them, that
 is a recorded acceptance of their risk (below), not a result.
@@ -133,15 +140,10 @@ NMSh, `exit` every `nmsh2` window and start again.
 **PASS** if no step shows an unrelated screen, nothing runs without your Enter, and the refusal stands.
 
 ### R2 · Pasted NMSh commands (F02), Ghostty, zsh, 4 min
-1. `pbcopy < retest/paste-mixed.txt`, paste (Cmd+V), Enter (inserts), Enter: nothing runs; the reviewed list opens
-   with `1 One at a time · 2 commands` and no Run as block or Queue choice. Enter: `cd modules/bun-app` waits in the
-   composer with `Pasted command 1 of 2 · Enter runs it · Esc stops`. Enter: it runs; `/modules` is then offered.
-   Enter: the Modules panel opens (no `zsh: no such file or directory`). Close it; `cd ../..`.
-2. `pbcopy < retest/paste-track.txt`, paste, Enter, Enter, Enter: each `/track …` is offered in turn and runs as its
-   own tracker on your Enter. `/track stop` each one.
-3. Paste `retest/paste-mixed.txt` again, Enter, Enter, Enter, then Esc while `cd …` waits: the composer empties and
-   nothing more is offered. A multi-line shell script with no NMSh line (`for i in 1 2` Ctrl+J `do echo $i` Ctrl+J
-   `done`) still runs as one command.
+*Updated for the final modes: Queue all is now offered for a list with NMSh commands (see F1).*
+1. `pbcopy < retest/paste-mixed.txt`, paste (Cmd+V), Enter (inserts), Enter: nothing runs; the reviewed list opens on **One at a time · 2 commands**, with Queue all also in the mode strip and **no Run as block** (a note says why). Enter: `cd modules/bun-app` waits in the composer with `Pasted command 1 of 2 · Enter runs it · Esc stops`. Enter: it runs; `/modules` is then offered. Enter: the Modules panel opens (no `zsh: no such file or directory`). Close it; `cd ../..`.
+2. `pbcopy < retest/paste-track.txt`, paste, Enter, Enter, Enter: each `/track …` is offered in turn and runs as its own tracker on your Enter. `/track stop` each one.
+3. Paste `retest/paste-mixed.txt` again, Enter, Enter, Enter, then Esc while `cd …` waits: the composer empties and nothing more is offered. A multi-line shell script with no NMSh line (`for i in 1 2` Ctrl+J `do echo $i` Ctrl+J `done`) still runs as one command.
 
 **PASS** if no NMSh line ever reaches the shell and nothing runs without its own Enter.
 
@@ -214,6 +216,62 @@ history. **FAIL** with a screenshot and `fc -ln -30`.
 
 **PASS** if progress reads as in A1, only real window resizes reach the program, and full-screen programs use the
 whole window.
+
+## Final additions (about 70 minutes; separate from the retests above)
+
+Added after the retests were written: multiline modes, images, text sizing, the document workspace, `/browser` and the arcade. **Every row below is NOT RUN until a person performs it**; automated tests establish protocol output, fallbacks, rules and ownership, not how any of this looks or feels.
+
+**Fixtures:** `scripts/qa/v022-final-fixtures.sh /Volumes/T7Tmp/ai-dev/q22 <build-worktree>` adds `work/final/` (images, `docs/`, pastes) and the launcher `/Volumes/T7Tmp/ai-dev/q22/nmsh3` (`nmsh3 fish`, `nmsh3 bash`). It uses your QA configuration, its own session service and its own arcade scores and browser profile. A Chrome or Chromium must be installed for F5-F6 (otherwise F5 checks the fallback and F6 is NOT RUN with the reason). Paths are relative to `work/final`.
+
+### F1 · Multiline modes, Ghostty, zsh, 8 min
+1. `pbcopy < paste-multi.txt`, paste, Enter, Enter: the review opens on **One at a time**; the strip also offers Queue all; **Run as block** is absent with the reason "NMSh commands never go to the shell as a block". `Esc` cancels nothing run.
+2. `q` (Queue all selected), nothing has run. Enter: `FIRST-OK` prints, `cd docs` runs, `/view README-images.md` opens the document (the sequence waits), Esc closes it, then `pwd` prints `…/docs`. The strip above the composer read `Queue all · n of 4 · Esc stops` while it ran.
+3. Repeat with a failing command first (`false` at the top of the paste): the sequence stops, says what did not run.
+4. `pbcopy < paste-block.txt`, paste, Enter, Enter, `b`: one block of three lines, with the warning about shells; Enter runs it as one command.
+5. A paste with an unclosed quote: only Run as block, Edit and Cancel, Edit selected; Enter puts the text in the composer.
+6. Narrow the window to ~40 columns and with `NO_COLOR=1`: the strip, the selected row and the notes stay readable.
+
+**PASS** if nothing runs before Enter on a mode and no NMSh command ever reaches the shell.
+
+### F2 · Images, Ghostty (Kitty graphics), 8 min
+1. `/doctor`: the Host terminal rows say **Kitty graphics (verified)**; documents use Kitty Unicode placeholders. (If not, say what they say: that is a result.)
+2. `/view images/gradient.png`: the picture fills the panel with its aspect kept, no artifacts; header `gradient.png · PNG · 480 × 270`. `+` `+` zooms, arrows pan, `0` fits, `n`/`p` step through the folder, Esc returns to the shell with **no image left on screen**.
+3. `/view images/photo.jpg`, `images/small.webp`, `images/small.gif` (a first-frame note for GIF), `images/not-an-image.png` (a plain message, no crash), `images/icon.svg` (source text, **no** `QA-SVG-RAN`).
+4. `/view docs/README-images.md` then `h`: the logo is drawn in the text flow and scrolls with it; the remote badge, `../outside`, the symlink and the missing file are `[image: …]` with their reasons; `i` opens the logo, Esc returns to the same place. Resize the window while it is open.
+5. Settings → General → Images: Unicode, then Off: the same documents show character art / placeholders; back to Auto.
+
+**PASS** if images appear, scroll, clear and resize without leftovers, and nothing outside the folder is drawn.
+
+### F3 · Images, Zed (character art), 5 min
+Repeat F2 steps 2-5 in Zed's terminal (`nmsh3`): `/doctor` says no verified protocol and why; pictures are readable quadrant-block art; nothing escapes to the terminal as garbage. Note the resolution is lower than Ghostty's; do not call it equal.
+
+### F4 · Text sizing, 5 min
+1. Ghostty: `/doctor` says whether text sizing is on. Auto is expected **off** (Ghostty is not known to draw scaled glyphs). Settings → Text sizing → Enhanced, `/view docs/typography.md`, `h`: record what you see (scaled headings, or tiny glyphs in big boxes, or nothing). Set it back to Auto.
+2. Kitty, if available: Auto should scale H1 (3×), H2 (2×), H3 (1.5×); body, code and the table stay normal; scroll the document so a heading is half out of view: the plain heading shows, no fragment. `c` copies the source with no escape codes.
+3. Zed / Terminal.app: headings use weight and color only.
+
+### F5 · Document workspace, Ghostty or Zed, 10 min
+1. `/view docs/page.html`: source with line numbers, header names the file, controls name `h preview`, `e edit`, `R reload from disk`. `h`: the preview (Chromium when installed: the grid, gradient cards, the pulsing dot and the CSS marquee **move**, scripts stay off: "Scripts are off" line unchanged). `T` turns scripts on: `QA-SCRIPT-RAN` appears; `T` again.
+2. `e`: type `her` (they are text), `Ctrl+O`: the preview shows your unsaved change; `Ctrl+O` returns to the same caret. Esc → source (`● edited`), `r` in the preview refreshes without losing the edit. `Ctrl+Z` still undoes.
+3. In another window change `docs/page.html` on disk, back here `Ctrl+S`: a conflict dialog; Keep editing; `R` asks before discarding.
+4. `/edit docs/crlf-bom.html`, type, Ctrl+S, then `xxd docs/crlf-bom.html | head -2`: the BOM and CRLF are kept.
+5. `/view docs/README-images.md`, `h`, then `/edit docs/README-images.md`: the same workspace behavior for Markdown. No browser installed: the preview says it is NMSh's own and still shows the document.
+
+### F6 · `/browser`, Ghostty (Kitty frames) then Zed, 10 min
+1. `/browser docs/page.html`: the page renders in the panel, animates; `j`/`k` scroll; `o` the address bar (type `example.com`, Enter); `[` back; `+`/`-` zoom; `/` find; `t` a new tab, `x` closes it. A click on the page works; `i` focuses the page and a typed `h e r` go to a form field in `docs/app.html` (open it with `o`), Esc returns to browser commands.
+2. Refused addresses: `o` then `javascript:alert(1)`, `chrome://settings` and `data:text/html,x` are refused with a reason.
+3. Esc closes the browser. Activity Monitor: no Chrome processes remain within ~60 s.
+4. Zed: the same page as character art; readable layout, lower resolution; interaction works. **Do not call it equivalent to the real pixels.**
+5. Settings → Real browser → Off: `/browser` says it is off; the preview uses NMSh's own renderer.
+
+### F7 · Vespyr Arcade, Ghostty and Zed, 15 min
+1. `/games` (also `/game`, `/arcade`): the hub lists five games with best results; Enter plays; `/game dash` opens Dash directly; Esc leaves.
+2. Run, Flight, Dash: Space starts, play ~1 minute each. Check: jump/flap feel, speed ramp, no unfair obstacle, Esc/`p` pauses, the game over card offers Retry / Back to Arcade / Exit, a new best says so. `/game run` after a restart shows the saved best. Resize mid-game; NO_COLOR (`NO_COLOR=1 nmsh3`) stays playable.
+3. Classic Sudoku: pick Easy, enter digits, `n` notes, `t` a hint, `u` undo, pause hides the board, finishing shows the celebration; relaunch resumes an unfinished puzzle.
+4. Vespyr Doku: Easy, move, Space places a cat, `x` marks, `t` explains a hint, a clashing cat is flagged, finishing celebrates; regions stay distinguishable under NO_COLOR (letters and borders).
+5. **Ownership:** run `sleep 5`, and while it runs enter `/games`. The hub must not appear over the running command (it says why, or the line waits for your approval as any line entered while a command runs does). Then run `read x`, answer it: the answer goes to the program and no game or panel ever receives it.
+
+**PASS** if every game is playable, scores persist, nothing the arcade draws remains after leaving, and the composer is exactly as before.
 
 ## Sitting A: Ghostty, zsh (about 80 minutes; a break fits after A7)
 

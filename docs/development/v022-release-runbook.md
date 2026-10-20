@@ -19,6 +19,16 @@ manual **Publish NMSh website** dispatch, approved in the `nmsh-production` envi
 (`package.json` is `private`). `master` needs the `Verify (22.x)` and `Verify (26.x)` checks; the old GitHub Pages
 deploy (`deploy.yml`) is disabled.
 
+## The final scope (added after the first runbook)
+
+v0.22.0 also ships multiline modes, the graphics service and image viewing, OSC 66 typography, the document workspace, `/browser` and the Vespyr Arcade
+([ledger](v022-ledger.md#final-scope-2026-10-20-multiline-modes-graphics-typography-workspace-browser-arcade)). They reach `release/v0.22.0` through
+reviewed PRs merged by the maintainer, in this order: the component PRs (#458, #459) or the single integration PR (`integration/v022-final`, which contains them),
+then the release-metadata commit (changelog date, "current stable release" text) on `release/v0.22.0`. Two new runtime dependencies are in `package.json`
+and the lockfile (`jpeg-js` 0.4.4, `marked` 18.1.1); check `npm ci` and the source archive build after the merge. Tests that need a real Chrome skip when none can start;
+on the hosted runners they run where Chrome is installed. For this release the maintainer accepted hosted CI on the exact final head in place of a local `npm run verify:release`
+on an 8 GB machine; record that difference in the release notes.
+
 ## 0. Before starting
 
 - The physical QA results table has a recorded result for every row on the candidate build (or the maintainer has

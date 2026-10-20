@@ -130,7 +130,10 @@ function inlineText(nodes: readonly Node[]): string {
     const name = node.name;
     if (DROPPED.has(name)) continue;
     if (name === 'br') out += ' ';
-    else if (name === 'img') out += `<img alt="${escapeAttribute(imageLabel(node.attributes))}">`;
+    else if (name === 'img') {
+      const src = decodeEntities(node.attributes.src ?? '').trim().slice(0, 2000);
+      out += `<img alt="${escapeAttribute(imageLabel(node.attributes))}"${src ? ` src="${escapeAttribute(src)}"` : ''}>`;
+    }
     else if (name === 'input') out += node.attributes.type?.toLowerCase() === 'checkbox' ? ('checked' in node.attributes ? '☑ ' : '☐ ') : '';
     else if (CODE.has(name)) out += `<code>${escapeAttribute(decodeEntities(textContent(node.children)).replace(/\s+/gu, ' '))}</code>`;
     else if (STRONG.has(name)) out += `<b>${inlineText(node.children)}</b>`;

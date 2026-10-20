@@ -36,141 +36,115 @@ function dispose(instance: TerminalApp) {
 
 const queued = (instance: TerminalApp) => instance['queueState'].entries.map(entry => entry.text);
 
-test('multiline paste choices: default valid state offers block, queue, edit, cancel with queue as default', () => {
+test('multiline paste modes: a valid shell paste offers One at a time, Queue all, Run as block, Edit, Cancel, defaulting to One at a time', () => {
   const review = createBatchReview('echo first\necho second\necho third', 'bash', 10)!;
-  assert.equal(review.choice, 'queue');
+  assert.equal(review.choice, 'steps', 'nothing executes by default: the conservative mode is one command at a time');
   assert.equal(review.verifiedCount, 3);
   assert.equal(review.refusal, undefined);
 
-  const choices = batchAvailableChoices(review);
-  assert.deepEqual(choices, ['block', 'queue', 'edit', 'cancel']);
+  assert.deepEqual(batchAvailableChoices(review), ['steps', 'queue', 'block', 'edit', 'cancel']);
 });
 
-test('choice navigation: Tab, BackTab, Left, Right and 1-4 update focus only, never executing anything', () => {
+test('mode navigation: Tab, BackTab, Left, Right, digits and letters update the mode only, never executing anything', () => {
   const review = createBatchReview('echo a\necho b', 'bash', 10)!;
+  assert.equal(review.choice, 'steps');
 
-  // Initial choice is queue
-  assert.equal(review.choice, 'queue');
-
-  // Tab (complete) moves to edit
-  assert.equal(batchReviewKey(review, {kind: 'complete'}, 20), undefined);
-  assert.equal(review.choice, 'edit');
-
-  // Tab (complete) moves to cancel
-  assert.equal(batchReviewKey(review, {kind: 'complete'}, 20), undefined);
-  assert.equal(review.choice, 'cancel');
-
-  // Tab (complete) wraps to block
-  assert.equal(batchReviewKey(review, {kind: 'complete'}, 20), undefined);
-  assert.equal(review.choice, 'block');
-
-  // Shift+Tab (focusPrevious) moves back to cancel
+  // Tab (complete) walks the strip in the order it is drawn, and wraps.
+  const walk = ['queue', 'block', 'edit', 'cancel', 'steps'];
+  for (const expected of walk) {
+    assert.equal(batchReviewKey(review, {kind: 'complete'}, 20), undefined);
+    assert.equal(review.choice, expected);
+  }
   assert.equal(batchReviewKey(review, {kind: 'focusPrevious'}, 20), undefined);
   assert.equal(review.choice, 'cancel');
-
-  // Left moves to edit
   assert.equal(batchReviewKey(review, {kind: 'left'}, 20), undefined);
   assert.equal(review.choice, 'edit');
-
-  // Right moves to cancel
   assert.equal(batchReviewKey(review, {kind: 'right'}, 20), undefined);
   assert.equal(review.choice, 'cancel');
 
-  // Direct numbers 1-4
-  assert.equal(batchReviewKey(review, text('1'), 20), undefined);
-  assert.equal(review.choice, 'block');
-
-  assert.equal(batchReviewKey(review, text('2'), 20), undefined);
-  assert.equal(review.choice, 'queue');
-
-  assert.equal(batchReviewKey(review, text('3'), 20), undefined);
-  assert.equal(review.choice, 'edit');
-
-  assert.equal(batchReviewKey(review, text('4'), 20), undefined);
-  assert.equal(review.choice, 'cancel');
-
-  // 'b' focuses block
-  assert.equal(batchReviewKey(review, text('b'), 20), undefined);
-  assert.equal(review.choice, 'block');
+  // Digits pick the nth mode shown.
+  for (const [digit, expected] of [['1', 'steps'], ['2', 'queue'], ['3', 'block'], ['4', 'edit'], ['5', 'cancel']] as const) {
+    assert.equal(batchReviewKey(review, text(digit), 20), undefined);
+    assert.equal(review.choice, expected);
+  }
+  // Letters pick by name; they select, and only Enter confirms (q used to queue at once).
+  for (const [letter, expected] of [['b', 'block'], ['q', 'queue'], ['o', 'steps']] as const) {
+    assert.equal(batchReviewKey(review, text(letter), 20), undefined, `${letter} selects, never runs`);
+    assert.equal(review.choice, expected);
+  }
 });
 
-test('refusal on unsafe separation: unclosed construct or single command refuses queue and defaults to block', () => {
+test('refusal on unsafe separation: only Run as block, Edit and Cancel remain, and Enter alone never runs the block', () => {
   const review = createBatchReviewWithRefusal('echo "unclosed\necho next', 'bash', 10, 'Unclosed quote in line 1');
-  assert.equal(review.choice, 'block');
+  assert.equal(review.choice, 'edit', 'the default does not execute');
   assert.equal(review.refusal, 'Unclosed quote in line 1');
 
-  // Queue is NOT available among choices
-  const choices = batchAvailableChoices(review);
-  assert.deepEqual(choices, ['block', 'edit', 'cancel']);
+  // One at a time and Queue all need separate commands.
+  assert.deepEqual(batchAvailableChoices(review), ['block', 'edit', 'cancel']);
 
-  // Pressing 2 does NOT select queue
-  batchReviewKey(review, text('2'), 20);
-  assert.equal(review.choice, 'block');
+  // Pressing 2 picks the second mode shown (Edit), the queue letter picks nothing.
+  batchReviewKey(review, text('q'), 20);
+  assert.equal(review.choice, 'edit');
+  assert.deepEqual(batchReviewKey(review, {kind: 'enter'}, 20), {kind: 'edit'});
 
-  // Enter on refused state confirms block (1 outer execution)
-  const action = batchReviewKey(review, {kind: 'enter'}, 20);
-  assert.deepEqual(action, {kind: 'block'});
+  // Run as block is a deliberate choice, then Enter confirms it (1 outer execution).
+  batchReviewKey(review, text('b'), 20);
+  assert.deepEqual(batchReviewKey(review, {kind: 'enter'}, 20), {kind: 'block'});
 });
 
-test('execution choices on Enter: block, queue, edit, cancel perform exact actions', () => {
+test('execution choices on Enter: steps, queue, block, edit, cancel perform exact actions', () => {
   const pasteText = 'git fetch\ngit pull --ff-only';
-
-  // 1. Block
-  const blockReview = createBatchReview(pasteText, 'bash', 10)!;
-  batchReviewKey(blockReview, text('1'), 20);
-  assert.deepEqual(batchReviewKey(blockReview, {kind: 'enter'}, 20), {kind: 'block'});
-
-  // 2. Queue
-  const queueReview = createBatchReview(pasteText, 'bash', 10)!;
-  batchReviewKey(queueReview, text('2'), 20);
-  assert.deepEqual(batchReviewKey(queueReview, {kind: 'enter'}, 20), {kind: 'queue'});
-
-  // 3. Edit
-  const editReview = createBatchReview(pasteText, 'bash', 10)!;
-  batchReviewKey(editReview, text('3'), 20);
-  assert.deepEqual(batchReviewKey(editReview, {kind: 'enter'}, 20), {kind: 'edit'});
-
-  // 4. Cancel
-  const cancelReview = createBatchReview(pasteText, 'bash', 10)!;
-  batchReviewKey(cancelReview, text('4'), 20);
-  assert.deepEqual(batchReviewKey(cancelReview, {kind: 'enter'}, 20), {kind: 'cancel'});
+  for (const [digit, kind] of [['1', 'steps'], ['2', 'queue'], ['3', 'block'], ['4', 'edit'], ['5', 'cancel']] as const) {
+    const review = createBatchReview(pasteText, 'bash', 10)!;
+    batchReviewKey(review, text(digit), 20);
+    assert.deepEqual(batchReviewKey(review, {kind: 'enter'}, 20), {kind}, kind);
+  }
+  // A queue with no room for the commands does not offer Queue all.
+  const full = createBatchReview(pasteText, 'bash', 1)!;
+  assert.deepEqual(batchAvailableChoices(full), ['steps', 'block', 'edit', 'cancel']);
+  // Neither does a session that cannot queue.
+  const off = createBatchReview(pasteText, 'bash', 10)!;
+  off.queueOff = 'Queue all is not offered: queueing is off.';
+  assert.deepEqual(batchAvailableChoices(off), ['steps', 'block', 'edit', 'cancel']);
 });
 
-test('renderBatchReview shows verified statement count, choice pills, and dynamic Enter control', () => {
+test('renderBatchReview draws the shared mode strip, the verified count and the dynamic Enter control, with no bracket selectors', () => {
   const review = createBatchReview('make build\nmake test', 'bash', 10)!;
   const rendered = renderBatchReview(review, 80, 24).map(stripAnsi);
 
-  // Header has verified statements count
   assert.ok(rendered[0]!.includes('2 verified statements'));
+  const strip = rendered.find(row => row.includes('One at a time'))!;
+  for (const label of ['One at a time', 'Queue all', 'Run as block', 'Edit', 'Cancel']) assert.ok(strip.includes(label), label);
+  assert.ok(!rendered.some(row => /\[\d? ?(?:One at a time|Run as block|Queue|Edit|Cancel)/u.test(row)), 'no old bracket-style options');
+  assert.ok(rendered.some(row => row.includes('Enter') && row.includes('first to the composer')));
 
-  // Contains choices
-  const choicesRow = rendered.find(row => row.includes('[1 Run as block') || row.includes('[1 Block'))!;
-  assert.ok(choicesRow.includes('1 Run as block'));
-  assert.ok(choicesRow.includes('2 Queue separately'));
-  assert.ok(choicesRow.includes('3 Edit'));
-  assert.ok(choicesRow.includes('4 Cancel'));
+  review.choice = 'queue';
+  const queueRendered = renderBatchReview(review, 80, 24).map(stripAnsi);
+  assert.ok(queueRendered.some(row => row.includes('Enter') && row.includes('queue all 2')));
 
-  // Default queue has Enter queue 2
-  assert.ok(rendered.some(row => row.includes('Enter') && row.includes('queue 2')));
-
-  // Switch to block choice
   review.choice = 'block';
   const blockRendered = renderBatchReview(review, 80, 24).map(stripAnsi);
   assert.ok(blockRendered.some(row => row.includes('Enter') && row.includes('run as block')));
-  assert.ok(blockRendered.some(row => row.includes('The shell runs 1 outer execution')));
+  assert.match(blockRendered.join(' ').replace(/\s+/gu, ' '), /read a block differently/u, 'the warning about different shells');
 
-  // Switch to edit choice
   review.choice = 'edit';
-  const editRendered = renderBatchReview(review, 80, 24).map(stripAnsi);
-  assert.ok(editRendered.some(row => row.includes('Enter') && row.includes('edit in composer')));
-
-  // Switch to cancel choice
+  assert.ok(renderBatchReview(review, 80, 24).map(stripAnsi).some(row => row.includes('Enter') && row.includes('edit in composer')));
   review.choice = 'cancel';
-  const cancelRendered = renderBatchReview(review, 80, 24).map(stripAnsi);
-  assert.ok(cancelRendered.some(row => row.includes('Enter') && row.includes('cancel')));
+  assert.ok(renderBatchReview(review, 80, 24).map(stripAnsi).some(row => row.includes('Enter') && row.includes('cancel')));
 });
 
-test('app integration: selecting "1 Run as block" submits the whole paste as 1 outer execution without queueing', async () => {
+test('renderBatchReview fits narrow windows, and draws the active mode and the selected row without color', () => {
+  const review = createBatchReview('make build\nmake test\nmake lint', 'bash', 10)!;
+  for (const columns of [24, 30, 40, 60, 100]) {
+    for (const height of [10, 16, 24]) {
+      const rows = renderBatchReview(review, columns, height);
+      assert.ok(rows.length <= height);
+      for (const row of rows) assert.ok(displayWidth(stripAnsi(row)) <= columns, `${columns}x${height}: ${stripAnsi(row)}`);
+    }
+  }
+});
+
+test('app integration: choosing Run as block submits the whole paste as 1 outer execution without queueing', async () => {
   const instance = app();
   try {
     const paste = 'echo "step1"\necho "step2"';
@@ -181,9 +155,9 @@ test('app integration: selecting "1 Run as block" submits the whole paste as 1 o
     instance['handleKey'](text('b'));
     await reviewing(instance);
     assert.ok(instance['batchReview']);
+    assert.equal(instance['batchReview'].choice, 'steps', 'the review opens on the conservative mode');
 
-    // Focus 1 (Run as block)
-    instance['handleKey'](text('1'));
+    instance['handleKey'](text('b'));
     assert.equal(instance['batchReview'].choice, 'block');
     assert.deepEqual(queued(instance), [], 'nothing queued on focus');
 
@@ -206,7 +180,7 @@ test('app integration: selecting "1 Run as block" submits the whole paste as 1 o
   }
 });
 
-test('app integration: selecting "3 Edit" places paste in composer and clears review', async () => {
+test('app integration: choosing Edit places paste in composer and clears review', async () => {
   const instance = app();
   try {
     const paste = 'echo line1\necho line2';
@@ -215,11 +189,9 @@ test('app integration: selecting "3 Edit" places paste in composer and clears re
     await reviewing(instance);
     assert.ok(instance['batchReview']);
 
-    // Select choice 3 (Edit)
-    instance['handleKey'](text('3'));
+    instance['handleKey'](text('4'));
     assert.equal(instance['batchReview'].choice, 'edit');
 
-    // Confirm
     instance['handleKey']({kind: 'enter'});
     assert.equal(instance['batchReview'], undefined);
     assert.equal(instance['pastePreview'], undefined);
@@ -277,7 +249,7 @@ test('removal and reordering in paste review change the confirmed block and edit
     instance['batchReview'] = review;
     instance['handleKey']({kind: 'delete'});
     instance['handleKey'](text('j'));
-    instance['handleKey'](text('1'));
+    instance['handleKey'](text('b'));
     let submitted = '';
     instance['submit'] = async () => { submitted = instance['editor'].text; };
     instance['handleKey']({kind: 'enter'});
@@ -285,7 +257,7 @@ test('removal and reordering in paste review change the confirmed block and edit
     assert.equal(submitted, 'echo THIRD\necho SECOND', 'only the reviewed survivors, in the reviewed order');
     instance['editor'].clear();
     instance['batchReview'] = review;
-    instance['handleKey'](text('3'));
+    instance['handleKey'](text('4'));
     instance['handleKey']({kind: 'enter'});
     assert.equal(instance['editor'].text, 'echo THIRD\necho SECOND');
   } finally { dispose(instance); }

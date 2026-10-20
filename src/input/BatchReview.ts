@@ -1,5 +1,6 @@
 import type {Key} from '../terminal/keys.js';
 import {renderControlRows} from '../ui/controls.js';
+import {renderTabStrip, selectedRowBand} from '../ui/PanelShell.js';
 import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {isSlashInput, parseSlashCommand} from '../commands/slashCommands.js';
@@ -9,18 +10,25 @@ import {splitBatch, type BatchCommand, type BatchShell} from './pasteBatch.js';
 import {displayWidth, padCells, truncateAnsi, truncateText} from '../util/text.js';
 
 /**
- * Batch Review: a pasted sequence split into the commands the shell would run, to look at before any of it is queued.
- * Nothing runs because it was pasted or shown here. Enter queues exactly the commands listed, in the order listed,
- * into this session's own queue (one at a time, in the same shell, pausing on a failure); every other key leaves the
- * paste as text.
+ * Batch Review: a pasted sequence split into the commands the shell (or NMSh) would run, to look at before any of it
+ * runs. Nothing runs because it was pasted or shown here. The mode strip chooses how: One at a time (each command
+ * waits in the composer for its own Enter), Queue all (one confirmation, then they run in order and the sequence stops
+ * on a failure) or Run as block (a shell-only paste, one original submission). Enter confirms the chosen mode; every
+ * other key leaves the paste as text. Drawn with the shared tab strip, selection band and control rows.
  */
 export interface BatchEntry extends BatchCommand {
   kinds: PasteKind[];
 }
 
-/** steps: one at a time through the composer, for a list with NMSh commands (QA F02). */
-export type BatchChoice = 'block' | 'queue' | 'steps' | 'edit' | 'cancel';
-export const BATCH_CHOICES: readonly BatchChoice[] = ['block', 'queue', 'steps', 'edit', 'cancel'];
+/**
+ * steps: One at a time, through the composer. queue: Queue all, run in order after one confirmation. block: Run as
+ * block, a shell-only paste as one original submission.
+ */
+export type BatchChoice = 'steps' | 'queue' | 'block' | 'edit' | 'cancel';
+export const BATCH_CHOICES: readonly BatchChoice[] = ['steps', 'queue', 'block', 'edit', 'cancel'];
+
+/** The labels of the mode strip; `b`, `q` and `o` select, Enter confirms. */
+export const BATCH_LABELS: Readonly<Record<BatchChoice, string>> = {steps: 'One at a time', queue: 'Queue all', block: 'Run as block', edit: 'Edit', cancel: 'Cancel'};
 
 export interface BatchReviewState {
   /** The paste exactly as it arrived. */
@@ -43,6 +51,8 @@ export interface BatchReviewState {
   refusal?: string;
   /** Verified statement count (from parse validation). */
   verifiedCount?: number;
+  /** Why Queue all is not offered when the session cannot queue (queueing off, an older service). */
+  queueOff?: string;
 }
 
 export type BatchReviewAction =
@@ -95,13 +105,18 @@ export function entryKinds(text: string, depth = 0): PasteKind[] {
   return [...kinds];
 }
 
+/** The statement's command with its leading comment lines removed: what NMSh dispatches. */
+export function nmshCommandText(text: string): string {
+  return text.split('\n').filter(line => !/^\s*#/u.test(line)).join('\n').trim();
+}
+
 /**
  * A statement that is one of NMSh's own commands (QA F02). The shell would treat `/modules` as a path, and a block that
  * starts with one is not a slash command either, so a list holding one is never run as a block or queued for the shell.
  * Comment lines before it belong to the statement; a slash line inside a heredoc or a quote is the statement's text.
  */
 export function isNmshStatement(text: string): boolean {
-  const command = text.split('\n').filter(line => !/^\s*#/u.test(line)).join('\n').trim();
+  const command = nmshCommandText(text);
   if (!isSlashInput(command)) return false;
   const slash = parseSlashCommand(command);
   return Boolean(slash && slash.kind !== 'unknown');
@@ -117,7 +132,8 @@ export function createBatchReview(source: string, shell: BatchShell, capacity: n
   const result = splitBatch(source, shell);
   if (!result.ok || result.commands.length < 2) return undefined;
   const entries = result.commands.map(command => ({...command, kinds: entryKinds(command.text)}));
-  return {source, entries, cursor: 0, top: 0, capacity, choice: hasNmshCommand({entries}) ? 'steps' : 'queue', verifiedCount: result.commands.length};
+  // Nothing executes by default: the conservative first mode is One at a time, where each command still waits for Enter.
+  return {source, entries, cursor: 0, top: 0, capacity, choice: 'steps', verifiedCount: result.commands.length};
 }
 
 /**
@@ -135,28 +151,44 @@ export function createBatchReviewWithRefusal(source: string, shell: BatchShell, 
     cursor: 0,
     top: 0,
     capacity,
-    // A block holding an NMSh command line is never offered to the shell as one: only Edit and Cancel remain.
-    choice: hasNmshCommand({entries, refusal: reason}) ? 'edit' : 'block',
+    // A paste that cannot be separated offers Run as block (a shell-only paste), Edit and Cancel; Edit is the default
+    // so that Enter alone never runs anything.
+    choice: 'edit',
     refusal: reason,
     verifiedCount: result.ok ? result.commands.length : 1,
   };
 }
 
-/** The choice Enter acts on. A list with NMSh commands only ever has its own choices; otherwise as before. */
-function activeChoice(state: BatchReviewState, choices: readonly BatchChoice[]): BatchChoice {
-  const choice = state.choice ?? (state.refusal ? 'block' : 'queue');
-  return hasNmshCommand(state) && !choices.includes(choice) ? choices[0]! : choice;
+/** The most commands in a row that go to the shell's queue at once (NMSh commands are dispatched in NMSh, between them). */
+export function longestShellRun(entries: readonly Pick<BatchEntry, 'text'>[]): number {
+  let longest = 0;
+  let run = 0;
+  for (const entry of entries) {
+    if (isNmshStatement(entry.text)) run = 0;
+    else { run += 1; longest = Math.max(longest, run); }
+  }
+  return longest;
 }
 
-/** Available execution choices for the given batch review state. */
+/** Queue all is possible: separated commands, a queue that is on, and room for the longest run of shell commands. */
+function canQueueAll(state: BatchReviewState): boolean {
+  return !state.refusal && !state.queueOff && state.entries.length >= 1 && longestShellRun(state.entries) <= state.capacity;
+}
+
+/** Available execution choices for the given batch review state, in the order the mode strip shows them. */
 export function batchAvailableChoices(state: BatchReviewState): BatchChoice[] {
-  // NMSh's commands run in NMSh, one at a time; the shell (a block, its queue) never gets them.
-  if (hasNmshCommand(state)) return state.refusal ? ['edit', 'cancel'] : ['steps', 'edit', 'cancel'];
-  const choices: BatchChoice[] = ['block'];
-  const canQueue = !state.refusal && state.entries.length >= 2 && state.entries.length <= state.capacity;
-  if (canQueue) choices.push('queue');
+  const choices: BatchChoice[] = [];
+  if (!state.refusal && state.entries.length) choices.push('steps');
+  if (canQueueAll(state)) choices.push('queue');
+  // NMSh's own commands never reach the shell, so a list holding one is never one block either.
+  if (!hasNmshCommand(state) && batchBlockText(state).trim()) choices.push('block');
   choices.push('edit', 'cancel');
   return choices;
+}
+
+/** The choice Enter acts on: the chosen one when it is offered, otherwise the first offered. */
+function activeChoice(state: BatchReviewState, choices: readonly BatchChoice[]): BatchChoice {
+  return state.choice && choices.includes(state.choice) ? state.choice : choices[0]!;
 }
 
 /** A reviewed list of commands that are already separate (a recipe's steps): the same review, queue and safety. */
@@ -168,6 +200,7 @@ export function batchFromCommands(commands: readonly string[], capacity: number,
     cursor: 0,
     top: 0,
     capacity,
+    // A recipe is a saved, named sequence the person chose to run: its review keeps Queue all first.
     choice: 'queue',
     verifiedCount: commands.length,
     title: details.title,
@@ -196,14 +229,16 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
   };
 
   const choices = batchAvailableChoices(state);
+  // What Enter does is what the strip shows: a mode that stopped being offered (no room left) falls back visibly.
+  if (state.choice && !choices.includes(state.choice)) state.choice = choices[0];
   const currentChoice = activeChoice(state, choices);
   const cycleChoice = (step: number) => {
-    let idx = choices.indexOf(currentChoice);
-    if (idx === -1) idx = 0;
+    const idx = Math.max(0, choices.indexOf(currentChoice));
     state.choice = choices[(idx + step + choices.length) % choices.length];
   };
+  const choose = (choice: BatchChoice) => { if (choices.includes(choice)) state.choice = choice; };
 
-  // Choice navigation (Left / Right / Tab / Shift+Tab)
+  // Mode navigation (Left / Right / Tab / Shift+Tab)
   if (key.kind === 'left' || key.kind === 'focusPrevious') {
     cycleChoice(-1);
     return undefined;
@@ -214,12 +249,9 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
   }
 
   if (key.kind === 'enter') {
-    if (currentChoice === 'queue') {
-      if (state.refusal) return undefined;
-      return state.entries.length && state.entries.length <= state.capacity ? {kind: 'queue'} : undefined;
-    }
-    if (currentChoice === 'block') return batchBlockText(state).trim() ? {kind: 'block'} : undefined;
     if (currentChoice === 'steps') return state.entries.length ? {kind: 'steps'} : undefined;
+    if (currentChoice === 'queue') return canQueueAll(state) ? {kind: 'queue'} : undefined;
+    if (currentChoice === 'block') return batchBlockText(state).trim() ? {kind: 'block'} : undefined;
     if (currentChoice === 'edit') return {kind: 'edit'};
     if (currentChoice === 'cancel') return {kind: 'cancel'};
     return undefined;
@@ -234,20 +266,16 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
   else if (key.kind === 'delete' || key.kind === 'backspace') remove(state);
   else if (key.kind === 'text') {
     const value = key.value.toLowerCase();
-    if (value === '1') { if (choices.includes('block') || choices.includes('steps')) state.choice = choices.includes('steps') ? 'steps' : 'block'; return undefined; }
-    if (value === '2') {
-      if (choices.includes('queue')) state.choice = 'queue';
-      return undefined;
-    }
-    if (value === '3') { state.choice = 'edit'; return undefined; }
-    if (value === '4') { state.choice = 'cancel'; return undefined; }
-    if (value === 'b') { if (choices.includes('block')) state.choice = 'block'; return undefined; }
+    // Digits pick the nth mode shown; letters pick a mode by name. Only Enter confirms one that can run something.
+    if (/^[1-9]$/u.test(value)) { const picked = choices[Number(value) - 1]; if (picked) state.choice = picked; return undefined; }
+    if (value === 'o') { choose('steps'); return undefined; }
+    if (value === 'q') { choose('queue'); return undefined; }
+    if (value === 'b') { choose('block'); return undefined; }
     if (value === 'x') remove(state);
     else if (value === 'k') move(-1);
     else if (value === 'j') move(1);
     else if (value === 't') return {kind: 'text'};
     else if (value === 'e' && state.entries.length) return {kind: 'edit'};
-    else if (value === 'q' && choices.includes('queue') && state.entries.length && state.entries.length <= state.capacity) return {kind: 'queue'};
     else if (value === 'c') return {kind: 'cancel'};
   }
   state.top = Math.max(0, Math.min(state.top, Math.max(0, state.entries.length - rows)));
@@ -289,11 +317,42 @@ function wrapRows(line: string, width: number): string[] {
   return rows;
 }
 
+/** Words as rows of at most `width` cells (a quiet note that wraps rather than being cut). */
+function wrapWords(text: string, width: number): string[] {
+  const rows: string[] = [];
+  let row = '';
+  for (const word of text.split(' ')) {
+    if (row && displayWidth(row) + 1 + displayWidth(word) > width) { rows.push(row); row = word; }
+    else row = row ? `${row} ${word}` : word;
+  }
+  if (row) rows.push(row);
+  return rows.map(item => truncateText(item, width));
+}
+
 const FIXED_ROWS = 12;
 const listRows = (height: number) => Math.max(1, Math.min(8, height - FIXED_ROWS - 3));
 const RISKY: ReadonlySet<PasteKind> = new Set(['destructive', 'privilege', 'pipeline']);
 
-/** At most `height` rows: header, choices, the list (scrolling), the selected command in full, the notes and the controls. */
+/** What the chosen mode will do on Enter, and what it is not offered for, in one quiet line each. */
+function modeNotes(state: BatchReviewState, active: BatchChoice, choices: readonly BatchChoice[]): string[] {
+  const count = state.entries.length;
+  const nmsh = hasNmshCommand(state);
+  const notes: string[] = [];
+  if (active === 'steps') notes.push(nmsh ? 'Each waits in the composer for your Enter; NMSh commands run in NMSh, not the shell.' : 'Each waits in the composer for your Enter; the next is offered after it.');
+  else if (active === 'queue') notes.push(nmsh
+    ? `Enter confirms all ${count}: they run in order, NMSh commands in NMSh and the rest in the shell; it stops on a failure.`
+    : `Enter confirms all ${count}: they run in order in this shell, and the queue stops if one fails.`);
+  else if (active === 'block') notes.push('1 submission. Shells may read a block differently than line by line.');
+  else if (active === 'edit') notes.push('Enter opens this text in the composer for editing. Nothing is executed.');
+  else notes.push('Enter discards this paste. Nothing is executed.');
+  if (!choices.includes('block') && !state.refusal && nmsh) notes.push('Run as block is off: NMSh commands never go to the shell as a block.');
+  if (!choices.includes('queue') && !state.refusal) {
+    notes.push(state.queueOff ?? (count ? `Queue all is off: the queue has room for ${state.capacity} more shell commands.` : ''));
+  }
+  return notes.filter(Boolean);
+}
+
+/** At most `height` rows: header, mode strip, the list (scrolling), the selected command in full, the notes and the controls. */
 export function renderBatchReview(state: BatchReviewState, columns: number, height: number): string[] {
   const primary = foreground(UI_COLORS.primary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -308,102 +367,64 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
   if (state.note) out.push(`  ${subtle}${truncateText(state.note, width)}${reset}`);
   if (state.refusal) out.push(`  ${failure}! Separation refused: ${truncateText(state.refusal, Math.max(8, width - 24))}${reset}`);
 
-  // Execution choices bar
+  // The mode strip: the shared tab strip, so the active mode is the same lavender block as Settings' active tab.
   const choices = batchAvailableChoices(state);
   const active = activeChoice(state, choices);
   const compact = columns < 70;
-  const choicePills: string[] = [];
-  const nmsh = hasNmshCommand(state);
-  if (nmsh) {
-    out.push(`  ${subtle}${truncateText(state.refusal ? 'It has NMSh commands, which never go to the shell: edit it, or enter them one by one.'
-      : 'NMSh commands run in NMSh, not the shell: each command waits in the composer in turn, and runs on your Enter.', width)}${reset}`);
-    if (!state.refusal) {
-      const stepsLabel = compact ? `1 One at a time (${count})` : `1 One at a time · ${count} command${count === 1 ? '' : 's'}`;
-      choicePills.push(active === 'steps' ? `${accent}${GLYPHS.selection} [${stepsLabel}]${reset}` : `${subtle}[${stepsLabel}]${reset}`);
-    }
-  }
-
-  if (!nmsh) {
-    const blockFocused = active === 'block';
-    const blockLabel = compact ? '1 Block' : '1 Run as block';
-    choicePills.push(blockFocused ? `${accent}${GLYPHS.selection} [${blockLabel} · 1 outer execution]${reset}` : `${subtle}[${blockLabel}]${reset}`);
-
-    const queueFocused = active === 'queue';
-    const canQueue = choices.includes('queue');
-    if (canQueue) {
-      const queueLabel = compact ? `2 Queue (${count})` : `2 Queue separately · ${count} statement${count === 1 ? '' : 's'}`;
-      choicePills.push(queueFocused ? `${accent}${GLYPHS.selection} [${queueLabel}]${reset}` : `${subtle}[2 Queue]${reset}`);
-    } else {
-      choicePills.push(`${subtle}[2 Queue · refused]${reset}`);
-    }
-  }
-
-  const editFocused = active === 'edit';
-  choicePills.push(editFocused ? `${accent}${GLYPHS.selection} [3 Edit]${reset}` : `${subtle}[3 Edit]${reset}`);
-
-  const cancelFocused = active === 'cancel';
-  choicePills.push(cancelFocused ? `${accent}${GLYPHS.selection} [4 Cancel]${reset}` : `${subtle}[4 Cancel]${reset}`);
-
-  out.push(`  ${choicePills.join('  ')}`);
+  const label = (choice: BatchChoice) => (choice === 'steps' && !compact ? `One at a time · ${count}` : choice === 'queue' && !compact ? `Queue all · ${count}` : BATCH_LABELS[choice]);
+  out.push('');
+  out.push(renderTabStrip(choices.map(label), choices.indexOf(active), columns, true));
+  for (const note of modeNotes(state, active, choices)) for (const row of wrapWords(note, width).slice(0, 2)) out.push(`  ${subtle}${row}${reset}`);
   out.push('');
 
   const rows = listRows(height);
   const numberWidth = String(count).length;
   const labelWidth = columns >= 76 ? 26 : 0;
-  if (!count) out.push(`  ${secondary}Nothing left to queue. Esc goes back to the paste.${reset}`);
+  if (!count) out.push(`  ${secondary}Nothing left to run. Esc goes back to the paste.${reset}`);
   for (let index = state.top; index < Math.min(count, state.top + rows); index += 1) {
     const entry = state.entries[index]!;
     const focused = index === state.cursor;
+    const nmshEntry = isNmshStatement(entry.text);
     const kind = primaryKind(entry.kinds);
-    const color = RISKY.has(kind) ? failure : kind === 'install' || kind === 'modifies' ? accent : subtle;
-    const label = labelWidth ? `${color}${padCells(truncateText(KIND_LABELS[kind], labelWidth - 1), labelWidth)}${reset}` : RISKY.has(kind) ? `${failure}! ${reset}` : '';
+    const color = nmshEntry ? accent : RISKY.has(kind) ? failure : kind === 'install' || kind === 'modifies' ? accent : subtle;
+    const kindName = nmshEntry ? 'NMSh command' : KIND_LABELS[kind];
+    const tag = labelWidth ? `${color}${padCells(truncateText(kindName, labelWidth - 1), labelWidth)}${reset}` : RISKY.has(kind) ? `${failure}! ${reset}` : '';
     const lines = entry.text.split('\n');
     const first = displaySafe(lines[0]!) + (lines.length > 1 ? `  ⏎ +${lines.length - 1}` : '');
-    out.push(truncateAnsi(`${focused ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${subtle}${String(index + 1).padStart(numberWidth)}${reset}  ${label}${focusForeground(focused)}${truncateText(first, Math.max(8, width - numberWidth - labelWidth - 4))}${reset}`, columns));
+    const row = `${focused ? GLYPHS.selection : ' '} ${subtle}${String(index + 1).padStart(numberWidth)}${reset}  ${tag}${focused ? '' : focusForeground(false)}${truncateText(first, Math.max(8, width - numberWidth - labelWidth - 4))}${reset}`;
+    out.push(focused ? selectedRowBand(` ${row}`, columns) : truncateAnsi(` ${row}`, columns));
   }
   if (count > rows) out.push(`  ${subtle}${state.top + 1}–${Math.min(count, state.top + rows)} of ${count}${reset}`);
   const selected = state.entries[state.cursor];
-  const notes = 2;
 
-  const actionLabel = active === 'steps'
-    ? 'first command to the composer'
-    : active === 'block'
-    ? 'run as block'
-    : active === 'queue'
-      ? `queue ${count}`
-      : active === 'edit'
-        ? 'edit in composer'
-        : 'cancel';
-  const controls = renderControlRows([['↑↓', 'select'], ['←→/Tab', 'choice'], ['Enter', actionLabel], ['e', 'edit as text'], ['t', 'original text'], ['Esc', 'back']], columns);
+  const actionLabel = active === 'steps' ? 'first to the composer'
+    : active === 'queue' ? `queue all ${count}`
+    : active === 'block' ? 'run as block'
+    : active === 'edit' ? 'edit in composer'
+    : 'cancel';
+  const controls = renderControlRows([['↑↓', 'select'], ['←→/Tab', 'mode'], ['Enter', actionLabel], ['e', 'edit as text'], ['t', 'original text'], ['Esc', 'back']], columns);
+  const notesRoom = 1;
 
   if (active === 'block' && state.entries.length <= 1) {
     out.push('', `  ${subtle}Entire block, exactly as it will run as 1 outer execution${reset}`);
     const wrapped = batchBlockText(state).split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
-    const room = Math.max(2, height - out.length - notes - controls.length - 1);
+    const room = Math.max(2, height - out.length - notesRoom - controls.length - 1);
     const shown = wrapped.length > room ? room - 1 : room;
     for (const row of wrapped.slice(0, shown)) out.push(`    ${secondary}${row}${reset}`);
-    if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? "" : "s"} hidden; still part of the command${reset}`);
+    if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? '' : 's'} hidden; still part of the command${reset}`);
   } else if (selected) {
     const kind = primaryKind(selected.kinds);
-    out.push('', `  ${subtle}Command ${state.cursor + 1}, exactly as it will be queued${reset}${RISKY.has(kind) || kind === 'install' || kind === 'modifies' ? `${RISKY.has(kind) ? failure : accent} · ${KIND_LABELS[kind]} somewhere in it${reset}` : ''}`);
+    const nmshEntry = isNmshStatement(selected.text);
+    const risk = RISKY.has(kind) || kind === 'install' || kind === 'modifies';
+    out.push('', `  ${subtle}Command ${state.cursor + 1}, exactly as it will run${reset}${nmshEntry ? `${accent} · NMSh runs this itself${reset}` : risk ? `${RISKY.has(kind) ? failure : accent} · ${KIND_LABELS[kind]} somewhere in it${reset}` : ''}`);
     const wrapped = selected.text.split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
-    const room = Math.max(2, height - out.length - notes - controls.length - 1);
+    const room = Math.max(2, height - out.length - notesRoom - controls.length - 1);
     const shown = wrapped.length > room ? room - 1 : room;
     for (const row of wrapped.slice(0, shown)) out.push(`    ${secondary}${row}${reset}`);
-    if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? "" : "s"} hidden; still part of the command${reset}`);
+    if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? '' : 's'} hidden; still part of the command${reset}`);
   }
   out.push('');
-  if (active === 'block') {
-    out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter. The shell runs 1 outer execution.', width)}${reset}`);
-  } else if (active === 'edit') {
-    out.push(`  ${subtle}${truncateText('Press Enter to open this text in the composer for editing. Nothing will be executed.', width)}${reset}`);
-  } else if (active === 'cancel') {
-    out.push(`  ${subtle}${truncateText('Press Enter to cancel and discard this paste. Nothing will be executed.', width)}${reset}`);
-  } else if (count > state.capacity) {
-    out.push(`  ${failure}${truncateText(`The queue has room for ${state.capacity} more; remove ${count - state.capacity} to queue these.`, width)}${reset}`);
-  } else {
-    out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter. Then the shell runs them one at a time, and the queue stops if one fails.', width)}${reset}`);
-  }
+  out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter on a mode.', width)}${reset}`);
   out.push(...controls.map(row => `  ${row}`));
   const fixed = Math.max(4, height);
   return (out.length > fixed ? [...out.slice(0, fixed - 1), out[out.length - 1]!] : out).map(row => truncateAnsi(row, columns));

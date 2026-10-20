@@ -10,6 +10,10 @@ import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
+import {ArcadeSession, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {ARCADE_GAMES, findGame, gameNames} from '../arcade/registry.js';
+import {ArcadeStore} from '../arcade/scores.js';
+import {freshSeed} from '../arcade/rng.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
 import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
@@ -69,10 +73,12 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, typ
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {displayPath, loadFileDocument, outputDocument} from '../viewer/document.js';
+import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
+import {formatForPath} from '../viewer/document.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -116,9 +122,9 @@ import {
   customColorEditor,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
-import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
+import {basename, delimiter, dirname, extname, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
@@ -202,7 +208,7 @@ import {helpMarkdown} from '../help/helpContent.js';
 import {renderMarkdownText} from '../help/markdown.js';
 import {sweepAnimates, sweepAnsiRow, sweepCells, sweepOnce} from '../motion/lightSweep.js';
 import {sweepStill, sweepStyleFor} from '../motion/sweepStyle.js';
-import {mixRgb} from '../chroma/chroma.js';
+import {luminance, mixRgb, resolveColor, theme as themeRole} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
@@ -270,7 +276,7 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
-import {runDoctor} from '../doctor/doctor.js';
+import {runDoctor, type DoctorCheck} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchNoticeRows, watchPanelKey, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
@@ -278,7 +284,8 @@ import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, isNmshStatement, longestShellRun, nmshCommandText, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {BatchSequencer, type SequenceHost, type SequenceItem} from '../input/batchSequence.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -288,7 +295,19 @@ import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
 import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
-import {nmshConfigDirectory} from '../configuration/paths.js';
+import {nmshCacheDirectory, nmshConfigDirectory} from '../configuration/paths.js';
+import {configureTextSizing, describeTextSizing, textSizingEnabled} from '../ui/textSizing.js';
+import {BrowserHost} from '../browser/host.js';
+import {BrowserSession} from '../browser/session.js';
+import {browserPanelKey, createBrowserPanel, renderBrowserPanel, type BrowserPanelState} from '../browser/BrowserPanel.js';
+import {BrowserPreviewView} from '../browser/documentPreview.js';
+import {normalizeAddress} from '../browser/address.js';
+import {decideGraphics, describeGraphics} from '../graphics/capabilities.js';
+import {GraphicsService, type GraphicsHost} from '../graphics/service.js';
+import {ImageError} from '../graphics/raster.js';
+import {DocumentImages, documentRoot} from '../viewer/documentImages.js';
+import {createImageView, IMAGE_EXTENSIONS, imageViewKey, renderImageView, showImage, siblingImages, type ImageViewState} from '../viewer/ImagePanel.js';
+import type {TextOverlay} from '../arcade/Canvas.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
@@ -393,7 +412,7 @@ import type {WorkspaceEffect} from './workspaceHost.js';
 import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
-import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
+import {defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -1282,6 +1301,9 @@ export class TerminalApp {
    * byte goes to the program. Reclaimed in onShellPrompt.
    */
   private handOverTerminal(restore = ''): void {
+    // Images uploaded to the terminal are deleted before a program takes the screen.
+    this.graphics?.releaseAll();
+    this.browserPanel?.session.forgetPictures();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
     this.outputProcessing.set(true);
     // A reply still arriving belongs to the program, which now receives every byte anyway.
@@ -1338,6 +1360,16 @@ export class TerminalApp {
         this.handOverTerminal();
       }
       return;
+    }
+    if (this.arcade) {
+      // A command (a queued one, or one from another window) now owns the keyboard: the arcade closes first, so a game never
+      // takes a password or a reply meant for it.
+      this.closeArcade(false);
+      this.output.addFrontendInteraction('/games', 'Closed the arcade: a command started and owns the keyboard. Open it again at the prompt.', INFO);
+    }
+    if (this.browserPanel) {
+      this.closeBrowser(false);
+      this.output.addFrontendInteraction('/browser', 'Closed the browser: a command started and owns the keyboard. Open it again at the prompt.', INFO);
     }
     this.commandModes.reset();
     this.commandLine.reset();
@@ -1408,7 +1440,7 @@ export class TerminalApp {
           process.stdin.resume();
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
-      }, undefined, {graphics: shouldProbeGraphics(process.env)});
+      }, undefined, {graphics: shouldProbeGraphics(process.env), extended: process.env.TERM !== 'dumb'});
       if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
@@ -1577,6 +1609,7 @@ export class TerminalApp {
     this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
+    if (this.arcade) { const size = this.dimensions(); this.arcade.session.resize(size.columns, Math.max(8, size.rows - 4)); }
     this.lastPtyRows = 0;
     this.lastPtyColumns = 0;
     if (this.passthrough) {
@@ -1647,6 +1680,7 @@ export class TerminalApp {
     }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      if (key.kind === 'focusOut') this.arcade?.session.pause();
       return;
     }
     // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
@@ -1748,6 +1782,43 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.arcade) {
+      const session = this.arcade.session;
+      if (key.kind !== 'paste' && key.kind !== 'mouseMove' && key.kind !== 'mouseClick' && key.kind !== 'mouseDrag' && key.kind !== 'mouseRelease' && key.kind !== 'wheelUp' && key.kind !== 'wheelDown') {
+        if (session.key(key) === 'close') this.closeArcade();
+        else this.syncArcadeClock();
+      }
+      this.render();
+      return;
+    }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const action = browserPanelKey(panel, key, this.panelGeometry(panel.session.viewport().scale));
+      if (action?.kind === 'close') this.closeBrowser();
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      else if (action?.kind === 'open-document') { this.closeBrowser(false); void this.openDocumentSession(action.path, '/browser', 'preview', true); }
+      this.render();
+      return;
+    }
+    if (this.docSession) {
+      const session = this.docSession;
+      const {columns, rows} = this.dimensions();
+      const action = documentSessionKey(session, key, columns, rows - 4, this.documentViewerLook());
+      if (action) this.runDocumentAction(session, action);
+      // Leaving the preview closes its browser page; the engine stays warm for a while and stops by itself when idle.
+      if (session.mode !== 'preview' && session.preview) { session.preview.dispose(); delete session.preview; }
+      this.render();
+      return;
+    }
+    if (this.imageView) {
+      const view = this.imageView;
+      const action = imageViewKey(view, key);
+      if (action?.kind === 'close') this.closeImageView();
+      else if (action?.kind === 'load') void this.loadImageEntry(view, action.index);
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      this.render();
+      return;
+    }
     if (this.viewer) {
       const viewer = this.viewer;
       const {columns, rows} = this.dimensions();
@@ -1755,6 +1826,7 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
       else if (action?.kind === 'open') void this.openFromViewer(viewer, action);
+      else if (action?.kind === 'image') void this.openDocumentImage(viewer, action.index);
       else if (action?.kind === 'copy') {
         void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
@@ -2116,23 +2188,14 @@ export class TerminalApp {
       const action = batchReviewKey(review, key, this.dimensions().rows - 4);
       const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
       if (action?.kind === 'queue') {
-        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
-        const texts = batchTexts(review);
-        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
-          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
-        } else {
-          for (const text of texts) {
-            this.syncQueuePolicy();
-            this.session.queue({op: 'add', text});
-            this.sessionSubmissions.push({text, slash: false});
-            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
-          }
-          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
-        }
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, run once, shell commands
+        // through this session's own queue and NMSh's commands through NMSh (never the shell).
+        this.startBatchSequence(review);
         done();
       } else if (action?.kind === 'steps') {
         // One at a time (QA F02): each command waits in the composer, unsent, and runs only on the person's Enter.
-        this.pasteSteps = {items: batchTexts(review), next: 0, running: false};
+        this.batchSequence?.stop('Replaced by One at a time');
+        this.pasteSteps = {items: batchTexts(review).map(text => (isNmshStatement(text) ? nmshCommandText(text) : text)), next: 0, running: false};
         done();
         this.offerPasteStep();
       } else if (action?.kind === 'block') {
@@ -2195,6 +2258,12 @@ export class TerminalApp {
       }
       // Any other key (typing, editing) invalidates the paste preview and continues normal processing
       this.pastePreview = undefined;
+    }
+    if ((key.kind === 'escape' || key.kind === 'interrupt') && this.batchSequence?.active && !this.running && !this.hasModalInput() && !this.editor.text) {
+      this.batchSequence.stop('Stopped');
+      this.dropFinishedSequence();
+      this.render();
+      return;
     }
     if (key.kind === 'escape' && this.pasteSteps && !this.pasteSteps.running && this.editor.text && !this.hasModalInput()) {
       this.stopPasteSteps('Stopped');
@@ -3075,6 +3144,8 @@ export class TerminalApp {
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
+    else if (slash.kind === 'arcade') this.openArcade(slash.game, command.trim());
+    else if (slash.kind === 'browser') await this.openBrowser(slash.target, command.trim());
     else if (slash.kind === 'editFile') {
       if (!slash.target) this.output.addFrontendInteraction(command.trim(), 'Name a file: /edit notes.md. Your own editor and vim, nano or micro still work as usual.', INFO);
       else this.openTextEditor(slash.target, command.trim());
@@ -3774,7 +3845,309 @@ export class TerminalApp {
   }
 
   private viewerLook(): ViewerLook {
-    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks};
+    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), sized: textSizingEnabled()};
+  }
+
+  /** Which way images are drawn right now, from the live capabilities and settings. */
+  private graphicsDecision(): ReturnType<typeof decideGraphics> {
+    const {columns, rows} = this.dimensions();
+    return decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows});
+  }
+
+  /** The graphics service, created on first use; its host answers from the live capabilities and settings. */
+  private graphicsService(): GraphicsService {
+    if (this.graphics) return this.graphics;
+    const host: GraphicsHost = {
+      decision: () => this.graphicsDecision(),
+      send: data => this.renderer.sendRaw(data),
+      scratchDir: () => {
+        const directory = join(defaultRuntimeDir(), 'images');
+        try { ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(directory, {recursive: true, mode: 0o700}); } catch { /* the converter reports it */ }
+        return directory;
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+    };
+    this.graphics = new GraphicsService(host);
+    return this.graphics;
+  }
+
+  /** Close the document's images (their uploads go with them) when no document is open. */
+  private releaseViewerImages(): void {
+    this.viewerImages?.close();
+    this.viewerImages = undefined;
+  }
+
+  /** `/view image.png`: the image viewer, with the folder's other images a keypress away. */
+  private async openImageViewer(path: string, command: string): Promise<void> {
+    const {entries, index} = await siblingImages(path);
+    if (this.stopped || this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    const view = createImageView(entries, index);
+    this.imageView = view;
+    this.render();
+    await this.loadImageEntry(view, index, command);
+  }
+
+  private async loadImageEntry(view: ImageViewState, index: number, command = '/view'): Promise<void> {
+    const entry = view.entries[index];
+    if (!entry) return;
+    view.loading = true;
+    this.render();
+    try {
+      const image = await this.graphicsService().load(entry.path);
+      if (this.imageView === view && !this.stopped) showImage(view, index, image);
+    } catch (error) {
+      if (this.imageView === view && !this.stopped) showImage(view, index, undefined, error instanceof ImageError ? error.message : `${command}: the image could not be read.`);
+    }
+    this.render();
+  }
+
+  /** The image viewer for image `index` of the open document; Esc comes back to the document where it was. */
+  private async openDocumentImage(viewer: ViewerState, index: number): Promise<void> {
+    const images = this.viewerImages;
+    if (!images) return;
+    const list = images.list().filter(item => item.path);
+    const position = list.findIndex(item => item.index === index);
+    if (position < 0) { viewer.note = images.list().find(item => item.index === index)?.note ?? 'That image cannot be shown.'; this.render(); return; }
+    const view = createImageView(list.map(item => ({path: item.path!, name: item.path!.split('/').pop() ?? 'image', alt: item.alt})), position, {returnTo: viewer});
+    // Opened from a document session, Esc returns to that session exactly as it was (its buffer and edits are untouched).
+    if (this.docSession && this.docSession.viewer === viewer) { view.returnToSession = this.docSession; delete view.returnTo; this.docSession = undefined; }
+    this.viewer = undefined;
+    this.imageView = view;
+    await this.loadImageEntry(view, position);
+  }
+
+  private closeImageView(): void {
+    const view = this.imageView;
+    if (!view) return;
+    this.imageView = undefined;
+    this.graphics?.releaseOwner(view.owner);
+    if (view.returnToSession) this.docSession = view.returnToSession as DocumentSession;
+    else if (view.returnTo) this.viewer = view.returnTo;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** The image viewer's overlay (iTerm2, Sixel) at its screen cells, or none. */
+  private imageOverlay(plan: ScreenPlan, region: {top: number; height: number} | undefined): ImageOverlay | undefined {
+    const placed = this.imageView?.overlay;
+    if (!placed || !region || !plan.panelActive) return undefined;
+    const row = region.top + placed.y + (plan.panelPosition === 'top' ? -1 : 0);
+    if (row < region.top || row + placed.placement.size.rows > region.top + region.height) return undefined;
+    const column = placed.x + (this.workspace.open ? this.workspaceColumns().center.x : 0);
+    return {key: placed.placement.key, row, column, size: placed.placement.size, transmit: placed.placement.transmit, place: placed.placement.place, cleanup: placed.placement.cleanup};
+  }
+
+  /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
+  private syncTypography(): void {
+    if (this.viewerImages && !this.viewer && !this.imageView && !this.docSession) this.releaseViewerImages();
+    const capabilities = this.host.capabilities;
+    const key = `${this.promptConfiguration.textSizing}|${capabilities.textSizing?.scale ?? '-'}|${capabilities.textSizing?.width ?? '-'}`;
+    if (key === this.typographyKey) return;
+    this.typographyKey = key;
+    configureTextSizing({setting: this.promptConfiguration.textSizing, capabilities, env: process.env});
+  }
+
+  /** The panel's sized-text blocks at screen cells: only blocks that lie wholly inside the panel are ever placed. */
+  private panelTextBlocks(plan: ScreenPlan, region: {top: number; height: number} | undefined): Array<{row: number; column: number; columns: number; rows: number; sequence: string}> {
+    if (!region || !plan.panelActive || !this.panelBlocks.length) return [];
+    const shift = plan.panelPosition === 'top' ? -1 : 0;
+    const columnShift = this.workspace.open ? this.workspaceColumns().center.x : 0;
+    return this.panelBlocks.flatMap(block => {
+      const row = region.top + block.y + shift;
+      return row >= region.top && row + block.rows <= region.top + region.height
+        ? [{row, column: block.x + columnShift, columns: block.columns, rows: block.rows, sequence: block.sequence}] : [];
+    });
+  }
+
+  // ---- Real browser -------------------------------------------------------------------------------------------
+
+  private browserHostService(): BrowserHost {
+    this.browserHost ??= new BrowserHost({profileDir: join(nmshCacheDirectory(), 'browser'), idleMs: 60_000, env: process.env});
+    return this.browserHost;
+  }
+
+  /** Whether the page should be told the terminal is dark: the theme's text is light. */
+  private themeColorScheme(): 'light' | 'dark' {
+    return luminance(resolveColor(themeRole('primary'))) > 0.5 ? 'dark' : 'light';
+  }
+
+  /** Where the panel's first row is on the screen (1-based), for mapping mouse positions onto a page. */
+  private panelGeometry(scale: number): {top: number; left: number; cell: {width: number; height: number}; scale: number} {
+    const plan = this.presentationFrame?.plan;
+    const region = plan?.regions.find(item => item.kind === 'panel');
+    return {top: (region?.top ?? 0) + 1 - (plan?.panelPosition === 'top' ? 1 : 0), left: 1 + (this.workspace.open ? this.workspaceColumns().center.x : 0), cell: this.graphicsDecision().cell, scale};
+  }
+
+  private newBrowserSession(engine: Awaited<ReturnType<BrowserHost['engine']>>): BrowserSession {
+    const graphics = this.graphicsService();
+    const session = new BrowserSession({
+      engine, openStream: owner => graphics.openStream(owner), cell: () => this.graphicsDecision().cell, scale: 'auto',
+      colorScheme: this.themeColorScheme(), reducedMotion: !this.decorativeMotionAllowed(),
+    });
+    session.onChange(() => { if (!this.stopped) this.render(); });
+    return session;
+  }
+
+  /** /browser [address | file]: a real Chromium in a panel. Never while a program owns the terminal; never downloads a browser. */
+  private async openBrowser(target: string, command: string): Promise<void> {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The browser opens at the prompt: let the running command finish first, so its input is never taken by a page.', INFO);
+      return;
+    }
+    if (this.promptConfiguration.browser === 'off') {
+      this.output.addFrontendInteraction(command, 'The real browser is off (Settings → General → Real browser). /view still renders documents with NMSh\'s own renderer.', INFO);
+      return;
+    }
+    const address = target ? normalizeAddress(target, {cwd: this.shellCwd, home: homedir()}) : undefined;
+    if (address && !address.ok) { this.output.addFrontendInteraction(command, address.reason, INFO); return; }
+    if (address?.ok && address.local) { await this.openDocumentSession(address.local, command, 'preview', true); return; }
+    const host = this.browserHostService();
+    const availability = await host.availability();
+    if (!availability.ok) {
+      this.output.addFrontendInteraction(command, `${availability.reason} NMSh does not download a browser; set NMSH_BROWSER to one you installed. /view renders documents with NMSh's own renderer.`, INFO);
+      return;
+    }
+    if (this.stopped || this.hasModalInput()) return;
+    let engine;
+    try { engine = await host.engine(); }
+    catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'The browser could not start.', ERROR); return; }
+    if (this.stopped || this.hasModalInput()) return;
+    const session = this.newBrowserSession(engine);
+    const panel = createBrowserPanel(session, {cwd: this.shellCwd, home: homedir()});
+    this.panelOrigin = undefined;
+    this.browserPanel = panel;
+    this.render();
+    const opened = await session.open(address?.ok ? address.url : 'about:blank');
+    if (!opened.ok) this.output.addFrontendInteraction(command, opened.reason, ERROR);
+    if (!address) { panel.focus = 'address'; panel.draft = ''; }
+    this.render();
+  }
+
+  private closeBrowser(restore = true): void {
+    const panel = this.browserPanel;
+    if (!panel) return;
+    this.browserPanel = undefined;
+    panel.session.dispose();
+    const back = this.browserReturn;
+    this.browserReturn = undefined;
+    if (!restore) return;
+    if (back) this.docSession = back;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** A link the preview refused, opened in the real browser on the person's request; Esc there returns to the document. */
+  private openLinkInBrowser(url: string): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.browserReturn = session;
+    this.docSession = undefined;
+    void this.openBrowser(url, '/browser').then(() => { if (!this.browserPanel && this.browserReturn === session) { this.docSession = session; this.browserReturn = undefined; this.render(); } });
+  }
+
+  /** Start the document session's Chromium preview (the native renderer shows meanwhile, and stays if no browser can be used). */
+  private async startBrowserPreview(session: DocumentSession): Promise<void> {
+    if (this.previewStarting === session || session.preview || this.promptConfiguration.browser === 'off') return;
+    this.previewStarting = session;
+    try {
+      const host = this.browserHostService();
+      const availability = await host.availability();
+      if (!availability.ok) { session.note = `${availability.reason} Showing NMSh's own preview.`; return; }
+      const [engine, previews] = await Promise.all([host.engine(), host.previews()]);
+      if (this.docSession !== session || session.mode !== 'preview') return;
+      const browserSession = this.newBrowserSession(engine);
+      const file = session.editor.file;
+      const kind = formatForPath(file.path).format === 'html' ? 'html' : 'markdown';
+      const view = await BrowserPreviewView.open({
+        session: browserSession, previews, html: text => host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme()}),
+        geometry: () => this.panelGeometry(browserSession.viewport().scale), openLink: url => this.openLinkInBrowser(url), dirty: () => session.editor.buffer.dirty,
+      }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted});
+      if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
+      if (this.docSession !== session || session.mode !== 'preview') { view.dispose(); return; }
+      session.preview = view;
+      // The person may have turned scripts on or off while the preview was starting: what runs must match what the screen says.
+      if (view.trusted !== session.trusted) void view.setTrusted(session.trusted, bufferText(session.editor));
+    } catch (error) {
+      session.note = `${error instanceof Error ? error.message : 'The browser preview could not start.'} Showing NMSh's own preview.`;
+    } finally {
+      if (this.previewStarting === session) this.previewStarting = undefined;
+      this.render();
+    }
+  }
+
+  // ---- Vespyr Arcade ------------------------------------------------------------------------------------------
+
+  private arcadeEnvironment(): ArcadeEnvironment {
+    this.arcadeStore ??= new ArcadeStore({directory: nmshConfigDirectory()});
+    return {
+      store: this.arcadeStore,
+      now: () => Date.now(),
+      motion: () => {
+        const reduced = !this.decorativeMotionAllowed();
+        const off = this.promptConfiguration.presentation.effectsOff;
+        return {reduced, effects: off ? 'off' : reduced ? 'subtle' : this.promptConfiguration.motion.rendering === 'rich' ? 'rich' : 'normal'};
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+      seed: () => freshSeed(),
+    };
+  }
+
+  /** /games, /game and /arcade: the hub, or one game by id or alias. Never while a program owns the terminal. */
+  private openArcade(name: string | undefined, command: string): void {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The arcade opens at the prompt: let the running command finish first, so its input is never taken by a game.', INFO);
+      return;
+    }
+    const game = name ? findGame(name) : undefined;
+    if (name && !game) {
+      this.output.addFrontendInteraction(command, `No game named "${name}". Try /games, or one of: ${gameNames().join(', ')}.`, INFO);
+      return;
+    }
+    this.closeArcade(false);
+    const {columns, rows} = this.dimensions();
+    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows: Math.max(8, rows - 4)}, game);
+    this.arcade = {session, interval: 0, floor: 40, last: performance.now()};
+    this.syncArcadeClock();
+  }
+
+  /** Subscribe to the shared clock exactly while the session wants frames, at the rate it asks for. */
+  private syncArcadeClock(): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    const wanted = arcade.session.interval;
+    const floor = arcade.session.floor;
+    if (arcade.interval === wanted && arcade.floor === floor) return;
+    arcade.stop?.();
+    arcade.stop = undefined;
+    arcade.interval = wanted;
+    arcade.floor = floor;
+    arcade.last = performance.now();
+    if (wanted > 0) arcade.stop = presentationClock.subscribe(() => this.tickArcade(), wanted, floor);
+  }
+
+  private tickArcade(): void {
+    const arcade = this.arcade;
+    if (!arcade || this.stopped) return;
+    const now = performance.now();
+    const elapsed = Math.max(0, now - arcade.last);
+    arcade.last = now;
+    arcade.session.frame(elapsed);
+    this.syncArcadeClock();
+    this.render();
+  }
+
+  private closeArcade(restore = true): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    arcade.stop?.();
+    this.arcade = undefined;
+    arcade.session.dispose();
+    if (restore) { this.returnFromPanel(); this.render(); }
   }
 
   /**
@@ -3794,16 +4167,39 @@ export class TerminalApp {
       this.openOutputViewer(record);
       return;
     }
+    // A picture opens in the image viewer; its text cannot be shown (binary), and SVG is source text, never drawn.
+    const imagePath = resolveViewPath(target, this.shellCwd);
+    if (IMAGE_EXTENSIONS.has(extname(imagePath).slice(1).toLowerCase())) { void this.openImageViewer(imagePath, command); return; }
+    // Markdown and HTML open in the document workspace (source, edit and preview of one buffer) when the file can be edited
+    // safely; a file that cannot is read in the read-only viewer, as before.
+    const kind = formatForPath(imagePath).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) {
+      void this.openDocumentSession(target, command, 'source', true);
+      return;
+    }
     const load = new AbortController();
     this.viewerLoad = load;
-    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(result => {
+    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(async result => {
       if (this.viewerLoad !== load || this.stopped) return;
+      if (!result.ok) { this.viewerLoad = undefined; this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Images of a Markdown or HTML file: found, resolved inside its folder or project and loaded within a short deadline.
+      let images: DocumentImages | undefined;
+      const document = result.document;
+      if ((document.format === 'markdown' || document.format === 'html') && document.origin.kind === 'file' && this.promptConfiguration.graphicsMode !== 'off') {
+        const base = dirname(document.origin.realPath);
+        images = new DocumentImages(this.graphicsService(), base, await documentRoot(base), () => { if (!this.stopped) this.render(); });
+        images.collect(document);
+        if (images.count) await images.load(1200);
+      }
+      if (this.viewerLoad !== load || this.stopped) { images?.close(); return; }
       this.viewerLoad = undefined;
-      if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
       // Another panel opened while the file was read: it keeps the keys; the file is not opened over it.
-      if (this.hasModalInput()) return;
+      if (this.hasModalInput()) { images?.close(); return; }
       this.panelOrigin = undefined;
-      this.viewer = createViewer(result.document);
+      this.releaseViewerImages();
+      if (images?.count) this.viewerImages = images;
+      else images?.close();
+      this.viewer = createViewer(document);
       this.render();
     });
   }
@@ -3813,6 +4209,8 @@ export class TerminalApp {
    * stay readable in /view). `returnTo` is the viewer it was opened from; it is reopened if the file cannot be edited.
    */
   private openTextEditor(target: string, command: string, returnTo?: ViewerState): void {
+    const kind = formatForPath(resolveViewPath(target, this.shellCwd)).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) { void this.openDocumentSession(target, command, 'edit', false); return; }
     void openForEdit(target, this.shellCwd).then(result => {
       if (this.stopped) return;
       if (!result.ok) {
@@ -3859,6 +4257,145 @@ export class TerminalApp {
       } else if (result.conflict) {
         editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
       } else editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'};
+      this.render();
+    });
+  }
+
+  // ---- Document session -------------------------------------------------------------------------------------
+
+  /** The viewer look for the session's read-only modes. */
+  private documentViewerLook(): ViewerLook {
+    const look = this.viewerLook();
+    return this.docSession ? documentSessionLook(this.docSession, look) : look;
+  }
+
+  /**
+   * /view and /edit on a Markdown or HTML file: one buffer shown as source, editor or preview. `fallback`: /view falls back to the
+   * read-only viewer when the file cannot be edited safely (too big, read-only, mixed line endings…); /edit says why in the transcript.
+   */
+  private async openDocumentSession(target: string, command: string, mode: DocumentMode, fallback: boolean): Promise<void> {
+    // /view never creates a file: one that does not exist is reported by the read-only path.
+    if (fallback && !existsSync(resolveViewPath(target, this.shellCwd))) { await this.openReadOnlyDocument(target, command, 'it does not exist'); return; }
+    const result = await openForEdit(target, this.shellCwd);
+    if (this.stopped) return;
+    if (!result.ok) {
+      if (!fallback) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Not editable: the read-only viewer still shows it (rendered), saying why it cannot be edited.
+      await this.openReadOnlyDocument(target, command, result.reason);
+      return;
+    }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    this.docSession = createDocumentSession(result.file, mode);
+    if (mode === 'preview') this.beginPreview(this.docSession, false);
+    this.render();
+  }
+
+  private async openReadOnlyDocument(target: string, command: string, why: string): Promise<void> {
+    const load = new AbortController();
+    this.viewerLoad = load;
+    const result = await loadFileDocument(target, this.shellCwd, {signal: load.signal});
+    if (this.viewerLoad !== load || this.stopped) return;
+    this.viewerLoad = undefined;
+    if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    const viewer = createViewer(result.document);
+    viewer.note = `Read-only: ${why}`;
+    this.viewer = viewer;
+    this.render();
+  }
+
+  /** Entering the preview, or refreshing it: the page shows the buffer as it is now. Without a browser the native renderer does. */
+  private beginPreview(session: DocumentSession, refresh: boolean): void {
+    syncDocumentViewer(session, true);
+    if (session.mode === 'preview' || refresh) session.viewer.rendered = true;
+    this.refreshDocumentImages(session);
+    // A real browser renders the same buffer when one is installed; refreshing swaps the served page and reloads it.
+    if (session.preview) { if (refresh) void session.preview.refresh(bufferText(session.editor)); return; }
+    void this.startBrowserPreview(session);
+  }
+
+  /** The session's native preview draws local images of the CURRENT buffer, found and loaded like a viewed document's. */
+  private refreshDocumentImages(session: DocumentSession): void {
+    if (this.promptConfiguration.graphicsMode === 'off') return;
+    const document = session.viewer.document;
+    if (document.origin.kind !== 'file') return;
+    const base = dirname(document.origin.realPath);
+    this.releaseViewerImages();
+    const images = new DocumentImages(this.graphicsService(), base, base, () => { if (!this.stopped && this.docSession === session) this.render(); });
+    images.collect(document);
+    if (!images.count) { images.close(); return; }
+    this.viewerImages = images;
+    void documentRoot(base).then(async root => {
+      if (this.viewerImages !== images) return;
+      const rooted = new DocumentImages(this.graphicsService(), base, root, () => { if (!this.stopped && this.docSession === session) this.render(); });
+      rooted.collect(document);
+      if (this.viewerImages !== images) { rooted.close(); return; }
+      images.close();
+      this.viewerImages = rooted;
+      await rooted.load(0);
+      if (this.docSession === session) this.render();
+    });
+  }
+
+  private closeDocumentSession(): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.docSession = undefined;
+    session.preview?.dispose();
+    this.releaseViewerImages();
+    this.returnFromPanel();
+  }
+
+  /** The session's requests that touch the disk, the clipboard or the preview. */
+  private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
+    const editor = session.editor;
+    if (action.kind === 'close') { this.closeDocumentSession(); return; }
+    if (action.kind === 'copy') {
+      void this.copyText(action.text, 'Copied').then(note => { if (note && this.docSession === session) { editor.note = {text: note, tone: 'success'}; session.viewer.note = note; this.render(); } });
+      return;
+    }
+    if (action.kind === 'preview') { this.beginPreview(session, action.refresh); return; }
+    if (action.kind === 'trust') {
+      session.note = action.on ? 'Scripts are on for this preview.' : 'Scripts are off for this preview.';
+      void session.preview?.setTrusted(action.on, bufferText(editor));
+      return;
+    }
+    if (action.kind === 'open') { void this.openFromViewer(session.viewer, {path: action.path}); return; }
+    if (action.kind === 'image') { void this.openDocumentImage(session.viewer, action.index); return; }
+    editor.busy = true;
+    if (action.kind === 'reload') {
+      void openForEdit(editor.file.path, this.shellCwd).then(result => {
+        editor.busy = false;
+        if (this.docSession !== session) return;
+        if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
+        const fresh = createDocumentSession(result.file, session.mode === 'edit' ? 'edit' : 'source');
+        fresh.note = 'Reloaded from disk; your changes were discarded.';
+        fresh.viewer.note = fresh.note;
+        session.preview?.dispose();
+        this.docSession = fresh;
+        this.render();
+      });
+      return;
+    }
+    const lines = [...editor.buffer.lines];
+    void saveFile(editor.file, lines, {...(action.force ? {force: true} : {})}).then(result => {
+      editor.busy = false;
+      if (this.docSession !== session) return;
+      if (result.ok) {
+        editor.file = result.file;
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        if (action.thenClose) { this.closeDocumentSession(); this.render(); return; }
+        editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+        session.viewer.note = `Saved ${editor.file.title}.`;
+        syncDocumentViewer(session, session.mode === 'preview');
+      } else if (result.conflict) {
+        editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
+      } else { editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'}; session.viewer.note = result.reason; }
       this.render();
     });
   }
@@ -5248,7 +5785,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5264,6 +5801,7 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
+    this.panelBlocks = [];
     const minimum = this.panelMinimum();
     const {rows} = this.dimensions();
     if (minimum && !fits(minimum, columns, rows)) {
@@ -5290,7 +5828,17 @@ export class TerminalApp {
     if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
-    if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
+    if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const view = renderBrowserPanel(panel, columns, this.dimensions().rows - 4);
+      // The previous picture is deleted once the new rows are written.
+      setImmediate(() => panel.session.settle());
+      return view.rows;
+    }
+    if (this.docSession) { const rows = renderDocumentSession(this.docSession, columns, this.dimensions().rows - 4, this.documentViewerLook()); this.panelBlocks = this.docSession.overlays; return rows; }
+    if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
+    if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
@@ -8283,7 +8831,7 @@ export class TerminalApp {
     const now = Date.now();
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
-    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns), ...this.sequenceRows(columns)];
     const background = this.backgroundRows(columns);
     return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
@@ -8317,6 +8865,9 @@ export class TerminalApp {
     }
     const check = await verifyCommands(batchTexts(review), shell);
     if (this.stopped || !current()) return;
+    if (!this.queueAvailable() && longestShellRun(review.entries) > 0) review.queueOff = this.session.features.has('queue')
+      ? 'Queue all is not offered: queueing is off (Settings → Sessions → Queue commands).'
+      : 'Queue all is not offered: this session\'s service is older and has no command queue.';
     if (check.ok) {
       review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · ');
       this.batchReview = review;
@@ -8346,6 +8897,79 @@ export class TerminalApp {
     void this.openBatchReview(text, () => this.pendingMixedBlock === text).finally(() => { if (this.pendingMixedBlock === text) this.pendingMixedBlock = undefined; });
     this.render();
     return true;
+  }
+
+  /** Queue all: confirm once, then the sequencer runs the reviewed commands in order (see input/batchSequence). */
+  private startBatchSequence(review: BatchReviewState): void {
+    const items: SequenceItem[] = review.entries.map(entry => {
+      const nmsh = isNmshStatement(entry.text);
+      return {nmsh, text: nmsh ? nmshCommandText(entry.text) : entry.text};
+    });
+    const needsQueue = items.some(item => !item.nmsh);
+    if (needsQueue && (!this.queueAvailable() || longestShellRun(review.entries) > QUEUE_LIMIT - this.queueState.entries.length)) {
+      this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+      return;
+    }
+    this.batchSequence?.stop('Replaced by a new Queue all');
+    this.pasteSteps = undefined;
+    const sequence = new BatchSequencer(items, this.sequenceHost());
+    this.batchSequence = sequence;
+    this.output.addFrontendInteraction('/ps', `Queue all: ${items.length} command${items.length === 1 ? '' : 's'}. They run in order${needsQueue ? ' (shell commands through /queue)' : ''}; it stops on a failure, and Esc stops it.`, INFO);
+    sequence.poke();
+    this.dropFinishedSequence();
+  }
+
+  private sequenceHost(): SequenceHost {
+    return {
+      queueView: () => {
+        const timeline = this.queueState.timeline;
+        return {
+          entries: this.queueState.entries.length,
+          dispatching: Boolean(this.queueState.dispatching),
+          paused: Boolean(this.queueState.paused),
+          ...(timeline ? {chain: {id: timeline.id, status: timeline.status, failurePolicy: timeline.failurePolicy, failed: timeline.counts.failed, interrupted: timeline.counts.interrupted}} : {}),
+        };
+      },
+      queueFree: () => QUEUE_LIMIT - this.queueState.entries.length,
+      addShell: text => {
+        this.syncQueuePolicy();
+        this.session.queue({op: 'add', text});
+        this.sessionSubmissions.push({text, slash: false});
+        if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+      },
+      foregroundBusy: () => Boolean(this.running || this.passthrough || this.externalPassthrough || this.startupPending || this.preparingCommand),
+      modalOpen: () => this.hasModalInput(),
+      composerEmpty: () => !this.editor.text,
+      runNmsh: async text => {
+        this.editor.replaceText(text);
+        await this.submit(false, true, false);
+      },
+      say: text => this.output.addFrontendInteraction('Queue all', text, INFO),
+      changed: () => this.render(),
+    };
+  }
+
+  private dropFinishedSequence(): void {
+    if (this.batchSequence && !this.batchSequence.active) this.batchSequence = undefined;
+  }
+
+  /** Ask the sequencer to continue once the current state allows (a prompt, an empty queue, a closed panel). */
+  private scheduleSequencePoke(): void {
+    if (!this.batchSequence || this.sequencePokeScheduled) return;
+    this.sequencePokeScheduled = true;
+    queueMicrotask(() => {
+      this.sequencePokeScheduled = false;
+      if (this.stopped) return;
+      this.batchSequence?.poke();
+      this.dropFinishedSequence();
+    });
+  }
+
+  /** The strip above the composer while Queue all runs: where it is and how to stop it. */
+  private sequenceRows(columns: number): string[] {
+    const sequence = this.batchSequence;
+    if (!sequence?.active) return [];
+    return [truncateAnsi(`${SUBTLE}${sequence.statusLine()}${RESET}`, columns)];
   }
 
   /** The next pasted command, unsent, when the composer is free; the last one ends the list. */
@@ -8390,7 +9014,7 @@ export class TerminalApp {
    */
   private async runReviewedBlock(text: string): Promise<void> {
     if (this.running) {
-      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete or choose Queue separately.', ERROR);
+      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete, or choose Queue all.', ERROR);
       return;
     }
     this.editor.replaceText(text);
@@ -9033,6 +9657,17 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refreshing' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the ${noun} on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
+  /** What the graphics service and the typography backend decided, and why, as /doctor rows under the host terminal. */
+  private graphicsDoctorChecks(): DoctorCheck[] {
+    const section = 'Host terminal';
+    const {columns, rows} = this.dimensions();
+    const lines = describeGraphics(decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows}));
+    return [
+      {section, label: lines[0]!, state: 'info', detail: lines.slice(1).join(' · ')},
+      {section, label: describeTextSizing({setting: this.promptConfiguration.textSizing, capabilities: this.host.capabilities, env: process.env}), state: 'info'},
+    ];
+  }
+
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
   private async openDoctor(): Promise<void> {
     this.panelOrigin = undefined;
@@ -9068,7 +9703,7 @@ export class TerminalApp {
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
         ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
-      if (this.doctorPanel === panel) { panel.checks = checks; panel.selected = 0; }
+      if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks()]; panel.selected = 0; }
     } finally { clock?.(); }
     this.render();
   }
@@ -9448,6 +10083,28 @@ export class TerminalApp {
   private pendingMixedBlock?: string;
   /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
   private pasteSteps?: {items: string[]; next: number; running: boolean};
+  /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
+  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number};
+  private arcadeStore?: ArcadeStore;
+  /** Sized-text blocks the active panel asked for this frame, relative to its rows (placed by render). */
+  private panelBlocks: TextOverlay[] = [];
+  private typographyKey = '';
+  /** The one graphics service: every image NMSh draws goes through it. */
+  private graphics?: GraphicsService;
+  /** The images of the open document (Markdown or HTML) and the standalone image viewer. */
+  private viewerImages?: DocumentImages;
+  private imageView?: ImageViewState;
+  /** A Markdown or HTML file open for reading, editing and preview at once (see viewer/DocumentWorkspace). */
+  private docSession?: DocumentSession;
+  /** The real browser (an installed Chromium), reached only through this host and only when a browser surface is opened. */
+  private browserHost?: BrowserHost;
+  private browserPanel?: BrowserPanelState;
+  /** The document session a /browser opened from a preview link returns to. */
+  private browserReturn?: DocumentSession;
+  private previewStarting?: DocumentSession;
+  /** Queue all (a reviewed paste run in order, shell and NMSh commands alike). */
+  private batchSequence?: BatchSequencer;
+  private sequencePokeScheduled = false;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -10860,6 +11517,8 @@ export class TerminalApp {
   }
 
   private render(): void {
+    this.syncTypography();
+    this.scheduleSequencePoke();
     this.reconcileOutputNavigation();
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
@@ -11061,7 +11720,8 @@ export class TerminalApp {
       // Flow can scroll the input row off screen.
       cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
-    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
+    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns) ?? this.imageOverlay(plan, panelRegion));
+    this.renderer.setTextBlocks(this.panelTextBlocks(plan, panelRegion));
     this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
@@ -11917,6 +12577,7 @@ export class TerminalApp {
     if (!this.replaying && getCurrentGlyphMode() !== 'safe' && colorLevel() !== 'ansi16') {
       for (const change of queuePresentationChanges(previous, state)) this.transitions.highlight(change.target, change.tone, Date.now(), change.phase);
     }
+    this.scheduleSequencePoke();
     if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;
@@ -12828,6 +13489,12 @@ export class TerminalApp {
     this.stopped = true;
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
+    this.closeArcade(false);
+    this.closeBrowser(false);
+    this.docSession?.preview?.dispose();
+    void this.browserHost?.shutdown();
+    this.releaseViewerImages();
+    this.graphics?.releaseAll();
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();

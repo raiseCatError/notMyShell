@@ -593,6 +593,15 @@ export type StartingPointId = typeof STARTING_POINT_IDS[number];
 
 /** Where Ask's command suggestions come from: nowhere (default) or the person's local model (#432). */
 export type AskCommandSuggestions = 'off' | 'local';
+/** How real images are drawn: Auto picks the best verified protocol; the others are an explicit choice (see graphics/capabilities). */
+export type GraphicsMode = 'auto' | 'kitty' | 'iterm2' | 'sixel' | 'unicode' | 'off';
+export const GRAPHICS_MODES: readonly GraphicsMode[] = ['auto', 'kitty', 'iterm2', 'sixel', 'unicode', 'off'];
+/** Scaled headings and counters through Kitty's text sizing protocol: Auto when the terminal was shown to scale text, Off, or Enhanced. */
+export type TextSizingSetting = 'auto' | 'off' | 'enhanced';
+export const TEXT_SIZING_SETTINGS: readonly TextSizingSetting[] = ['auto', 'off', 'enhanced'];
+/** The real browser (an installed Chromium, started only when /browser or a rendered preview needs it): Auto, or Off. */
+export type BrowserSetting = 'auto' | 'off';
+export const BROWSER_SETTINGS: readonly BrowserSetting[] = ['auto', 'off'];
 export const ASK_COMMAND_SUGGESTIONS: readonly AskCommandSuggestions[] = ['off', 'local'];
 
 export interface PromptConfiguration {
@@ -685,6 +694,14 @@ export interface PromptConfiguration {
    * resolver cannot place a request. Copy/Insert only, never run. Remote providers are a later, separately reviewed slice.
    */
   askCommandSuggestions: AskCommandSuggestions;
+  /** Real image rendering (graphics service); text and menus are never images. */
+  graphicsMode: GraphicsMode;
+  /** Markdown and HTML files open in the document workspace (source, edit, preview); off keeps the read-only viewer and the plain editor. */
+  documentWorkspace?: boolean;
+  /** Use an installed Chromium for /browser and rendered document previews; Off keeps NMSh's own renderer and disables /browser. */
+  browser: BrowserSetting;
+  /** Relative text sizing for document headings, titles and celebrations (OSC 66, where verified). */
+  textSizing: TextSizingSetting;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
   askPresentation: 'chat' | 'normal';
   /** Optional local language understanding; Auto by default (deterministic first, nothing downloads without consent). Folding stays opt-in. */
@@ -903,6 +920,9 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   copy: {...DEFAULT_COPY},
   askRecord: true,
   askCommandSuggestions: 'off',
+  graphicsMode: 'auto',
+  textSizing: 'auto',
+  browser: 'auto',
   askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
@@ -1024,7 +1044,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askCommandSuggestions: value.askCommandSuggestions === 'local' ? 'local' as const : 'off' as const, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askCommandSuggestions: value.askCommandSuggestions === 'local' ? 'local' as const : 'off' as const, graphicsMode: GRAPHICS_MODES.includes(value.graphicsMode as GraphicsMode) ? value.graphicsMode as GraphicsMode : 'auto', textSizing: TEXT_SIZING_SETTINGS.includes(value.textSizing as TextSizingSetting) ? value.textSizing as TextSizingSetting : 'auto', browser: BROWSER_SETTINGS.includes(value.browser as BrowserSetting) ? value.browser as BrowserSetting : 'auto', askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',

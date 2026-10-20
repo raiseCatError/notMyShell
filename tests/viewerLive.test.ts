@@ -23,9 +23,13 @@ test('live: /view reads a file and the latest output; find, go to line, copy all
     writeFileSync(join(sandbox.home, 'notes.md'), '# Field notes\n\nThe **quick** fox.\n\n- alpha\n- beta\n');
     let mark = frontend.mark;
     frontend.pty.write('/view notes.md\r');
-    await frontend.waitFor(/notes\.md[\s\S]*Markdown · 6 lines[\s\S]*Field notes[\s\S]*quick fox[\s\S]*Esc close/u, mark);
+    // Markdown opens as source in the document workspace; h shows the rendered preview, h again the source.
+    await frontend.waitFor(/notes\.md[\s\S]*Markdown · 6 lines[\s\S]*# Field notes[\s\S]*\*\*quick\*\* fox[\s\S]*h preview[\s\S]*Esc close/u, mark);
     mark = frontend.mark;
-    frontend.pty.write('m');
+    frontend.pty.write('h');
+    await frontend.waitFor(/Field notes[\s\S]*quick fox[\s\S]*h source/u, mark);
+    mark = frontend.mark;
+    frontend.pty.write('h');
     await frontend.waitFor(/\*\*quick\*\*/u, mark);
     // Esc closes; the composer is drawn again before anything is typed (a lone Esc followed at once by text is ambiguous).
     mark = frontend.mark;

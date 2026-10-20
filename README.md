@@ -62,6 +62,8 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 - **Theme Studio and Theme Bridge** — built-in, imported and custom themes in `/theme`; opt-in `/theme-bridge` carries the active theme to fzf, less/man, file listings, bat, tmux, Vim, Neovim and Helix through files NMSh owns and you review.
 - **Curated tools** — `/tools` finds, explains and (on request) installs a short list of shell tools; `/providers` picks the picker, history, navigation and suggestion providers; `/tmux` and `/dotfiles` import settings safely.
 - **Shell frameworks, handled carefully** — Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit and Antidote are detected; shell config is treated as code, never as harmless data.
+- **Documents, images and a real browser (v0.22)** — `/view` opens Markdown and HTML as one workspace with a source, an editor and a rendered preview of the same buffer; images are drawn in Ghostty and Kitty and as character art everywhere else; `/browser` shows a real Chromium page when you have Chrome installed (nothing is downloaded). Larger headings appear in terminals that prove they can scale text.
+- **Vespyr Arcade (v0.22)** — `/games` (`/game`, `/arcade`): three endless Vespyr games, Classic Sudoku and Vespyr Doku, with local scores and no accounts.
 - **Keep Awake** — `/zoomies` (also `/caffeinate`, `/awake`) keeps the machine or display awake through the OS's own mechanism and shows that it is on, quietly.
 - **Personality, optional** — Chroma color treatments, motion, screensavers and Vespyr, the NMSh cat. All of it respects Reduced Motion, Safe glyphs and `NO_COLOR`.
 
@@ -173,7 +175,8 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
-| Files and output (v0.22 candidate) | `/view` (files and completed output; `o` opens your editor), `/edit` (a small text file), `/track` (one live result of a command), `/copy --semantic` |
+| Files and output (v0.22 candidate) | `/view` (files, images and completed output; Markdown and HTML open as source, editor and preview of one buffer), `/edit`, `/browser` (a real browser, optional), `/track` (one live result of a command), `/copy --semantic` |
+| Games (v0.22 candidate) | `/games` (`/game`, `/arcade`; `/game run`, `flight`, `dash`, `sudoku`, `vespyr-doku`) |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
@@ -228,6 +231,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
 - Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours.
 - Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
+- Images, scaled headings, the Chromium frames and the games are covered by automated tests but have not been physically verified in a real terminal; character art is the fallback everywhere a graphics protocol is not proven. See the [v0.22 physical QA record](docs/testing/v022-physical-qa.md).
 
 ## Documentation
 
@@ -236,6 +240,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - [Context Modules](docs/architecture/context-modules.md) — facts, routing, Context Rail and declarative pack direction
 - [Demo gallery](docs/demos.md) — every feature clip in one place
 - [ShellAdapter](docs/architecture/shell-adapter.md), [platforms](docs/architecture/platforms.md), [terminal stack](docs/architecture/terminal-stack.md)
+- [Graphics service](docs/design/graphics-service.md), [typography](docs/design/typography.md), [document workspace](docs/design/document-workspace.md), [real browser](docs/design/browser.md), [Vespyr Arcade](docs/design/arcade.md), [multiline execution modes](docs/design/multiline-execution-modes.md)
 - [Themes, imports and Theme Bridge](docs/design/theme-bridge.md), [Chroma and UI chrome](docs/design/chroma-and-ui-chrome.md), [idle visuals](docs/design/idle-visuals.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Support](SUPPORT.md)
 

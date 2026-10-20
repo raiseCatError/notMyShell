@@ -9,6 +9,7 @@ import {parseBlocks, type Alignment, type Block} from './blocks.js';
 import {htmlToBlocks} from './html.js';
 import {highlightCode, type CodeTokenKind} from './highlight.js';
 import {parseInline, plainInline, type InlineSpan, type InlineStyle} from './inline.js';
+import {typeset, type SizedBlock} from '../ui/typography.js';
 
 /**
  * Markdown for untrusted text, as terminal rows: agent replies, provider command output and GitHub bodies. Every row
@@ -17,7 +18,34 @@ import {parseInline, plainInline, type InlineSpan, type InlineStyle} from './inl
  * Safe glyphs replace every decorative character. The caller scrubs terminal controls first (`displayText`).
  */
 
-export type MarkdownRowKind = 'text' | 'heading' | 'code' | 'quote' | 'table' | 'rule' | 'list' | 'blank';
+export type MarkdownRowKind = 'text' | 'heading' | 'code' | 'quote' | 'table' | 'rule' | 'list' | 'blank' | 'image';
+
+/** One image reference of a document as the renderer sees it: what to draw for it now. */
+export interface ImageSlot {
+  /** Position among the document's images, in order of first appearance (for "open in the image viewer"). */
+  index: number;
+  /** Rows to draw at most `columns` x `maxRows` cells, or undefined while it cannot be shown (loading, refused, failed). */
+  place(columns: number, maxRows: number): {lines: string[]; columns: number; rows: number} | undefined;
+  /** Why it is not drawn (a few words): "remote images are not fetched", "loading…". Shown beside the `[image: alt]` placeholder. */
+  note?: string;
+}
+
+/** What the renderer asks about a reference; it never reads a file or the network itself. */
+export interface ImageProvider {
+  slot(src: string, alt: string): ImageSlot | undefined;
+}
+
+/**
+ * Rows that belong together as one block drawn by the terminal (a sized heading): the first row carries the sized form
+ * and the others are blank. A viewer that has all `of` rows on screen draws the block over them; otherwise the first row's
+ * ordinary text is what shows.
+ */
+export interface RowBlock {
+  id: number;
+  index: number;
+  of: number;
+  sized?: SizedBlock;
+}
 
 export interface MarkdownRow {
   /** Styled row, at most `columns` cells, reset at its end. */
@@ -27,6 +55,10 @@ export interface MarkdownRow {
   kind: MarkdownRowKind;
   /** The code block a row belongs to (0-based, in source order), for copy-code actions. */
   code?: number;
+  /** Set on every row of a sized heading. */
+  block?: RowBlock;
+  /** Set on image rows: the image's index in the document. */
+  image?: number;
 }
 
 export interface MarkdownOptions {
@@ -40,6 +72,12 @@ export interface MarkdownOptions {
   tone?: 'primary' | 'secondary';
   /** Render HTML inside the Markdown (`/view`, QA F01); otherwise tags are shown as text. */
   html?: boolean;
+  /** Real images: an image alone in its paragraph is drawn as rows when the provider can show it; otherwise `[image: alt]`. */
+  images?: ImageProvider;
+  /** The most rows one image may take. */
+  maxImageRows?: number;
+  /** Headings may be sized blocks (only a viewer that places them passes this): the most rows a heading may take. */
+  sizedHeadings?: {maxRows: number};
 }
 
 const RESET = '\u001b[0m';
@@ -58,6 +96,10 @@ interface Context {
   tone: RgbColor;
   codeIndex: number;
   html: boolean;
+  images?: ImageProvider;
+  maxImageRows: number;
+  sizedHeadings?: {maxRows: number};
+  blockIds: {next: number};
 }
 
 function glyph(context: Context, nerd: string, safe: string): string {
@@ -121,7 +163,10 @@ function atomsOf(spans: readonly InlineSpan[], context: Context, base: string): 
   for (let index = 0; index < spans.length; index++) {
     const span = spans[index]!;
     let text = span.text;
-    if (span.style.image) text = `[image: ${text}]`;
+    if (span.style.image) {
+      const note = span.style.src ? context.images?.slot(span.style.src, span.text)?.note : undefined;
+      text = `[image: ${text}]${note ? ` (${note})` : ''}`;
+    }
     // Without color, code keeps its backticks so it never depends on color to read as code.
     if (span.style.code && context.level === 'none') text = `\`${text}\``;
     const sgr = spanSgr(span.style, context, base);
@@ -220,7 +265,7 @@ function tokenSgr(kind: CodeTokenKind, context: Context): string {
 export function codeTokenStyle(kind: CodeTokenKind, options: {syntax?: SyntaxSgr; level?: ColorLevel} = {}): string {
   const level = options.level ?? colorLevel();
   return tokenSgr(kind, {level, safe: false, hyperlinks: false, ...(options.syntax ? {syntax: options.syntax} : {}),
-    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false});
+    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false, maxImageRows: 1, blockIds: {next: 1}});
 }
 
 function codeRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context): MarkdownRow[] {
@@ -317,6 +362,54 @@ function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, contex
   return out;
 }
 
+// ---- Typography and images ----------------------------------------------------------------------------------------
+
+/**
+ * A heading as a sized block (see ui/typography): the same typography scale for Markdown `#` and HTML `<h1>`-`<h6>`, with
+ * the heading's inline styling kept piece by piece. Only top-level headings, and only when the viewer asked for them: a
+ * block cannot sit behind a list marker or a quote bar.
+ */
+function sizedHeading(block: Extract<Block, {kind: 'heading'}>, width: number, context: Context, sgr: string, ordinary: MarkdownRow[]): MarkdownRow[] | undefined {
+  if (!context.sizedHeadings || ordinary.length !== 1) return undefined;
+  const spans = parseInline(block.text, {html: context.html});
+  const segments = spans.filter(span => span.text).map(span => ({text: span.text.replace(/\s+/gu, ' '), sgr: spanSgr(span.style, context, sgr)}));
+  const text = segments.map(segment => segment.text).join('').trim();
+  if (!text || segments.length > 24) return undefined;
+  const typed = typeset({role: 'heading', level: block.level, text, maxColumns: width, maxRows: context.sizedHeadings.maxRows, segments});
+  if (!typed.sized) return undefined;
+  const id = context.blockIds.next++;
+  const first = ordinary[0]!;
+  return Array.from({length: typed.sized.rows}, (_, index) => index === 0
+    ? {...first, block: {id, index, of: typed.sized!.rows, sized: typed.sized!}}
+    : {ansi: '', plain: '', kind: 'heading' as const, block: {id, index, of: typed.sized!.rows}});
+}
+
+/**
+ * A paragraph made only of images the provider can show: each image as its own rows, left aligned, with a quiet line naming
+ * a link's host when the image is also a link. Anything else (text around images, images not yet or never shown) keeps the
+ * ordinary reading, `[image: alt]` among the words.
+ */
+function imageParagraph(source: string, width: number, context: Context): MarkdownRow[] | undefined {
+  const provider = context.images;
+  if (!provider || width < 8) return undefined;
+  const spans = parseInline(source, {html: context.html});
+  const images = spans.filter(span => span.style.image && span.style.src);
+  if (!images.length || spans.some(span => !(span.style.image && span.style.src) && span.text.trim())) return undefined;
+  const placed: Array<{span: InlineSpan; slot: ImageSlot; shown: {lines: string[]; columns: number; rows: number}}> = [];
+  for (const span of images) {
+    const slot = provider.slot(span.style.src!, span.text);
+    const shown = slot?.place(width, context.maxImageRows);
+    if (!slot || !shown) return undefined;
+    placed.push({span, slot, shown});
+  }
+  const rows: MarkdownRow[] = [];
+  for (const {span, slot, shown} of placed) {
+    shown.lines.forEach((line, offset) => rows.push({ansi: `${line}${RESET}`, plain: offset === 0 ? `[image: ${span.text}]` : '', kind: 'image', image: slot.index}));
+    if (span.style.link) rows.push({ansi: `${context.fg(UI_COLORS.subtle)}${glyph(context, '↗', '->')} ${hostOf(span.style.link)}${RESET}`, plain: `-> ${hostOf(span.style.link)}`, kind: 'text'});
+  }
+  return rows;
+}
+
 // ---- Blocks -------------------------------------------------------------------------------------------------------
 
 const BULLETS = {nerd: ['•', '◦', '▪'], safe: ['-', '*', '+']};
@@ -329,12 +422,13 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
     if (!tight) gap();
     switch (block.kind) {
       case 'paragraph':
-        for (const row of inlineRows(block.text, width, context, base)) out.push({...row, kind: 'text'});
+        out.push(...(imageParagraph(block.text, width, context) ?? inlineRows(block.text, width, context, base).map(row => ({...row, kind: 'text' as const}))));
         break;
       case 'heading': {
         const role = block.level === 1 ? UI_COLORS.accent : block.level === 2 ? UI_COLORS.primary : UI_COLORS.secondary;
         const sgr = `${block.level <= 3 ? BOLD : ''}${block.level >= 4 ? ITALIC : ''}${context.fg(role)}`;
-        for (const row of inlineRows(block.text, width, context, sgr)) out.push({...row, kind: 'heading'});
+        const ordinary = inlineRows(block.text, width, context, sgr).map(row => ({...row, kind: 'heading' as const}));
+        out.push(...(depth === 0 ? sizedHeading(block, width, context, sgr, ordinary) : undefined) ?? ordinary);
         break;
       }
       case 'code':
@@ -402,6 +496,10 @@ function renderSource(source: string, columns: number, options: MarkdownOptions,
     tone: options.tone === 'secondary' ? UI_COLORS.secondary : UI_COLORS.primary,
     codeIndex: 0,
     html: Boolean(options.html),
+    ...(options.images ? {images: options.images} : {}),
+    maxImageRows: Math.max(1, options.maxImageRows ?? 16),
+    ...(options.sizedHeadings ? {sizedHeadings: options.sizedHeadings} : {}),
+    blockIds: {next: 1},
   };
   // The renderer never trusts its caller to have scrubbed: terminal controls and bidi formatting go, tabs become spaces.
   const safe = source.split('\n').map(line => stripTerminalControls(line.replace(/\t/gu, '    '), Number.MAX_SAFE_INTEGER)).join('\n');
