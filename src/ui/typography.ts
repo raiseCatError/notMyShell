@@ -53,6 +53,11 @@ export interface TypeRequest {
   level?: number;
   fg?: Rgb;
   bg?: Rgb;
+  /**
+   * The text as styled pieces (bold, italic, code, links in a heading): each piece is drawn with its own SGR prefix, side by
+   * side at the same scale. When present, `text` is the pieces joined. A piece that cannot be sized means plain text.
+   */
+  segments?: ReadonlyArray<{text: string; sgr: string}>;
 }
 
 /** A scaled block: the escape that draws it with the cursor at its top-left cell, and the cells it covers. */

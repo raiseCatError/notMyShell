@@ -22,6 +22,8 @@ export interface InlineStyle {
   link?: string;
   /** Text of an image (its alt text): shown, never fetched. */
   image?: boolean;
+  /** The image's source reference as written (bounded). Never fetched here: the graphics service decides what may be read. */
+  src?: string;
 }
 
 export interface InlineSpan {
@@ -226,7 +228,7 @@ function tokenize(source: string, options: InlineOptions): Token[] {
         flush();
         const label = source.slice(open + 1, close);
         const url = safeLink(target.url);
-        if (image) tokens.push({kind: 'span', span: [{text: label.trim() || 'image', style: {image: true}}]});
+        if (image) tokens.push({kind: 'span', span: [{text: label.trim() || 'image', style: {image: true, ...(target.url ? {src: target.url.slice(0, 2000)} : {})}}]});
         else {
           const inner = parseInline(label, options).map(span => ({text: span.text, style: {...span.style, ...(url && !span.style.code ? {link: url} : {})}}));
           // A link whose target was refused still shows its text, and the refused target as text so nothing is hidden.
@@ -293,7 +295,7 @@ function htmlTag(tag: NonNullable<ReturnType<typeof readTag>>, source: string, c
     return tag.end;
   }
   if (name === 'br') { tokens.push({kind: 'text', text: ' '}); return tag.end; }
-  if (name === 'img') { tokens.push({kind: 'span', span: [{text: imageLabel(tag.attributes), style: {image: true}}]}); return tag.end; }
+  if (name === 'img') { const src = decodeEntities(tag.attributes.src ?? '').trim().slice(0, 2000); tokens.push({kind: 'span', span: [{text: imageLabel(tag.attributes), style: {image: true, ...(src ? {src} : {})}}]}); return tag.end; }
   if (name === 'input' && tag.attributes.type?.toLowerCase() === 'checkbox') { tokens.push({kind: 'text', text: 'checked' in tag.attributes ? '☑ ' : '☐ '}); return tag.end; }
   if (CODE_TAGS.has(name) && !tag.selfClosing) {
     // Code is literal: its text up to the end tag, any markup inside dropped, references decoded (safely).

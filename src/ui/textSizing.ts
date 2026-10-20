@@ -83,6 +83,7 @@ export function osc66(text: string, step: Pick<ScaleStep, 's' | 'n' | 'd' | 'v' 
 /** The sized block for a request, or undefined when scaling is off, unverified, or no step fits. */
 function sizedBlock(request: TypeRequest, text: string): SizedBlock | undefined {
   if (!textSizingEnabled() || !isSizable(text)) return undefined;
+  if (request.segments?.some(segment => !isSizable(segment.text))) return undefined;
   const steps = request.role === 'title' || request.role === 'heading' || request.role === 'subheading'
     ? ROLE_STEPS[request.level !== undefined ? roleForLevel(request.level) : request.role] : ROLE_STEPS[request.role];
   const maxRows = request.maxRows ?? 3;
@@ -90,7 +91,10 @@ function sizedBlock(request: TypeRequest, text: string): SizedBlock | undefined 
   for (const step of steps) {
     const columns = cells * step.s;
     if (step.s > maxRows || columns > request.maxColumns || request.maxColumns < step.minColumns) continue;
-    return {sequence: osc66(text, step), columns, rows: step.s};
+    const sequence = request.segments?.length
+      ? request.segments.map(segment => `${segment.sgr}${osc66(segment.text, step)}\u001b[0m`).join('')
+      : osc66(text, step);
+    return {sequence, columns, rows: step.s};
   }
   return undefined;
 }

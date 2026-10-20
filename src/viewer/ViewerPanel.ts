@@ -1,7 +1,8 @@
 import type {Key} from '../terminal/keys.js';
 import type {SyntaxSgr} from '../input/syntaxTheme.js';
 import {graphemes} from '../input/inputLayout.js';
-import {codeTokenStyle, renderHtml, renderMarkdown, type MarkdownRow} from '../markdown/render.js';
+import {codeTokenStyle, renderHtml, renderMarkdown, type ImageProvider, type MarkdownRow, type RowBlock} from '../markdown/render.js';
+import type {TextOverlay} from '../arcade/Canvas.js';
 import {highlightCode, type CodeToken} from '../markdown/highlight.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {renderControlRows} from '../ui/controls.js';
@@ -32,7 +33,7 @@ const BOLD = '\u001b[1m';
 
 interface Segment {text: string; style: string}
 /** One logical line of what is shown: a source line (segments), or a rendered Markdown row (prestyled). */
-interface Unit {text: string; segments?: Segment[]; prestyled?: string; number?: number; rest?: number}
+interface Unit {text: string; segments?: Segment[]; prestyled?: string; number?: number; rest?: number; block?: RowBlock}
 
 export interface ViewerState {
   document: ViewDocument;
@@ -54,14 +55,25 @@ export interface ViewerState {
   /** Units the last drawing showed, for the position line. */
   shown?: {first: number; last: number};
   tokens?: CodeToken[][];
-  markdown?: {width: number; rows: MarkdownRow[]};
+  markdown?: {width: number; version: string; rows: MarkdownRow[]};
+  /** Sized-text blocks (headings) drawn over the rows by the last render, positioned in the returned panel rows. */
+  overlays?: TextOverlay[];
 }
 
 export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number} | {kind: 'edit'; path: string}
+  /** Open image `index` of this document in the image viewer. */
+  | {kind: 'image'; index: number}
   /** The file shown, for the person's own editor (the /open bridge); line is the first line on screen, when it is one. */
   | {kind: 'open'; path: string; line?: number};
 
-export interface ViewerLook {syntax?: SyntaxSgr; hyperlinks?: boolean}
+export interface ViewerLook {
+  syntax?: SyntaxSgr;
+  hyperlinks?: boolean;
+  /** Real images in the document, and a version that changes whenever one finishes loading (rows are drawn again). */
+  images?: ImageProvider & {count: number; version: number};
+  /** Headings may be drawn as sized blocks (the app places them); the cache key includes this. */
+  sized?: boolean;
+}
 
 export function createViewer(document: ViewDocument): ViewerState {
   const renderable = renders(document);
@@ -149,9 +161,14 @@ function gutterWidth(state: ViewerState): number {
 }
 
 function markdownRows(state: ViewerState, width: number, look: ViewerLook): MarkdownRow[] {
-  if (state.markdown?.width !== width) {
-    const options = {...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks)};
-    state.markdown = {width, rows: state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true})};
+  const version = `${look.images?.version ?? 0}|${look.sized ? 'sized' : 'plain'}`;
+  if (state.markdown?.width !== width || state.markdown.version !== version) {
+    const options = {
+      ...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks),
+      ...(look.images ? {images: look.images} : {}),
+      ...(look.sized ? {sizedHeadings: {maxRows: 3}} : {}),
+    };
+    state.markdown = {width, version, rows: state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true})};
   }
   return state.markdown.rows;
 }
@@ -175,7 +192,7 @@ function cellBudget(state: ViewerState, width: number): number {
 function unitAt(state: ViewerState, index: number, width: number, look: ViewerLook): Unit {
   if (state.rendered) {
     const row = markdownRows(state, width, look)[index];
-    return {text: row?.plain ?? '', prestyled: row?.ansi ?? ''};
+    return {text: row?.plain ?? '', prestyled: row?.ansi ?? '', ...(row?.block ? {block: row.block} : {})};
   }
   const level = colorLevel();
   const styleOf = (token: CodeToken) => level === 'none' ? '' : codeTokenStyle(token.kind, {...(look.syntax ? {syntax: look.syntax} : {}), level});
@@ -359,7 +376,7 @@ function step(state: ViewerState, direction: 1 | -1, width: number, height: numb
 
 export function viewerKey(state: ViewerState, key: Key, columns: number, height: number, look: ViewerLook = {}): ViewerAction | undefined {
   const width = contentWidth(state, columns);
-  const body = bodyHeight(state, columns, height);
+  const body = bodyHeight(state, columns, height, look);
   if (state.input) {
     const input = state.input;
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.input = undefined; return undefined; }
@@ -408,6 +425,14 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   else if (text === ':') state.input = {kind: 'goto', value: ''};
   else if (text === 'n' && state.query) step(state, 1, width, body, look);
   else if (text === 'N' && state.query) step(state, -1, width, body, look);
+  else if (text === 'i' && state.rendered && look.images) {
+    if (!look.images.count) state.note = 'No images in this document.';
+    else {
+      const rows = markdownRows(state, width, look);
+      const shown = rows.slice(state.top).find(row => row.image !== undefined) ?? rows.find(row => row.image !== undefined);
+      return {kind: 'image', index: shown?.image ?? 0};
+    }
+  }
   else if (text === 'c') return {kind: 'copy', text: state.document.text, lines: state.document.lines.length};
   else if (text === 'e' && state.document.origin.kind === 'file') return {kind: 'edit', path: state.document.origin.path};
   // Rendered Markdown rows are not source lines: the file then opens at its start.
@@ -442,19 +467,20 @@ function headerRows(state: ViewerState, columns: number, height: number): string
   return rows;
 }
 
-function controls(state: ViewerState, columns: number): string[] {
+function controls(state: ViewerState, columns: number, look: ViewerLook): string[] {
   const width = Math.max(1, columns - 4);
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
   return renderControlRows([
     ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
+    ...(state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
     ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const, ['o', 'open in editor'] as const] : []), ['Esc', 'close'],
   ], width);
 }
 
-function bodyHeight(state: ViewerState, columns: number, height: number): number {
-  return Math.max(1, height - 2 - headerRows(state, columns, height).length - 1 - controls(state, columns).length);
+function bodyHeight(state: ViewerState, columns: number, height: number, look: ViewerLook): number {
+  return Math.max(1, height - 2 - headerRows(state, columns, height).length - 1 - controls(state, columns, look).length);
 }
 
 function statusRow(state: ViewerState, width: number, total: number): string {
@@ -476,12 +502,13 @@ function statusRow(state: ViewerState, width: number, total: number): string {
 export function renderViewer(state: ViewerState, columns: number, height: number, look: ViewerLook = {}): string[] {
   const width = contentWidth(state, columns);
   const gutter = gutterWidth(state);
-  const body = bodyHeight(state, columns, height);
+  const body = bodyHeight(state, columns, height, look);
   clampTop(state, width, body, look);
   const out = headerRows(state, columns, height);
   const total = unitCount(state, width, look);
   const subtle = foreground(UI_COLORS.subtle);
   const rows: string[] = [];
+  const meta: Array<{block?: RowBlock; highlighted: boolean}> = [];
   let first = -1;
   let last = -1;
   for (let index = state.top; index < total && rows.length < body; index += 1) {
@@ -493,14 +520,32 @@ export function renderViewer(state: ViewerState, columns: number, height: number
       if (rows.length >= body) return;
       const number = gutter ? `${subtle}${(offset === 0 && (index !== state.top || state.sub === 0) ? String(unit.number ?? '') : '').padStart(gutter - 1)}${RESET} ` : '';
       rows.push(`  ${number}${row}`);
+      meta.push({...(unit.block ? {block: unit.block} : {}), highlighted: highlights.length > 0});
     });
     if (first < 0) first = index;
     last = index;
   }
+  // Sized headings: drawn over their rows only when every row of the block is on screen and none holds a search match;
+  // anywhere else the heading shows as its ordinary styled text on its first row.
+  const overlays: TextOverlay[] = [];
+  const visibleRows = Math.max(0, height - 2 - out.length);
+  for (let at = 0; at < rows.length; at += 1) {
+    const block = meta[at]?.block;
+    if (!block?.sized || block.index !== 0 || meta[at]!.highlighted) continue;
+    let whole = at + block.of <= rows.length && at + block.of <= visibleRows;
+    for (let part = 0; whole && part < block.of; part += 1) {
+      const row = meta[at + part];
+      whole = row?.block?.id === block.id && row.block.index === part && !row.highlighted;
+    }
+    if (!whole) continue;
+    overlays.push({x: 2 + gutter, y: 1 + out.length + at, columns: block.sized.columns, rows: block.sized.rows, sequence: block.sized.sequence});
+    for (let part = 0; part < block.of; part += 1) rows[at + part] = '  ';
+  }
+  state.overlays = overlays;
   state.shown = first < 0 ? undefined : {first, last};
   if (!total) rows.push(`  ${subtle}${state.document.origin.kind === 'output' ? 'No output.' : 'Empty file.'}${RESET}`);
   while (rows.length < body) rows.push('');
-  out.push(...rows, statusRow(state, Math.max(1, columns - 4), total), ...controls(state, columns).map(row => `  ${row}`));
+  out.push(...rows, statusRow(state, Math.max(1, columns - 4), total), ...controls(state, columns, look).map(row => `  ${row}`));
   const rule = framePanel([], columns)[0]!;
   if (height <= 1) return [rule].slice(0, Math.max(0, height));
   return [...framePanel(out.slice(0, Math.max(0, height - 2)).map(row => truncateAnsi(row, columns)), columns), rule];
