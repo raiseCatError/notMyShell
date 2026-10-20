@@ -106,6 +106,11 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = back.mark;
       back.pty.write('a');
       await until(() => contents() === 'after-failure\napproved\n', 20_000, 'only the explicitly approved entry runs');
+      // The marker is written while the command runs; this window still has to see it finish. A line typed in the few
+      // milliseconds before it has seen the shell's events is taken for the next command's own exec (#426: the window's
+      // view of the shell trails the shell's by the time its events take to arrive, longer on a loaded machine).
+      await until(async () => (await sandbox.transcripts().list()).some(item => item.transcript.records.some(record => record.command === approved)),
+        20_000, 'the approved command is recorded before the next line is typed');
       back.pty.write('\u001b[27u');
       await back.run('echo CONDITIONS-DONE', /CONDITIONS-DONE/u);
       assert.equal(contents(), 'after-failure\napproved\n', 'no duplicate or inherited approval');
