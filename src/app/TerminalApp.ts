@@ -278,7 +278,8 @@ import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, isNmshStatement, longestShellRun, nmshCommandText, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {BatchSequencer, type SequenceHost, type SequenceItem} from '../input/batchSequence.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -2116,23 +2117,14 @@ export class TerminalApp {
       const action = batchReviewKey(review, key, this.dimensions().rows - 4);
       const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
       if (action?.kind === 'queue') {
-        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
-        const texts = batchTexts(review);
-        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
-          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
-        } else {
-          for (const text of texts) {
-            this.syncQueuePolicy();
-            this.session.queue({op: 'add', text});
-            this.sessionSubmissions.push({text, slash: false});
-            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
-          }
-          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
-        }
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, run once, shell commands
+        // through this session's own queue and NMSh's commands through NMSh (never the shell).
+        this.startBatchSequence(review);
         done();
       } else if (action?.kind === 'steps') {
         // One at a time (QA F02): each command waits in the composer, unsent, and runs only on the person's Enter.
-        this.pasteSteps = {items: batchTexts(review), next: 0, running: false};
+        this.batchSequence?.stop('Replaced by One at a time');
+        this.pasteSteps = {items: batchTexts(review).map(text => (isNmshStatement(text) ? nmshCommandText(text) : text)), next: 0, running: false};
         done();
         this.offerPasteStep();
       } else if (action?.kind === 'block') {
@@ -2195,6 +2187,12 @@ export class TerminalApp {
       }
       // Any other key (typing, editing) invalidates the paste preview and continues normal processing
       this.pastePreview = undefined;
+    }
+    if ((key.kind === 'escape' || key.kind === 'interrupt') && this.batchSequence?.active && !this.running && !this.hasModalInput() && !this.editor.text) {
+      this.batchSequence.stop('Stopped');
+      this.dropFinishedSequence();
+      this.render();
+      return;
     }
     if (key.kind === 'escape' && this.pasteSteps && !this.pasteSteps.running && this.editor.text && !this.hasModalInput()) {
       this.stopPasteSteps('Stopped');
@@ -8283,7 +8281,7 @@ export class TerminalApp {
     const now = Date.now();
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
-    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns), ...this.sequenceRows(columns)];
     const background = this.backgroundRows(columns);
     return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
@@ -8317,6 +8315,9 @@ export class TerminalApp {
     }
     const check = await verifyCommands(batchTexts(review), shell);
     if (this.stopped || !current()) return;
+    if (!this.queueAvailable() && longestShellRun(review.entries) > 0) review.queueOff = this.session.features.has('queue')
+      ? 'Queue all is not offered: queueing is off (Settings → Sessions → Queue commands).'
+      : 'Queue all is not offered: this session\'s service is older and has no command queue.';
     if (check.ok) {
       review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · ');
       this.batchReview = review;
@@ -8346,6 +8347,79 @@ export class TerminalApp {
     void this.openBatchReview(text, () => this.pendingMixedBlock === text).finally(() => { if (this.pendingMixedBlock === text) this.pendingMixedBlock = undefined; });
     this.render();
     return true;
+  }
+
+  /** Queue all: confirm once, then the sequencer runs the reviewed commands in order (see input/batchSequence). */
+  private startBatchSequence(review: BatchReviewState): void {
+    const items: SequenceItem[] = review.entries.map(entry => {
+      const nmsh = isNmshStatement(entry.text);
+      return {nmsh, text: nmsh ? nmshCommandText(entry.text) : entry.text};
+    });
+    const needsQueue = items.some(item => !item.nmsh);
+    if (needsQueue && (!this.queueAvailable() || longestShellRun(review.entries) > QUEUE_LIMIT - this.queueState.entries.length)) {
+      this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+      return;
+    }
+    this.batchSequence?.stop('Replaced by a new Queue all');
+    this.pasteSteps = undefined;
+    const sequence = new BatchSequencer(items, this.sequenceHost());
+    this.batchSequence = sequence;
+    this.output.addFrontendInteraction('/ps', `Queue all: ${items.length} command${items.length === 1 ? '' : 's'}. They run in order${needsQueue ? ' (shell commands through /queue)' : ''}; it stops on a failure, and Esc stops it.`, INFO);
+    sequence.poke();
+    this.dropFinishedSequence();
+  }
+
+  private sequenceHost(): SequenceHost {
+    return {
+      queueView: () => {
+        const timeline = this.queueState.timeline;
+        return {
+          entries: this.queueState.entries.length,
+          dispatching: Boolean(this.queueState.dispatching),
+          paused: Boolean(this.queueState.paused),
+          ...(timeline ? {chain: {id: timeline.id, status: timeline.status, failurePolicy: timeline.failurePolicy, failed: timeline.counts.failed, interrupted: timeline.counts.interrupted}} : {}),
+        };
+      },
+      queueFree: () => QUEUE_LIMIT - this.queueState.entries.length,
+      addShell: text => {
+        this.syncQueuePolicy();
+        this.session.queue({op: 'add', text});
+        this.sessionSubmissions.push({text, slash: false});
+        if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+      },
+      foregroundBusy: () => Boolean(this.running || this.passthrough || this.externalPassthrough || this.startupPending || this.preparingCommand),
+      modalOpen: () => this.hasModalInput(),
+      composerEmpty: () => !this.editor.text,
+      runNmsh: async text => {
+        this.editor.replaceText(text);
+        await this.submit(false, true, false);
+      },
+      say: text => this.output.addFrontendInteraction('Queue all', text, INFO),
+      changed: () => this.render(),
+    };
+  }
+
+  private dropFinishedSequence(): void {
+    if (this.batchSequence && !this.batchSequence.active) this.batchSequence = undefined;
+  }
+
+  /** Ask the sequencer to continue once the current state allows (a prompt, an empty queue, a closed panel). */
+  private scheduleSequencePoke(): void {
+    if (!this.batchSequence || this.sequencePokeScheduled) return;
+    this.sequencePokeScheduled = true;
+    queueMicrotask(() => {
+      this.sequencePokeScheduled = false;
+      if (this.stopped) return;
+      this.batchSequence?.poke();
+      this.dropFinishedSequence();
+    });
+  }
+
+  /** The strip above the composer while Queue all runs: where it is and how to stop it. */
+  private sequenceRows(columns: number): string[] {
+    const sequence = this.batchSequence;
+    if (!sequence?.active) return [];
+    return [truncateAnsi(`${SUBTLE}${sequence.statusLine()}${RESET}`, columns)];
   }
 
   /** The next pasted command, unsent, when the composer is free; the last one ends the list. */
@@ -8390,7 +8464,7 @@ export class TerminalApp {
    */
   private async runReviewedBlock(text: string): Promise<void> {
     if (this.running) {
-      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete or choose Queue separately.', ERROR);
+      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete, or choose Queue all.', ERROR);
       return;
     }
     this.editor.replaceText(text);
@@ -9448,6 +9522,9 @@ export class TerminalApp {
   private pendingMixedBlock?: string;
   /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
   private pasteSteps?: {items: string[]; next: number; running: boolean};
+  /** Queue all (a reviewed paste run in order, shell and NMSh commands alike). */
+  private batchSequence?: BatchSequencer;
+  private sequencePokeScheduled = false;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -10860,6 +10937,7 @@ export class TerminalApp {
   }
 
   private render(): void {
+    this.scheduleSequencePoke();
     this.reconcileOutputNavigation();
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
@@ -11917,6 +11995,7 @@ export class TerminalApp {
     if (!this.replaying && getCurrentGlyphMode() !== 'safe' && colorLevel() !== 'ansi16') {
       for (const change of queuePresentationChanges(previous, state)) this.transitions.highlight(change.target, change.tone, Date.now(), change.phase);
     }
+    this.scheduleSequencePoke();
     if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;

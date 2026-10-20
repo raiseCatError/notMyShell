@@ -47,36 +47,41 @@ function fixture() {
   return {...frame, submitted, slashes, adds, key, enter, composer, reviewing, pasteAndEnter, screen};
 }
 
-test('review: a list with an NMSh command offers one at a time only, never one block or the shell\'s queue', () => {
+test('review: a list with an NMSh command offers One at a time and Queue all, never Run as block', () => {
   for (const source of [A, B]) {
     const review = createBatchReview(source, 'zsh', 100)!;
-    assert.deepEqual(batchAvailableChoices(review), ['steps', 'edit', 'cancel'], source);
+    assert.deepEqual(batchAvailableChoices(review), ['steps', 'queue', 'edit', 'cancel']);
     assert.equal(review.choice, 'steps');
-    for (const shortcut of ['1', 'b', 'q', '2']) {
-      assert.equal(batchReviewKey(review, {kind: 'text', value: shortcut}, 26), undefined, `${shortcut} does nothing`);
-      assert.notEqual(review.choice, 'block');
-      assert.notEqual(review.choice, 'queue');
+    for (const shortcut of ['b', '3']) {
+      batchReviewKey(review, {kind: 'text', value: shortcut}, 26);
+      assert.notEqual(review.choice, 'block', `${shortcut} never selects Run as block`);
     }
     review.choice = 'steps';
     assert.deepEqual(batchReviewKey(review, {kind: 'enter'}, 26), {kind: 'steps'});
+    batchReviewKey(review, {kind: 'text', value: 'q'}, 26);
+    assert.deepEqual(batchReviewKey(review, {kind: 'enter'}, 26), {kind: 'queue'});
   }
   // A slash line inside a heredoc is the heredoc's text (zsh, Bash), not a statement.
   for (const shell of ['zsh', 'bash'] as const) {
     const heredoc = createBatchReview('cd /tmp\ncat <<EOF\n/track ls\nEOF', shell, 100)!;
     assert.deepEqual(heredoc.entries.map(entry => entry.text), ['cd /tmp', 'cat <<EOF\n/track ls\nEOF']);
-    assert.deepEqual(batchAvailableChoices(heredoc), ['block', 'queue', 'edit', 'cancel'], shell);
+    assert.deepEqual(batchAvailableChoices(heredoc), ['steps', 'queue', 'block', 'edit', 'cancel'], shell);
   }
-  // The list says why, and fits narrow windows.
+  // The list says why Run as block is missing, and fits narrow windows.
   const review = createBatchReview(B, 'zsh', 100)!;
   for (const columns of [30, 50, 80, 120]) {
     const rows = renderBatchReview(review, columns, 20);
     assert.ok(rows.length <= 20);
     for (const row of rows) assert.ok(displayWidth(stripAnsi(row)) <= columns, `${columns}: ${stripAnsi(row)}`);
   }
-  assert.match(stripAnsi(renderBatchReview(review, 120, 20).join('\n')), /One at a time · 2 commands[\s\S]*NMSh commands run in NMSh, not the shell|NMSh commands run in NMSh, not the shell[\s\S]*One at a time · 2 commands/u);
-  assert.doesNotMatch(stripAnsi(renderBatchReview(review, 120, 20).join('\n')), /Run as block|Queue separately/u);
-  // Shell-only lists are unchanged.
-  assert.deepEqual(batchAvailableChoices(createBatchReview('cd /tmp\nls', 'zsh', 100)!), ['block', 'queue', 'edit', 'cancel']);
+  const text = stripAnsi(renderBatchReview(review, 120, 24).join('\n'));
+  assert.match(text, /One at a time · 2/u);
+  assert.match(text, /Queue all · 2/u);
+  assert.match(text, /Run as block is off: NMSh commands never go to the shell as a block/u);
+  assert.match(text, /NMSh command/u);
+  assert.doesNotMatch(text, /Queue separately/u);
+  // Shell-only lists offer all three.
+  assert.deepEqual(batchAvailableChoices(createBatchReview('cd /tmp\nls', 'zsh', 100)!), ['steps', 'queue', 'block', 'edit', 'cancel']);
 });
 
 test('F02 B: `cd` + `/modules` pasted and entered: nothing runs; NMSh offers them one at a time, each on its own Enter', async () => {
@@ -203,5 +208,91 @@ test('F02: multi-line shell text is unchanged: a script, a heredoc with a slash 
     f.app['editor'].insertPaste('/track ls');
     f.enter(); await settled();
     assert.deepEqual(f.slashes, ['/track ls']);
+  } finally { f.dispose(); }
+});
+
+test('Queue all: `cd` then `/modules` runs both after one confirmation, in order; the shell never gets the NMSh line', async () => {
+  const f = fixture();
+  try {
+    await f.pasteAndEnter(B);
+    await f.reviewing();
+    f.key({kind: 'text', value: 'q'});
+    assert.deepEqual(f.adds(), [], 'choosing the mode runs nothing');
+    f.enter(); await settled();
+    assert.equal(f.app['batchReview'], undefined);
+    assert.deepEqual(f.adds(), ['cd modules/bun-app'], 'the shell command is queued; /modules waits for it');
+    assert.deepEqual(f.slashes, []);
+    assert.match(f.screen(), /Queue all · 1 of 2/u);
+    f.complete(0); // the prompt: the owner starts the queued command
+    f.begin('cd modules/bun-app');
+    f.complete(0); await settled();
+    assert.deepEqual(f.slashes, ['/modules'], 'NMSh dispatches its own command after the shell command succeeded, with no further Enter');
+    assert.deepEqual(f.adds(), ['cd modules/bun-app']);
+    assert.equal(f.app['batchSequence'], undefined, 'finished');
+    assert.doesNotMatch(f.screen(), /Queue all ·/u);
+  } finally { f.dispose(); }
+});
+
+test('Queue all: four `/track` lines all run in NMSh without a single Enter, and none reaches the shell', async () => {
+  const f = fixture();
+  try {
+    await f.pasteAndEnter(A);
+    await f.reviewing();
+    f.key({kind: 'text', value: 'q'});
+    f.enter(); await settled();
+    await settled();
+    assert.deepEqual(f.slashes, A.split('\n'));
+    assert.deepEqual(f.adds(), []);
+    assert.deepEqual(f.submitted, []);
+  } finally { f.dispose(); }
+});
+
+test('Queue all: a failed shell command stops the rest, and Esc stops a waiting sequence', async () => {
+  const f = fixture();
+  try {
+    await f.pasteAndEnter(B);
+    await f.reviewing();
+    f.key({kind: 'text', value: 'q'});
+    f.enter(); await settled();
+    f.complete(0);
+    f.begin('cd modules/bun-app');
+    f.complete(1); await settled();
+    assert.deepEqual(f.slashes, [], '/modules does not run after a failure');
+    assert.equal(f.app['batchSequence'], undefined);
+    assert.match(f.screen(), /Queue all stopped/u);
+  } finally { f.dispose(); }
+});
+
+test('Queue all: Esc at an idle prompt stops a sequence that is waiting, and nothing more runs', async () => {
+  const f = fixture();
+  try {
+    await f.pasteAndEnter(B);
+    await f.reviewing();
+    f.key({kind: 'text', value: 'q'});
+    f.enter(); await settled();
+    assert.ok(f.app['batchSequence']);
+    f.key({kind: 'escape'});
+    assert.match(f.screen(), /Queue all will stop when the command/u);
+    assert.match(f.screen(), /Queue all · 1 of 2 · stopping/u);
+    f.complete(0);
+    f.begin('cd modules/bun-app');
+    f.complete(0); await settled();
+    assert.deepEqual(f.slashes, [], 'stopped: /modules never ran');
+    assert.equal(f.app['batchSequence'], undefined);
+  } finally { f.dispose(); }
+});
+
+test('Queue all: comment lines before an NMSh command are not sent with it, and it still reaches NMSh', async () => {
+  const f = fixture();
+  try {
+    const source = '# go to the app\ncd modules/bun-app\n# then look at its modules\n/modules';
+    await f.pasteAndEnter(source);
+    await f.reviewing();
+    f.key({kind: 'text', value: 'q'});
+    f.enter(); await settled();
+    f.complete(0);
+    f.begin('cd modules/bun-app');
+    f.complete(0); await settled();
+    assert.deepEqual(f.slashes, ['/modules'], 'the comment is dropped from the NMSh command, never left to turn it into shell text');
   } finally { f.dispose(); }
 });

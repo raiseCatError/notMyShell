@@ -39,7 +39,7 @@ test('a reviewed batch lists the commands the shell would run; nothing is queued
   assert.equal(createBatchReview('echo "never closed\nls', 'bash', 100), undefined, 'ambiguous syntax stays one block of text');
 });
 
-test('remove, reorder and select act on the reviewed list only; Enter and Q queue, Esc/T/E never queue', () => {
+test('remove, reorder and select act on the reviewed list only; Enter confirms the chosen mode, Esc/T/E never queue', () => {
   const review = createBatchReview(SEQUENCE, 'bash', 100)!;
   const key = (value: Key) => batchReviewKey(review, value, 26);
   key({kind: 'down'});
@@ -54,9 +54,12 @@ test('remove, reorder and select act on the reviewed list only; Enter and Q queu
   assert.equal(key(text('e'))?.kind, 'edit');
   assert.equal(key({kind: 'escape'})?.kind, 'back');
   assert.equal(key({kind: 'interrupt'})?.kind, 'cancel');
+  assert.equal(key({kind: 'enter'})?.kind, 'steps', 'the default mode is One at a time');
+  assert.equal(key(text('q')), undefined, 'q only selects Queue all');
   assert.equal(key({kind: 'enter'})?.kind, 'queue');
   review.capacity = 2;
-  assert.equal(key({kind: 'enter'}), undefined, 'more commands than the queue has room for: no partial queueing');
+  assert.notEqual(key({kind: 'enter'})?.kind, 'queue', 'more commands than the queue has room for: no partial queueing');
+  assert.equal(review.choice, 'steps', 'the strip shows the fallback, and Enter does what it shows');
 });
 
 test('the review fits narrow windows and shows every selected command in full, safely', () => {
@@ -69,7 +72,7 @@ test('the review fits narrow windows and shows every selected command in full, s
   assert.ok(!renderBatchReview(review, 80, 20).join('\n').includes('\u001b[2J'));
 });
 
-test('pasting a multi-command block offers B; Enter on the review queues exactly the reviewed commands, in order, once', async () => {
+test('pasting a multi-command block offers B; Enter on Queue all queues exactly the reviewed commands, in order, once', async () => {
   const instance = app();
   try {
     instance['handleKey']({kind: 'paste', value: SEQUENCE});
@@ -80,6 +83,8 @@ test('pasting a multi-command block offers B; Enter on the review queues exactly
     assert.ok(instance['batchReview']);
     assert.deepEqual(queued(instance), [], 'reviewing alone queues nothing');
     instance['handleKey'](text('x'));
+    instance['handleKey'](text('q'));
+    assert.deepEqual(queued(instance), [], 'choosing Queue all queues nothing until Enter');
     instance['handleKey']({kind: 'enter'});
     assert.equal(instance['batchReview'], undefined);
     assert.equal(instance['pastePreview'], undefined);
