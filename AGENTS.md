@@ -38,6 +38,9 @@ notMyShell (NMSh) is a terminal frontend that operates over a persistent, real s
 
 NMSh uses a FOLLOW mode during execution, pinning the output viewport to the bottom. During historical inspection, it enters DETACHED mode.
 
+## Graphics and typography (permanent rule)
+Any actual image goes through the shared graphics service (`src/graphics/`, [graphics service](docs/design/graphics-service.md)); no surface decodes, scales, uploads, places or deletes an image itself, and none selects a protocol by terminal name. Capability detection uses bounded terminal replies (never the PTY's input), and every surface has a character-art or placeholder fallback with the reason shown. Document and celebration typography goes through `typeset()` ([typography](docs/design/typography.md)): components ask for a role, the backend decides whether OSC 66 sizing is verified; sized text is never written to transcripts, saved documents or the clipboard, and is only drawn when every one of its rows is visible. Markdown and HTML share one heading scale. Menus, tabs, selection controls and chrome are always text.
+
 ## Input invariants
 - `Shift+Enter`: newline (multiline)
 - `Ctrl+J`: fallback newline
