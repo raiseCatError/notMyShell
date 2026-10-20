@@ -1408,7 +1408,7 @@ export class TerminalApp {
           process.stdin.resume();
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
-      }, undefined, {graphics: shouldProbeGraphics(process.env)});
+      }, undefined, {graphics: shouldProbeGraphics(process.env), extended: process.env.TERM !== 'dumb'});
       if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
