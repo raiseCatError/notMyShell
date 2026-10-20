@@ -160,6 +160,15 @@ export class FrameStream {
     this.retired = [];
   }
 
+  /** Take this stream's pictures out of the terminal now (its surface is hidden) but keep it usable: the next frame uploads again. */
+  release(): void {
+    if (this.route === 'kitty-placeholder') {
+      const ids = [...this.retired, ...(this.current === undefined ? [] : [this.current])];
+      if (ids.length) this.host.send(ids.map(kittyDeleteImage).join(''));
+    }
+    this.forget();
+  }
+
   /** The terminal lost its images (a program took the screen): forget them without deleting, so the next frame uploads again. */
   forget(): void {
     this.current = undefined;
