@@ -386,3 +386,37 @@ hidden report split fast type-ahead (CI).
 Plain-Enter type-ahead needs an approval (two keys) or Ctrl+Q; keys typed into a program as it exits wait for approval;
 the transcript can be a few rows shorter than the shell's terminal while chrome is open. Cost: one `sh`/`stty`/`head`/`od`
 chain at a prompt only after a command NMSh delivered input to.
+
+## Final scope (2026-10-20): multiline modes, graphics, typography, workspace, browser, arcade
+
+Added to the candidate after the hardening pass. Everything below is automated evidence; none of it is physical QA (the F1-F7 rows in
+[physical QA](../testing/v022-physical-qa.md) are NOT RUN).
+
+| Piece | Branch / PR | Design | Key tests |
+|---|---|---|---|
+| Multiline modes (One at a time, Queue all, Run as block), shared panel components, UI consistency rule | `feature/v022-multiline-modes` (#458) | [multiline-execution-modes](../design/multiline-execution-modes.md) | `batchSequence`, `pasteBatch*`, `pasteSlashCommands`, live paste and clip tests (Queue all chosen with `q`, confirmed with Enter) |
+| Graphics service, decoders, encoders, image viewer, document images, OSC 66 typography, arcade kernel | `feature/v022-graphics` (#459) | [graphics-service](../design/graphics-service.md), [typography](../design/typography.md), [arcade](../design/arcade.md) | `graphicsCapabilities`, `graphicsDecode*`, `graphicsEncode*`, `graphicsService`, `hostProbeExtended`, `textSizing`, `documentTypography`, `viewImages` |
+| Five games | `feature/v022-game-{run,flight,dash,sudoku,doku}` → `feature/v022-arcade-games` | `arcade-{run,flight,dash,sudoku,doku}` | `arcade*` (150+ tests; fairness proofs by simulation for the action games, uniqueness and logical solvability for the puzzles) |
+| Browser engine, preview server, panel | `feature/v022-browser-engine`, `feature/v022-browser-panel` → `feature/v022-browser` | [browser](../design/browser.md), [browser-engine](../design/browser-engine.md), [browser-panel](../design/browser-panel.md) | `browserEngineChrome` (17 against a real Chrome 156), `browserEngineProtocol`, `browserPreviewServer`, `browserPreviewMarkdown`, `browserPanel`, `browserSurface`, `documentPreview`, `browserApp` |
+| Document workspace | `feature/v022-browser` | [document-workspace](../design/document-workspace.md) | `documentWorkspace`, `documentWorkspaceApp` |
+| Integration of all of the above | `integration/v022-final` | | CI run on the exact head recorded in the PR |
+
+### Decisions
+
+- **Rendering architecture:** native hybrid (in-process decoders and encoders, Kitty placeholders, character art), Chafa not required: see the comparison in graphics-service.md. `jpeg-js` and `marked` are the only new runtime dependencies; `sudoku-gen` was evaluated and rejected (its puzzles cannot be reproduced from a seed).
+- **Capabilities from replies, not names:** the host probe also asks DA1 (Sixel), the cell and window pixel size and, on a scratch alternate screen, the three cursor reports of the OSC 66 test. Ghostty stays off for text sizing in Auto.
+- **Browser:** an installed Chrome or Chromium over a pipe, never downloaded, never started at startup; previews are a separate trust class from browsing.
+- **`/view` of an editable Markdown or HTML file opens source-first** (a deliberate change of the earlier rendered-first default, requested for the workspace); `q`/`b`/`o` in the paste review only choose a mode.
+- **The arcade never owns a running command's keyboard:** it refuses to open over one and closes if one starts.
+
+### Reviews and fixes recorded
+
+- Automated security review of the graphics service found (1) a file name with control characters drawn unfiltered and (2) the containment check running after `realpath`; both fixed with tests (lexical containment first, same answer for existing and missing paths outside the root, names made safe).
+- A review of the Chromium preview found a trust race (scripts toggled while the preview was starting could leave the page running with the opposite setting); fixed by reconciling after open and by running trust and refresh changes in order with scripts turned off first.
+- The first CI attempt on #458 failed two macOS live tests (`reattaching across profiles…`, `NMSh inside GNU screen…`) that do not touch the multiline code and passed on the rerun of the failed jobs; the earlier live paste tests that did fail were real consequences of the new default and were updated.
+- `git diff --check` found blank lines at the end of new files in three branches; fixed and checked on every branch.
+
+### Open risks
+
+- Kitty placeholders, OSC 66 and Chromium frames are untested in a real Ghostty or Kitty; the game feel and look are unverified; Zed shows character art only.
+- The merge of the component PRs into `release/v0.22.0` needs the maintainer (the automation was declined permission to merge); see the release PR.
