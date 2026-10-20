@@ -10,6 +10,10 @@ import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
+import {ArcadeSession, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {ARCADE_GAMES, findGame, gameNames} from '../arcade/registry.js';
+import {ArcadeStore} from '../arcade/scores.js';
+import {freshSeed} from '../arcade/rng.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
 import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
@@ -1339,6 +1343,12 @@ export class TerminalApp {
       }
       return;
     }
+    if (this.arcade) {
+      // A command (a queued one, or one from another window) now owns the keyboard: the arcade closes first, so a game never
+      // takes a password or a reply meant for it.
+      this.closeArcade(false);
+      this.output.addFrontendInteraction('/games', 'Closed the arcade: a command started and owns the keyboard. Open it again at the prompt.', INFO);
+    }
     this.commandModes.reset();
     this.commandLine.reset();
     this.inputState = undefined;
@@ -1577,6 +1587,7 @@ export class TerminalApp {
     this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
+    if (this.arcade) { const size = this.dimensions(); this.arcade.session.resize(size.columns, Math.max(8, size.rows - 4)); }
     this.lastPtyRows = 0;
     this.lastPtyColumns = 0;
     if (this.passthrough) {
@@ -1647,6 +1658,7 @@ export class TerminalApp {
     }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      if (key.kind === 'focusOut') this.arcade?.session.pause();
       return;
     }
     // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
@@ -1745,6 +1757,15 @@ export class TerminalApp {
       const {columns, rows} = this.dimensions();
       const action = editorKey(editor, key, columns, rows - 4);
       if (action) this.runEditorAction(editor, action);
+      this.render();
+      return;
+    }
+    if (this.arcade) {
+      const session = this.arcade.session;
+      if (key.kind !== 'paste' && key.kind !== 'mouseMove' && key.kind !== 'mouseClick' && key.kind !== 'mouseDrag' && key.kind !== 'mouseRelease' && key.kind !== 'wheelUp' && key.kind !== 'wheelDown') {
+        if (session.key(key) === 'close') this.closeArcade();
+        else this.syncArcadeClock();
+      }
       this.render();
       return;
     }
@@ -3075,6 +3096,7 @@ export class TerminalApp {
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
+    else if (slash.kind === 'arcade') this.openArcade(slash.game, command.trim());
     else if (slash.kind === 'editFile') {
       if (!slash.target) this.output.addFrontendInteraction(command.trim(), 'Name a file: /edit notes.md. Your own editor and vim, nano or micro still work as usual.', INFO);
       else this.openTextEditor(slash.target, command.trim());
@@ -3781,6 +3803,77 @@ export class TerminalApp {
    * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
    * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
    */
+  // ---- Vespyr Arcade ------------------------------------------------------------------------------------------
+
+  private arcadeEnvironment(): ArcadeEnvironment {
+    this.arcadeStore ??= new ArcadeStore({directory: nmshConfigDirectory()});
+    return {
+      store: this.arcadeStore,
+      now: () => Date.now(),
+      motion: () => {
+        const reduced = !this.decorativeMotionAllowed();
+        const off = this.promptConfiguration.presentation.effectsOff;
+        return {reduced, effects: off ? 'off' : reduced ? 'subtle' : this.promptConfiguration.motion.rendering === 'rich' ? 'rich' : 'normal'};
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+      seed: () => freshSeed(),
+    };
+  }
+
+  /** /games, /game and /arcade: the hub, or one game by id or alias. Never while a program owns the terminal. */
+  private openArcade(name: string | undefined, command: string): void {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The arcade opens at the prompt: let the running command finish first, so its input is never taken by a game.', INFO);
+      return;
+    }
+    const game = name ? findGame(name) : undefined;
+    if (name && !game) {
+      this.output.addFrontendInteraction(command, `No game named "${name}". Try /games, or one of: ${gameNames().join(', ')}.`, INFO);
+      return;
+    }
+    this.closeArcade(false);
+    const {columns, rows} = this.dimensions();
+    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows: Math.max(8, rows - 4)}, game);
+    this.arcade = {session, interval: 0, floor: 40, last: performance.now()};
+    this.syncArcadeClock();
+  }
+
+  /** Subscribe to the shared clock exactly while the session wants frames, at the rate it asks for. */
+  private syncArcadeClock(): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    const wanted = arcade.session.interval;
+    const floor = arcade.session.floor;
+    if (arcade.interval === wanted && arcade.floor === floor) return;
+    arcade.stop?.();
+    arcade.stop = undefined;
+    arcade.interval = wanted;
+    arcade.floor = floor;
+    arcade.last = performance.now();
+    if (wanted > 0) arcade.stop = presentationClock.subscribe(() => this.tickArcade(), wanted, floor);
+  }
+
+  private tickArcade(): void {
+    const arcade = this.arcade;
+    if (!arcade || this.stopped) return;
+    const now = performance.now();
+    const elapsed = Math.max(0, now - arcade.last);
+    arcade.last = now;
+    arcade.session.frame(elapsed);
+    this.syncArcadeClock();
+    this.render();
+  }
+
+  private closeArcade(restore = true): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    arcade.stop?.();
+    this.arcade = undefined;
+    arcade.session.dispose();
+    if (restore) { this.returnFromPanel(); this.render(); }
+  }
+
   private openViewer(target: string, command: string): void {
     this.viewerLoad?.abort();
     this.viewerLoad = undefined;
@@ -5248,7 +5341,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5290,6 +5383,7 @@ export class TerminalApp {
     if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.arcade) return this.arcade.session.render().rows;
     if (this.viewer) return renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook());
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
@@ -9448,6 +9542,9 @@ export class TerminalApp {
   private pendingMixedBlock?: string;
   /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
   private pasteSteps?: {items: string[]; next: number; running: boolean};
+  /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
+  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number};
+  private arcadeStore?: ArcadeStore;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -12828,6 +12925,7 @@ export class TerminalApp {
     this.stopped = true;
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
+    this.closeArcade(false);
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();

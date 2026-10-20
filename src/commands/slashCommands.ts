@@ -19,7 +19,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/theme-bridge': {group: 'Appearance', title: 'Open Theme Bridge'}, '/chroma': {group: 'Appearance', title: 'Open Chroma'},
   '/chrome': {group: 'Appearance', title: 'Open UI Chrome'}, '/cursor': {group: 'Appearance', title: 'Open Cursor & effects'},
   '/motion': {group: 'Appearance', title: 'Open Motion'}, '/glyphs': {group: 'Appearance', title: 'Configure Glyph Style'},
-  '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'},
+  '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'}, '/game': {alias: '/games'}, '/arcade': {alias: '/games'},
   '/screensaver': {group: 'Appearance', title: 'Open Idle visuals'}, '/activity': {group: 'Appearance', title: 'Open Live activity colors'},
   '/prompt': {group: 'Composer & transcript', title: 'Open Prompt'}, '/modules': {group: 'Composer & transcript', title: 'Open Modules'}, '/layout': {group: 'Composer & transcript', title: 'Configure Composer Layout'},
   '/composer': {alias: '/layout'}, '/syntax': {group: 'Composer & transcript', title: 'Open Syntax highlighting'},
@@ -41,6 +41,14 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/copy', insertion: '/copy', description: 'Select completed output: Up/Down, Enter copies, Esc returns (saved Quick Copy preferences still apply)'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status; --semantic or --both the Semantic Output reading'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
+  {name: '/games', insertion: '/games', description: 'Vespyr Arcade: Vespyr Run, Flight and Dash, Classic Sudoku and Vespyr Doku, with local high scores (/game run · /game sudoku · /arcade vespyr-doku)'},
+  {name: '/game', insertion: '/game', description: 'Same as /games; /game <name> opens a game directly: run, flight, dash, sudoku, vespyr-doku'},
+  {name: '/arcade', insertion: '/arcade', description: 'Same as /games'},
+  {name: '/game run', insertion: '/game run', description: 'Vespyr Run: an endless runner. Space or ↑ jumps, ↓ ducks'},
+  {name: '/game flight', insertion: '/game flight', description: 'Vespyr Flight: fly through endless gaps. Space or ↑ flaps'},
+  {name: '/game dash', insertion: '/game dash', description: 'Vespyr Dash: a rhythm platformer over spikes and gaps. Space or ↑ jumps'},
+  {name: '/game sudoku', insertion: '/game sudoku', description: 'Classic Sudoku with notes, hints, undo and best times'},
+  {name: '/game vespyr-doku', insertion: '/game vespyr-doku', description: 'Vespyr Doku: one cat in every row, column and colored region, none touching'},
   {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
   {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
@@ -173,6 +181,8 @@ export type ParsedSlashCommand =
   | {kind: 'compare'; first?: number; second?: number; error?: string}
   /** /view [path | N]: a file (relative to the shell's directory, ~ for home), output N as /copy numbers it, or the latest output. */
   | {kind: 'view'; target: string}
+  /** /games, /game and /arcade are one command: the hub, or a game by id or alias. */
+  | {kind: 'arcade'; game?: string}
   /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
   | {kind: 'editFile'; target: string}
   | {kind: 'appearance'}
@@ -270,6 +280,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const clips = /^\/clips(?:\s+suggestions\s+(on|off))?\s*$/u.exec(input);
   if (clips) return {kind: 'clips', ...(clips[1] ? {suggestions: clips[1] === 'on'} : {})};
   if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
+  const arcade = /^\/(?:games|game|arcade)(?:\s+(.*?))?\s*$/u.exec(input);
+  if (arcade) return {kind: 'arcade', ...(arcade[1] ? {game: arcade[1]} : {})};
   const view = /^\/view(?:\s+([\s\S]*))?$/u.exec(input);
   if (view) return {kind: 'view', target: (view[1] ?? '').trim()};
   const editFile = /^\/edit(?:\s+([\s\S]*))?$/u.exec(input);
