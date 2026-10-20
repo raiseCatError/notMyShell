@@ -208,7 +208,7 @@ import {helpMarkdown} from '../help/helpContent.js';
 import {renderMarkdownText} from '../help/markdown.js';
 import {sweepAnimates, sweepAnsiRow, sweepCells, sweepOnce} from '../motion/lightSweep.js';
 import {sweepStill, sweepStyleFor} from '../motion/sweepStyle.js';
-import {mixRgb} from '../chroma/chroma.js';
+import {luminance, mixRgb, resolveColor, theme as themeRole} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
@@ -294,8 +294,13 @@ import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
 import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
-import {nmshConfigDirectory} from '../configuration/paths.js';
+import {nmshCacheDirectory, nmshConfigDirectory} from '../configuration/paths.js';
 import {configureTextSizing, describeTextSizing, textSizingEnabled} from '../ui/textSizing.js';
+import {BrowserHost} from '../browser/host.js';
+import {BrowserSession} from '../browser/session.js';
+import {browserPanelKey, createBrowserPanel, renderBrowserPanel, type BrowserPanelState} from '../browser/BrowserPanel.js';
+import {BrowserPreviewView} from '../browser/documentPreview.js';
+import {normalizeAddress} from '../browser/address.js';
 import {decideGraphics, describeGraphics} from '../graphics/capabilities.js';
 import {GraphicsService, type GraphicsHost} from '../graphics/service.js';
 import {ImageError} from '../graphics/raster.js';
@@ -1297,6 +1302,7 @@ export class TerminalApp {
   private handOverTerminal(restore = ''): void {
     // Images uploaded to the terminal are deleted before a program takes the screen.
     this.graphics?.releaseAll();
+    this.browserPanel?.session.forgetPictures();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
     this.outputProcessing.set(true);
     // A reply still arriving belongs to the program, which now receives every byte anyway.
@@ -1359,6 +1365,10 @@ export class TerminalApp {
       // takes a password or a reply meant for it.
       this.closeArcade(false);
       this.output.addFrontendInteraction('/games', 'Closed the arcade: a command started and owns the keyboard. Open it again at the prompt.', INFO);
+    }
+    if (this.browserPanel) {
+      this.closeBrowser(false);
+      this.output.addFrontendInteraction('/browser', 'Closed the browser: a command started and owns the keyboard. Open it again at the prompt.', INFO);
     }
     this.commandModes.reset();
     this.commandLine.reset();
@@ -1780,11 +1790,22 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const action = browserPanelKey(panel, key, this.panelGeometry(panel.session.viewport().scale));
+      if (action?.kind === 'close') this.closeBrowser();
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      else if (action?.kind === 'open-document') { this.closeBrowser(false); void this.openDocumentSession(action.path, '/browser', 'preview', true); }
+      this.render();
+      return;
+    }
     if (this.docSession) {
       const session = this.docSession;
       const {columns, rows} = this.dimensions();
       const action = documentSessionKey(session, key, columns, rows - 4, this.documentViewerLook());
       if (action) this.runDocumentAction(session, action);
+      // Leaving the preview closes its browser page; the engine stays warm for a while and stops by itself when idle.
+      if (session.mode !== 'preview' && session.preview) { session.preview.dispose(); delete session.preview; }
       this.render();
       return;
     }
@@ -3126,6 +3147,7 @@ export class TerminalApp {
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
     else if (slash.kind === 'arcade') this.openArcade(slash.game, command.trim());
+    else if (slash.kind === 'browser') await this.openBrowser(slash.target, command.trim());
     else if (slash.kind === 'editFile') {
       if (!slash.target) this.output.addFrontendInteraction(command.trim(), 'Name a file: /edit notes.md. Your own editor and vim, nano or micro still work as usual.', INFO);
       else this.openTextEditor(slash.target, command.trim());
@@ -3828,14 +3850,17 @@ export class TerminalApp {
     return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), sized: textSizingEnabled()};
   }
 
+  /** Which way images are drawn right now, from the live capabilities and settings. */
+  private graphicsDecision(): ReturnType<typeof decideGraphics> {
+    const {columns, rows} = this.dimensions();
+    return decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows});
+  }
+
   /** The graphics service, created on first use; its host answers from the live capabilities and settings. */
   private graphicsService(): GraphicsService {
     if (this.graphics) return this.graphics;
     const host: GraphicsHost = {
-      decision: () => {
-        const {columns, rows} = this.dimensions();
-        return decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows});
-      },
+      decision: () => this.graphicsDecision(),
       send: data => this.renderer.sendRaw(data),
       scratchDir: () => {
         const directory = join(defaultRuntimeDir(), 'images');
@@ -3938,6 +3963,120 @@ export class TerminalApp {
       return row >= region.top && row + block.rows <= region.top + region.height
         ? [{row, column: block.x + columnShift, columns: block.columns, rows: block.rows, sequence: block.sequence}] : [];
     });
+  }
+
+  // ---- Real browser -------------------------------------------------------------------------------------------
+
+  private browserHostService(): BrowserHost {
+    this.browserHost ??= new BrowserHost({profileDir: join(nmshCacheDirectory(), 'browser'), idleMs: 60_000, env: process.env});
+    return this.browserHost;
+  }
+
+  /** Whether the page should be told the terminal is dark: the theme's text is light. */
+  private themeColorScheme(): 'light' | 'dark' {
+    return luminance(resolveColor(themeRole('primary'))) > 0.5 ? 'dark' : 'light';
+  }
+
+  /** Where the panel's first row is on the screen (1-based), for mapping mouse positions onto a page. */
+  private panelGeometry(scale: number): {top: number; left: number; cell: {width: number; height: number}; scale: number} {
+    const plan = this.presentationFrame?.plan;
+    const region = plan?.regions.find(item => item.kind === 'panel');
+    return {top: (region?.top ?? 0) + 1 - (plan?.panelPosition === 'top' ? 1 : 0), left: 1 + (this.workspace.open ? this.workspaceColumns().center.x : 0), cell: this.graphicsDecision().cell, scale};
+  }
+
+  private newBrowserSession(engine: Awaited<ReturnType<BrowserHost['engine']>>): BrowserSession {
+    const graphics = this.graphicsService();
+    const session = new BrowserSession({
+      engine, openStream: owner => graphics.openStream(owner), cell: () => this.graphicsDecision().cell, scale: 'auto',
+      colorScheme: this.themeColorScheme(), reducedMotion: !this.decorativeMotionAllowed(),
+    });
+    session.onChange(() => { if (!this.stopped) this.render(); });
+    return session;
+  }
+
+  /** /browser [address | file]: a real Chromium in a panel. Never while a program owns the terminal; never downloads a browser. */
+  private async openBrowser(target: string, command: string): Promise<void> {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The browser opens at the prompt: let the running command finish first, so its input is never taken by a page.', INFO);
+      return;
+    }
+    if (this.promptConfiguration.browser === 'off') {
+      this.output.addFrontendInteraction(command, 'The real browser is off (Settings → General → Real browser). /view still renders documents with NMSh\'s own renderer.', INFO);
+      return;
+    }
+    const address = target ? normalizeAddress(target, {cwd: this.shellCwd, home: homedir()}) : undefined;
+    if (address && !address.ok) { this.output.addFrontendInteraction(command, address.reason, INFO); return; }
+    if (address?.ok && address.local) { await this.openDocumentSession(address.local, command, 'preview', true); return; }
+    const host = this.browserHostService();
+    const availability = await host.availability();
+    if (!availability.ok) {
+      this.output.addFrontendInteraction(command, `${availability.reason} NMSh does not download a browser; set NMSH_BROWSER to one you installed. /view renders documents with NMSh's own renderer.`, INFO);
+      return;
+    }
+    if (this.stopped || this.hasModalInput()) return;
+    let engine;
+    try { engine = await host.engine(); }
+    catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'The browser could not start.', ERROR); return; }
+    if (this.stopped || this.hasModalInput()) return;
+    const session = this.newBrowserSession(engine);
+    const panel = createBrowserPanel(session, {cwd: this.shellCwd, home: homedir()});
+    this.panelOrigin = undefined;
+    this.browserPanel = panel;
+    this.render();
+    const opened = await session.open(address?.ok ? address.url : 'about:blank');
+    if (!opened.ok) this.output.addFrontendInteraction(command, opened.reason, ERROR);
+    if (!address) { panel.focus = 'address'; panel.draft = ''; }
+    this.render();
+  }
+
+  private closeBrowser(restore = true): void {
+    const panel = this.browserPanel;
+    if (!panel) return;
+    this.browserPanel = undefined;
+    panel.session.dispose();
+    const back = this.browserReturn;
+    this.browserReturn = undefined;
+    if (!restore) return;
+    if (back) this.docSession = back;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** A link the preview refused, opened in the real browser on the person's request; Esc there returns to the document. */
+  private openLinkInBrowser(url: string): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.browserReturn = session;
+    this.docSession = undefined;
+    void this.openBrowser(url, '/browser').then(() => { if (!this.browserPanel && this.browserReturn === session) { this.docSession = session; this.browserReturn = undefined; this.render(); } });
+  }
+
+  /** Start the document session's Chromium preview (the native renderer shows meanwhile, and stays if no browser can be used). */
+  private async startBrowserPreview(session: DocumentSession): Promise<void> {
+    if (this.previewStarting === session || session.preview || this.promptConfiguration.browser === 'off') return;
+    this.previewStarting = session;
+    try {
+      const host = this.browserHostService();
+      const availability = await host.availability();
+      if (!availability.ok) { session.note = `${availability.reason} Showing NMSh's own preview.`; return; }
+      const [engine, previews] = await Promise.all([host.engine(), host.previews()]);
+      if (this.docSession !== session || session.mode !== 'preview') return;
+      const browserSession = this.newBrowserSession(engine);
+      const file = session.editor.file;
+      const kind = formatForPath(file.path).format === 'html' ? 'html' : 'markdown';
+      const view = await BrowserPreviewView.open({
+        session: browserSession, previews, html: text => host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme()}),
+        geometry: () => this.panelGeometry(browserSession.viewport().scale), openLink: url => this.openLinkInBrowser(url), dirty: () => session.editor.buffer.dirty,
+      }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted});
+      if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
+      if (this.docSession !== session || session.mode !== 'preview') { view.dispose(); return; }
+      session.preview = view;
+    } catch (error) {
+      session.note = `${error instanceof Error ? error.message : 'The browser preview could not start.'} Showing NMSh's own preview.`;
+    } finally {
+      if (this.previewStarting === session) this.previewStarting = undefined;
+      this.render();
+    }
   }
 
   // ---- Vespyr Arcade ------------------------------------------------------------------------------------------
@@ -4175,6 +4314,9 @@ export class TerminalApp {
     syncDocumentViewer(session, true);
     if (session.mode === 'preview' || refresh) session.viewer.rendered = true;
     this.refreshDocumentImages(session);
+    // A real browser renders the same buffer when one is installed; refreshing swaps the served page and reloads it.
+    if (session.preview) { if (refresh) void session.preview.refresh(bufferText(session.editor)); return; }
+    void this.startBrowserPreview(session);
   }
 
   /** The session's native preview draws local images of the CURRENT buffer, found and loaded like a viewed document's. */
@@ -4218,7 +4360,11 @@ export class TerminalApp {
       return;
     }
     if (action.kind === 'preview') { this.beginPreview(session, action.refresh); return; }
-    if (action.kind === 'trust') { session.note = action.on ? 'Scripts are on for this preview.' : 'Scripts are off for this preview.'; return; }
+    if (action.kind === 'trust') {
+      session.note = action.on ? 'Scripts are on for this preview.' : 'Scripts are off for this preview.';
+      void session.preview?.setTrusted(action.on, bufferText(editor));
+      return;
+    }
     if (action.kind === 'open') { void this.openFromViewer(session.viewer, {path: action.path}); return; }
     if (action.kind === 'image') { void this.openDocumentImage(session.viewer, action.index); return; }
     editor.busy = true;
@@ -5639,7 +5785,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5683,6 +5829,13 @@ export class TerminalApp {
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const view = renderBrowserPanel(panel, columns, this.dimensions().rows - 4);
+      // The previous picture is deleted once the new rows are written.
+      setImmediate(() => panel.session.settle());
+      return view.rows;
+    }
     if (this.docSession) { const rows = renderDocumentSession(this.docSession, columns, this.dimensions().rows - 4, this.documentViewerLook()); this.panelBlocks = this.docSession.overlays; return rows; }
     if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
     if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
@@ -9867,6 +10020,12 @@ export class TerminalApp {
   private imageView?: ImageViewState;
   /** A Markdown or HTML file open for reading, editing and preview at once (see viewer/DocumentWorkspace). */
   private docSession?: DocumentSession;
+  /** The real browser (an installed Chromium), reached only through this host and only when a browser surface is opened. */
+  private browserHost?: BrowserHost;
+  private browserPanel?: BrowserPanelState;
+  /** The document session a /browser opened from a preview link returns to. */
+  private browserReturn?: DocumentSession;
+  private previewStarting?: DocumentSession;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -13250,6 +13409,9 @@ export class TerminalApp {
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
     this.closeArcade(false);
+    this.closeBrowser(false);
+    this.docSession?.preview?.dispose();
+    void this.browserHost?.shutdown();
     this.releaseViewerImages();
     this.graphics?.releaseAll();
     this.clips.clear();

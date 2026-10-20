@@ -33,6 +33,10 @@ export interface PreviewView {
   status(): string | undefined;
   /** The preview is reading text (a find prompt): every key, Esc included, belongs to it. */
   capturing(): boolean;
+  /** Show the buffer's text now (the app builds the page from it); never reads or writes the file. */
+  refresh(text: string): Promise<void>;
+  /** Scripts on or off for this file (a trusted project). */
+  setTrusted(trusted: boolean, text: string): Promise<void>;
 }
 
 export interface DocumentSession {

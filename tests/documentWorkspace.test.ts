@@ -126,7 +126,7 @@ test('a browser preview owns scrolling and zoom in preview mode; the workspace k
   const state = createDocumentSession(file(HTML));
   const keys: Key[] = [];
   let disposed = false;
-  const preview: PreviewView = {render: (columns, height) => ({rows: Array.from({length: height}, () => ' '.repeat(columns))}), key: key => { keys.push(key); }, dispose: () => { disposed = true; }, status: () => undefined, capturing: () => false};
+  const preview: PreviewView = {render: (columns, height) => ({rows: Array.from({length: height}, () => ' '.repeat(columns))}), key: key => { keys.push(key); }, dispose: () => { disposed = true; }, status: () => undefined, capturing: () => false, refresh: async () => {}, setTrusted: async () => {}};
   press(state, text('h'));
   state.preview = preview;
   press(state, text('j'));
