@@ -96,7 +96,10 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
             `completed journal for ${reading}`);
           if (await frontend.completions(next) === before) {
             await pause(500);
-            if (await frontend.completions(next) === before) {
+            // Its output on the screen means it ran; the journal only trails it, longer on a loaded machine. That is not held.
+            const ran = () => new RegExp(`(?<!echo )NEXT-${tag}`, 'u').test(strip(frontend.output.slice(mark)));
+            if (ran()) await until(async () => await frontend.completions(next) > before, 10_000, `completed journal for ${next}, which ran`);
+            else if (await frontend.completions(next) === before) {
               const queued = ((await sandbox.sessions())[0]?.queued ?? 0) > 0;
               await showAndRunHeld(frontend, mode, run, next, mark, queued);
               await until(async () => await frontend.completions(next) > before, 10_000,
