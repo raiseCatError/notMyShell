@@ -263,4 +263,3 @@ function drawLabels(canvas: Canvas, palette: ArcadePalette, view: View, layout: 
     canvas.text(x, layout.headerY, text, {fg: color, bold: text === tick || text === '!' || column === view.cursor % size});
   }
 }
-

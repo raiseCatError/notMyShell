@@ -45,4 +45,3 @@ export function textCat(kind: 'large' | 'medium' | 'compact' | 'tight' | 'mini',
   if (kind === 'mini') return [state.conflict ? '^!' : '^^'];
   return [face];
 }
-
