@@ -41,6 +41,11 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         await frontend.waitFor(/Review commands[\s\S]*5 commands/u, mark);
         await pause(300);
         assert.doesNotMatch(strip(frontend.output.slice(mark)), /in-sub|loop-a/u, 'reviewing runs nothing');
+        // Choosing the mode runs nothing; Enter on Queue all is the confirmation.
+        frontend.pty.write('q');
+        await frontend.waitFor(/Enter\s+queue all 5/u, mark);
+        await pause(300);
+        assert.doesNotMatch(strip(frontend.output.slice(mark)), /in-sub|loop-a/u, 'choosing Queue all runs nothing');
         mark = frontend.mark;
         frontend.pty.write('\r');
         await frontend.waitFor(/in-sub[\s\S]*loop-a[\s\S]*loop-b/u, mark, 30_000);
