@@ -693,6 +693,8 @@ export interface PromptConfiguration {
   askCommandSuggestions: AskCommandSuggestions;
   /** Real image rendering (graphics service); text and menus are never images. */
   graphicsMode: GraphicsMode;
+  /** Markdown and HTML files open in the document workspace (source, edit, preview); off keeps the read-only viewer and the plain editor. */
+  documentWorkspace?: boolean;
   /** Relative text sizing for document headings, titles and celebrations (OSC 66, where verified). */
   textSizing: TextSizingSetting;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */

@@ -40,6 +40,8 @@ export interface ImageViewState {
   pan: {x: number; y: number};
   /** Where Esc returns to: the document this image was opened from. */
   returnTo?: ViewerState;
+  /** Or the document session (source/edit/preview of one buffer) it was opened from; kept as it was, edits included. */
+  returnToSession?: unknown;
   note?: string;
   /** The owner of this viewer's placements. */
   readonly owner: object;

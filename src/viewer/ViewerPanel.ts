@@ -73,6 +73,8 @@ export interface ViewerLook {
   images?: ImageProvider & {count: number; version: number};
   /** Headings may be drawn as sized blocks (the app places them); the cache key includes this. */
   sized?: boolean;
+  /** The viewer is the read-only side of a document workspace (Markdown/HTML): its controls name the workspace's keys. */
+  workspace?: {mode: 'source' | 'preview'; dirty: boolean; browser: boolean; trusted: boolean};
 }
 
 export function createViewer(document: ViewDocument): ViewerState {
@@ -454,14 +456,15 @@ function detail(document: ViewDocument): string {
   return `${kind} · ${lines} · ${formatBytes(document.origin.bytes)}${ending}${link}`;
 }
 
-function headerRows(state: ViewerState, columns: number, height: number): string[] {
+function headerRows(state: ViewerState, columns: number, height: number, look: ViewerLook = {}): string[] {
   const width = Math.max(10, columns - 4);
   const primary = foreground(UI_COLORS.primary);
   const subtle = foreground(UI_COLORS.subtle);
   const warning = foreground(UI_COLORS.warning);
   const title = state.document.origin.kind === 'output' ? `$ ${state.document.title}` : state.document.title;
   const shownTitle = truncateText(title.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), Math.max(8, Math.floor(width * 0.6)));
-  const rows = [`  ${primary}${shownTitle}${RESET}  ${subtle}${truncateText(detail(state.document), Math.max(1, width - displayWidth(shownTitle) - 2))}${RESET}`];
+  const edited = look.workspace?.dirty ? ` ${warning}● edited${RESET}` : '';
+  const rows = [`  ${primary}${shownTitle}${RESET}${edited}  ${subtle}${truncateText(detail(state.document), Math.max(1, width - displayWidth(shownTitle) - (edited ? 10 : 0) - 2))}${RESET}`];
   const notes = height >= 12 ? state.document.notes.slice(0, 2) : [];
   for (const note of notes) rows.push(`  ${warning}${truncateText(note, width)}${RESET}`);
   return rows;
@@ -470,6 +473,15 @@ function headerRows(state: ViewerState, columns: number, height: number): string
 function controls(state: ViewerState, columns: number, look: ViewerLook): string[] {
   const width = Math.max(1, columns - 4);
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
+  if (look.workspace) {
+    const preview = look.workspace.mode === 'preview';
+    return renderControlRows([
+      ['↑↓', 'scroll'], ['/', 'find'], ...(preview ? [] : [[':', 'line'] as const]),
+      ['h', preview ? 'source' : 'preview'], ['e', 'edit'], ...(preview ? [['r', 'refresh'] as const] : []),
+      ...(preview && state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
+      ['Ctrl+S', 'save'], ['R', 'reload from disk'], ['Esc', preview ? 'source' : 'close'],
+    ], width);
+  }
   return renderControlRows([
     ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
@@ -480,7 +492,7 @@ function controls(state: ViewerState, columns: number, look: ViewerLook): string
 }
 
 function bodyHeight(state: ViewerState, columns: number, height: number, look: ViewerLook): number {
-  return Math.max(1, height - 2 - headerRows(state, columns, height).length - 1 - controls(state, columns, look).length);
+  return Math.max(1, height - 2 - headerRows(state, columns, height, look).length - 1 - controls(state, columns, look).length);
 }
 
 function statusRow(state: ViewerState, width: number, total: number): string {
@@ -504,7 +516,7 @@ export function renderViewer(state: ViewerState, columns: number, height: number
   const gutter = gutterWidth(state);
   const body = bodyHeight(state, columns, height, look);
   clampTop(state, width, body, look);
-  const out = headerRows(state, columns, height);
+  const out = headerRows(state, columns, height, look);
   const total = unitCount(state, width, look);
   const subtle = foreground(UI_COLORS.subtle);
   const rows: string[] = [];

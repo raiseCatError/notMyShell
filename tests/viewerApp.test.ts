@@ -69,10 +69,15 @@ test('/view <file> reads relative to the shell directory; a missing file is repo
     app['shellCwd'] = root;
     writeFileSync(join(root, 'notes.md'), '# Notes\n\nhello\n');
     app['openViewer']('notes.md', '/view notes.md');
-    await until(() => app['viewer'] !== undefined, 'the viewer');
-    assert.equal(app['viewer']!.document.format, 'markdown');
-    assert.equal(app['viewer']!.rendered, true);
+    await until(() => app['docSession'] !== undefined, 'the document workspace');
+    assert.equal(app['docSession']!.viewer.document.format, 'markdown');
+    assert.equal(app['docSession']!.mode, 'source', 'Markdown opens source-first; h previews it');
+    assert.equal(app['docSession']!.viewer.rendered, false);
+    app['handleKey']({kind: 'text', value: 'h'});
+    assert.equal(app['docSession']!.viewer.rendered, true, 'the native preview when no browser is in use');
     app['handleKey']({kind: 'escape'});
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['docSession'], undefined);
     app['openViewer']('missing.txt', '/view missing.txt');
     await until(() => /does not exist/u.test(transcriptText(app)), 'the missing-file notice');
     assert.equal(app['viewer'], undefined);

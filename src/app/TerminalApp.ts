@@ -77,6 +77,8 @@ import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '..
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
+import {formatForPath} from '../viewer/document.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -1775,6 +1777,14 @@ export class TerminalApp {
         if (session.key(key) === 'close') this.closeArcade();
         else this.syncArcadeClock();
       }
+      this.render();
+      return;
+    }
+    if (this.docSession) {
+      const session = this.docSession;
+      const {columns, rows} = this.dimensions();
+      const action = documentSessionKey(session, key, columns, rows - 4, this.documentViewerLook());
+      if (action) this.runDocumentAction(session, action);
       this.render();
       return;
     }
@@ -3880,6 +3890,8 @@ export class TerminalApp {
     const position = list.findIndex(item => item.index === index);
     if (position < 0) { viewer.note = images.list().find(item => item.index === index)?.note ?? 'That image cannot be shown.'; this.render(); return; }
     const view = createImageView(list.map(item => ({path: item.path!, name: item.path!.split('/').pop() ?? 'image', alt: item.alt})), position, {returnTo: viewer});
+    // Opened from a document session, Esc returns to that session exactly as it was (its buffer and edits are untouched).
+    if (this.docSession && this.docSession.viewer === viewer) { view.returnToSession = this.docSession; delete view.returnTo; this.docSession = undefined; }
     this.viewer = undefined;
     this.imageView = view;
     await this.loadImageEntry(view, position);
@@ -3890,7 +3902,8 @@ export class TerminalApp {
     if (!view) return;
     this.imageView = undefined;
     this.graphics?.releaseOwner(view.owner);
-    if (view.returnTo) this.viewer = view.returnTo;
+    if (view.returnToSession) this.docSession = view.returnToSession as DocumentSession;
+    else if (view.returnTo) this.viewer = view.returnTo;
     else this.returnFromPanel();
     this.render();
   }
@@ -3907,7 +3920,7 @@ export class TerminalApp {
 
   /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
   private syncTypography(): void {
-    if (this.viewerImages && !this.viewer && !this.imageView) this.releaseViewerImages();
+    if (this.viewerImages && !this.viewer && !this.imageView && !this.docSession) this.releaseViewerImages();
     const capabilities = this.host.capabilities;
     const key = `${this.promptConfiguration.textSizing}|${capabilities.textSizing?.scale ?? '-'}|${capabilities.textSizing?.width ?? '-'}`;
     if (key === this.typographyKey) return;
@@ -4018,6 +4031,13 @@ export class TerminalApp {
     // A picture opens in the image viewer; its text cannot be shown (binary), and SVG is source text, never drawn.
     const imagePath = resolveViewPath(target, this.shellCwd);
     if (IMAGE_EXTENSIONS.has(extname(imagePath).slice(1).toLowerCase())) { void this.openImageViewer(imagePath, command); return; }
+    // Markdown and HTML open in the document workspace (source, edit and preview of one buffer) when the file can be edited
+    // safely; a file that cannot is read in the read-only viewer, as before.
+    const kind = formatForPath(imagePath).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) {
+      void this.openDocumentSession(target, command, 'source', true);
+      return;
+    }
     const load = new AbortController();
     this.viewerLoad = load;
     void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(async result => {
@@ -4050,6 +4070,8 @@ export class TerminalApp {
    * stay readable in /view). `returnTo` is the viewer it was opened from; it is reopened if the file cannot be edited.
    */
   private openTextEditor(target: string, command: string, returnTo?: ViewerState): void {
+    const kind = formatForPath(resolveViewPath(target, this.shellCwd)).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) { void this.openDocumentSession(target, command, 'edit', false); return; }
     void openForEdit(target, this.shellCwd).then(result => {
       if (this.stopped) return;
       if (!result.ok) {
@@ -4096,6 +4118,138 @@ export class TerminalApp {
       } else if (result.conflict) {
         editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
       } else editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'};
+      this.render();
+    });
+  }
+
+  // ---- Document session -------------------------------------------------------------------------------------
+
+  /** The viewer look for the session's read-only modes. */
+  private documentViewerLook(): ViewerLook {
+    const look = this.viewerLook();
+    return this.docSession ? documentSessionLook(this.docSession, look) : look;
+  }
+
+  /**
+   * /view and /edit on a Markdown or HTML file: one buffer shown as source, editor or preview. `fallback`: /view falls back to the
+   * read-only viewer when the file cannot be edited safely (too big, read-only, mixed line endings…); /edit says why in the transcript.
+   */
+  private async openDocumentSession(target: string, command: string, mode: DocumentMode, fallback: boolean): Promise<void> {
+    // /view never creates a file: one that does not exist is reported by the read-only path.
+    if (fallback && !existsSync(resolveViewPath(target, this.shellCwd))) { await this.openReadOnlyDocument(target, command, 'it does not exist'); return; }
+    const result = await openForEdit(target, this.shellCwd);
+    if (this.stopped) return;
+    if (!result.ok) {
+      if (!fallback) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Not editable: the read-only viewer still shows it (rendered), saying why it cannot be edited.
+      await this.openReadOnlyDocument(target, command, result.reason);
+      return;
+    }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    this.docSession = createDocumentSession(result.file, mode);
+    if (mode === 'preview') this.beginPreview(this.docSession, false);
+    this.render();
+  }
+
+  private async openReadOnlyDocument(target: string, command: string, why: string): Promise<void> {
+    const load = new AbortController();
+    this.viewerLoad = load;
+    const result = await loadFileDocument(target, this.shellCwd, {signal: load.signal});
+    if (this.viewerLoad !== load || this.stopped) return;
+    this.viewerLoad = undefined;
+    if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    const viewer = createViewer(result.document);
+    viewer.note = `Read-only: ${why}`;
+    this.viewer = viewer;
+    this.render();
+  }
+
+  /** Entering the preview, or refreshing it: the page shows the buffer as it is now. Without a browser the native renderer does. */
+  private beginPreview(session: DocumentSession, refresh: boolean): void {
+    syncDocumentViewer(session, true);
+    if (session.mode === 'preview' || refresh) session.viewer.rendered = true;
+    this.refreshDocumentImages(session);
+  }
+
+  /** The session's native preview draws local images of the CURRENT buffer, found and loaded like a viewed document's. */
+  private refreshDocumentImages(session: DocumentSession): void {
+    if (this.promptConfiguration.graphicsMode === 'off') return;
+    const document = session.viewer.document;
+    if (document.origin.kind !== 'file') return;
+    const base = dirname(document.origin.realPath);
+    this.releaseViewerImages();
+    const images = new DocumentImages(this.graphicsService(), base, base, () => { if (!this.stopped && this.docSession === session) this.render(); });
+    images.collect(document);
+    if (!images.count) { images.close(); return; }
+    this.viewerImages = images;
+    void documentRoot(base).then(async root => {
+      if (this.viewerImages !== images) return;
+      const rooted = new DocumentImages(this.graphicsService(), base, root, () => { if (!this.stopped && this.docSession === session) this.render(); });
+      rooted.collect(document);
+      if (this.viewerImages !== images) { rooted.close(); return; }
+      images.close();
+      this.viewerImages = rooted;
+      await rooted.load(0);
+      if (this.docSession === session) this.render();
+    });
+  }
+
+  private closeDocumentSession(): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.docSession = undefined;
+    session.preview?.dispose();
+    this.releaseViewerImages();
+    this.returnFromPanel();
+  }
+
+  /** The session's requests that touch the disk, the clipboard or the preview. */
+  private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
+    const editor = session.editor;
+    if (action.kind === 'close') { this.closeDocumentSession(); return; }
+    if (action.kind === 'copy') {
+      void this.copyText(action.text, 'Copied').then(note => { if (note && this.docSession === session) { editor.note = {text: note, tone: 'success'}; session.viewer.note = note; this.render(); } });
+      return;
+    }
+    if (action.kind === 'preview') { this.beginPreview(session, action.refresh); return; }
+    if (action.kind === 'trust') { session.note = action.on ? 'Scripts are on for this preview.' : 'Scripts are off for this preview.'; return; }
+    if (action.kind === 'open') { void this.openFromViewer(session.viewer, {path: action.path}); return; }
+    if (action.kind === 'image') { void this.openDocumentImage(session.viewer, action.index); return; }
+    editor.busy = true;
+    if (action.kind === 'reload') {
+      void openForEdit(editor.file.path, this.shellCwd).then(result => {
+        editor.busy = false;
+        if (this.docSession !== session) return;
+        if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
+        const fresh = createDocumentSession(result.file, session.mode === 'edit' ? 'edit' : 'source');
+        fresh.note = 'Reloaded from disk; your changes were discarded.';
+        fresh.viewer.note = fresh.note;
+        session.preview?.dispose();
+        this.docSession = fresh;
+        this.render();
+      });
+      return;
+    }
+    const lines = [...editor.buffer.lines];
+    void saveFile(editor.file, lines, {...(action.force ? {force: true} : {})}).then(result => {
+      editor.busy = false;
+      if (this.docSession !== session) return;
+      if (result.ok) {
+        editor.file = result.file;
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        if (action.thenClose) { this.closeDocumentSession(); this.render(); return; }
+        editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+        session.viewer.note = `Saved ${editor.file.title}.`;
+        syncDocumentViewer(session, session.mode === 'preview');
+      } else if (result.conflict) {
+        editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
+      } else { editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'}; session.viewer.note = result.reason; }
       this.render();
     });
   }
@@ -5485,7 +5639,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -5529,6 +5683,7 @@ export class TerminalApp {
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
+    if (this.docSession) { const rows = renderDocumentSession(this.docSession, columns, this.dimensions().rows - 4, this.documentViewerLook()); this.panelBlocks = this.docSession.overlays; return rows; }
     if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
     if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
@@ -9710,6 +9865,8 @@ export class TerminalApp {
   /** The images of the open document (Markdown or HTML) and the standalone image viewer. */
   private viewerImages?: DocumentImages;
   private imageView?: ImageViewState;
+  /** A Markdown or HTML file open for reading, editing and preview at once (see viewer/DocumentWorkspace). */
+  private docSession?: DocumentSession;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
