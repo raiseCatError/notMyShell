@@ -94,6 +94,13 @@ runner. GitHub CI provides independent platform verification, not a replacement
 for local checks. See [development verification](docs/development-verification.md)
 for sharding, platform gates and exact-release evidence requirements.
 
+**Dispatching CI.** The `CI` workflow has one concurrency group per workflow and ref with `cancel-in-progress`, so a second
+run on the same ref cancels the first (a pull request's run uses its own ref, so it does not). Before `gh workflow run` or a
+rerun, list the runs for that SHA (`gh run list --workflow CI --branch <branch>`) and reuse a queued or running one; the PR's
+automatic run is enough unless the exact-release evidence needs the dispatched jobs (timing smokes, Fedora), and then dispatch
+once. Follow a run with `gh run watch`, never by dispatching again. A `cancelled` run superseded by a newer one is not a test
+failure: report the authoritative run IDs and the SHA, and call CI green only when every required check of those runs succeeded.
+
 ```bash
 npm run verify:fast
 npm run verify
