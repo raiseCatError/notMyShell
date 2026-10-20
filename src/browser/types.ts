@@ -28,13 +28,14 @@ export interface OpenOptions {
   viewport: Viewport;
   /** `web` only: the address to load. Previews load their `PreviewHandle.url`. */
   url?: string;
-  /** Scripts run. `web` pages default to true; `preview` pages to false and need an explicit trust decision. */
+  /**
+   * Scripts run. `web` pages default to true; `preview` pages to false and need an explicit trust decision. A preview can only ever
+   * reach its own loopback origin (every other request is refused and reported as a `blocked` event), whatever this says.
+   */
   scripts?: boolean;
   /** Emulate prefers-color-scheme / prefers-reduced-motion so a page follows NMSh's theme and motion settings. */
   colorScheme?: 'light' | 'dark';
   reducedMotion?: boolean;
-  /** `preview` only: remote resources may be fetched (default false: only the preview origin is reachable). */
-  allowRemote?: boolean;
 }
 
 /** One rendered frame, PNG-encoded, at `viewport.width * scale` x `viewport.height * scale` pixels. */
