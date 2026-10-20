@@ -1,3 +1,5 @@
+> The About logo overlay described here is one use of the shared graphics service: see [graphics service](../design/graphics-service.md) and [typography](../design/typography.md).
+
 # Image surface
 
 `src/presentation/ImageSurface.ts` is NMSh's one raster path. The terminal
