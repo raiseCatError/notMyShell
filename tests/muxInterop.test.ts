@@ -26,6 +26,22 @@ const TSX = import.meta.resolve('tsx');
 const nmshCommand = (home: string) => `cd ${quote(home)} && exec ${quote(process.execPath)} --import=${quote(TSX)} ${quote(ENTRY)}`;
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 const hasScreen = spawnSync('screen', ['-v']).status !== null && spawnSync('which', ['screen']).status === 0;
+/** What a screen-driven wait saw, for a timeout message: repeated redraw rows collapsed, with the words the wait looked for. */
+function describeOutput(text: string): string {
+  const lines: string[] = [];
+  let repeats = 0;
+  for (const raw of text.split(/\r?\n|\r/u)) {
+    const line = raw.replace(/ {2,}/gu, ' ').trim();
+    if (!line) continue;
+    if (line === lines.at(-1)) { repeats += 1; continue; }
+    if (repeats) { lines[lines.length - 1] += `  (x${repeats + 1})`; repeats = 0; }
+    lines.push(line);
+  }
+  if (repeats) lines[lines.length - 1] += `  (x${repeats + 1})`;
+  const seen = ['JOB-GONE', 'Completed', 'approval'].map(word => `${word}:${text.includes(word) ? 'yes' : 'no'}`).join(' ');
+  return `${seen}; ${lines.length} distinct rows, last 60:\n${lines.slice(-60).join('\n')}`;
+}
+
 const quote = (value: string) => `'${value.replace(/'/gu, `'\\''`)}'`;
 
 /**
@@ -220,7 +236,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
-  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${plain(from).replace(/ {2,}/gu, ' ').slice(-3000)}`);
+  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${describeOutput(plain(from))}`);
   // Each command's own completion row before the next is typed: a line typed while one still runs waits for approval (#426).
   const run = async (command: string, expect: RegExp) => { const mark = output.length; pty.write(`${command}\r`); await waitFor(new RegExp(`${expect.source}[\\s\\S]*Completed`, expect.flags), mark); };
   try {
