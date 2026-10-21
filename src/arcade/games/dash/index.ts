@@ -9,7 +9,7 @@ import {playerSprite, spikeSprite} from './sprites.js';
 /** Vespyr Dash: a rhythm platformer. Vespyr rides a glowing board at a steady pace; Space or Up jumps. See docs/design/arcade-dash.md. */
 export const dashGame: GameDefinition = {
   id: 'dash', aliases: ['vespyr-dash'], title: 'Vespyr Dash', tagline: 'Rhythm platformer',
-  description: 'Time your jumps over spikes, gaps and platforms. The pace never stops and never gets unfair.', kind: 'action',
+  description: 'Time your jumps over spikes, gaps and platforms. The pace never stops and never gets unfair.', kind: 'action', category: 'runners',
   controls: [{keys: 'Space/Up', action: 'jump'}],
   summary: record => { const saved = readRecord(record); return saved.attempts > 0 ? `Best ${saved.best} · ${saved.bestDistance} m` : 'Not played yet'; },
   preview(canvas: Canvas, frame: number, palette: ArcadePalette) {

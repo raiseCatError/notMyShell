@@ -1,4 +1,4 @@
-# Vespyr Doku
+# Vespyr Queens
 
 A cat-placement logic puzzle in the family of Queens / Star Battle (mechanics only; no assets or levels are shared). A
 square N x N board is split into N colored regions, each a connected set of cells. Place Vespyr cats so that every row,
@@ -45,7 +45,7 @@ Rated by the hardest technique the logical solver needs, not by size:
 The solver always applies the easiest available technique, and the puzzle's level is the highest one it had to use. If no
 generated candidate lands in the band the closest rating is returned.
 
-## Generator and solver (`src/arcade/games/doku/`)
+## Generator and solver (`src/arcade/games/queens/`)
 
 - `generator.ts`: plants a placement (random backtracking over a permutation with no touching), grows N connected regions
   from the planted cats (the smaller of two random regions grows first), then repairs ambiguity: given another solution

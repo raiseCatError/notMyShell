@@ -242,7 +242,7 @@ evidence never fills it.
 | Docs | Help, How to play, design note |
 | Physical | Played by a person in Ghostty and Zed |
 
-The live status per game is kept in the epic issue and in [arcade-expansion-status.md](../development/arcade-expansion-status.md).
+The live status per game is kept in the epic issue (#481; trackers #474–#480) and in [arcade-expansion-status.md](../development/arcade-expansion-status.md).
 
 ## Provenance and licenses
 

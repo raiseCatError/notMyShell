@@ -9,7 +9,7 @@ import {catSprite, obstacleSprite} from './sprites.js';
 /** Vespyr Run: an endless runner. The cat runs by itself; Space or Up jumps, Down ducks. See docs/design/arcade-run.md. */
 export const runGame: GameDefinition = {
   id: 'run', aliases: ['vespyr-run', 'dino'], title: 'Vespyr Run', tagline: 'Endless runner',
-  description: 'Vespyr dashes across a scrolling landscape. Jump the crates and yarn, duck the swooping birds.', kind: 'action',
+  description: 'Vespyr dashes across a scrolling landscape. Jump the crates and yarn, duck the swooping birds.', kind: 'action', category: 'runners',
   controls: [{keys: 'Space/Up', action: 'jump'}, {keys: 'Down', action: 'duck'}],
   summary: record => { const saved = readRecord(record); return saved.runs > 0 ? `Best ${saved.best} · ${saved.bestDistance} m` : 'Not played yet'; },
   preview(canvas: Canvas, frame: number, palette: ArcadePalette) {

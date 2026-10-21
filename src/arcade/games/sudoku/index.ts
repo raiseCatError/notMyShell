@@ -339,7 +339,7 @@ function preview(canvas: Canvas, frame: number, palette: ArcadePalette): void {
 export const sudokuGame: GameDefinition = {
   id: 'sudoku', aliases: ['classic-sudoku'], title: 'Classic Sudoku', tagline: 'Numbers, calmly',
   description: 'The classic 9x9 puzzle in four difficulties, with pencil notes, hints, undo and unlimited fresh puzzles. Your puzzle in progress is saved.',
-  kind: 'puzzle',
+  kind: 'puzzle', category: 'logic',
   controls: [{keys: '←↑↓→', action: 'move'}, {keys: '1-9', action: 'digit'}, {keys: 'n', action: 'notes'}, {keys: 'u', action: 'undo'}, {keys: 't', action: 'hint'}],
   summary: record => summarize(record),
   preview,

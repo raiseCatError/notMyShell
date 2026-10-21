@@ -10,9 +10,9 @@ import {createRng} from '../src/arcade/rng.js';
 import {ArcadeStore, type GameRecord, type GameRecordHandle} from '../src/arcade/scores.js';
 import {findGame} from '../src/arcade/registry.js';
 import type {GameContext, GameInstance} from '../src/arcade/types.js';
-import {dokuGame} from '../src/arcade/games/doku/index.js';
-import {readCurrent} from '../src/arcade/games/doku/board.js';
-import {minimumCanvas} from '../src/arcade/games/doku/layout.js';
+import {queensGame} from '../src/arcade/games/queens/index.js';
+import {readCurrent} from '../src/arcade/games/queens/board.js';
+import {minimumCanvas} from '../src/arcade/games/queens/layout.js';
 import {stripAnsi, displayWidth} from '../src/util/text.js';
 
 const text = (value: string): Key => ({kind: 'text', value} as Key);
@@ -32,7 +32,7 @@ function open(options: Options = {}) {
     motion: {effects: options.reduced ? 'off' : 'normal', reduced: options.reduced ?? false}, color: options.color ?? 'truecolor', safeGlyphs: options.safe ?? false,
     record, now: () => 0,
   };
-  const game = dokuGame.create(context);
+  const game = queensGame.create(context);
   const canvas = new Canvas(context.size.columns, context.size.rows);
   const press = (...keys: Array<string | Key>) => { for (const key of keys) game.key(typeof key === 'string' ? (key.length === 1 ? text(key) : named(key)) : key); };
   const plain = (safe = options.safe ?? false, color: 'none' | 'truecolor' = options.color ?? 'truecolor') => { game.render(canvas, 0, arcadePalette()); return canvas.plain({color, safe}); };
@@ -61,11 +61,13 @@ function play(options: Options = {}, difficulty = 'e') {
   return {...harness, board, size, move, at: () => cursor, cat: (cell: number) => { move(cell); harness.press(' '); }};
 }
 
-test('registry: Vespyr Doku is a puzzle with id, alias and title', () => {
-  assert.equal(findGame('doku'), dokuGame);
-  assert.equal(findGame('vespyr-doku'), dokuGame);
-  assert.equal(dokuGame.title, 'Vespyr Doku');
-  assert.equal(dokuGame.kind, 'puzzle');
+test('registry: Vespyr Queens is a puzzle with id, alias and title', () => {
+  assert.equal(findGame('doku'), queensGame);
+  assert.equal(findGame('vespyr-doku'), queensGame);
+  assert.equal(findGame('queens'), queensGame);
+  assert.equal(queensGame.id, 'queens');
+  assert.equal(queensGame.title, 'Vespyr Queens');
+  assert.equal(queensGame.kind, 'puzzle');
   const game = open().game;
   assert.equal(game.stepsPerSecond, 0);
   assert.equal(game.refreshMs, 1000);
@@ -219,7 +221,7 @@ test('winning by hand: result, statistics, best time per difficulty, streak', ()
   assert.equal(record.version, 1);
   assert.equal(record.current, undefined);
   const rows = h.plain().join('\n');
-  assert.match(rows, /Vespyr Doku/u);
+  assert.match(rows, /Vespyr Queens/u);
   // a slower second solve keeps the best time and extends the streak
   const second = open({record: h.record, seed: 9});
   second.press('e');
@@ -234,7 +236,7 @@ test('winning by hand: result, statistics, best time per difficulty, streak', ()
   assert.equal(after.bestTimes.easy, 83_000);
   assert.equal(after.streak, 2);
   assert.equal(after.completed, 2);
-  assert.match(dokuGame.summary(after), /Solved 2/u);
+  assert.match(queensGame.summary(after), /Solved 2/u);
 });
 
 test('restart (r twice), new puzzle (n) and Continue', () => {
@@ -423,7 +425,7 @@ test('the shared session: pause hides the board, resume brings it back, a win sh
   try {
     let now = 1000;
     const env: ArcadeEnvironment = {store: new ArcadeStore({directory: dir}), now: () => now, motion: () => ({reduced: false, effects: 'normal'}), color: () => 'none', safeGlyphs: () => false, seed: () => 11};
-    const session = new ArcadeSession(env, [dokuGame], {columns: 100, rows: 40}, dokuGame);
+    const session = new ArcadeSession(env, [queensGame], {columns: 100, rows: 40}, queensGame);
     const screen = () => session.render().rows.map(row => stripAnsi(row)).join('\n');
     assert.match(screen(), /New easy puzzle/u);
     session.key(text('e'));
@@ -450,13 +452,13 @@ test('the shared session: pause hides the board, resume brings it back, a win sh
 
 test('preview and summary behave for an empty or odd record', () => {
   const canvas = new Canvas(30, 8);
-  for (let frame = 0; frame < 30; frame += 3) { canvas.clear(); dokuGame.preview(canvas, frame, arcadePalette()); }
+  for (let frame = 0; frame < 30; frame += 3) { canvas.clear(); queensGame.preview(canvas, frame, arcadePalette()); }
   assert.match(canvas.plain().join('\n'), /[A-E]/u);
-  assert.equal(dokuGame.summary({}), 'Not played yet');
-  assert.equal(dokuGame.summary({completed: 'many', bestTimes: null}), 'Not played yet');
-  assert.match(dokuGame.summary({completed: 3, bestTimes: {hard: 95_000}}), /Solved 3 · best hard 1:35/u);
+  assert.equal(queensGame.summary({}), 'Not played yet');
+  assert.equal(queensGame.summary({completed: 'many', bestTimes: null}), 'Not played yet');
+  assert.match(queensGame.summary({completed: 3, bestTimes: {hard: 95_000}}), /Solved 3 · best hard 1:35/u);
   const tiny = new Canvas(16, 3);
-  dokuGame.preview(tiny, 4, arcadePalette());
+  queensGame.preview(tiny, 4, arcadePalette());
 });
 
 test('dispose releases the board and is safe to repeat', () => {

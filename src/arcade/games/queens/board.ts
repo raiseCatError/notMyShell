@@ -12,7 +12,7 @@ export const MAX_ELAPSED_MS = 99 * 3_600_000;
 const MARK_CHARS = '.xc';
 
 /** A puzzle in progress: the marks, the history, the clock's total and the hints used. Pure state, no drawing. */
-export class DokuBoard {
+export class QueensBoard {
   readonly marks: Uint8Array;
   elapsedMs = 0;
   hints = 0;
@@ -108,7 +108,7 @@ export class DokuBoard {
 
 export interface SavedPuzzle extends Puzzle { difficulty: Difficulty; seed: number }
 
-export function newBoard(seed: number, difficulty: Difficulty): DokuBoard { return new DokuBoard(makePuzzle(seed, difficulty)); }
+export function newBoard(seed: number, difficulty: Difficulty): QueensBoard { return new QueensBoard(makePuzzle(seed, difficulty)); }
 
 // ---- reading a saved game ------------------------------------------------------------------------------------------
 
@@ -133,7 +133,7 @@ function connected(size: number, regions: readonly number[], region: number): bo
  * that is not a valid placement, a layout without exactly one solution, marks that are not `.xc`, a negative clock.
  * A bad saved game is dropped whole, never repaired.
  */
-export function readCurrent(value: unknown): DokuBoard | undefined {
+export function readCurrent(value: unknown): QueensBoard | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
   const size = item.size;
@@ -163,7 +163,7 @@ export function readCurrent(value: unknown): DokuBoard | undefined {
   const cats = new Uint8Array(total);
   solution.forEach((column, row) => { cats[row * size + column] = CAT; });
   if (!analyze(size, regions, cats).solved || countSolutions(size, regions, 2) !== 1) return undefined;
-  const board = new DokuBoard({size, regions, solution, difficulty: item.difficulty as Difficulty, seed: item.seed}, marks);
+  const board = new QueensBoard({size, regions, solution, difficulty: item.difficulty as Difficulty, seed: item.seed}, marks);
   board.elapsedMs = item.elapsedMs;
   board.hints = item.hints as number;
   return board;

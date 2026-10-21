@@ -7,7 +7,7 @@ import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResu
 import type {Key} from '../../../terminal/keys.js';
 import {typeset} from '../../../ui/typography.js';
 import {truncateText} from '../../../util/text.js';
-import {DokuBoard, formatTime, newBoard, readCurrent, readStats, writeStats} from './board.js';
+import {QueensBoard, formatTime, newBoard, readCurrent, readStats, writeStats} from './board.js';
 import {SIZES, makePuzzle} from './puzzle.js';
 import {regionLetter} from './rules.js';
 import {renderBoard, SETTLE_MS} from './render.js';
@@ -27,11 +27,11 @@ const CONTROLS: readonly ControlHint[] = [
 
 let demo: ReturnType<typeof makePuzzle> | undefined;
 
-class DokuGame implements GameInstance {
+class QueensGame implements GameInstance {
   result: GameResult | undefined;
   readonly stepsPerSecond = 0;
   private screen: 'menu' | 'play' | 'won' = 'menu';
-  private board: DokuBoard | undefined;
+  private board: QueensBoard | undefined;
   private menu: Menu;
   private cursor = 0;
   private hint: Hint | undefined;
@@ -44,11 +44,11 @@ class DokuGame implements GameInstance {
   private settling = 0;
   private readonly particles: ParticleSystem;
   private disposed = false;
-  private saved: DokuBoard | undefined;
+  private saved: QueensBoard | undefined;
 
   constructor(private readonly context: GameContext) {
     this.size = context.size;
-    this.particles = new ParticleSystem(context.rng.fork('doku-fx'), 120, context.motion.effects);
+    this.particles = new ParticleSystem(context.rng.fork('queens-fx'), 120, context.motion.effects);
     const record = context.record.get();
     const saved = record.current === undefined ? undefined : readCurrent(record.current);
     if (record.current !== undefined && !saved) context.record.update(entry => { delete entry.current; });
@@ -66,7 +66,7 @@ class DokuGame implements GameInstance {
 
   // ---- menu ---------------------------------------------------------------------------------------------------
 
-  private buildMenu(saved: DokuBoard | undefined): Menu {
+  private buildMenu(saved: QueensBoard | undefined): Menu {
     const stats = readStats(this.context.record.get());
     const items: MenuItem[] = [];
     if (saved) items.push({id: 'continue', label: 'Continue', key: 'c', hint: `${cap(saved.difficulty)} ${saved.size}×${saved.size} · ${formatTime(saved.elapsedMs)}`});
@@ -77,7 +77,7 @@ class DokuGame implements GameInstance {
     return new Menu(items);
   }
 
-  private startPuzzle(board: DokuBoard): void {
+  private startPuzzle(board: QueensBoard): void {
     this.board = board;
     this.screen = 'play';
     this.cursor = Math.floor(board.size / 2) * board.size + Math.floor(board.size / 2);
@@ -178,7 +178,7 @@ class DokuGame implements GameInstance {
     if (board.solved) this.win();
   }
 
-  private hintKey(board: DokuBoard): void {
+  private hintKey(board: QueensBoard): void {
     if (this.hint) {
       const hint = this.hint;
       this.hint = undefined;
@@ -261,7 +261,7 @@ class DokuGame implements GameInstance {
     canvas.clear(palette.deep);
     const stats = readStats(this.context.record.get());
     const width = canvas.width;
-    const title = typeset({role: 'title', text: 'Vespyr Doku', maxColumns: Math.max(8, width - 4), maxRows: 2});
+    const title = typeset({role: 'title', text: 'Vespyr Queens', maxColumns: Math.max(8, width - 4), maxRows: 2});
     const tall = canvas.height >= this.menu.items.length + title.rows + 5;
     let y = 0;
     if (tall) {
@@ -270,7 +270,7 @@ class DokuGame implements GameInstance {
       canvas.text(2, y, truncateText('A cat in every row, column and color. No two touching.', width - 4), {fg: palette.accent});
       y += 2;
     } else {
-      canvas.text(1, y, 'Vespyr Doku', {fg: palette.ink, bold: true});
+      canvas.text(1, y, 'Vespyr Queens', {fg: palette.ink, bold: true});
       y += 1;
     }
     this.menu.draw(canvas, palette, 0, y, width);
@@ -314,10 +314,10 @@ function drawPreview(canvas: Canvas, frame: number, palette: ArcadePalette): voi
   }
 }
 
-export const dokuGame: GameDefinition = {
-  id: 'vespyr-doku', aliases: ['doku'], title: 'Vespyr Doku', tagline: 'Cats and colored regions',
+export const queensGame: GameDefinition = {
+  id: 'queens', aliases: ['vespyr-queens', 'vespyr-doku', 'doku'], title: 'Vespyr Queens', tagline: 'Cats and colored regions',
   description: 'One cat in every row, column and colored region, and no two cats touching. Unlimited puzzles, four difficulties, logical hints.',
-  kind: 'puzzle',
+  kind: 'puzzle', category: 'logic',
   controls: [{keys: 'Space', action: 'cat'}, {keys: 'x', action: 'exclude'}, {keys: 'u', action: 'undo'}, {keys: 't', action: 'hint'}],
   summary: record => {
     const stats = readStats(record);
@@ -326,5 +326,5 @@ export const dokuGame: GameDefinition = {
     return best ? `Solved ${stats.completed} · best ${best} ${formatTime(stats.bestTimes[best]!)}` : `Solved ${stats.completed}`;
   },
   preview: drawPreview,
-  create: context => new DokuGame(context),
+  create: context => new QueensGame(context),
 };

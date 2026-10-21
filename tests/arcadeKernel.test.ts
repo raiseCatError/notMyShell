@@ -150,7 +150,7 @@ test('score store: round trip, atomic write, bounded and validated records', () 
     assert.deepEqual(run.get(), {best: 120, runs: 4}, 'a refused write changes nothing');
     assert.throws(() => store.record('Bad Id'), RangeError);
     const big = store.record('big');
-    assert.equal(big.set({list: Array.from({length: 4096}, (_, i) => 'x'.repeat(100) + i)}), false, 'the file stays under its cap');
+    assert.equal(big.set({list: Array.from({length: 4096}, (_, i) => 'x'.repeat(130) + i)}), false, 'the file stays under its cap');
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
@@ -186,8 +186,8 @@ test('score store: a damaged file is set aside and the arcade starts fresh; a ne
 });
 
 test('registry and commands: five games, one parser for /games, /game and /arcade, aliases and unknown names', () => {
-  assert.deepEqual(gameNames(), ['run', 'flight', 'dash', 'sudoku', 'vespyr-doku']);
-  for (const [name, id] of [['run', 'run'], ['Vespyr Run', 'run'], ['dino', 'run'], ['flight', 'flight'], ['vespyr-dash', 'dash'], ['classic-sudoku', 'sudoku'], ['doku', 'vespyr-doku'], ['Vespyr-Doku', 'vespyr-doku']]) {
+  assert.deepEqual(gameNames(), ['run', 'flight', 'dash', 'sudoku', 'queens']);
+  for (const [name, id] of [['run', 'run'], ['Vespyr Run', 'run'], ['dino', 'run'], ['flight', 'flight'], ['vespyr-dash', 'dash'], ['classic-sudoku', 'sudoku'], ['doku', 'queens'], ['Vespyr-Doku', 'queens'], ['vespyr queens', 'queens']]) {
     assert.equal(findGame(name)?.id, id, name);
   }
   assert.equal(findGame('tetris'), undefined);

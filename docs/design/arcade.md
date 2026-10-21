@@ -1,7 +1,7 @@
 # Vespyr Arcade
 
 `/games`, `/game` and `/arcade` open one hub with five games, all offline and local: **Vespyr Run**, **Vespyr Flight**,
-**Vespyr Dash**, **Classic Sudoku** and **Vespyr Doku**. `/game run|flight|dash|sudoku|vespyr-doku` (or any alias, see
+**Vespyr Dash**, **Classic Sudoku** and **Vespyr Queens**. `/game run|flight|dash|sudoku|queens` (or any alias, see
 `src/arcade/registry.ts`) opens a game directly. There is one command implementation and no per-game global command: a
 new game is one directory under `src/arcade/games/` and one line in the registry.
 
@@ -46,7 +46,7 @@ presses or a short window, never from release events.
 
 Each game keeps its statistics under its id in `arcade.json` (`run`: `best`, `bestDistance`, `runs`; `flight`:
 `best`, `bestPassed`, `attempts`; `dash`: `best`, `bestDistance`, `attempts`; `sudoku`: `bestTimes.<difficulty>`,
-`completed`, `streak`, `current`; `vespyr-doku`: likewise). Values are bounded plain JSON; the store refuses anything
+`completed`, `streak`, `current`; `queens` (formerly `vespyr-doku`, migrated by records v2): likewise). Values are bounded plain JSON; the store refuses anything
 else. QA launchers use their own `XDG_CONFIG_HOME`, so test sessions never touch personal scores.
 
 ## Accessibility and safety
@@ -67,4 +67,4 @@ else. QA launchers use their own `XDG_CONFIG_HOME`, so test sessions never touch
 | `terminal-kit` | MIT | 4 MB + dependency tree | Not used: a competing terminal framework. |
 | `blessed` | MIT | large | Not used: a competing terminal framework, unmaintained. |
 | `rot.js` | BSD-3 | 2.5 MB | Not used: roguelike toolkit; the Canvas covers rendering. |
-| Queens / Star Battle generators | various, mostly unlicensed | tiny | Not used: none vetted; Vespyr Doku has its own generator and an independent solver. |
+| Queens / Star Battle generators | various, mostly unlicensed | tiny | Not used: none vetted; Vespyr Queens has its own generator and an independent solver. |

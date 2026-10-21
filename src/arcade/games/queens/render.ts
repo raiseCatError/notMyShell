@@ -6,7 +6,7 @@ import {regionColors, type ArcadePalette} from '../../palette.js';
 import {typeset} from '../../../ui/typography.js';
 import {displayWidth, truncateText} from '../../../util/text.js';
 import {wrap} from '../../ArcadeSession.js';
-import type {DokuBoard} from './board.js';
+import type {QueensBoard} from './board.js';
 import {formatTime} from './board.js';
 import {chooseLayout, minimumCanvas, type BoardLayout} from './layout.js';
 import {regionLetter} from './rules.js';
@@ -18,7 +18,7 @@ export const SETTLE_MS = 280;
 
 /** Everything the renderer needs besides the canvas and palette. */
 export interface View {
-  board: DokuBoard;
+  board: QueensBoard;
   cursor: number;
   hint: Hint | undefined;
   /** Milliseconds since the game began animating, for blinks and tail flicks. */
@@ -70,7 +70,7 @@ function drawHud(canvas: Canvas, palette: ArcadePalette, view: View): void {
   const {board} = view;
   const analysis = board.analysis();
   const wide = canvas.width >= 44;
-  const title = typeset({role: 'heading', text: 'Vespyr Doku', maxColumns: Math.max(6, canvas.width - 2), maxRows: 1});
+  const title = typeset({role: 'heading', text: 'Vespyr Queens', maxColumns: Math.max(6, canvas.width - 2), maxRows: 1});
   canvas.typeBlock(title, 1, 0, {fg: palette.ink, bold: true});
   const level = `${board.difficulty[0]!.toUpperCase()}${board.difficulty.slice(1)} ${board.size}×${board.size}`;
   const timer = typeset({role: 'counter', text: formatTime(board.elapsedMs), maxColumns: 9, maxRows: 1});

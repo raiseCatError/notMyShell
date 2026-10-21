@@ -1,4 +1,4 @@
-/** Shared shapes for Vespyr Doku. Types only: the generator and the solver both import this and nothing from each other. */
+/** Shared shapes for Vespyr Queens. Types only: the generator and the solver both import this and nothing from each other. */
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
 export const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard', 'expert'];
 

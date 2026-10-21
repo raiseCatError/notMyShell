@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {createRng} from '../src/arcade/rng.js';
-import {DokuBoard, formatTime, readCurrent, readStats, writeStats} from '../src/arcade/games/doku/board.js';
-import {candidatePuzzle, growRegions, placeCats} from '../src/arcade/games/doku/generator.js';
-import {boardHeight, boardWidth, chooseLayout, CELL_STYLES} from '../src/arcade/games/doku/layout.js';
-import {SIZES, makePuzzle, makePuzzleOfSize} from '../src/arcade/games/doku/puzzle.js';
-import {analyze} from '../src/arcade/games/doku/rules.js';
-import {DIFFICULTY_LEVELS, LogicBoard, countSolutions, nextHint, rate, solveOne, solveOther} from '../src/arcade/games/doku/solver.js';
-import {CAT, DIFFICULTIES, EXCLUDED, type Puzzle} from '../src/arcade/games/doku/types.js';
+import {QueensBoard, formatTime, readCurrent, readStats, writeStats} from '../src/arcade/games/queens/board.js';
+import {candidatePuzzle, growRegions, placeCats} from '../src/arcade/games/queens/generator.js';
+import {boardHeight, boardWidth, chooseLayout, CELL_STYLES} from '../src/arcade/games/queens/layout.js';
+import {SIZES, makePuzzle, makePuzzleOfSize} from '../src/arcade/games/queens/puzzle.js';
+import {analyze} from '../src/arcade/games/queens/rules.js';
+import {DIFFICULTY_LEVELS, LogicBoard, countSolutions, nextHint, rate, solveOne, solveOther} from '../src/arcade/games/queens/solver.js';
+import {CAT, DIFFICULTIES, EXCLUDED, type Puzzle} from '../src/arcade/games/queens/types.js';
 
-const source = (name: string) => readFileSync(fileURLToPath(new URL(`../src/arcade/games/doku/${name}`, import.meta.url)), 'utf8');
+const source = (name: string) => readFileSync(fileURLToPath(new URL(`../src/arcade/games/queens/${name}`, import.meta.url)), 'utf8');
 
 const catsOf = (puzzle: Puzzle): Uint8Array => {
   const marks = new Uint8Array(puzzle.size * puzzle.size);
@@ -237,7 +237,7 @@ test('hints: say what the technique is, in words, and flag a wrong cat or X firs
 });
 
 test('board: toggles, exclusion, undo and redo round trip, clear is one undoable move', () => {
-  const board = new DokuBoard(makePuzzle(3, 'easy'));
+  const board = new QueensBoard(makePuzzle(3, 'easy'));
   const total = board.size * board.size;
   assert.ok(board.toggleExclude(0));
   assert.equal(board.marks[0], EXCLUDED);
@@ -269,7 +269,7 @@ test('board: toggles, exclusion, undo and redo round trip, clear is one undoable
 });
 
 test('board: completion is detected when the rules hold, not by comparison', () => {
-  const board = new DokuBoard(makePuzzle(4, 'easy'));
+  const board = new QueensBoard(makePuzzle(4, 'easy'));
   assert.ok(!board.solved);
   board.puzzle.solution.forEach((column, row) => board.toggleCat(row * board.size + column));
   assert.ok(board.solved);
@@ -278,7 +278,7 @@ test('board: completion is detected when the rules hold, not by comparison', () 
 });
 
 test('persistence: a board survives its record; every corrupt field is discarded', () => {
-  const board = new DokuBoard(makePuzzle(8, 'medium'));
+  const board = new QueensBoard(makePuzzle(8, 'medium'));
   board.toggleCat(10); board.toggleExclude(11);
   board.elapsedMs = 83_456; board.hints = 2;
   const stored = JSON.parse(JSON.stringify(board.toRecord()));

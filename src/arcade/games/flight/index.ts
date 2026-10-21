@@ -10,7 +10,7 @@ import {catSprite} from './sprites.js';
 /** Vespyr Flight: an endless flier. Gravity pulls; Space or Up flaps. See docs/design/arcade-flight.md. */
 export const flightGame: GameDefinition = {
   id: 'flight', aliases: ['vespyr-flight', 'flap'], title: 'Vespyr Flight', tagline: 'Endless flier',
-  description: 'Vespyr flaps a pair of paper wings through towers of books, glass chimneys and crates. Each gap passed is a point.', kind: 'action',
+  description: 'Vespyr flaps a pair of paper wings through towers of books, glass chimneys and crates. Each gap passed is a point.', kind: 'action', category: 'runners',
   controls: [{keys: 'Space/Up', action: 'flap'}],
   summary: record => { const saved = readRecord(record); return saved.attempts > 0 ? `Best ${saved.best} · ${saved.bestPassed} passed` : 'Not played yet'; },
   preview(canvas: Canvas, frame: number, palette: ArcadePalette) {
