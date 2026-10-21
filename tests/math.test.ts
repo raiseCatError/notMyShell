@@ -153,3 +153,14 @@ test('an unsupported display block shows its source and why, in readable form; a
   assert.match(wide, /not rendered/iu);
   for (const width of [10, 30, 80]) for (const row of renderMarkdown('$$\\frac{a}{b}$$\n\n$x^2$', width, {level: 'none', math: true} as never)) assert.ok(displayWidth(row.plain) <= width, `${width}: ${row.plain}`);
 });
+
+test('command names are never looked up on Object.prototype', () => {
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+    for (const display of [false, true]) {
+      const result = renderMath(`\\${name} x`, {display});
+      assert.equal(result.ok, false, name);
+    }
+    assert.equal(renderMath(`\\begin{${name}} a \\end{${name}}`, {display: true}).ok, false, name);
+    assert.equal(renderMath(`\\left${name} x \\right.`, {display: true}).ok, false, name);
+  }
+});

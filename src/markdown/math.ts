@@ -48,6 +48,8 @@ const MATH_ALPHABETS: Record<string, {upper: number; lower: number; digits?: num
 };
 const FONT_COMMANDS: Record<string, string> = {mathbf: 'bf', boldsymbol: 'bf', bm: 'bf', mathit: 'it', mathcal: 'cal', mathscr: 'cal', mathfrak: 'frak', mathbb: 'bb', mathsf: 'sf', mathtt: 'tt'};
 const ACCENTS: Record<string, string> = {hat: '̂', widehat: '̂', bar: '̄', vec: '⃗', dot: '̇', ddot: '̈', tilde: '̃', widetilde: '̃', acute: '́', grave: '̀', breve: '̆', check: '̌', overline: '̅'};
+// Lookup tables take command names from the document: no inherited keys (`\constructor`, `\toString`) may match.
+for (const table of [GREEK, PREFIX, ORDINARY, BINARY, RELATION, BIG, DELIMITERS, SPACES, SUPERSCRIPT, SUBSCRIPT, MATH_ALPHABETS, FONT_COMMANDS, ACCENTS] as object[]) Object.setPrototypeOf(table, null);
 
 function styled(text: string, font: string): string {
   const alphabet = MATH_ALPHABETS[font]!;
@@ -271,7 +273,7 @@ class Parser {
   private environment(depth: number): Node {
     const name = this.text(depth);
     const matrices: Record<string, [string, string]> = {matrix: ['', ''], pmatrix: ['(', ')'], bmatrix: ['[', ']'], Bmatrix: ['{', '}'], vmatrix: ['|', '|'], Vmatrix: ['‖', '‖'], cases: ['{', '']};
-    if (!matrices[name]) return fail(`the “${name}” environment is not supported`);
+    if (!Object.hasOwn(matrices, name)) return fail(`the “${name}” environment is not supported`);
     const rows: Node[][] = [[]];
     for (let guard = 0; guard < 400; guard += 1) {
       rows.at(-1)!.push(this.row(depth + 1, 'cell'));
@@ -488,7 +490,7 @@ class Layout {
       '{': {top: '⎧', mid: '⎪', bottom: '⎩', single: '⎨'}, '}': {top: '⎫', mid: '⎪', bottom: '⎭', single: '⎬'}, '|': {top: '│', mid: '│', bottom: '│'}, '‖': {top: '║', mid: '║', bottom: '║'},
       '⟨': {top: '╱', mid: '│', bottom: '╲'}, '⟩': {top: '╲', mid: '│', bottom: '╱'}, '⌊': {top: '│', mid: '│', bottom: '└'}, '⌋': {top: '│', mid: '│', bottom: '┘'}, '⌈': {top: '┌', mid: '│', bottom: '│'}, '⌉': {top: '┐', mid: '│', bottom: '│'},
     };
-    const pieces = sets[char];
+    const pieces = Object.hasOwn(sets, char) ? sets[char] : undefined;
     if (!pieces) return text(char);
     void left;
     const rows = Array.from({length: height}, (_, index) => index === 0 ? pieces.top : index === height - 1 ? pieces.bottom : pieces.mid);
@@ -532,6 +534,6 @@ export function renderMath(source: string, options: {display: boolean; ascii?: b
     return {ok: true, rows, baseline: box.baseline, width: box.width};
   } catch (error) {
     if (error instanceof Unsupported) return {ok: false, reason: error.message};
-    throw error;
+    return {ok: false, reason: 'the formula could not be drawn'};
   }
 }
