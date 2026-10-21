@@ -1,6 +1,6 @@
 ---
 title: "Workspace keymap"
-description: "Canonical workspace keymap from the v0.20.0 published source."
+description: "Canonical workspace keymap from the v0.22.0 published source."
 group: Technical reference
 order: 118
 source: "docs/design/workspace-keymap.md"

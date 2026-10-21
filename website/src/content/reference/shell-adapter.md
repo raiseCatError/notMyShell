@@ -1,6 +1,6 @@
 ---
 title: "ShellAdapter contract"
-description: "Canonical shelladapter contract from the v0.20.0 published source."
+description: "Canonical shelladapter contract from the v0.22.0 published source."
 group: Technical reference
 order: 101
 source: "docs/architecture/shell-adapter.md"

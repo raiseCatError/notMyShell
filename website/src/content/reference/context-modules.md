@@ -1,10 +1,9 @@
 ---
 title: "Context modules and packs"
-description: "Canonical context modules and packs from the v0.20.0 published source."
+description: "Canonical context modules and packs from the v0.22.0 published source."
 group: Technical reference
 order: 103
 source: "docs/architecture/context-modules.md"
-editorial: ["The release-status paragraph said the module platform was still pending acceptance. It shipped in v0.18.0 and is part of v0.20.0."]
 ---
 
 NMSh runs around a real persistent zsh, Bash or Fish session. Its native modules
