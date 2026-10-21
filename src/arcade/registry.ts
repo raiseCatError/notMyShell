@@ -11,6 +11,9 @@ import {brickfallGame} from './games/brickfall/index.js';
 import {towerGame} from './games/tower/index.js';
 import {bullseyeGame} from './games/bullseye/index.js';
 import {orbitGame} from './games/orbit/index.js';
+import {mergeGame} from './games/merge/index.js';
+import {minesGame} from './games/mines/index.js';
+import {purrwordGame} from './games/purrword/index.js';
 
 /**
  * Every arcade game, in hub order within its category (the hub groups them). A new game is one more entry here and one
@@ -20,7 +23,7 @@ export const ARCADE_GAMES: readonly GameDefinition[] = [
   runGame, flightGame, dashGame, leapGame,
   snakeGame, pongGame, brickfallGame,
   towerGame, bullseyeGame, orbitGame,
-  sudokuGame, queensGame,
+  sudokuGame, queensGame, minesGame, mergeGame, purrwordGame,
 ];
 
 /** The game a `/game <name>` argument names (id or alias, case-insensitive, spaces as dashes), or undefined. */

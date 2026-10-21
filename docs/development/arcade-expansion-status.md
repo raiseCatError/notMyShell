@@ -25,12 +25,12 @@ Legend: ✓ done with evidence · ◐ in progress · · not started · — not a
 | 18 | Vespyr Pinball | 4 | · | · | · | · | · | · | · | · | · | · |
 | 19 | Maze Prowler | 4 | · | · | · | · | · | · | · | · | · | · |
 | 20 | Sandfall | 4 | · | · | · | · | · | · | · | · | · | · |
-| 21 | Merge 2048 | 3 | · | · | · | · | · | · | · | · | · | · |
+| 21 | Merge 2048 | 3 | ✓ | — | ✓ | ✓ | ✓ | ◐ | ◐ | · | ✓ | · |
 | 22 | Yarn Drop | 4 | · | · | · | · | · | · | · | · | · | · |
 | 23 | Treat Match | 3 | · | · | · | · | · | · | · | · | · | · |
-| 24 | Minefield | 3 | · | · | · | · | · | · | · | · | · | · |
+| 24 | Minefield | 3 | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | · | ✓ | · |
 | 25 | Cat Fleet | 3 | · | · | · | · | · | · | · | · | · | · |
-| 26 | Purrword | 3 | · | · | · | · | · | · | · | · | · | · |
+| 26 | Purrword | 3 | ✓ | — | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 27 | Tile Slide | 3 | · | · | · | · | · | · | · | · | · | · |
 | 28 | Yarn Lines | 3 | · | · | · | · | · | · | · | · | · | · |
 | 29 | Circuit | 3 | · | · | · | · | · | · | · | · | · | · |
@@ -61,6 +61,7 @@ finale. Not yet captured: Reduced Motion and NO_COLOR / Safe Glyphs for every ga
 
 ## Log
 
+- 2026-10-21: batch 3 (in progress) on `feature/arcade-batch3`: Minefield, Merge 2048 and Purrword registered with tests (273 arcade tests pass, typecheck clean). Purrword verified: two-pass scoring, date-seeded daily, resume, streak rollover, practice, tile flip sequencing. Visual captures of batch 3 not yet reviewed; Treat Match (23) is the remaining batch 3 game.
 - 2026-10-21: program started; spec and status written. Worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/arcade`.
 - 2026-10-21: batch 2 on `feature/arcade-batch2`: Vespyr Leap, Tail Chase, Purr Pong, Brickfall, Cat Tower, Vespyr Bullseye, Color Orbit (shared `kit.ts`; `outlineSprite` keeps Vespyr readable over lavender skies). FX ◐ where the game has hit and pass effects but no dedicated record celebration beyond the shared results sheet.
 - 2026-10-21: batch 1 and 1b on `feature/arcade-expansion`: records v2 + Queens migration, look/fx/engine, full-viewport hub and Stage, Sudoku and Queens redesigns, Run/Flight/Dash worlds.
