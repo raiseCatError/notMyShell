@@ -1,0 +1,22 @@
+# v0.24 editor features — physical QA checklist
+
+Automated tests cover the logic headlessly. Everything below is **NOT RUN** until a person does it in a real terminal; record the date, terminal, shell and result per line. Run in Ghostty and in Zed's terminal separately, with a throwaway folder and an isolated `XDG_CONFIG_HOME`.
+
+## Crash recovery (#469)
+- [ ] `/edit notes.md`, type, wait two seconds, kill the terminal window (not Esc). Reopen NMSh, `/edit notes.md`: the recovery choice shows; Restore brings the text back unsaved; the file is unchanged until Ctrl+S.
+- [ ] The same with `kill -9` of the `nmsh` process; with Discard; with Keep for later (then type, quit normally, reopen: the kept draft is offered).
+- [ ] Two terminals editing one file: neither is offered the other's draft while both run.
+- [ ] A draft after the file changed on disk says so; Compare names the first differing line.
+- [ ] `ls -l` of the recovery folder under NMSh's data directory: drwx------, files -rw-------.
+
+## Markdown helpers and tables (#463)
+- [ ] In a Markdown file: Enter continues bullets, numbers and tasks; Enter on an empty item ends the list; Tab / Shift+Tab move items (Shift+Tab is delivered by the terminal, and in Zed too).
+- [ ] F1 opens the Markdown actions (F1 is not taken by the terminal or Zed). Task, renumber, link, image, bold/italic/code/strike, each undone by one Ctrl+Z.
+- [ ] In a table: Tab / Shift+Tab walk cells; F1 offers row, column and alignment actions; the status line names the cell. Tab in ordinary text still inserts a tab.
+- [ ] At 30, 50, 80 and 120 columns the menu and the footer fit; with NO_COLOR=1 and Safe Glyphs they stay legible.
+
+## Reviewing external changes (#463)
+- [ ] Edit a file, change it from another terminal (`printf`, an editor save, `git checkout`, an atomic `mv`), press Ctrl+S: Review changes appears. Disk-only hunks default to the file's version; a shared line is a conflict.
+- [ ] Choose per hunk, preview with `r`, undo a choice with `z`, apply with Enter, undo the whole merge with Ctrl+Z, save, and check the file with `cat -A` (line endings kept).
+- [ ] Change the file again while the review is open, then Enter: the review restarts. Delete it: the review ends and says so.
+- [ ] Keys never reach the shell while the review is open; after it closes the composer is as it was.

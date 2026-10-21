@@ -9,6 +9,7 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {formatForPath, inert} from './document.js';
 import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from './markdownTable.js';
+import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
 import {continueList, insertLink, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
 import {displayColumn, TAB_WIDTH, TextBuffer, type Position} from './textBuffer.js';
@@ -47,6 +48,8 @@ export interface EditorState {
   input?: {kind: 'find'; value: string};
   query?: string;
   dialog?: EditorDialog;
+  /** Hunk-by-hunk review of changes made on disk while editing (#463); while it is open it owns the keys and the panel. */
+  review?: ReviewState;
   note?: {text: string; tone: 'info' | 'error' | 'success'};
   /** A save or reload is in progress; keys wait. */
   busy?: boolean;
@@ -60,7 +63,10 @@ export type EditorAction =
   /** The draft was restored into the buffer, discarded for good, or kept for later (#469); the app updates the store. */
   | {kind: 'draft'; target: DraftOffer}
   | {kind: 'draft-discard'; target: DraftOffer}
-  | {kind: 'draft-keep'; target: DraftOffer};
+  | {kind: 'draft-keep'; target: DraftOffer}
+  /** Load the disk's version to review it; or apply the finished review (the app revalidates the disk first). */
+  | {kind: 'review'}
+  | {kind: 'review-apply'};
 
 export function createEditor(file: EditableFile): EditorState {
   return {file, buffer: new TextBuffer(file.lines), top: 0, left: 0, ...(file.identity ? {} : {note: {text: 'New file: it is created when you save.', tone: 'info' as const}})};
@@ -118,8 +124,9 @@ function dialogControls(dialog: EditorDialog): ActionControl[] {
   ];
   return [
     {id: 'Action.Keep', label: 'Keep editing', state: focused(0), key: 'Esc', essential: true},
-    {id: 'Action.Overwrite', label: dialog.conflict === 'deleted' ? 'Save anyway' : 'Overwrite', state: focused(1, true), key: 'o', essential: true},
-    ...(dialog.conflict === 'deleted' || dialog.conflict === 'exists' ? [] : [{id: 'Action.Reload', label: 'Reload, discard mine', state: focused(2, true), key: 'r', essential: true} as ActionControl]),
+    ...(dialog.conflict === 'deleted' ? [] : [{id: 'Action.Review', label: 'Review changes', state: focused(1), key: 'v', essential: true} as ActionControl]),
+    {id: 'Action.Overwrite', label: dialog.conflict === 'deleted' ? 'Save anyway' : 'Overwrite', state: focused(dialog.conflict === 'deleted' ? 1 : 2, true), key: 'o', essential: true},
+    ...(dialog.conflict === 'deleted' || dialog.conflict === 'exists' ? [] : [{id: 'Action.Reload', label: 'Reload, discard mine', state: focused(3, true), key: 'r', essential: true} as ActionControl]),
   ];
 }
 
@@ -162,6 +169,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
   if (chosen === 'Action.Keep') return undefined;
   if (chosen === 'Action.Save') return {kind: 'save', thenClose: true};
   if (chosen === 'Action.Discard') return {kind: 'close'};
+  if (chosen === 'Action.Review') return {kind: 'review'};
   if (chosen === 'Action.Overwrite') return {kind: 'save', force: true, ...(dialog.thenClose ? {thenClose: true} : {})};
   return {kind: 'reload'};
 }
@@ -194,6 +202,7 @@ function reveal(state: EditorState, columns: number, height: number): void {
 
 export function editorKey(state: EditorState, key: Key, columns: number, height: number): EditorAction | undefined {
   if (state.busy) return undefined;
+  if (state.review) return reviewKey(state, key, columns, height);
   if (state.dialog) return dialogKey(state, state.dialog, key);
   const buffer = state.buffer;
   if (state.input) {
@@ -371,6 +380,7 @@ function footerRows(state: EditorState, columns: number): string[] {
 }
 
 export function renderEditor(state: EditorState, columns: number, height: number): string[] {
+  if (state.review) return renderReview(state, columns, height);
   const width = textWidth(state, columns);
   const rows = textRows(state, columns, height);
   state.top = Math.max(0, Math.min(state.top, Math.max(0, state.buffer.lines.length - 1)));

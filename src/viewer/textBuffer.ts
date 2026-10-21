@@ -19,7 +19,11 @@ interface Edit {
   caretAfter: Position;
   kind: 'type' | 'delete' | 'other';
   at: number;
+  /** State kept beside the text (a file's base after a merge) that must move with undo and redo. */
+  hooks?: EditHooks;
 }
+
+export interface EditHooks {undo(): void; redo(): void}
 
 const MAX_UNDO = 500;
 const UNREACHABLE: unique symbol = Symbol('unreachable saved state');
@@ -144,6 +148,7 @@ export class TextBuffer {
     this.caret = edit.caretBefore;
     this.anchor = edit.anchorBefore;
     this.redoStack.push(edit);
+    edit.hooks?.undo();
     return true;
   }
 
@@ -153,6 +158,7 @@ export class TextBuffer {
     this.replaceRange(edit.from, this.endOf(edit.from, edit.removed), edit.inserted, 'other', false);
     this.caret = edit.caretAfter;
     this.undoStack.push(edit);
+    edit.hooks?.redo();
     return true;
   }
 
@@ -160,18 +166,20 @@ export class TextBuffer {
    * One undoable edit made by an editing helper: [from, to) becomes `text`, then the caret (and the selection's other
    * end) go where the helper says. Undo restores the text and the caret and selection from before.
    */
-  edit(from: Position, to: Position, text: string, after: {caret: Position; anchor?: Position}): void {
+  edit(from: Position, to: Position, text: string, after: {caret: Position; anchor?: Position}, hooks?: EditHooks): void {
     this.replaceRange(from, to, text, 'other');
     this.caret = after.caret;
     this.anchor = after.anchor && !same(after.anchor, after.caret) ? after.anchor : undefined;
     const done = this.undoStack.at(-1);
-    if (done) { done.caretAfter = this.caret; }
+    if (done) { done.caretAfter = this.caret; if (hooks) done.hooks = hooks; }
   }
 
   /** Replace the whole text as one undoable edit (a recovered draft); the caret goes to the start. */
-  replaceAll(lines: readonly string[]): void {
+  replaceAll(lines: readonly string[], hooks?: EditHooks): void {
     const last = this.lines.length - 1;
     this.replaceRange({line: 0, column: 0}, {line: last, column: this.lines[last]!.length}, (lines.length ? lines : ['']).join('\n'), 'other');
+    const done = this.undoStack.at(-1);
+    if (done && hooks) done.hooks = hooks;
   }
 
   // ---- Editing -----------------------------------------------------------------------------------------------------

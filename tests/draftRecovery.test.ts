@@ -250,3 +250,20 @@ test('review: a draft whose process id now belongs to something else is still of
     assert.equal(store.recoverable('/w/a.md').length, 1);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+test('review (reviewer finding 3): a draft is retired under the path it was written for, even if the editor\'s file changed since', async () => {
+  const root = scratch();
+  try {
+    const file = join(root, 'a.md'); writeFileSync(file, 'hello\n');
+    const editor = createEditor(await opened(file));
+    const store = new DraftStore(join(root, 'r'));
+    const keeper = new DraftKeeper(store, {debounceMs: 60_000});
+    const original = editor.file.realPath;
+    typed(editor, 'x'); keeper.note(editor); keeper.flush();
+    assert.ok(store.own(original));
+    editor.file = {...editor.file, realPath: join(root, 'elsewhere.md')};
+    keeper.discard(editor);
+    assert.equal(store.own(original), undefined, 'the draft written for the original path is gone');
+    keeper.dispose();
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});

@@ -1,5 +1,5 @@
 import {createHash, randomBytes} from 'node:crypto';
-import {constants} from 'node:fs';
+import {constants, lstatSync} from 'node:fs';
 import {access, link, lstat, open, readFile, realpath, rename, stat, unlink} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, dirname, join} from 'node:path';
@@ -40,6 +40,15 @@ export interface EditableFile {
   bom: boolean;
   finalNewline: boolean;
   lines: string[];
+}
+
+/**
+ * Whether two real paths are the same file. Equal spellings are; different spellings only if both exist and are one file
+ * (device and inode), which is how a case-insensitive volume reports `New.md` and `new.md`; on a case-sensitive one they are not.
+ */
+export function sameRealFile(a: string, b: string, stat: (path: string) => {dev: number; ino: number} = path => lstatSync(path)): boolean {
+  if (a === b) return true;
+  try { const first = stat(a), second = stat(b); return first.dev === second.dev && first.ino === second.ino; } catch { return false; }
 }
 
 export type OpenResult = {ok: true; file: EditableFile} | {ok: false; reason: string};

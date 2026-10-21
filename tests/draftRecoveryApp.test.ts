@@ -17,9 +17,9 @@ import {executionFrameFixture} from './support/executionTimelineFrames.js';
  */
 const DEAD = 2 ** 22 + 777;
 async function settled(check: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = process.hrtime.bigint() + 5_000_000_000n;
   while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (process.hrtime.bigint() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise(done => setTimeout(done, 10));
   }
 }

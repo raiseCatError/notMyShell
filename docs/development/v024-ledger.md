@@ -31,6 +31,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 2. **#463 slice 1: list/task/link/wrap helpers** — branch `feature/v024-markdown-helpers`, stacked on PR #489 (needs `TextBuffer.replaceAll`'s neighbour `edit` and the editor dialog mechanism). Done: `markdownEdit.ts`, Enter / Tab / Shift+Tab / F1 menu, tests, design table, changelog. #463 remaining: **slice 2** (done, branch `feature/v024-markdown-tables`, stacked on slice 1): interactive GFM tables, **slice 3** hunk-by-hunk review of changes made on disk while editing — persistence and conflict safety, research first; #469's Compare is a one-line summary, not a merge.
 
+3. **#463 slice 3: hunk-by-hunk external-change review** — branch `feature/v024-external-review`, stacked on slice 2. Done: `threeWayMerge.ts`, `ReviewPanel.ts`, wiring, tests, design section, changelog, `docs/testing/v024-editor-physical-qa.md`. Also fixed in the stack: #490 now carries the fence-state performance fix; #491 refuses a clipped table paragraph instead of editing part of a table. **#463 remaining:** physical QA only (NOT RUN); footnote renumbering was proposed in the issue and is not built.
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).
