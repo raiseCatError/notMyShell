@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseInline, plainInline} from '../src/markdown/inline.js';
-import {parseBlocks} from '../src/markdown/blocks.js';
+import {parseBlocks as parseBlocksWithSpans, type Block} from '../src/markdown/blocks.js';
+
+/** These tests are about block structure; the source spans every block now carries are covered by tests/sourceMap.test.ts. */
+function withoutSpans(blocks: Block[]): Block[] {
+  return blocks.map(block => {
+    const {from: _from, to: _to, ...rest} = block;
+    if (rest.kind === 'quote') return {...rest, blocks: withoutSpans(rest.blocks)} as Block;
+    if (rest.kind === 'list') return {...rest, items: rest.items.map(item => ({...item, blocks: withoutSpans(item.blocks)}))} as Block;
+    return rest as Block;
+  });
+}
+const parseBlocks = (source: string, options?: {html?: boolean}) => withoutSpans(parseBlocksWithSpans(source, options));
 import {highlightCode} from '../src/markdown/highlight.js';
 import {codeBlocks, renderMarkdown} from '../src/markdown/render.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';

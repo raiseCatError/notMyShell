@@ -14,14 +14,19 @@ import {BLOCK, KNOWN} from './markup.js';
 
 export type Alignment = 'left' | 'center' | 'right' | undefined;
 
-export type Block =
+export type Block = (
   | {kind: 'heading'; level: number; text: string}
   | {kind: 'paragraph'; text: string}
   | {kind: 'code'; language?: string; lines: string[]; closed: boolean}
   | {kind: 'list'; ordered: boolean; start: number; loose: boolean; items: ListItem[]}
   | {kind: 'quote'; blocks: Block[]}
   | {kind: 'table'; align: Alignment[]; header: string[]; rows: string[][]}
-  | {kind: 'rule'};
+  | {kind: 'rule'}
+) & {
+  /** The source lines the block came from (0-based; `to` is exclusive), when `parseBlocks` knows them: the shared source-position map. */
+  from?: number;
+  to?: number;
+};
 
 export interface ListItem {
   /** `•`-style bullets are drawn by the renderer; ordered items keep their number and delimiter. */
@@ -142,7 +147,7 @@ function interrupts(line: string, next: string | undefined): boolean {
 export function parseBlocks(source: string, options: {html?: boolean} = {}): Block[] {
   const lines = source.replace(/\r\n?/gu, '\n').split('\n');
   if (lines.length > MAX_LINES) lines.length = MAX_LINES;
-  return parseLines(lines, 0, Boolean(options.html));
+  return parseLines(lines, 0, Boolean(options.html), 0);
 }
 
 /** The kind of HTML block a line starts (CommonMark 1, 2, 6, 7), or undefined. */
@@ -171,14 +176,24 @@ function htmlBlockEnd(lines: readonly string[], start: number, kind: 1 | 2 | 6 |
   return index;
 }
 
-function parseLines(lines: readonly string[], depth: number, html = false): Block[] {
+function parseLines(lines: readonly string[], depth: number, html = false, offset = 0): Block[] {
   const blocks: Block[] = [];
   if (depth > MAX_DEPTH) {
     const text = lines.join('\n').trim();
     return text ? [{kind: 'paragraph', text}] : [];
   }
   let index = 0;
+  // Every block made by one pass of the loop gets the source lines that pass consumed (`offset` places `lines` in the document).
+  let stamped = 0, startedAt = 0;
+  const stamp = () => {
+    // Blank lines a block swallowed at its end (a list or indented code) are not part of its span.
+    let end = index;
+    while (end - 1 > startedAt && blank(lines[end - 1]!)) end -= 1;
+    for (; stamped < blocks.length; stamped += 1) { blocks[stamped]!.from = offset + startedAt; blocks[stamped]!.to = offset + end; }
+  };
   while (index < lines.length) {
+    stamp();
+    startedAt = index;
     const line = lines[index]!;
     if (blank(line)) { index++; continue; }
 
@@ -221,13 +236,13 @@ function parseLines(lines: readonly string[], depth: number, html = false): Bloc
         else break;
         index++;
       }
-      blocks.push({kind: 'quote', blocks: parseLines(inner, depth + 1, html)});
+      blocks.push({kind: 'quote', blocks: parseLines(inner, depth + 1, html, offset + startedAt)});
       continue;
     }
 
     const item = ITEM.exec(line);
     if (item) {
-      const parsed = parseList(lines, index, depth, html);
+      const parsed = parseList(lines, index, depth, html, offset);
       blocks.push(parsed.block);
       index = parsed.next;
       continue;
@@ -275,10 +290,11 @@ function parseLines(lines: readonly string[], depth: number, html = false): Bloc
     }
     if (paragraph.length) blocks.push({kind: 'paragraph', text: paragraph.join('\n').replace(/\n\n/gu, '\n')});
   }
+  stamp();
   return blocks;
 }
 
-function parseList(lines: readonly string[], start: number, depth: number, html: boolean): {block: Extract<Block, {kind: 'list'}>; next: number} {
+function parseList(lines: readonly string[], start: number, depth: number, html: boolean, offset = 0): {block: Extract<Block, {kind: 'list'}>; next: number} {
   const first = ITEM.exec(lines[start]!)!;
   const ordered = /\d/u.test(first[2]!);
   const delimiter = ordered ? first[2]!.slice(-1) : first[2]!;
@@ -296,6 +312,7 @@ function parseList(lines: readonly string[], start: number, depth: number, html:
     const spacing = match[3]!.length;
     // Content starts after one to four spaces; more means the content itself is indented (code), so one space counts.
     const width = marker + (spacing >= 1 && spacing <= 4 ? spacing : 1);
+    const itemStart = index;
     const body: string[] = [lines[index]!.slice(width)];
     let blankRun = 0;
     for (index++; index < lines.length; index++) {
@@ -312,7 +329,7 @@ function parseList(lines: readonly string[], start: number, depth: number, html:
     let task: ListItem['task'];
     const taskMatch = /^\[([ xX])\][ \t]+/u.exec(body[0] ?? '');
     if (taskMatch) { task = taskMatch[1] === ' ' ? 'open' : 'done'; body[0] = body[0]!.slice(taskMatch[0].length); }
-    items.push({...(ordered ? {number: Number(match[2]!.slice(0, -1))} : {}), ...(task ? {task} : {}), blocks: parseLines(body, depth + 1, html)});
+    items.push({...(ordered ? {number: Number(match[2]!.slice(0, -1))} : {}), ...(task ? {task} : {}), blocks: parseLines(body, depth + 1, html, offset + itemStart)});
   }
   return {block: {kind: 'list', ordered, start: items[0]?.number ?? 1, loose, items}, next: index};
 }
