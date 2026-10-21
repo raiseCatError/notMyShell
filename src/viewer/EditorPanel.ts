@@ -63,6 +63,8 @@ export interface EditorState {
   /** The parsed structure of the buffer (headings), kept until it changes; and where jumps came from, newest last (#462). */
   index?: DocumentIndex;
   jumps?: SourceAnchor[];
+  /** The editor sits in a document workspace: its footer names the split key. */
+  workspace?: boolean;
   note?: {text: string; tone: 'info' | 'error' | 'success'};
   /** A save or reload is in progress; keys wait. */
   busy?: boolean;
@@ -567,7 +569,8 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'saveas' ? 'save here' : 'find'], ['Esc', 'cancel']], width);
   return renderControlRows([['Ctrl+S', 'save'], ['Esc', 'close'], ['Ctrl+Z', 'undo'], ['Ctrl+Y', 'redo'], ['Ctrl+F', 'find'], ['Ctrl+C', 'copy'], ['Ctrl+X', 'cut'],
-    ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : paletteFormat(state) ? [['F1', 'Snippets']] as Array<[string, string]> : [])], width);
+    ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : paletteFormat(state) ? [['F1', 'Snippets']] as Array<[string, string]> : []),
+    ...(state.workspace ? [['F2', 'split']] as Array<[string, string]> : [])], width);
 }
 
 export function renderEditor(state: EditorState, columns: number, height: number): string[] {

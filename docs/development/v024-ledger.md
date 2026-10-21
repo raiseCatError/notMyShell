@@ -39,6 +39,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 6. **#462 slice 1: source-position map and heading navigation** — branch `feature/v024-outline` (stacked on the Playground slice). Done: spans on every block, `MarkdownRow.line`, `DocumentIndex`, `SourceAnchor`, GitHub slugs, viewer `#` prompt + Backspace, editor *Go to heading…*/*Back*, `/view file#heading`, architecture note `docs/architecture/document-source-map.md`. **#462 remaining:** `<details>/<summary>` disclosure, Mermaid, math (distinct later slices), a persistent outline rail (not started: the prompt/palette fit the existing layout without taking width), following `#fragment` links inside a rendered document (no link focus exists yet). **Next in order:** #461 (Source/Preview/Split, using `rowForLine`/`lineForRow`), then #460, then #466. **#463** still lacks footnote renumbering.
 
+7. **#461: split view** — branch `feature/v024-split` (stacked on #462 slice 1). Done: `split` mode with editor + native preview of one buffer, linked scrolling, focus/ownership, swap/ratio, narrow collapse, F2. **#461 remaining:** pointer input and hit testing, vertical orientation, the Chromium preview inside the split, preview→caret sync; physical QA. **Next:** #460 (hybrid Markdown editing) builds on `blockAt`/`rowForLine`; #466 diagnostics uses the heading index and block spans; #462's details/Mermaid/math slices; #463 footnote renumbering.
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).
