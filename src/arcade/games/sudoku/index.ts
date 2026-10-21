@@ -11,6 +11,7 @@ import {DIFFICULTIES, DIFFICULTY_LABEL, generatePuzzle, type Difficulty} from '.
 import {readRecord, formatTime, recordWin, summarize, writeRecord, type Stats} from './record.js';
 import type {Saved} from './state.js';
 import {SudokuState} from './state.js';
+import {cellAtPoint, layoutFor} from './layout.js';
 import {completeUnits, drawMenu, drawPlay, POP_MS, waveGroups, type BoardView} from './view.js';
 
 /** Longest single clock step the timer accepts, so a suspended laptop does not bank hours of "play". */
@@ -167,6 +168,12 @@ class Sudoku implements SudokuInstance {
       case 'down': state.move(1, 0); return 'handled';
       case 'left': state.move(0, -1); return 'handled';
       case 'right': state.move(0, 1); return 'handled';
+      case 'mouseClick': {
+        const layout = layoutFor(this.size.columns, this.size.rows);
+        const at = layout && typeof key.x === 'number' && typeof key.y === 'number' ? cellAtPoint(layout, key.x - 1, key.y - 1) : undefined;
+        if (at !== undefined) state.moveTo(at);
+        return 'handled';
+      }
       case 'backspace': case 'delete': return this.after(state.erase(), false);
       case 'redo': return this.after(state.redo(), false);
       case 'text': return this.textKey(key.value);

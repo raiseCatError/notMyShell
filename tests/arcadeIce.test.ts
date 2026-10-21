@@ -144,3 +144,41 @@ test('win render is bounded with and without reduced motion', () => {
     game.dispose();
   }
 });
+
+test('layout: rink cells are physically square at every size, centered, and as large as fits', () => {
+  for (const [columns, rows] of [[100, 34], [60, 24], [40, 16], [28, 12], [160, 45]] as const) for (const choice of ['1', '2', '3']) {
+    const game = iceGame.create(context(memory(), {size: {columns, rows}})) as never as Handle & {layout(): {cellW: number; cellH: number; x: number; y: number; width: number; height: number} | undefined};
+    game.key({kind: 'text', value: choice});
+    const layout = game.layout();
+    assert.ok(layout, `${columns}x${rows} ${choice}`);
+    assert.equal(layout.cellW / (layout.cellH * 2), 1);
+    assert.ok(layout.x >= 0 && layout.x + layout.width <= columns && layout.y >= 1 && layout.y + layout.height <= rows - 1);
+    assert.ok(Math.abs(layout.x - (columns - layout.width - layout.x)) <= 1, 'centered');
+    game.dispose();
+  }
+  const big = iceGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Handle & {layout(): {cellH: number}};
+  big.key({kind: 'text', value: '3' });
+  assert.ok(big.layout().cellH >= 3, 'the glacier uses tall cells in a full-screen stage');
+});
+
+test('feedback: sliding shows a direction arrow, landing puffs, reduced motion shows neither; ghost marks where each slide stops', () => {
+  const game = iceGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Handle;
+  game.key({kind: 'text', value: '1'});
+  const dir = game.board.hint()!;
+  const arrow = {up: '↑', down: '↓', left: '←', right: '→'}[dir];
+  const draw = () => { const canvas = new Canvas(100, 34); game.render(canvas, 0, arcadePalette()); return canvas.plain().join('\n'); };
+  assert.ok(draw().includes(arrow), 'ghost landing marker');
+  game.key({kind: dir});
+  game.animate(10);
+  assert.ok(draw().includes(`Sliding ${dir}`), 'the status names the slide');
+  game.animate(2000);
+  assert.ok((game as never as {puff: unknown}).puff, 'impact puff after landing');
+  game.animate(400);
+  assert.equal((game as never as {puff: unknown}).puff, undefined);
+  game.dispose();
+  const still = iceGame.create(context(memory(), {motion: {reduced: true, effects: 'off'}})) as never as Handle;
+  still.key({kind: 'text', value: '1'});
+  still.key({kind: still.board.hint()!});
+  assert.equal((still as never as {puff: unknown}).puff, undefined);
+  assert.equal(still.refreshMs, 0);
+});

@@ -2,17 +2,55 @@ import {ALL_EIGHT, cellX, cellY, neighbours} from '../../engine/grid.js';
 import type {Rng} from '../../rng.js';
 
 /**
- * Minefield's rules: the classic Minesweeper board. Mines are placed on the first reveal, never on the revealed cell or
+ * Minefield's rules: the classic Minesweeper board, or a hexagonal one where every cell has six neighbours. Mines are placed on the first reveal, never on the revealed cell or
  * its neighbours, so the first move always opens ground. Revealing a cell with no neighbouring mines opens its whole
  * region (a breadth-first flood, which also gives the order the cascade animates in). Chording a number whose flags are
  * all placed reveals its other neighbours. Winning is revealing every cell that is not a mine.
  */
-export type Preset = 'beginner' | 'intermediate' | 'expert';
-export const PRESETS: Readonly<Record<Preset, {width: number; height: number; mines: number; label: string}>> = {
-  beginner: {width: 9, height: 9, mines: 10, label: 'Beginner'},
-  intermediate: {width: 16, height: 16, mines: 40, label: 'Intermediate'},
-  expert: {width: 30, height: 16, mines: 99, label: 'Expert'},
+export type ClassicPreset = 'beginner' | 'intermediate' | 'expert';
+export type HexPreset = 'hexSmall' | 'hexMedium' | 'hexLarge';
+export type Preset = ClassicPreset | HexPreset;
+export interface PresetSpec {width: number; height: number; mines: number; label: string; hex: boolean}
+export const PRESETS: Readonly<Record<Preset, PresetSpec>> = {
+  beginner: {width: 9, height: 9, mines: 10, label: 'Beginner', hex: false},
+  intermediate: {width: 16, height: 16, mines: 40, label: 'Intermediate', hex: false},
+  expert: {width: 30, height: 16, mines: 99, label: 'Expert', hex: false},
+  hexSmall: {width: 9, height: 8, mines: 9, label: 'Hex Small', hex: true},
+  hexMedium: {width: 14, height: 11, mines: 22, label: 'Hex Medium', hex: true},
+  hexLarge: {width: 16, height: 14, mines: 36, label: 'Hex Large', hex: true},
 };
+export const CLASSIC_PRESETS: readonly ClassicPreset[] = ['beginner', 'intermediate', 'expert'];
+export const HEX_PRESETS: readonly HexPreset[] = ['hexSmall', 'hexMedium', 'hexLarge'];
+
+/**
+ * Hex topology: offset rows, every odd row shifted half a cell to the right. A cell has six neighbours: left and right in
+ * its row, and two in each of the rows above and below. Which two depends on the row's parity (an even row's upper
+ * neighbours are at x-1 and x, an odd row's at x and x+1).
+ */
+export type HexDirection = 'w' | 'e' | 'nw' | 'ne' | 'sw' | 'se';
+export const HEX_DIRECTIONS: readonly HexDirection[] = ['w', 'e', 'nw', 'ne', 'sw', 'se'];
+const HEX_DELTA: Readonly<Record<'even' | 'odd', Readonly<Record<HexDirection, readonly [number, number]>>>> = {
+  even: {w: [-1, 0], e: [1, 0], nw: [-1, -1], ne: [0, -1], sw: [-1, 1], se: [0, 1]},
+  odd: {w: [-1, 0], e: [1, 0], nw: [0, -1], ne: [1, -1], sw: [0, 1], se: [1, 1]},
+};
+
+/** The cell one step from `cell` in a hex direction, or undefined past the edge. */
+export function hexStep(width: number, height: number, cell: number, direction: HexDirection): number | undefined {
+  const x = cell % width, y = Math.floor(cell / width);
+  const [dx, dy] = HEX_DELTA[y % 2 ? 'odd' : 'even'][direction];
+  const nx = x + dx, ny = y + dy;
+  return nx >= 0 && ny >= 0 && nx < width && ny < height ? ny * width + nx : undefined;
+}
+
+/** The (up to six) neighbours of a cell on a width x height hex board, in direction order. */
+export function hexNeighbours(width: number, height: number, cell: number): number[] {
+  const out: number[] = [];
+  for (const direction of HEX_DIRECTIONS) {
+    const next = hexStep(width, height, cell, direction);
+    if (next !== undefined) out.push(next);
+  }
+  return out;
+}
 
 export const HIDDEN = 0, OPEN = 1, FLAG = 2;
 
@@ -27,12 +65,13 @@ export class MineBoard {
   /** The order cells were opened by the last reveal, with their flood distance: the cascade's timing. */
   lastOpened: Array<{cell: number; depth: number}> = [];
 
-  constructor(readonly width: number, readonly height: number, readonly mineCount: number, private readonly rng: Rng) {
+  constructor(readonly width: number, readonly height: number, readonly mineCount: number, private readonly rng: Rng, readonly hex = false) {
     this.size = width * height;
     this.state = new Uint8Array(this.size);
   }
 
-  private around(cell: number): number[] { return neighbours({width: this.width, height: this.height}, cell, ALL_EIGHT); }
+  /** The cell's neighbours: eight on a square board, six on a hex board. */
+  around(cell: number): number[] { return this.hex ? hexNeighbours(this.width, this.height, cell) : neighbours({width: this.width, height: this.height}, cell, ALL_EIGHT); }
 
   /** Place the mines away from `safe` and its neighbours, then count. */
   private place(safe: number): void {

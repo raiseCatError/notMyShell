@@ -10,6 +10,7 @@ import {arcadeLook} from '../../look.js';
 import type {ArcadePalette} from '../../palette.js';
 import {rgb} from '../../scenery.js';
 import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
+import {CELL_ASPECT, cellOrigin, squareLayout, type BoardLayout} from '../../engine/boardLayout.js';
 import {GOAL, MergeBoard, type Tile} from './logic.js';
 
 /**
@@ -27,7 +28,9 @@ const INK_LIGHT = rgb(0xfffaf5);
 const tileColor = (value: number): Rgb => TILE[value] ?? rgb(0x4b3fa0);
 const inkOn = (value: number): Rgb => (value >= 64 && value !== 128 && value !== 256 && value !== 512 ? INK_LIGHT : INK_DARK);
 
-interface Layout { cw: number; ch: number; x: number; y: number; gap: number }
+/** The board's geometry: square slots from the shared helper, plus the well behind them (undefined when there is no room for a margin). */
+interface Layout extends BoardLayout { well: {x: number; y: number; w: number; h: number}; roomy: boolean }
+const WELL_X = CELL_ASPECT;
 
 class Merge2048 implements GameInstance {
   result: GameResult | undefined;
@@ -75,7 +78,7 @@ class Merge2048 implements GameInstance {
         this.popMs = this.context.motion.reduced ? 0 : POP_MS;
         const gained = this.board.score - before;
         const layout = this.layout();
-        if (gained && layout) this.popups.add(`+${gained}`, layout.x + 2 * (layout.cw + layout.gap), layout.y - 1, rgb(0xffe08a), 600);
+        if (gained && layout) this.popups.add(`+${gained}`, layout.x + 2 * layout.stepX, layout.well.y - 1, rgb(0xffe08a), 600);
         if (this.board.reached && !this.celebrated) {
           this.celebrated = true;
           confetti(this.particles, this.size.columns, this.size.rows * 2, [TILE[2048]!, TILE[128]!, TILE[32]!, TILE[512]!], this.context.motion);
@@ -99,14 +102,22 @@ class Merge2048 implements GameInstance {
     };
   }
 
+  /**
+   * The largest physically square tiles that fit: a roomy tier (a gap of one row and two columns between tiles and a
+   * margin of the same around them), a tight tier (no gaps), and finally cramped one-row tiles four columns wide, which
+   * are not square but still show every value.
+   */
   private layout(): Layout | undefined {
     const n = this.board.size;
-    for (const [cw, ch, gap] of [[9, 3, 1], [7, 3, 1], [5, 1, 1], [4, 1, 0]] as const) {
-      const width = n * cw + (n + 1) * gap;
-      const height = n * ch + (ch === 1 ? n + 1 : 2);
-      if (width <= this.size.columns && height + 2 <= this.size.rows) return {cw, ch, gap, x: Math.floor((this.size.columns - width) / 2) + gap, y: Math.floor((this.size.rows - height) / 2) + 1 + (ch === 1 ? 1 : 1)};
-    }
-    return undefined;
+    const {columns, rows} = this.size;
+    const roomy = squareLayout({columns, rows, top: 2, bottom: 3, left: WELL_X, right: WELL_X}, n, n, {gap: 1, minCellH: 2, maxCellH: 8});
+    if (roomy) return {...roomy, roomy: true, well: {x: roomy.x - WELL_X, y: roomy.y - 1, w: roomy.width + 2 * WELL_X, h: roomy.height + 2}};
+    const tight = squareLayout({columns, rows, top: 1, bottom: 1}, n, n, {gap: 0, minCellH: 2, maxCellH: 8});
+    if (tight) return {...tight, roomy: false, well: {x: tight.x, y: tight.y, w: tight.width, h: tight.height}};
+    const width = n * 4, height = n;
+    if (width > columns || height + 2 > rows) return undefined;
+    const x = Math.floor((columns - width) / 2), y = Math.floor((rows - height) / 2) + 1;
+    return {cellW: 4, cellH: 1, gap: 0, x, y, width, height, across: n, down: n, stepX: 4, stepY: 1, roomy: false, well: {x, y, w: width, h: height}};
   }
 
   render(canvas: Canvas, _alpha: number, palette: ArcadePalette): void {
@@ -118,25 +129,27 @@ class Merge2048 implements GameInstance {
     const layout = this.layout();
     if (!layout) { canvas.center(Math.floor(canvas.height / 2), 'Make the window a little larger', {fg: look.warn}); return; }
     const n = board.size;
-    const rowStep = layout.ch === 1 ? 2 : layout.ch;
-    const cellX = (cell: number) => layout.x + (cell % n) * (layout.cw + layout.gap);
-    const cellY = (cell: number) => layout.y + Math.floor(cell / n) * rowStep;
+    const cellX = (cell: number) => cellOrigin(layout, cell % n, Math.floor(cell / n)).x;
+    const cellY = (cell: number) => cellOrigin(layout, cell % n, Math.floor(cell / n)).y;
     const well = look.surface.sunken;
+    const plain = !color;
     if (color) {
-      canvas.fill(layout.x - layout.gap, layout.y - 1, n * (layout.cw + layout.gap) + layout.gap, n * rowStep + 2, ' ', {bg: well});
+      canvas.fill(layout.well.x, layout.well.y, layout.well.w, layout.well.h, ' ', {bg: well});
       for (let cell = 0; cell < n * n; cell += 1) this.drawTile(canvas, cellX(cell), cellY(cell), layout, mixRgb(well, look.surface.base, 0.6), '', undefined, well);
+    } else {
+      for (let cell = 0; cell < n * n; cell += 1) canvas.put(cellX(cell) + Math.floor((layout.cellW - 1) / 2), cellY(cell) + Math.floor(layout.cellH / 2), this.context.safeGlyphs ? '.' : '·', {});
     }
     const t = easeOutCubic(this.slideMs / SLIDE_MS);
     const position = (tile: Tile) => ({x: Math.round(cellX(tile.from) + (cellX(tile.cell) - cellX(tile.from)) * t), y: Math.round(cellY(tile.from) + (cellY(tile.cell) - cellY(tile.from)) * t)});
     const sliding = this.slideMs < SLIDE_MS;
-    if (sliding) for (const ghost of board.ghosts) { const at = position(ghost); this.drawTile(canvas, at.x, at.y, layout, tileColor(ghost.value), String(ghost.value), inkOn(ghost.value), well, !color); }
+    if (sliding) for (const ghost of board.ghosts) { const at = position(ghost); this.drawTile(canvas, at.x, at.y, layout, tileColor(ghost.value), String(ghost.value), inkOn(ghost.value), well, plain); }
     for (const tile of board.tiles) {
       if (sliding && (tile.merged || tile.fresh)) continue;
       const at = position(tile);
       let fill = tileColor(tile.value);
       if (tile.merged && this.popMs > 0) fill = mixRgb(fill, rgb(0xffffff), 0.45 * easeOutBack(this.popMs / POP_MS));
       if (tile.fresh && this.popMs > 0) fill = mixRgb(fill, well, 0.5 * (this.popMs / POP_MS));
-      this.drawTile(canvas, at.x, at.y, layout, fill, String(tile.value), inkOn(tile.value), well, !color);
+      this.drawTile(canvas, at.x, at.y, layout, fill, String(tile.value), inkOn(tile.value), well, plain);
     }
     if (this.particles.count) {
       if (this.pixels.width !== canvas.width || this.pixels.height !== canvas.height * 2) this.pixels = new PixelBuffer(canvas.width, canvas.height * 2);
@@ -145,17 +158,29 @@ class Merge2048 implements GameInstance {
       canvas.blit(this.pixels);
     }
     this.popups.draw(canvas, look.surface.base);
-    if (!this.started) canvas.center(Math.min(canvas.height - 1, layout.y + n * rowStep + 1), 'Arrows or WASD slide every tile · u undoes (three per game)', {fg: look.text.dim});
+    const hintRow = layout.well.y + layout.well.h;
+    if (!this.started && hintRow < canvas.height) canvas.center(hintRow, 'Arrows or WASD slide every tile · u undoes (three per game)', {fg: look.text.dim});
   }
 
   private drawTile(canvas: Canvas, x: number, y: number, layout: Layout, fill: Rgb, text: string, ink: Rgb | undefined, well: Rgb, plain = false): void {
-    if (plain) { canvas.text(x, y + Math.floor(layout.ch / 2), `[${text.padStart(Math.max(1, layout.cw - 2), ' ')}]`.slice(0, layout.cw), {bold: true}); return; }
-    if (layout.ch === 3) {
-      canvas.hline(x, y, layout.cw, '▄', {fg: fill, bg: well});
-      canvas.fill(x, y + 1, layout.cw, 1, ' ', {bg: fill});
-      canvas.hline(x, y + 2, layout.cw, '▀', {fg: fill, bg: well});
-    } else canvas.fill(x, y, layout.cw, 1, ' ', {bg: fill});
-    if (text) canvas.text(x + Math.floor((layout.cw - text.length) / 2), y + Math.floor(layout.ch / 2), text.slice(0, layout.cw), {fg: ink, bg: fill, bold: true});
+    const {cellW, cellH} = layout;
+    const mid = y + Math.floor(cellH / 2);
+    if (plain) {
+      const safe = this.context.safeGlyphs;
+      if (cellH >= 3) {
+        const [tl, tr, bl, br, h, v] = safe ? ['+', '+', '+', '+', '-', '|'] : ['┌', '┐', '└', '┘', '─', '│'];
+        canvas.text(x, y, `${tl}${h.repeat(cellW - 2)}${tr}`, {bold: true});
+        canvas.text(x, y + cellH - 1, `${bl}${h.repeat(cellW - 2)}${br}`, {bold: true});
+        for (let dy = 1; dy < cellH - 1; dy += 1) { canvas.put(x, y + dy, v, {bold: true}); canvas.put(x + cellW - 1, y + dy, v, {bold: true}); }
+        canvas.text(x + Math.floor((cellW - text.length) / 2), y + Math.floor(cellH / 2), text, {bold: true});
+      } else canvas.text(x, mid, `[${text.padStart(Math.max(1, cellW - 2), ' ')}]`.slice(0, cellW), {bold: true});
+      return;
+    }
+    canvas.fill(x, y, cellW, cellH, ' ', {bg: fill});
+    // Big tiles space their digits out so a value fills more of the tile.
+    const shown = cellH >= 4 && text.length * 2 - 1 <= cellW - 2 ? [...text].join(' ') : text;
+    if (shown) canvas.text(x + Math.floor((cellW - shown.length) / 2), y + Math.floor(cellH / 2), shown.slice(0, cellW), {fg: ink, bg: fill, bold: true});
+    void well;
   }
 
   resize(size: {columns: number; rows: number}): void { this.size = size; }

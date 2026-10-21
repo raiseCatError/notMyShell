@@ -13,9 +13,11 @@ import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResu
 import {FUEL_MAX, HEAD, RoverState, WHEEL_R, WHEEL_X, WHEEL_Y} from './logic.js';
 
 /**
- * Vespyr Rover: hill-climb driving over endless procedural moon hills. Gas and brake on the arrows, tilt in the air to
- * land on both wheels and to chase flips; fuel cans keep the tank up. A drawn scene (parallax ridges, stars, a rotating
- * pixel rover with Vespyr at the wheel); without color it falls back to a text profile of the same hills.
+ * Vespyr Rover: hill-climb driving over endless procedural moon terrain. Gas and brake on the arrows; tilt presses are
+ * short torque pulses that spin the rover in the air and shift its weight on the ground, so you can land on both wheels
+ * or chase flips; fuel cans keep the tank up. A drawn scene (parallax ridges, stars, the rover drawn rotated by its
+ * simulated angle, on its suspension, with Vespyr at the wheel); without color it falls back to a text profile of the
+ * same terrain.
  */
 const TIRE = rgb(0x15122a);
 const CAN = rgb(0xffb347);
@@ -28,7 +30,7 @@ function colorsFor(palette: ArcadePalette, look: ArcadeLook): Colors {
 }
 
 /** Draw the rover into `buffer` at pixel (cx, cy), rotated by `angle`, at `scale` pixels per unit; wheels turn with `spin`. */
-export function drawRover(buffer: PixelBuffer, cx: number, cy: number, angle: number, scale: number, spin: number, colors: Colors, crashed = false): void {
+export function drawRover(buffer: PixelBuffer, cx: number, cy: number, angle: number, scale: number, spin: number, colors: Colors, crashed = false, compression: readonly [number, number] = [1, 1]): void {
   const c = Math.cos(angle), s = Math.sin(angle);
   const reach = Math.ceil((WHEEL_X + WHEEL_R + 3) * scale) + 2;
   for (let py = Math.floor(cy - reach); py <= Math.ceil(cy + reach); py += 1) {
@@ -36,8 +38,10 @@ export function drawRover(buffer: PixelBuffer, cx: number, cy: number, angle: nu
       const dx = (px + 0.5 - cx) / scale, dy = (py + 0.5 - cy) / scale;
       const lx = dx * c + dy * s, ly = -dx * s + dy * c; // into body space
       let color: Rgb | undefined;
-      for (const sx of [-WHEEL_X, WHEEL_X]) {
-        const wx = lx - sx, wy = ly - WHEEL_Y;
+      for (const [side, sx] of [-WHEEL_X, WHEEL_X].entries()) {
+        const center = WHEEL_Y - compression[side]!;
+        if (Math.abs(lx - sx) < 0.45 && ly > 1.5 && ly < center) color = TIRE;
+        const wx = lx - sx, wy = ly - center;
         const d = Math.hypot(wx, wy);
         if (d <= WHEEL_R) {
           color = d < WHEEL_R * 0.5 ? colors.trim : TIRE;
@@ -68,6 +72,8 @@ class Rover implements GameInstance {
   private readonly shake = new Shake(220);
   private pixels = new PixelBuffer(0, 0);
   private camY = 0;
+  private drawCamY = 0;
+  private frac = 0.28;
   private clock = 0;
   private banner = '';
   private bannerMs = 0;
@@ -82,6 +88,7 @@ class Rover implements GameInstance {
     this.popups = new Popups(5, context.motion.effects);
     this.startBest = readScore(context.record.get()).best;
     this.camY = this.state.y;
+    this.drawCamY = this.camY;
   }
 
   get status(): GameStatus { return this.done ? 'over' : this.started ? 'playing' : 'ready'; }
@@ -92,7 +99,7 @@ class Rover implements GameInstance {
     const state = this.state;
     state.step(dtMs);
     const view = this.view(this.size.columns, this.size.rows);
-    const at = (x: number, y: number) => ({x: (x - this.camX(state.x, view)) * view.scale, y: view.y0 + (y - this.camY) * view.scale});
+    const at = (x: number, y: number) => ({x: (x - this.camX(state.x, view)) * view.scale, y: view.y0 + (y - this.drawCamY) * view.scale});
     if (state.driving && state.grounded && this.context.motion.effects !== 'off') {
       this.dust += 1;
       if (this.dust % 5 === 0) {
@@ -108,7 +115,7 @@ class Rover implements GameInstance {
       } else if (event.kind === 'land') {
         this.particles.burst({x: p.x, y: p.y + 2, count: 4, speed: 20 + event.speed * 0.3, angle: -Math.PI / 2, spread: 1.3, life: 400, gravity: 50, drag: 1.2, colors: [DIRT[0]!, GRASS]});
       } else if (event.kind === 'flip') {
-        this.say(`${event.count > 1 ? `${event.count} flips` : 'Flip'}  +${event.count * 25}`);
+        this.say(`Flip!  +${event.count * 25}`);
       } else if (event.kind === 'crash') {
         shatter(this.particles, {x: p.x - 4, y: p.y - 3, width: 8, height: 6}, [this.colors().body, this.colors().trim, TIRE], {speed: 46, gravity: 90});
         this.shake.trigger(!this.context.motion.reduced && this.context.motion.effects !== 'off');
@@ -129,7 +136,7 @@ class Rover implements GameInstance {
     const record = state.score > 0 && state.score > this.startBest;
     this.result = {
       score: state.score, scoreText: `${state.score.toLocaleString('en-US')} m`, record,
-      details: [state.reason === 'fuel' ? 'Out of fuel' : 'Flipped over', `Distance ${state.distance} m`, `Flips ${state.flips}`, `Fuel cans ${state.collected}`, `Best ${saved.best.toLocaleString('en-US')} m`],
+      details: [state.reason === 'fuel' ? 'Out of fuel' : state.reason === 'stuck' ? 'Stranded' : 'Crashed upside down', `Distance ${state.distance} m`, `Flips ${state.flips}`, `Fuel cans ${state.collected}`, `Best ${saved.best.toLocaleString('en-US')} m`],
     };
     if (record) {
       this.celebrate = 2400;
@@ -144,7 +151,14 @@ class Rover implements GameInstance {
     this.shake.update(dtMs);
     this.bannerMs = Math.max(0, this.bannerMs - dtMs);
     this.celebrate = Math.max(0, this.celebrate - dtMs);
-    this.camY += (this.state.y - this.camY) * clamp(dtMs / 260, 0, 1);
+    // Camera: look further ahead the faster the rover goes, follow the rover and the ground ahead on the ground, and chase
+    // the rover itself in the air (render keeps it inside the frame whatever the lag).
+    const state = this.state;
+    const view = this.view(this.size.columns, this.size.rows);
+    this.frac += (0.27 + 0.13 * clamp(state.vx / 55, 0, 1) - this.frac) * clamp(dtMs / 500, 0, 1);
+    const ahead = state.terrain.height(state.x + (view.width / view.scale) * 0.4);
+    const target = state.grounded ? state.y * 0.62 + ahead * 0.38 : state.y;
+    this.camY += (target - this.camY) * clamp(dtMs / (state.grounded ? 280 : 130), 0, 1);
   }
 
   key(key: Key): GameKeyResult {
@@ -164,7 +178,11 @@ class Rover implements GameInstance {
     const height = Math.max(8, rows * 2);
     return {scale: clamp(columns / 80, 0.5, 1.6), y0: 2 + Math.floor((height - 2) * 0.58), width: columns, height};
   }
-  private camX(x: number, view: {scale: number; width: number}): number { return x - (view.width / view.scale) * 0.3; }
+  private camX(x: number, view: {scale: number; width: number}): number { return x - (view.width / view.scale) * this.frac; }
+  /** The smoothed camera height, held so the rover stays inside the frame (below the HUD rows) however high it flies. */
+  private camYFor(ry: number, view: {scale: number; y0: number; height: number}): number {
+    return clamp(this.camY, ry - (view.height - 8 - view.y0) / view.scale, ry - (8 - view.y0) / view.scale);
+  }
 
   render(canvas: Canvas, alpha: number, palette: ArcadePalette): void {
     this.lastPalette = palette;
@@ -179,6 +197,7 @@ class Rover implements GameInstance {
     const ry = state.py + (state.y - state.py) * alpha;
     const ra = state.pangle + (state.angle - state.pangle) * alpha;
     const camX = this.camX(rx, view);
+    this.drawCamY = this.camYFor(ry, view);
     if (color) this.drawScene(canvas, palette, look, view, camX, rx, ry, ra);
     else this.drawText(canvas, look, view, camX, rx, ry);
     topRow(canvas, look, 'Vespyr Rover', `${unitText}  Fuel ${fuel}%`);
@@ -186,10 +205,14 @@ class Rover implements GameInstance {
     this.popups.draw(canvas, look.surface.base);
     const middle = Math.floor(canvas.height / 3);
     if (!this.started) readyText(canvas, look, 'Vespyr Rover', ['Press → to drive', '→ gas  ← brake  ↑↓ tilt', 'Land on your wheels'], middle);
-    else if (this.bannerMs > 0 && !this.done) canvas.center(Math.max(2, middle - 1), this.banner, {fg: look.gold, bold: true});
+    else if (!this.done && state.danger > 0) {
+      const blink = this.context.motion.reduced || Math.floor(this.clock / 150) % 2 === 0;
+      const left = Math.max(0, Math.ceil((1 - state.danger) * 5));
+      canvas.center(Math.max(2, middle - 1), `${state.upsideDown ? 'UPSIDE DOWN' : 'ROOF DOWN'}! Roll back  ${'#'.repeat(left)}${'-'.repeat(5 - left)}`.slice(0, canvas.width - 2), {fg: look.bad, bold: blink});
+    } else if (this.bannerMs > 0 && !this.done) canvas.center(Math.max(2, middle - 1), this.banner, {fg: look.gold, bold: true});
     if (this.done) {
       const record = this.result?.record;
-      canvas.center(middle, this.state.reason === 'fuel' ? 'OUT OF FUEL' : 'FLIPPED OVER', {fg: look.bad, bold: true});
+      canvas.center(middle, this.state.reason === 'fuel' ? 'OUT OF FUEL' : this.state.reason === 'stuck' ? 'STRANDED' : 'CRASHED', {fg: look.bad, bold: true});
       canvas.center(middle + 1, `${unitText}${record ? '  *  NEW RECORD  *' : ''}`, {fg: record ? look.gold : look.text.strong, bold: true});
     }
   }
@@ -218,7 +241,7 @@ class Rover implements GameInstance {
     // Terrain.
     for (let x = 0; x < buffer.width; x += 1) {
       const wx = camX + x / view.scale;
-      const gy = Math.round(view.y0 + (this.state.terrain.height(wx) - this.camY) * view.scale);
+      const gy = Math.round(view.y0 + (this.state.terrain.height(wx) - this.drawCamY) * view.scale);
       for (let y = Math.max(top, gy); y < buffer.height; y += 1) {
         const depth = y - gy;
         buffer.set(x, y, depth < 1 ? GRASS : depth < 2 ? mixRgb(GRASS, DIRT[0]!, 0.5) : DIRT[Math.min(2, Math.floor(depth / 5))]!);
@@ -226,26 +249,26 @@ class Rover implements GameInstance {
     }
     // Fuel cans, with a letter on top so the pickup is not just a color.
     for (const pickup of this.state.pickups) {
-      const x = Math.round((pickup.x - camX) * view.scale), y = Math.round(view.y0 + (pickup.y - this.camY) * view.scale);
+      const x = Math.round((pickup.x - camX) * view.scale), y = Math.round(view.y0 + (pickup.y - this.drawCamY) * view.scale);
       if (x < -4 || x > buffer.width + 4) continue;
       const w = Math.max(3, Math.round(3.4 * view.scale)), h = Math.max(4, Math.round(4.4 * view.scale));
       buffer.rect(x - Math.floor(w / 2), y - Math.floor(h / 2), w, h, CAN);
       buffer.rect(x - Math.floor(w / 2), y - Math.floor(h / 2), w, 1, rgb(0xfff2c0));
     }
-    const spin = this.state.x / WHEEL_R;
-    drawRover(buffer, (rx - camX) * view.scale, view.y0 + (ry - this.camY) * view.scale, ra, view.scale, spin, colors, this.state.over);
+    const spin = this.state.spin;
+    drawRover(buffer, (rx - camX) * view.scale, view.y0 + (ry - this.drawCamY) * view.scale, ra, view.scale, spin, colors, this.state.over, this.state.compression);
     this.particles.draw(buffer, sky[1]!);
     const shake = this.shake.offset;
     canvas.blit(buffer, shake.x, shake.y);
     for (const pickup of this.state.pickups) {
-      const x = Math.round((pickup.x - camX) * view.scale), y = Math.floor((view.y0 + (pickup.y - this.camY) * view.scale) / 2);
+      const x = Math.round((pickup.x - camX) * view.scale), y = Math.floor((view.y0 + (pickup.y - this.drawCamY) * view.scale) / 2);
       if (x >= 0 && x < canvas.width && y >= 2 && y < canvas.height) canvas.put(x, y, 'F', {fg: rgb(0x2a1a00), bg: CAN, bold: true});
     }
   }
 
   /** Without color: the hills as / \ _ marks, the rover as O=O with Vespyr (c) above, fuel cans as F. */
   private drawText(canvas: Canvas, look: ArcadeLook, view: {scale: number; y0: number; width: number; height: number}, camX: number, rx: number, ry: number): void {
-    const cellY = (y: number) => Math.floor((view.y0 + (y - this.camY) * view.scale) / 2);
+    const cellY = (y: number) => Math.floor((view.y0 + (y - this.drawCamY) * view.scale) / 2);
     for (let x = 0; x < canvas.width; x += 1) {
       const wx = camX + x / view.scale;
       const gy = cellY(this.state.terrain.height(wx));
@@ -259,8 +282,8 @@ class Rover implements GameInstance {
     }
     const state = this.state;
     const part = (lx: number, ly: number) => { const p = state.local(lx, ly, state.angle, rx, ry); return {x: Math.round((p.x - camX) * view.scale), y: cellY(p.y)}; };
-    const a = part(-WHEEL_X, WHEEL_Y), b = part(WHEEL_X, WHEEL_Y), m = part(0, -1), h = part(HEAD.x, HEAD.y);
-    canvas.put(m.x, m.y, '=', {bold: true});
+    const a = part(-WHEEL_X, WHEEL_Y - state.compression[0]), b = part(WHEEL_X, WHEEL_Y - state.compression[1]), h = part(HEAD.x, HEAD.y);
+    for (const lx of [-4.5, -3.3, -2.1, -0.9, 0.3, 1.5, 2.7, 3.9, 5]) { const m = part(lx, -0.5); canvas.put(m.x, m.y, '=', {bold: true}); }
     canvas.put(h.x, h.y, state.over ? 'x' : 'c', {bold: true});
     canvas.put(a.x, a.y, 'O', {bold: true});
     canvas.put(b.x, b.y, 'O', {bold: true});
@@ -268,7 +291,7 @@ class Rover implements GameInstance {
 
   resize(size: {columns: number; rows: number}): void { this.size = size; }
   pause(): void {}
-  hints(): readonly ControlHint[] { return [{keys: '→', action: 'gas'}, {keys: '←', action: 'brake'}, {keys: '↑ ↓', action: 'tilt'}]; }
+  hints(): readonly ControlHint[] { return [{keys: '→', action: 'gas'}, {keys: '←', action: 'brake'}, {keys: '↑ ↓', action: 'tilt (tap fast)'}]; }
   persist(): void {}
   dispose(): void { this.particles.clear(); this.popups.clear(); }
 }
@@ -291,13 +314,13 @@ function preview(canvas: Canvas, frame: number, palette: ArcadePalette): void {
 
 export const roverGame: GameDefinition = {
   id: 'rover', aliases: ['vespyr-rover', 'hill-climb'], title: 'Vespyr Rover', tagline: 'Climb the hills, mind the fuel',
-  description: 'Drive Vespyr\'s moon rover over endless hills: gas and brake, tilt in the air to land on both wheels, grab fuel cans and score for every metre and every flip. Landing on your head ends the run.',
+  description: 'Drive Vespyr\'s moon rover over endless rolling terrain: gas and brake, tilt to spin the rover in the air and to land on both wheels, grab fuel cans and score for every metre and every flip. Staying roof-down too long ends the run.',
   kind: 'action', category: 'physics',
-  controls: [{keys: '→ / D', action: 'gas'}, {keys: '← / A', action: 'brake'}, {keys: '↑ ↓', action: 'tilt'}],
+  controls: [{keys: '→ / D', action: 'gas'}, {keys: '← / A', action: 'brake'}, {keys: '↑ ↓', action: 'tilt (tap fast to chain)'}],
   howToPlay: [
     'Press → (or D) to drive and keep pressing or holding it to keep the gas on; ← (or A) brakes and then reverses.',
-    'Tilt the rover with ↑ (nose up) and ↓ (nose down), most of all in the air. Land on both wheels; a full turn in the air scores a flip.',
-    'Fuel drains faster with the gas on. Drive through fuel cans (marked F). The run ends when you land on your head or stall with an empty tank.',
+    'Each ↑ (nose up) or ↓ (nose down) press is a short twist; tap quickly to chain them. In the air it spins the rover, on the ground it shifts your weight. Land on both wheels; a full turn scores a flip.',
+    'Fuel drains faster with the gas on. Drive through fuel cans (marked F). Head or roof on the ground, or stuck upside down, for under a second can still be rolled back; longer ends the run, as do an empty tank and being stranded.',
   ],
   summary: record => { const saved = readScore(record); return saved.plays ? `${scoreSummary(record, ' m')} · ${count(record.bestFlips)} flips` : 'Not played yet'; },
   preview,

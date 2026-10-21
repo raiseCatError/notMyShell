@@ -11,6 +11,7 @@ import {arcadeLook, type ArcadeLook} from '../../look.js';
 import {Menu} from '../../menu.js';
 import type {ArcadePalette} from '../../palette.js';
 import {DIFFICULTY_LABEL} from './generator.js';
+import {paintTile} from '../../engine/tilePaint.js';
 import {layoutFor, MIN_COLUMNS, MIN_ROWS, type Layout} from './layout.js';
 import {formatTime} from './record.js';
 import {box, column, row, unitComplete, UNITS, type Grid} from './solver.js';
@@ -111,23 +112,16 @@ function notesText(mask: number, width: number, safe: boolean): string {
 function drawTile(canvas: Canvas, layout: Layout, look: ArcadeLook, view: BoardView, cell: number, tile: Tile, plate: Rgb): void {
   const x = layout.x + layout.xs[column(cell)]!;
   const y = layout.y + layout.ys[row(cell)]!;
-  const {cw, ch} = layout;
   // Half-block edges keep tiles apart vertically; without color or in Safe Glyphs the edges are plain rows.
-  const edges = view.color && !view.safe;
-  const digitRow = ch === 3 ? y + 1 : y;
-  for (let dy = 0; dy < ch; dy += 1) {
-    const top = ch === 3 && dy === 0;
-    const bottom = (ch === 3 && dy === 2) || (ch === 2 && dy === 1);
-    if (edges && (top || bottom)) canvas.hline(x, y + dy, cw, top ? '▄' : '▀', {fg: tile.fill, bg: plate});
-    else canvas.fill(x, y + dy, cw, 1, ' ', {bg: tile.fill, ...(tile.reverse && y + dy === digitRow ? {reverse: true} : {})});
-  }
+  const {ix, iw, digitRow, digitX} = paintTile(canvas, x, y, layout.cw, layout.ch, {fill: tile.fill, plate, edges: view.color && !view.safe, reverse: tile.reverse && layout.ch < 3});
   const style: Style = {bg: tile.fill, ...(tile.fg ? {fg: tile.fg} : {}), bold: Boolean(tile.bold), underline: Boolean(tile.underline), reverse: Boolean(tile.reverse)};
-  if (tile.digit) canvas.put(x + Math.floor((cw - 1) / 2), digitRow, tile.digit, style);
+  if (tile.reverse && layout.ch >= 3) for (let dy = 0; dy < layout.ch; dy += 1) if (y + dy !== digitRow) canvas.fill(ix, y + dy, iw, 1, ' ', {bg: tile.fill, reverse: true});
+  if (tile.digit) canvas.put(digitX, digitRow, tile.digit, style);
   else if (!view.hidden && view.state.notes[cell]) {
-    const text = notesText(view.state.notes[cell]!, cw >= 9 ? 9 : cw, view.safe);
-    canvas.text(x + Math.floor((cw - displayWidth(text)) / 2), digitRow, text, {...style, fg: cell === view.state.cursor ? look.text.onAccent : look.hue.lilac, bold: false});
+    const text = notesText(view.state.notes[cell]!, iw >= 9 ? 9 : iw, view.safe);
+    canvas.text(ix + Math.floor((iw - displayWidth(text)) / 2), digitRow, text, {...style, fg: cell === view.state.cursor ? look.text.onAccent : look.hue.lilac, bold: false});
   }
-  if (tile.mark && cw >= 3) canvas.put(x + cw - 1, digitRow, tile.mark, {...style, fg: tile.markFg, bold: true});
+  if (tile.mark && iw >= 3) canvas.put(ix + iw - 1, digitRow, tile.mark, {...style, fg: tile.markFg, bold: true});
 }
 
 function drawBoard(canvas: Canvas, layout: Layout, look: ArcadeLook, view: BoardView, conflicts: boolean[]): void {
@@ -137,9 +131,9 @@ function drawBoard(canvas: Canvas, layout: Layout, look: ArcadeLook, view: Board
   if (!view.color) {
     // Without color the channels carry the box structure as lines.
     const line = view.safe ? {v: '#', h: '=', cross: '+'} : {v: '┃', h: '━', cross: '╋'};
-    for (const span of layout.plateX.slice(1)) canvas.vline(layout.x + span.at - 1, layout.y, layout.boardH, line.v, {bold: true});
-    for (const span of layout.plateY.slice(1)) canvas.hline(layout.x, layout.y + span.at - 1, layout.boardW, line.h, {bold: true});
-    for (const across of layout.plateX.slice(1)) for (const down of layout.plateY.slice(1)) canvas.put(layout.x + across.at - 1, layout.y + down.at - 1, line.cross, {bold: true});
+    for (const span of layout.plateX.slice(1)) canvas.vline(layout.x + span.at - Math.ceil(layout.chanX / 2), layout.y, layout.boardH, line.v, {bold: true});
+    for (const span of layout.plateY.slice(1)) canvas.hline(layout.x, layout.y + span.at - Math.ceil(layout.chanY / 2), layout.boardW, line.h, {bold: true});
+    for (const across of layout.plateX.slice(1)) for (const down of layout.plateY.slice(1)) canvas.put(layout.x + across.at - Math.ceil(layout.chanX / 2), layout.y + down.at - Math.ceil(layout.chanY / 2), line.cross, {bold: true});
   }
   for (const across of layout.plateX) for (const down of layout.plateY) canvas.fill(layout.x + across.at, layout.y + down.at, across.size, down.size, ' ', {bg: plate});
   for (let cell = 0; cell < 81; cell += 1) drawTile(canvas, layout, look, view, cell, tileFor(view, look, cell, conflicts), plate);

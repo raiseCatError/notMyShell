@@ -44,6 +44,8 @@ export class LeapState {
   time = 0;
   /** How far below the best height the view reaches: falling past it ends the climb. The game sets it from the screen. */
   fallLimit = 95;
+  /** Half the cat's drawn width in world units: the wrap happens only once the whole cat is past an edge (the game sets it). */
+  catHalf = CAT_W / 2;
 
   constructor(private readonly rng: Rng) {
     this.platforms.push(this.make(WIDTH / 2 - PLATFORM_W / 2, 0, 'solid', false));
@@ -89,7 +91,7 @@ export class LeapState {
     this.time += dt;
     if (!this.started) { this.y = 4 + Math.abs(Math.sin(this.time * 3)) * 6; return; }
     if (this.pressMs > 0) { this.pressMs -= dtMs; this.vx = this.pressDir * SPEED; } else this.vx *= 0.82;
-    this.x = ((this.x + this.vx * dt) % WIDTH + WIDTH) % WIDTH;
+    this.x = this.wrap(this.x + this.vx * dt);
     const before = this.y;
     this.vy -= GRAVITY * dt;
     this.y += this.vy * dt;
@@ -103,13 +105,24 @@ export class LeapState {
     if (this.y < this.best - this.fallLimit) { this.alive = false; this.events.push({kind: 'fall'}); }
   }
 
-  /** Falling feet crossed a platform's top this step, with the cat over it (wrapping): bounce, or break a crumbling one. */
+  /**
+   * One canonical x. The field is a ring of `WIDTH + 2 * catHalf`: the cat leaves by one edge until the whole sprite is
+   * beyond it, and only then re-enters from beyond the opposite edge. x is the sprite's centre, in [-catHalf, WIDTH + catHalf).
+   */
+  wrap(x: number): number {
+    const period = WIDTH + 2 * this.catHalf;
+    let wrapped = x;
+    while (wrapped >= WIDTH + this.catHalf) wrapped -= period;
+    while (wrapped < -this.catHalf) wrapped += period;
+    return wrapped;
+  }
+
+  /** Falling feet crossed a platform's top this step, with the cat over it: bounce, or break a crumbling one. */
   private land(before: number): void {
     for (const platform of this.platforms) {
       if (platform.broken || before < platform.y || this.y > platform.y) continue;
       const left = this.platformX(platform);
-      const dx = ((this.x - left) % WIDTH + WIDTH) % WIDTH;
-      if (dx > PLATFORM_W + CAT_W / 2 && dx < WIDTH - CAT_W / 2) continue;
+      if (this.x < left - CAT_W / 2 || this.x > left + PLATFORM_W + CAT_W / 2) continue;
       if (platform.kind === 'crumble') { platform.broken = true; this.events.push({kind: 'crumble', x: left + PLATFORM_W / 2, y: platform.y}); continue; }
       this.y = platform.y;
       this.vy = platform.spring ? SPRING : JUMP;

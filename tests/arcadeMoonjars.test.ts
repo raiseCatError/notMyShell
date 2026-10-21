@@ -5,7 +5,7 @@ import {Canvas} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
-import {applyPour, generateJars, isWon, JarBoard, LEVELS, pourAmount, solveJars, topRun, type Level} from '../src/arcade/games/moonjars/logic.js';
+import {applyPour, bestTarget, pourLowerBound, generateJars, isWon, JarBoard, LEVELS, pourAmount, solveJars, topRun, type Level} from '../src/arcade/games/moonjars/logic.js';
 import {moonjarsGame, readJars} from '../src/arcade/games/moonjars/index.js';
 import {displayWidth} from '../src/util/text.js';
 
@@ -167,4 +167,135 @@ test('win render is bounded with and without reduced motion', () => {
     assert.equal(game.status, 'won');
     game.dispose();
   }
+});
+
+test('target: the reference never exceeds the first solution, replays legally to a win, respects the lower bound, and says whether it is proven', () => {
+  for (const level of ['easy', 'medium'] as const) for (let seed = 1; seed <= 12; seed += 1) {
+    const puzzle = generateJars(level, createRng(seed));
+    const target = bestTarget(puzzle.jars, puzzle.cap)!;
+    assert.ok(target.pours <= puzzle.solution, `${level} ${seed}: ${target.pours} vs ${puzzle.solution}`);
+    assert.ok(target.pours >= pourLowerBound(puzzle.jars), 'never below the lower bound');
+    assert.equal(target.pours, target.solution.length);
+    let jars: readonly (readonly number[])[] = puzzle.jars;
+    for (const {from, to} of target.solution) { const next = applyPour(jars, puzzle.cap, from, to); assert.ok(next); jars = next; }
+    assert.ok(isWon(jars, puzzle.cap));
+  }
+});
+
+test('target: a proven result is the true minimum on a small deal (checked by breadth-first search) and a tiny budget is reported as unproven', () => {
+  // 3 colors, cap 2, one empty jar.
+  const start = [[0, 1], [1, 2], [2, 0], []];
+  const target = bestTarget(start, 2)!;
+  assert.ok(target.proven);
+  const key = (jars: readonly (readonly number[])[]) => jars.map(jar => jar.join('.')).sort().join('|');
+  let frontier: Array<readonly (readonly number[])[]> = [start];
+  const seen = new Set([key(start)]);
+  let depth = 0, optimal = -1;
+  while (frontier.length && optimal < 0 && depth < 30) {
+    depth += 1;
+    const next: Array<readonly (readonly number[])[]> = [];
+    for (const jars of frontier) for (let from = 0; from < jars.length; from += 1) for (let to = 0; to < jars.length; to += 1) {
+      const moved = applyPour(jars, 2, from, to);
+      if (!moved || seen.has(key(moved))) continue;
+      seen.add(key(moved));
+      if (isWon(moved, 2)) optimal = depth;
+      next.push(moved);
+    }
+    frontier = next;
+  }
+  assert.equal(target.pours, optimal);
+  const hard = generateJars('hard', createRng(3));
+  const rushed = bestTarget(hard.jars, hard.cap, 50, 1)!;
+  assert.ok(rushed.pours <= hard.solution);
+  if (rushed.pours > pourLowerBound(hard.jars)) assert.equal(rushed.proven, false);
+  assert.equal(bestTarget([[0, 1], [1, 0]], 2), undefined);
+});
+
+type Layout = {mode: string; cellW: number; cellH: number; xs: number[]; y: number; roomy: boolean};
+type Probe = Handle & {layout(): Layout | undefined; jarAt(x: number, y: number): number | undefined; anim: {amount: number} | undefined; shown(jar: number): {level: number}; target: {pours: number; proven: boolean} | undefined; refreshMs: number};
+
+test('layout: unit cells are physically square at many sizes, jars are taller than wide, and nothing leaves the canvas', () => {
+  for (const [columns, rows] of [[160, 45], [100, 34], [80, 30], [60, 24], [40, 16], [28, 12]] as const) for (const choice of ['1', '2', '3']) {
+    const game = moonjarsGame.create(context(memory(), {size: {columns, rows}})) as never as Probe;
+    game.key({kind: 'text', value: choice});
+    const layout = game.layout();
+    if (layout && layout.mode === 'tall') {
+      assert.equal(layout.cellW / (layout.cellH * 2), 1, `${columns}x${rows} ${choice}`);
+      const cap = game.board.cap;
+      assert.ok(cap * layout.cellH * 2 > layout.cellW, 'physically taller than wide');
+      assert.ok(layout.xs[0]! >= 1 && layout.xs.at(-1)! + layout.cellW + 1 <= columns);
+      assert.ok(layout.y + cap * layout.cellH + 1 <= rows);
+    }
+    game.dispose();
+  }
+  const big = moonjarsGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Probe;
+  big.key({kind: 'text', value: '3'});
+  assert.ok(big.layout()!.cellH >= 3, 'large units in a full-screen Stage');
+});
+
+test('mouse: a click on a jar picks it up and a second click pours; clicks outside do nothing', () => {
+  const game = moonjarsGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Probe;
+  game.key({kind: 'text', value: '1'});
+  const layout = game.layout()!;
+  const hint = game.board.hint()!;
+  const click = (jar: number) => game.key({kind: 'mouseClick', x: layout.xs[jar]! + 2, y: layout.y + 3});
+  assert.equal(game.jarAt(0, 0), undefined);
+  assert.equal(click(hint.from), 'handled');
+  assert.equal(game.source, hint.from);
+  click(hint.to);
+  assert.equal(game.board.moves, 1);
+  assert.equal(game.key({kind: 'mouseClick', x: 1, y: 1}), 'ignored');
+});
+
+test('pouring animates levels: the source drops and the target rises over time; reduced motion has no animation', () => {
+  const game = moonjarsGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Probe;
+  game.key({kind: 'text', value: '1'});
+  const {from, to} = game.board.hint()!;
+  const beforeFrom = game.board.jars[from]!.length, beforeTo = game.board.jars[to]!.length;
+  game.key({kind: 'text', value: '?'}); game.key({kind: 'enter'});
+  assert.ok(game.anim && game.refreshMs > 0);
+  assert.equal(game.shown(from).level, beforeFrom, 'starts full');
+  assert.equal(game.shown(to).level, beforeTo);
+  game.animate(120);
+  assert.ok(game.shown(from).level < beforeFrom && game.shown(from).level > game.board.jars[from]!.length - 1e-9 - 0, 'dropping');
+  assert.ok(game.shown(to).level > beforeTo, 'rising');
+  const canvas = new Canvas(100, 34);
+  game.render(canvas, 0, arcadePalette());
+  game.animate(2000);
+  assert.equal(game.anim, undefined);
+  assert.equal(game.shown(from).level, game.board.jars[from]!.length);
+  const still = moonjarsGame.create(context(memory(), {motion: {reduced: true, effects: 'off'}})) as never as Probe;
+  still.key({kind: 'text', value: '1'}); still.key({kind: 'text', value: '?'}); still.key({kind: 'enter'}); still.key({kind: 'enter'});
+  assert.equal(still.anim, undefined);
+  assert.equal(still.board.moves, 1);
+});
+
+test('target: shown in the header and honest in the result', () => {
+  const record = memory();
+  const game = moonjarsGame.create(context(record)) as never as Probe;
+  game.key({kind: 'text', value: '1'});
+  assert.ok(game.target);
+  const canvas = new Canvas(100, 34);
+  game.render(canvas, 0, arcadePalette());
+  assert.match(canvas.plain()[0]!, new RegExp(`Target ${game.target.proven ? '' : '≤'}${game.target.pours}`));
+  solveWithKeys(game);
+  game.animate(5000);
+  game.finale!.skip();
+  assert.ok((game as never as {result: {details: string[]}}).result!.details.some(line => /target|Target/.test(line)));
+});
+
+test('selected source is lifted and valid destinations are marked; no-color units carry a pattern as well as a letter', () => {
+  const game = moonjarsGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Probe;
+  game.key({kind: 'text', value: '1'});
+  game.key({kind: 'text', value: '?'});
+  const canvas = new Canvas(100, 34);
+  game.render(canvas, 0, arcadePalette());
+  const text = canvas.plain().join('\n');
+  assert.ok(text.includes('+') && text.includes('◆'), 'valid destination mark and source mark');
+  const plain = moonjarsGame.create(context(memory(), {size: {columns: 100, rows: 34}, color: 'none', safeGlyphs: true})) as never as Probe;
+  plain.key({kind: 'text', value: '1'});
+  const c2 = new Canvas(100, 34);
+  plain.render(c2, 0, arcadePalette());
+  const rows = c2.plain({color: 'none', safe: true}).join('\n');
+  assert.ok(/[#%=+ox*]{3}/.test(rows));
 });

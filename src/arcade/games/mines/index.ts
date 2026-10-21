@@ -5,19 +5,23 @@ import {PixelBuffer, type Canvas} from '../../Canvas.js';
 import {ParticleSystem} from '../../effects.js';
 import {confetti, Reveal} from '../../fx/cells.js';
 import {count, direction, topRow} from '../../kit.js';
+import {truncateText} from '../../../util/text.js';
 import {arcadeLook, type ArcadeLook} from '../../look.js';
 import {Menu} from '../../menu.js';
 import type {ArcadePalette} from '../../palette.js';
 import {createRng} from '../../rng.js';
 import type {ControlHint, Finale, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
-import {FLAG, HIDDEN, MineBoard, OPEN, PRESETS, type Preset} from './logic.js';
+import {cellAt, cellOrigin, hexCellAt, squareLayout, type BoardLayout} from '../../engine/boardLayout.js';
+import {paintHex, paintTile} from '../../engine/tilePaint.js';
+import {CLASSIC_PRESETS, FLAG, HEX_PRESETS, HIDDEN, hexStep, MineBoard, OPEN, PRESETS, type HexDirection, type Preset} from './logic.js';
 
 /**
- * Minefield: Minesweeper with first-click safety, chording, three presets and a cascade that opens a region in waves.
+ * Minefield: Minesweeper with first-click safety, chording, three square presets and three hexagonal ones (six neighbours, offset
+ * rows; their best times are kept apart under `bestHex*` keys), and a cascade that opens a region in waves.
  * Losing pops every mine outward from the one you found; winning lets every flag bloom. Numbers use distinct hues and are
  * always digits, so color only adds to them.
  */
-const PRESET_KEYS: readonly Preset[] = ['beginner', 'intermediate', 'expert'];
+const PRESET_KEYS: readonly Preset[] = [...CLASSIC_PRESETS, ...HEX_PRESETS];
 const CASCADE_MS = 22;
 const cap = (preset: Preset): string => `${preset[0]!.toUpperCase()}${preset.slice(1)}`;
 
@@ -27,7 +31,7 @@ export function formatClock(ms: number): string {
 }
 
 export function readMines(raw: Readonly<Record<string, unknown>>): {plays: number; wins: number; best: Record<Preset, number>} {
-  return {plays: count(raw.plays), wins: count(raw.wins), best: {beginner: count(raw.bestBeginner), intermediate: count(raw.bestIntermediate), expert: count(raw.bestExpert)}};
+  return {plays: count(raw.plays), wins: count(raw.wins), best: Object.fromEntries(PRESET_KEYS.map(preset => [preset, count(raw[`best${cap(preset)}`])])) as Record<Preset, number>};
 }
 
 class Minefield implements GameInstance {
@@ -47,6 +51,8 @@ class Minefield implements GameInstance {
   private pixels = new PixelBuffer(0, 0);
   private size: {columns: number; rows: number};
   private startBest = 0;
+  /** Hex boards: which side the next up or down step leans to, flipping each step so a run of them keeps its column. */
+  private lean: 0 | 1 = 1;
 
   constructor(private readonly context: GameContext) {
     this.size = context.size;
@@ -58,7 +64,7 @@ class Minefield implements GameInstance {
     const saved = readMines(this.context.record.get());
     return new Menu(PRESET_KEYS.map((preset, index) => {
       const p = PRESETS[preset];
-      return {id: preset, label: p.label, key: String(index + 1), hint: `${p.width}×${p.height} · ${p.mines} mines${saved.best[preset] ? ` · best ${formatClock(saved.best[preset])}` : ''}`};
+      return {id: preset, label: p.label, key: String(index + 1), hint: `${p.width}${'×'}${p.height} · ${p.mines} mines${saved.best[preset] ? ` · best ${formatClock(saved.best[preset])}` : ''}`};
     }));
   }
 
@@ -77,7 +83,7 @@ class Minefield implements GameInstance {
   private start(preset: Preset): void {
     const p = PRESETS[preset];
     this.preset = preset;
-    this.board = new MineBoard(p.width, p.height, p.mines, createRng(this.context.rng.int(1, 0x7fffffff)));
+    this.board = new MineBoard(p.width, p.height, p.mines, createRng(this.context.rng.int(1, 0x7fffffff)), p.hex);
     this.cursor = Math.floor(p.height / 2) * p.width + Math.floor(p.width / 2);
     this.elapsed = 0;
     this.delay = new Float32Array(p.width * p.height);
@@ -117,7 +123,8 @@ class Minefield implements GameInstance {
     const board = this.board!;
     const origin = board.lost >= 0 ? board.lost : this.cursor;
     const mines = [...Array(board.size).keys()].filter(cell => board.mines[cell]);
-    const distance = (cell: number) => Math.hypot(board.x(cell) - board.x(origin), board.y(cell) - board.y(origin));
+    const px = (cell: number) => board.x(cell) + (board.hex && board.y(cell) % 2 ? 0.5 : 0);
+    const distance = (cell: number) => Math.hypot(px(cell) - px(origin), board.y(cell) - board.y(origin));
     const groups: number[][] = [];
     for (const cell of mines.sort((a, b) => distance(a) - distance(b))) {
       const ring = Math.floor(distance(cell) / 2);
@@ -153,12 +160,17 @@ class Minefield implements GameInstance {
     const board = this.board!;
     if (board.over) { if (this.wave && !this.wave.done) this.wave.skip(); return 'ignored'; }
     this.paused = false;
-    const move = direction(key);
-    if (move && !(key.kind === 'text' && key.value === 'f')) {
-      const x = board.x(this.cursor) + (move === 'left' ? -1 : move === 'right' ? 1 : 0);
-      const y = board.y(this.cursor) + (move === 'up' ? -1 : move === 'down' ? 1 : 0);
-      this.cursor = Math.max(0, Math.min(board.height - 1, y)) * board.width + Math.max(0, Math.min(board.width - 1, x));
-      return 'handled';
+    if (board.hex) {
+      const step = this.hexMove(key);
+      if (step !== undefined) { this.cursor = step; return 'handled'; }
+    } else {
+      const move = direction(key);
+      if (move) {
+        const x = board.x(this.cursor) + (move === 'left' ? -1 : move === 'right' ? 1 : 0);
+        const y = board.y(this.cursor) + (move === 'up' ? -1 : move === 'down' ? 1 : 0);
+        this.cursor = Math.max(0, Math.min(board.height - 1, y)) * board.width + Math.max(0, Math.min(board.width - 1, x));
+        return 'handled';
+      }
     }
     if (key.kind === 'mouseClick') {
       const at = 'x' in key && typeof key.x === 'number' && typeof key.y === 'number' ? this.cellAt(key.x - 1, key.y - 1) : undefined;
@@ -167,31 +179,48 @@ class Minefield implements GameInstance {
     }
     if (key.kind === 'enter' || (key.kind === 'text' && key.value === ' ')) { this.act('reveal'); return 'handled'; }
     if (key.kind === 'text' && (key.value === 'f' || key.value === 'm')) { this.act('flag'); return 'handled'; }
-    if (key.kind === 'text' && key.value === 'c') { this.act('chord'); return 'handled'; }
+    if (key.kind === 'text' && (key.value === (board.hex ? 'x' : 'c') || key.value === 'x')) { this.act('chord'); return 'handled'; }
     return 'ignored';
+  }
+
+  /** A hex-board key as the cell it moves the cursor to (the same cell at an edge); undefined when it is not a move. */
+  private hexMove(key: Key): number | undefined {
+    const board = this.board!;
+    const side: Partial<Record<string, HexDirection>> = {left: 'w', right: 'e', a: 'w', h: 'w', d: 'e', l: 'e', q: 'nw', e: 'ne', z: 'sw', c: 'se'};
+    const name = key.kind === 'text' ? key.value.toLowerCase() : key.kind;
+    const direct = side[name];
+    if (direct) return hexStep(board.width, board.height, this.cursor, direct) ?? this.cursor;
+    const up = name === 'up' || name === 'w' || name === 'k', down = name === 'down' || name === 's' || name === 'j';
+    if (!up && !down) return undefined;
+    const first: HexDirection = up ? (this.lean ? 'ne' : 'nw') : (this.lean ? 'se' : 'sw');
+    const second: HexDirection = up ? (this.lean ? 'nw' : 'ne') : (this.lean ? 'sw' : 'se');
+    const next = hexStep(board.width, board.height, this.cursor, first) ?? hexStep(board.width, board.height, this.cursor, second);
+    if (next === undefined) return this.cursor;
+    this.lean = this.lean ? 0 : 1;
+    return next;
   }
 
   // ---- drawing ------------------------------------------------------------------------------------------------
 
-  private layout(): {cw: number; x: number; y: number; side: boolean} | undefined {
+  private static readonly SIDE = 26;
+
+  /** The largest physically square cells that fit, with the side panel when that costs no cell size. */
+  private layout(): (BoardLayout & {side: boolean}) | undefined {
     const board = this.board!;
-    for (const cw of [3, 2]) {
-      const width = board.width * cw;
-      const side = this.size.columns >= width + 26;
-      if (width > this.size.columns || board.height + 2 > this.size.rows) continue;
-      const x = side ? Math.max(1, Math.floor((this.size.columns - width - 24) / 2)) : Math.floor((this.size.columns - width) / 2);
-      return {cw, x, y: Math.max(2, Math.floor((this.size.rows - board.height) / 2)), side};
-    }
-    return undefined;
+    const options = {hex: board.hex, interlock: board.hex, maxCellH: 6};
+    const area = {columns: this.size.columns, rows: this.size.rows, top: 1, bottom: 0};
+    const full = squareLayout(area, board.width, board.height, options);
+    if (!full) return undefined;
+    const beside = squareLayout({...area, right: Minefield.SIDE}, board.width, board.height, options);
+    return beside && beside.cellH === full.cellH ? {...beside, side: true} : {...full, side: false};
   }
 
   private cellAt(column: number, row: number): number | undefined {
     const board = this.board;
     const layout = board && this.layout();
     if (!board || !layout) return undefined;
-    const x = Math.floor((column - layout.x) / layout.cw);
-    const y = row - layout.y;
-    return x >= 0 && y >= 0 && x < board.width && y < board.height ? y * board.width + x : undefined;
+    const at = board.hex ? hexCellAt(layout, column, row) : cellAt(layout, column, row);
+    return at ? at.cy * board.width + at.cx : undefined;
   }
 
   render(canvas: Canvas, _alpha: number, palette: ArcadePalette): void {
@@ -203,19 +232,20 @@ class Minefield implements GameInstance {
       topRow(canvas, look, 'Minefield', saved.plays ? `Won ${saved.wins} of ${saved.plays}` : 'Not played yet');
       const top = Math.max(2, Math.floor(canvas.height / 2) - 4);
       canvas.center(top, 'Choose a field', {fg: look.text.strong, bold: true});
-      canvas.center(top + 1, 'The first square you open is always safe.', {fg: look.text.dim});
-      this.menu.draw(canvas, palette, 0, top + 3, canvas.width);
+      canvas.center(top + 1, truncateText('The first square you open is always safe.', canvas.width), {fg: look.text.dim});
+      canvas.center(top + 2, truncateText('1-3 square fields · 4-6 hexagonal (six neighbours)', canvas.width), {fg: look.text.dim});
+      this.menu.draw(canvas, palette, 0, top + 4, canvas.width);
       return;
     }
     const board = this.board;
     topRow(canvas, look, `Minefield · ${PRESETS[this.preset].label}`, `Mines ${board.mineCount - board.flags}  ${formatClock(this.elapsed)}`);
     const layout = this.layout();
-    if (!layout) { canvas.center(Math.floor(canvas.height / 2), `Needs ${board.width * 2}×${board.height + 2} for this field`, {fg: look.warn}); return; }
+    if (!layout) { canvas.center(Math.floor(canvas.height / 2), truncateText('Make the window larger for this field', canvas.width), {fg: look.warn}); return; }
     const numbers: Rgb[] = [look.hue.sky, look.hue.mint, look.hue.rose, look.hue.lilac, look.hue.coral, look.hue.teal, look.hue.butter, look.hue.peach];
     const safe = this.context.safeGlyphs;
+    const edges = color && !safe;
     for (let cell = 0; cell < board.size; cell += 1) {
-      const x = layout.x + board.x(cell) * layout.cw;
-      const y = layout.y + board.y(cell);
+      const {x, y} = cellOrigin(layout, board.x(cell), board.y(cell), board.hex);
       const cursor = cell === this.cursor && !board.over;
       const state = board.state[cell]!;
       const waiting = (this.delay[cell] ?? 0) > 0;
@@ -232,7 +262,11 @@ class Minefield implements GameInstance {
         if (mine) { text = safe ? '*' : '✸'; fg = look.bad; bold = true; bg = cell === board.lost ? mixRgb(look.surface.sunken, look.bad, 0.5) : bg; }
         else if (n) { text = String(n); fg = numbers[n - 1]; bold = true; }
       } else {
-        bg = (board.x(cell) + board.y(cell)) % 2 ? look.surface.raised : look.surface.raised2;
+        // Hex cells need three shades so no two neighbours match; the squares alternate two.
+        const shade = board.hex && layout.cellH >= 3 ? ((board.x(cell) - (board.y(cell) - (board.y(cell) & 1)) / 2 - board.y(cell)) % 3 + 3) % 3 : (board.x(cell) + board.y(cell)) % 2;
+        bg = shade === 0 ? look.surface.raised2 : shade === 1 ? look.surface.raised : mixRgb(look.surface.raised, look.accent, 0.14);
+        // Without color a hidden square is still a mark, so it differs from an opened empty one.
+        if (!color) { text = safe ? '.' : '·'; fg = undefined; }
         if (state === FLAG || (board.won && mine)) {
           const wrong = board.lost >= 0 && state === FLAG && !mine;
           text = wrong ? (safe ? 'x' : '✗') : safe ? 'F' : '⚑';
@@ -243,11 +277,11 @@ class Minefield implements GameInstance {
       if (glow > 0) bg = mixRgb(bg, board.won ? look.ok : look.bad, 0.35 * glow);
       if (cursor) bg = look.accent;
       if (cursor && fg && state !== OPEN) fg = look.text.onAccent;
-      const cellText = layout.cw === 3 ? ` ${text} ` : `${text} `;
-      canvas.text(x, y, cellText, {bg: color ? bg : undefined, fg, bold, reverse: !color && cursor});
-      if (color && !safe && state === HIDDEN && layout.cw === 3 && !cursor) canvas.put(x, y, '▏', {fg: mixRgb(bg, look.text.strong, 0.12), bg});
+      const paint = {fill: color ? bg : undefined, plate: color ? look.surface.base : undefined, edges, reverse: !color && cursor};
+      const box = board.hex && layout.cellH >= 3 ? paintHex(canvas, x, y, layout.cellW, layout.cellH, paint) : paintTile(canvas, x, y, layout.cellW, layout.cellH, paint);
+      canvas.put(box.digitX, box.digitRow, text, {bg: color ? bg : undefined, fg, bold, reverse: !color && cursor});
     }
-    if (layout.side) this.drawSide(canvas, look, board, layout.x + board.width * layout.cw + 3, layout.y);
+    if (layout.side) this.drawSide(canvas, look, board, layout.x + layout.width + 3, layout.y);
     if (this.particles.count) {
       if (this.pixels.width !== canvas.width || this.pixels.height !== canvas.height * 2) this.pixels = new PixelBuffer(canvas.width, canvas.height * 2);
       this.pixels.clear();
@@ -272,6 +306,7 @@ class Minefield implements GameInstance {
   pause(): void { this.paused = true; }
   hints(): readonly ControlHint[] {
     if (this.screen === 'menu') return [{keys: '↑↓', action: 'field'}, {keys: '⏎', action: 'start'}, {keys: 'Esc', action: 'back'}];
+    if (this.board?.hex) return [{keys: '←→ ↑↓', action: 'move'}, {keys: 'q e z c', action: 'diagonal'}, {keys: 'Space', action: 'open'}, {keys: 'f', action: 'flag'}, {keys: 'x', action: 'chord'}];
     return [{keys: '←↑↓→', action: 'move'}, {keys: 'Space', action: 'open'}, {keys: 'f', action: 'flag'}, {keys: 'c', action: 'chord'}];
   }
   persist(): void {}
@@ -304,13 +339,14 @@ export const minesGame: GameDefinition = {
   kind: 'puzzle', category: 'logic',
   controls: [{keys: '←↑↓→', action: 'move'}, {keys: 'Space', action: 'open'}, {keys: 'f', action: 'flag'}, {keys: 'c', action: 'chord'}],
   howToPlay: [
-    'A number tells how many of the eight squares around it hide a mine. Flag the mines (f) and open everything else (Space or a click).',
+    'A number tells how many of the eight squares around it (six on a hex field) hide a mine. Flag the mines (f) and open everything else (Space or a click).',
     'Opening an empty square opens its whole region. On a number whose flags are all placed, c (or Space) opens the rest around it.',
+    'Hex fields (4-6 in the menu) are made of hexagons with six neighbours: ←→ move along a row, ↑↓ zigzag, q e z c step diagonally, x chords.',
   ],
   summary: record => {
     const saved = readMines(record);
     if (!saved.plays) return 'Not played yet';
-    const best = PRESET_KEYS.slice().reverse().find(preset => saved.best[preset]);
+    const best = [...CLASSIC_PRESETS].reverse().find(preset => saved.best[preset]) ?? [...HEX_PRESETS].reverse().find(preset => saved.best[preset]);
     return best ? `Won ${saved.wins} · ${PRESETS[best].label.toLowerCase()} ${formatClock(saved.best[best])}` : `Won ${saved.wins} of ${saved.plays}`;
   },
   preview,

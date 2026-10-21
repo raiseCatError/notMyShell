@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRng} from '../src/arcade/rng.js';
-import {Canvas} from '../src/arcade/Canvas.js';
+import {Canvas, PixelBuffer} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
@@ -85,4 +85,56 @@ test('render: every size draws inside its bounds, in color and without', () => {
       for (const line of canvas.plain()) assert.ok(displayWidth(line) <= columns);
     }
   }
+});
+
+/** Record every sprite draw call of a render, to count visible cats without reading pixels. */
+function catDraws(game: {render(c: Canvas, a: number, p: ReturnType<typeof arcadePalette>): void}, columns: number, rows: number): Array<{x: number; width: number}> {
+  const calls: Array<{x: number; width: number}> = [];
+  const original = PixelBuffer.prototype.sprite;
+  PixelBuffer.prototype.sprite = function (sprite, x, y, flip) { calls.push({x, width: sprite.width}); return original.call(this, sprite, x, y, flip); };
+  try { game.render(new Canvas(columns, rows), 0, arcadePalette()); } finally { PixelBuffer.prototype.sprite = original; }
+  return calls;
+}
+
+type LeapGame = {key(k: unknown): unknown; step(d: number): void; render(c: Canvas, a: number, p: ReturnType<typeof arcadePalette>): void; state: LeapState};
+
+test('wrap: one cat at every frame of a full wrap, left and right, at several viewport widths; x stays continuous', () => {
+  for (const columns of [28, 40, 60, 100, 160]) {
+    for (const dir of ['left', 'right'] as const) {
+      const rows = 34;
+      const game = leapGame.create(context(memory(), {size: {columns, rows}})) as never as LeapGame;
+      game.key({kind: 'text', value: ' '});
+      const state = game.state;
+      state.platforms = [];
+      state.fallLimit = 1e9;
+      state.y = 40;
+      state.x = dir === 'left' ? 12 : WIDTH - 12;
+      let previous = state.x;
+      let wrapped = false;
+      for (let frame = 0; frame < 900 && !wrapped; frame += 1) {
+        game.key({kind: dir});
+        state.vy = 0;
+        game.step(STEP);
+        const period = WIDTH + 2 * state.catHalf;
+        const jump = state.x - previous;
+        if (Math.abs(jump) > period / 2) { wrapped = true; assert.ok(Math.abs(Math.abs(jump) - period) < 3, `${columns} ${dir}: continuous modulo the ring, jump ${jump}`); }
+        previous = state.x;
+        const calls = catDraws(game, columns, rows);
+        assert.ok(calls.length <= 1, `${columns} ${dir} frame ${frame}: ${calls.length} cat draws`);
+      }
+      assert.ok(wrapped, `${columns} ${dir}: wrapped`);
+    }
+  }
+});
+
+test('wrap: the cat is wholly beyond the edge before it re-enters from the other, and bounces on a platform there', () => {
+  const state = new LeapState(createRng(3));
+  state.started = true;
+  state.catHalf = 8;
+  assert.equal(state.wrap(WIDTH + 7.9), WIDTH + 7.9, 'still partly in view: not wrapped yet');
+  assert.ok(state.wrap(WIDTH + 8.5) + state.catHalf <= 0.7, 're-enters from beyond the opposite edge');
+  state.platforms = [{id: 1, x: 0, y: 50, kind: 'solid', spring: false, broken: false, phase: 0, speed: 1, fall: 0}];
+  state.x = 2; state.y = 52; state.vy = -40;
+  for (let i = 0; i < 6; i += 1) state.step(STEP);
+  assert.ok(state.vy > JUMP * 0.9, 'bounced on the platform at the left edge');
 });

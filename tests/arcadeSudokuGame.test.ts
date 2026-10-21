@@ -316,14 +316,16 @@ test('layout: every canvas from 20x8 to 200x60 draws within bounds, fits its boa
   assert.equal(`${MIN_COLUMNS}x${MIN_ROWS}`, '20x13');
 });
 
-test('layout: bigger canvases get bigger cells, with the HUD beside the board when it fits', () => {
-  assert.equal(layoutFor(200, 60)!.cw, 9);
-  assert.equal(layoutFor(120, 35)!.cw, 7, 'a side HUD beats wider tiles with a cramped top HUD');
+test('layout: bigger canvases get bigger square cells, with the HUD beside the board when it fits', () => {
+  assert.equal(layoutFor(200, 60)!.ch, 5);
+  assert.equal(layoutFor(200, 60)!.cw, 10);
+  assert.equal(layoutFor(120, 35)!.cw, 6);
   assert.equal(layoutFor(120, 35)!.hud, 'side');
   assert.equal(layoutFor(200, 60)!.hud, 'side');
-  assert.equal(layoutFor(80, 21)!.cw, 5);
-  assert.equal(layoutFor(80, 21)!.ch, 1);
-  assert.equal(layoutFor(40, 15)!.cw, 3);
+  assert.equal(layoutFor(80, 24)!.cw, 4);
+  assert.equal(layoutFor(60, 24)!.cw, 4);
+  assert.equal(layoutFor(60, 24)!.hud, 'top');
+  assert.equal(layoutFor(40, 15)!.cw, 2);
   assert.equal(layoutFor(20, 13)!.cw, 2);
   assert.equal(layoutFor(20, 13)!.hud, 'top');
   assert.equal(layoutFor(19, 40), undefined);
@@ -343,7 +345,7 @@ test('hud: difficulty, timer, hints, notes mode and remaining digits are on scre
   }
   const wide = startEasy();
   const text = wide.draw().plain().join('\n');
-  assert.match(text, /Left/u);
+  assert.match(text, /Still to place|Left/u);
 });
 
 test('no color: clues, entries, the cursor and conflicts differ by weight, brackets and glyphs', () => {
@@ -358,7 +360,7 @@ test('no color: clues, entries, the cursor and conflicts differ by weight, brack
   state.moveTo(other); s.press(String(state.solution[other]));
   state.moveTo(target); s.press(String(rowClue));
   const rows = s.draw().rows({color: 'none', safe: false});
-  const cellText = (cell: number) => rows[layout.y + layout.ys[rowOf(cell)]!]!;
+  const cellText = (cell: number) => rows[layout.y + layout.ys[rowOf(cell)]! + Math.floor(layout.ch / 2)]!;
   assert.match(cellText(target), /!/u, 'a conflict carries a glyph');
   assert.match(cellText(target), /\[/u, 'the cursor carries brackets');
   assert.match(cellText(target), /\u001b\[7m/u, 'and reverse video');
@@ -379,13 +381,13 @@ test('no color: entries are not bold while clues are', () => {
   state.moveTo(clueCell);
   const rows = s.draw().rows({color: 'none', safe: false});
   const find = (c: number) => {
-    const line = rows[layout.y + layout.ys[Math.floor(c / 9)]!]!;
+    const line = rows[layout.y + layout.ys[Math.floor(c / 9)]! + Math.floor(layout.ch / 2)]!;
     const digit = String(state.grid[c]);
     const index = line.indexOf(digit, 0);
     return {line, index};
   };
   assert.ok(find(clueCell).line.includes('\u001b[1m'));
-  const entryLine = rows[layout.y + layout.ys[Math.floor(cell / 9)]!]!;
+  const entryLine = rows[layout.y + layout.ys[Math.floor(cell / 9)]! + Math.floor(layout.ch / 2)]!;
   assert.ok(entryLine.includes(String(state.solution[cell])));
 });
 

@@ -2,7 +2,7 @@ import {mixRgb} from '../../../chroma/chroma.js';
 import type {Rgb} from '../../../chroma/escape.js';
 import {catPixels} from '../../../idle/catSprite.js';
 import type {Key} from '../../../terminal/keys.js';
-import {outlineSprite, PixelBuffer, spriteFromRows, type Canvas} from '../../Canvas.js';
+import {outlineSprite, PixelBuffer, spriteFromRows, type Canvas, type Sprite} from '../../Canvas.js';
 import {ParticleSystem, Popups} from '../../effects.js';
 import {count, direction, isConfirm, readScore, saveScore, topRow} from '../../kit.js';
 import {arcadeLook} from '../../look.js';
@@ -27,6 +27,23 @@ const CRUMBLE = rgb(0xe8c48f);
 const SPRING = rgb(0xffe08a);
 /** Vespyr's outline: he climbs through skies close to his own lavender. */
 const OUTLINE = rgb(0x2a1d52);
+
+/** The drawn cat's width in pixels: the 14-wide sprite plus its outline. */
+const CAT_SPRITE_W = 16;
+
+/** The part of a sprite (mirrored when `flip`) that lies in columns [from, to), with its new left pixel; undefined when none shows. */
+export function clipSprite(sprite: Sprite, x: number, from: number, to: number, flip: boolean): {sprite: Sprite; x: number} | undefined {
+  const start = Math.max(x, from), end = Math.min(x + sprite.width, to);
+  if (end <= start) return undefined;
+  const pixels: Array<Rgb | undefined> = [];
+  for (let row = 0; row < sprite.height; row += 1) {
+    for (let column = start; column < end; column += 1) {
+      const source = column - x;
+      pixels.push(sprite.pixels[row * sprite.width + (flip ? sprite.width - 1 - source : source)]);
+    }
+  }
+  return {sprite: {...sprite, width: end - start, pixels}, x: start};
+}
 
 class VespyrLeap implements GameInstance {
   result: GameResult | undefined;
@@ -53,7 +70,7 @@ class VespyrLeap implements GameInstance {
   get status(): GameStatus { return this.done ? 'over' : this.state.started ? 'playing' : 'ready'; }
   get refreshMs(): number { return this.state.started ? 0 : this.context.motion.reduced ? 0 : 50; }
 
-  private scale(): number { return Math.max(0.5, Math.min(1.6, this.size.columns / WIDTH)); }
+  private scale(): number { return Math.max(0.3, Math.min(1.6, this.size.columns / WIDTH)); }
   private left(): number { return Math.floor((this.size.columns - WIDTH * this.scale()) / 2); }
   private screenY(y: number): number { return this.size.rows * 2 - 3 - (y - this.camera); }
 
@@ -63,6 +80,7 @@ class VespyrLeap implements GameInstance {
     const visible = this.size.rows * 2 - 3;
     // The camera keeps the best height 45% of the view above the bottom edge: dropping past that edge ends the climb.
     state.fallLimit = visible * 0.45 + 2;
+    state.catHalf = (this.context.color !== 'none' && !this.context.safeGlyphs ? CAT_SPRITE_W / 2 : 0.5) / this.scale();
     state.step(dtMs);
     this.camera = Math.max(this.camera, state.best - visible * 0.45);
     for (const event of state.events.splice(0)) {
@@ -137,8 +155,9 @@ class VespyrLeap implements GameInstance {
     const top = this.screenY(state.y);
     const pose = this.squashMs > 0 ? 'land' : state.vy > 0 ? 'jump' : 'idle';
     const sprite = outlineSprite(spriteFromRows(catPixels(pose), {L: palette.cat.body, E: palette.cat.eye}), OUTLINE);
-    // Drawn twice near an edge, so the wrap reads as one cat crossing.
-    for (const offset of [0, -WIDTH * scale, WIDTH * scale]) buffer.sprite(sprite, Math.round(catX + offset - sprite.width / 2), Math.round(top - sprite.height), state.vx < 0);
+    // One cat only: clipped to the field, it slides out of one edge entirely before it slides in from the other.
+    const shown = clipSprite(sprite, Math.round(catX - sprite.width / 2), left, left + Math.round(WIDTH * scale), state.vx < 0);
+    if (shown) buffer.sprite(shown.sprite, shown.x, Math.round(top - sprite.height));
     this.particles.draw(buffer, stops[1]);
     canvas.blit(buffer);
     this.popups.draw(canvas, stops[1]);
@@ -168,7 +187,8 @@ class VespyrLeap implements GameInstance {
       const glyph = platform.kind === 'moving' ? '~' : platform.kind === 'crumble' ? ':' : '=';
       canvas.text(Math.round(left + state.platformX(platform) * scale), row, (platform.spring ? '^' : glyph) + glyph.repeat(Math.max(1, Math.round(PLATFORM_W * scale) - 1)));
     }
-    canvas.put(Math.round(left + state.x * scale), Math.floor(this.screenY(state.y) / 2) - 1, '@', {bold: true});
+    const x = Math.round(left + state.x * scale);
+    if (x >= left && x < left + Math.round(WIDTH * scale)) canvas.put(x, Math.floor(this.screenY(state.y) / 2) - 1, '@', {bold: true});
   }
 
   resize(size: {columns: number; rows: number}): void { this.size = size; }

@@ -1,51 +1,72 @@
 import type {Rng} from '../../rng.js';
 
 /**
- * Kitten Parade's rules. A crowd of kittens runs up a three-lane road and passes through one cell of each gate row:
- * `+n`, `-n`, `×n`, `÷n` change the count, a saw takes a quarter of the crowd (and one more). The count hits zero and
- * the parade is over. Lane changes are instant.
+ * Kitten Parade's rules. A crowd of kittens runs up a three-lane road through a finite campaign of LEVELS levels. Each
+ * level is a run of gate rows (`+n`, `-n`, `×n`, `÷n`, a saw that takes a quarter and one more) and rival waves, and ends
+ * at a boss formation that fills the whole road. Lane changes are instant.
  *
- * Fairness: every row has a `safe` lane whose cell never lowers the count (`+n`, `×n` or empty), the safe lane moves at
- * most one lane between rows, and rows are at least MIN_GAP_S apart. Following the safe lanes can therefore never lose a
- * kitten, whatever the dice rolled elsewhere. The count is capped at MAX_COUNT; the drawing caps the sprites separately.
+ * Combat is deterministic, not scripted: when the crowd reaches a rival group both sides trade blows in exchanges of
+ * `k` members each (k = ceil(smaller side / ROUNDS), at least 1, never more than either side has) until one side is gone.
+ * The survivors are therefore `crowd - rivals`; a tie wipes both out and counts as a defeat. A rival group is drawn as a
+ * cluster with its real count above it.
+ *
+ * Fairness. Every operation is monotone in the crowd size, and the lanes are free to change between rows, so the best
+ * lane in every row (the one leaving the biggest crowd) is the optimal play. The generator walks that optimal path:
+ * it sizes each good gate to keep the optimal crowd on a rising curve, each wave to cost the optimal crowd a modest share
+ * (with its other lanes ruinous or lethal) and each boss to need only `crowd / ratio` with ratio in [BOSS_RATIO_MIN,
+ * BOSS_RATIO_MAX], so a perfect run always wins by a real, bounded margin and a poor run loses. Rows are at least
+ * MIN_GAP_S apart.
  */
 export const LANES = 3;
+export const LEVELS = 5;
 export const START_COUNT = 3;
 export const MAX_COUNT = 999_999;
 export const MIN_GAP_S = 1.1;
 export const ROW_LENGTH = 4;
+/** How far ahead of a rival group, in metres, the crowd stops to fight it. */
+export const ENEMY_REACH = 8;
 export const LOOKAHEAD = 70;
-export const START_SPEED = 9;
-export const MAX_SPEED = 18;
-export const RAMP = 0.1;
-/** The most kitten sprites ever drawn, whatever the count. */
+/** The most kitten (or rival) sprites ever drawn, whatever the count. */
 export const MAX_DRAWN = 48;
+export const MAX_ENEMY_DRAWN = 24;
+/** Milliseconds per exchange of blows, and the number of exchanges a fight is spread over. */
+export const ROUND_MS = 150;
+export const ROUNDS = 8;
+export const BOSS_ROUNDS = 14;
+export const CLEAR_MS = 2200;
+export const BOSS_RATIO_MIN = 1.3;
+export const BOSS_RATIO_MAX = 2.1;
+/** The optimal crowd just before each level's boss. */
+export const LEVEL_TARGET = [30, 70, 140, 260, 450] as const;
+export const levelLength = (level: number): number => 8 + 2 * level;
+export const speedFor = (level: number): number => 9 + 1.3 * (level - 1);
+/** Recruits who join the survivors when a boss falls. */
+export const recruits = (level: number): number => 2 + 2 * level;
 
 export type Op = '+' | '-' | '×' | '÷';
 export type Gate = {kind: 'gate'; op: Op; n: number} | {kind: 'saw'};
-export type Cell = Gate | null;
-export interface Row { z: number; cells: [Cell, Cell, Cell]; safe: number; applied: boolean }
+export type Enemy = {kind: 'enemy'; n: number; boss?: true};
+export type Cell = Gate | Enemy | null;
+export type RowKind = 'gate' | 'wave' | 'boss';
+export interface Row { z: number; cells: [Cell, Cell, Cell]; kind: RowKind; level: number; applied: boolean; fought: number }
+export interface Battle { lane: number; boss: boolean; crowd0: number; enemy0: number; crowd: number; enemy: number; step: number; ms: number }
 export type ParadeEvent =
   | {kind: 'lane'; lane: number}
-  | {kind: 'gate'; lane: number; op: Op; before: number; after: number}
-  | {kind: 'saw'; lane: number; before: number; after: number}
+  | {kind: 'gate'; lane: number; op: Op; before: number; after: number; good: boolean}
+  | {kind: 'saw'; lane: number; before: number; after: number; good: boolean}
   | {kind: 'empty'; lane: number}
-  | {kind: 'dead'}
+  | {kind: 'battle'; lane: number; boss: boolean; crowd: number; enemy: number}
+  | {kind: 'exchange'; lost: number; crowd: number; enemy: number; boss: boolean}
+  | {kind: 'routed'; boss: boolean; survivors: number; enemy: number}
+  | {kind: 'level'; level: number; recruits: number}
+  | {kind: 'victory'}
+  | {kind: 'dead'; boss: boolean; crowd0: number; enemy0: number; enemyLeft: number}
   | {kind: 'milestone'; meters: number};
-
-export const speedAt = (time: number): number => Math.min(MAX_SPEED, START_SPEED + RAMP * time);
-const RAMP_END = (MAX_SPEED - START_SPEED) / RAMP;
-export const distanceAt = (time: number): number => (time <= RAMP_END
-  ? START_SPEED * time + 0.5 * RAMP * time * time
-  : START_SPEED * RAMP_END + 0.5 * RAMP * RAMP_END * RAMP_END + MAX_SPEED * (time - RAMP_END));
-export const timeAt = (distance: number): number => {
-  const ramped = distanceAt(RAMP_END);
-  return distance <= ramped ? (-START_SPEED + Math.sqrt(START_SPEED * START_SPEED + 2 * RAMP * distance)) / RAMP : RAMP_END + (distance - ramped) / MAX_SPEED;
-};
 
 /** The count after passing a cell. */
 export function applyCell(count: number, cell: Cell): number {
   if (!cell) return count;
+  if (cell.kind === 'enemy') return Math.max(0, count - cell.n);
   if (cell.kind === 'saw') return Math.max(0, count - (Math.ceil(count / 4) + 1));
   switch (cell.op) {
     case '+': return Math.min(MAX_COUNT, count + cell.n);
@@ -55,7 +76,14 @@ export function applyCell(count: number, cell: Cell): number {
   }
 }
 
-export const cellText = (cell: Cell): string => (!cell ? '' : cell.kind === 'saw' ? 'SAW' : `${cell.op}${cell.n}`);
+export const cellText = (cell: Cell): string => (!cell ? '' : cell.kind === 'saw' ? 'SAW' : cell.kind === 'enemy' ? `${cell.boss ? 'B' : '!'}${compact(cell.n)}` : `${cell.op}${cell.n}`);
+
+/** The lane that leaves the biggest crowd (the middle one on a tie, then the lowest): the optimal play for a row. */
+export function bestLane(count: number, row: Row): number {
+  let best = 1;
+  for (const lane of [1, 0, 2]) if (applyCell(count, row.cells[lane]!) > applyCell(count, row.cells[best]!)) best = lane;
+  return best;
+}
 
 /** The count as short text: 1,234 stays, 12,345 becomes 12.3k. */
 export function compact(count: number): string {
@@ -80,62 +108,107 @@ export function crowdLayout(count: number, cap: number, maxColumns: number): Arr
   return out;
 }
 
+/** The exchange size for a fight between `crowd` and `enemy`. */
+export const exchangeSize = (crowd: number, enemy: number, boss: boolean): number => Math.max(1, Math.ceil(Math.min(crowd, enemy) / (boss ? BOSS_ROUNDS : ROUNDS)));
+
+/** The whole campaign's rows, generated up front from the rng (deterministic), walking the optimal path. */
+export function generateCampaign(rng: Rng): Row[] {
+  const rows: Row[] = [];
+  let est = START_COUNT;
+  let z = 14;
+  for (let level = 1; level <= LEVELS; level += 1) {
+    const speed = speedFor(level);
+    const length = levelLength(level);
+    const start = est;
+    const wavesAt = new Set(length > 10 ? [3, 7] : [3]);
+    if (length > 14) wavesAt.add(11);
+    let firstWave = true;
+    for (let index = 0; index < length; index += 1) {
+      const target = start * Math.pow(LEVEL_TARGET[level - 1]! / Math.max(1, start), (index + 1) / length);
+      const need = Math.max(0, target - est);
+      let cells: [Cell, Cell, Cell];
+      let kind: RowKind;
+      if (wavesAt.has(index)) {
+        kind = 'wave';
+        const small = Math.max(1, Math.round(est * (0.1 + 0.03 * level + rng.range(0, 0.06))));
+        const medium = Math.max(small + 1, Math.min(est - 1, Math.round(est * rng.range(0.5, 0.8))));
+        const big = Math.max(medium + 1, est + 1, Math.round(est * rng.range(1.15, 1.6)));
+        // The first wave of each level always puts the lethal group on the middle lane: standing still never survives.
+        const lanes = firstWave ? (rng.chance(0.5) ? [0, 2, 1] : [2, 0, 1]) : rng.shuffle([0, 1, 2]);
+        firstWave = false;
+        cells = [null, null, null];
+        cells[lanes[0]!] = {kind: 'enemy', n: small};
+        cells[lanes[1]!] = {kind: 'enemy', n: medium};
+        cells[lanes[2]!] = {kind: 'enemy', n: big};
+        est -= small;
+      } else {
+        kind = 'gate';
+        let good: Gate;
+        const swing = est >= 3 && est <= 200 && index > 0 && index < length - 1 && rng.chance(0.28);
+        if (swing) good = {kind: 'gate', op: '×', n: est <= 10 && rng.chance(0.4) ? 3 : 2};
+        else if (est >= 2 && need >= est * 0.9 && rng.chance(0.55)) good = {kind: 'gate', op: '×', n: need >= est * 1.8 && est <= 14 && rng.chance(0.5) ? 3 : 2};
+        else good = {kind: 'gate', op: '+', n: Math.max(2, Math.round(need * rng.range(0.9, 1.15)) + rng.int(0, 2))};
+        const decoy: Cell = rng.chance(0.3) ? null : {kind: 'gate', op: '+', n: Math.max(1, Math.round(Math.max(good.op === '+' ? good.n : swing ? est * 0.8 : need, 2) * rng.range(0.25, 0.6)))};
+        const roll = rng.next();
+        const trap: Cell = roll < 0.4 ? {kind: 'gate', op: '-', n: Math.max(2, Math.round(est * rng.range(0.25, 0.7)))}
+          : roll < 0.65 ? {kind: 'gate', op: '÷', n: est > 40 && rng.chance(0.3) ? 3 : 2}
+            : {kind: 'saw'};
+        const [a, b, c] = rng.shuffle<Cell>([good, decoy, trap]);
+        cells = [a!, b!, c!];
+        est = Math.max(...cells.map(cell => applyCell(est, cell)));
+      }
+      const gap = Math.max(MIN_GAP_S, (kind === 'wave' ? 2 : 1.55) + rng.range(0, 0.35));
+      if (rows.length > 0) z += gap * speed + ROW_LENGTH; else z = 14;
+      rows.push({z, cells, kind, level, applied: false, fought: -1});
+    }
+    // The boss formation: the same rival group in every lane, sized so the optimal crowd wins by a bounded margin.
+    const ratio = level === 1 ? rng.range(1.6, BOSS_RATIO_MAX) : rng.range(BOSS_RATIO_MIN + 0.05, 1.75);
+    const boss: Enemy = {kind: 'enemy', n: Math.max(3, Math.floor(est / ratio)), boss: true};
+    z += (2.4 + rng.range(0, 0.3)) * speed + ROW_LENGTH;
+    rows.push({z, cells: [boss, boss, boss], kind: 'boss', level, applied: false, fought: -1});
+    est = est - boss.n + recruits(level);
+  }
+  return rows;
+}
+
 export class ParadeState {
   time = 0;
+  /** Distance run, in metres. */
+  z = 0;
   lane = 1;
   count = START_COUNT;
   peak = START_COUNT;
   alive = true;
   started = false;
-  rows: Row[] = [];
+  won = false;
+  level = 1;
+  rows: Row[];
   events: ParadeEvent[] = [];
+  battle: Battle | undefined;
+  /** Milliseconds left of the level-clear pause. */
+  interlude = 0;
   gates = 0;
-  private lastSafe = 1;
-  private frontier = 14;
-  private estimate = START_COUNT;
+  streak = 0;
+  /** Points from good choices, wins and survivors: see `score`. */
+  points = 0;
+  bossesDown = 0;
+  rivalsBeaten = 0;
+  perfect = 0;
   private milestone = 0;
 
-  constructor(private readonly rng: Rng) { this.fill(); }
+  constructor(rng: Rng) { this.rows = generateCampaign(rng); }
 
-  get z(): number { return distanceAt(this.time); }
-  get speed(): number { return speedAt(this.time); }
+  get speed(): number { return speedFor(this.level); }
   get meters(): number { return Math.floor(this.z); }
-  get score(): number { return this.meters + this.peak * 2; }
-
-  private fill(): void { while (this.frontier < this.z + LOOKAHEAD) this.generate(); }
-
-  private generate(): void {
-    const rng = this.rng;
-    const hard = Math.min(1, timeAt(this.frontier) / 90);
-    const est = this.estimate;
-    const shift = this.rows.length === 0 ? 0 : rng.pick([-1, 0, 0, 1]);
-    const safe = Math.max(0, Math.min(LANES - 1, this.lastSafe + shift));
-    const add = (): Cell => ({kind: 'gate', op: '+', n: Math.max(2, Math.round(est * rng.range(0.1, 0.5))) + rng.int(1, 4)});
-    const times = (): Cell => ({kind: 'gate', op: '×', n: est > 60 || rng.chance(0.6) ? 2 : 3});
-    const cells: [Cell, Cell, Cell] = [null, null, null];
-    const roll0 = rng.next();
-    cells[safe] = this.rows.length === 0 ? add() : roll0 < 0.62 ? add() : roll0 < 0.82 ? times() : null;
-    for (let lane = 0; lane < LANES; lane += 1) {
-      if (lane === safe) continue;
-      const roll = rng.next() + (this.rows.length === 0 ? -1 : 0);
-      cells[lane] = roll < 0.28 + 0.1 * hard ? {kind: 'gate', op: '-', n: Math.max(2, Math.round(est * rng.range(0.25, 0.7)))}
-        : roll < 0.46 + 0.1 * hard ? {kind: 'gate', op: '÷', n: est > 40 && rng.chance(0.3) ? 3 : 2}
-          : roll < 0.62 + 0.15 * hard ? {kind: 'saw'}
-            : roll < 0.86 ? (rng.chance(0.7) ? add() : times()) : null;
-    }
-    this.estimate = Math.min(2000, applyCell(est, cells[safe]!) || est);
-    const gap = Math.max(MIN_GAP_S, (1.55 - 0.3 * hard) + (shift !== 0 ? 0.1 : 0) + rng.range(0, 0.3));
-    const start = this.rows.length === 0 ? this.frontier : distanceAt(timeAt(this.frontier) + gap);
-    this.rows.push({z: start, cells, safe, applied: false});
-    this.frontier = start + ROW_LENGTH;
-    this.lastSafe = safe;
-  }
+  get score(): number { return this.points + this.meters; }
+  get over(): boolean { return !this.alive || this.won; }
 
   nextRow(): Row | undefined { return this.rows.find(row => !row.applied); }
 
   moveLane(direction: -1 | 1): boolean {
-    if (!this.alive) return false;
+    if (!this.alive || this.won) return false;
     this.started = true;
+    if (this.battle) return false;
     const lane = this.lane + direction;
     if (lane < 0 || lane >= LANES) return false;
     this.lane = lane;
@@ -143,26 +216,84 @@ export class ParadeState {
     return true;
   }
 
+  private setCount(count: number): void { this.count = count; this.peak = Math.max(this.peak, count); }
+
   step(dtMs: number): void {
-    if (!this.alive || !this.started) return;
-    this.time += dtMs / 1000;
-    const now = this.z;
-    for (const row of this.rows) {
-      if (row.applied || row.z > now) continue;
-      row.applied = true;
-      const cell = row.cells[this.lane] ?? null;
-      const before = this.count;
-      this.count = applyCell(before, cell);
-      this.peak = Math.max(this.peak, this.count);
-      this.gates += 1;
-      if (!cell) this.events.push({kind: 'empty', lane: this.lane});
-      else if (cell.kind === 'saw') this.events.push({kind: 'saw', lane: this.lane, before, after: this.count});
-      else this.events.push({kind: 'gate', lane: this.lane, op: cell.op, before, after: this.count});
-      if (this.count <= 0) { this.alive = false; this.events.push({kind: 'dead'}); return; }
+    if (this.over || !this.started) return;
+    if (this.interlude > 0) {
+      this.interlude -= dtMs;
+      if (this.interlude <= 0) { this.interlude = 0; this.level += 1; }
+      return;
     }
-    this.fill();
-    while (this.rows.length > 2 && this.rows[1]!.z < now - 20) this.rows.shift();
-    const mark = Math.floor(now / 500);
+    if (this.battle) {
+      this.battle.ms += dtMs;
+      while (this.battle && this.battle.ms >= ROUND_MS) { this.battle.ms -= ROUND_MS; this.exchange(); }
+      return;
+    }
+    this.time += dtMs / 1000;
+    this.z += this.speed * (dtMs / 1000);
+    const row = this.nextRow();
+    if (row) {
+      const cell = row.cells[this.lane] ?? null;
+      const reach = cell?.kind === 'enemy' ? ENEMY_REACH : 0;
+      if (row.z - reach <= this.z) this.hit(row, cell);
+    }
+    const mark = Math.floor(this.z / 500);
     if (mark > this.milestone) { this.milestone = mark; this.events.push({kind: 'milestone', meters: mark * 500}); }
+  }
+
+  private hit(row: Row, cell: Cell): void {
+    row.applied = true;
+    this.gates += 1;
+    const before = this.count;
+    const best = applyCell(before, row.cells[bestLane(before, row)]!);
+    const after = applyCell(before, cell);
+    const good = after >= best;
+    if (good) { this.streak += 1; this.perfect += 1; this.points += 10 + 2 * Math.min(this.streak, 10); } else { this.streak = 0; this.points += 2; }
+    if (cell?.kind === 'enemy') { this.startBattle(row, cell); return; }
+    this.setCount(after);
+    if (!cell) this.events.push({kind: 'empty', lane: this.lane});
+    else if (cell.kind === 'saw') this.events.push({kind: 'saw', lane: this.lane, before, after, good});
+    else this.events.push({kind: 'gate', lane: this.lane, op: cell.op, before, after, good});
+    if (this.count <= 0) { this.alive = false; this.events.push({kind: 'dead', boss: false, crowd0: before, enemy0: 0, enemyLeft: 0}); }
+  }
+
+  private startBattle(row: Row, cell: Enemy): void {
+    row.fought = this.lane;
+    this.battle = {lane: this.lane, boss: Boolean(cell.boss), crowd0: this.count, enemy0: cell.n, crowd: this.count, enemy: cell.n, step: exchangeSize(this.count, cell.n, Boolean(cell.boss)), ms: 0};
+    this.events.push({kind: 'battle', lane: this.lane, boss: Boolean(cell.boss), crowd: this.count, enemy: cell.n});
+  }
+
+  /** One exchange of blows: both sides lose the same number of members. */
+  private exchange(): void {
+    const battle = this.battle!;
+    const lost = Math.min(battle.step, battle.crowd, battle.enemy);
+    battle.crowd -= lost;
+    battle.enemy -= lost;
+    this.count = battle.crowd;
+    this.events.push({kind: 'exchange', lost, crowd: battle.crowd, enemy: battle.enemy, boss: battle.boss});
+    if (battle.crowd > 0 && battle.enemy > 0) return;
+    this.battle = undefined;
+    if (battle.crowd <= 0) {
+      this.alive = false;
+      this.events.push({kind: 'dead', boss: battle.boss, crowd0: battle.crowd0, enemy0: battle.enemy0, enemyLeft: battle.enemy});
+      return;
+    }
+    this.rivalsBeaten += battle.enemy0;
+    this.points += battle.enemy0 * 2 + Math.min(5000, battle.crowd) * (battle.boss ? 6 : 3);
+    this.events.push({kind: 'routed', boss: battle.boss, survivors: battle.crowd, enemy: battle.enemy0});
+    if (!battle.boss) return;
+    this.bossesDown += 1;
+    this.points += 500 * this.level;
+    if (this.level >= LEVELS) {
+      this.won = true;
+      this.points += 2000 + Math.min(5000, this.count) * 5;
+      this.events.push({kind: 'victory'});
+      return;
+    }
+    const joined = recruits(this.level);
+    this.setCount(this.count + joined);
+    this.events.push({kind: 'level', level: this.level, recruits: joined});
+    this.interlude = CLEAR_MS;
   }
 }

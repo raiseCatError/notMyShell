@@ -6,7 +6,7 @@ import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
 import {generateLines, LinesBoard, SIZES, solveLines, validLinesSolution} from '../src/arcade/games/lines/logic.js';
-import {linesGame} from '../src/arcade/games/lines/index.js';
+import {linesGame, shapeHas} from '../src/arcade/games/lines/index.js';
 import {displayWidth} from '../src/util/text.js';
 
 function memory(initial: GameRecord = {}): GameRecordHandle & {raw(): GameRecord} {
@@ -139,4 +139,63 @@ test('render: every size and mode draws inside its bounds, with letters as well 
     for (const line of canvas.plain()) assert.ok(displayWidth(line) <= columns);
     game.dispose();
   }
+});
+
+test('layout: cells are physically square at many sizes and the board sits inside the canvas', () => {
+  for (const [columns, rows] of [[160, 45], [100, 34], [80, 30], [60, 24], [40, 16], [28, 12]] as const) for (const size of SIZES) {
+    const game = linesGame.create(context(memory(), {size: {columns, rows}})) as never as Probe & {layout(): {cellW: number; cellH: number; x: number; y: number; width: number; height: number} | undefined};
+    game.key(text(String(size)));
+    const layout = game.layout();
+    if (!layout) continue;
+    assert.equal(layout.cellW / (layout.cellH * 2), 1, `${columns}x${rows} ${size}`);
+    assert.ok(layout.x >= 0 && layout.x + layout.width <= columns && layout.y >= 1 && layout.y + layout.height <= rows);
+    game.dispose();
+  }
+  const big = linesGame.create(context(memory(), {size: {columns: 100, rows: 34}})) as never as Probe & {layout(): {cellH: number}};
+  big.key(text('6'));
+  assert.ok(big.layout().cellH >= 3, 'a 6x6 board uses large cells in a full-screen Stage');
+});
+
+test('end silhouettes: every color has its own shape at the larger cell sizes', () => {
+  for (const size of [6, 8]) {
+    const masks = new Set<string>();
+    for (let color = 0; color < 8; color += 1) {
+      let mask = '';
+      for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) mask += shapeHas(color, size, x, y) ? '1' : '0';
+      assert.ok(mask.includes('1'));
+      masks.add(mask);
+    }
+    assert.equal(masks.size, 8, `size ${size}`);
+  }
+});
+
+test('joining a pair pulses along it with motion and not with reduced motion; a click moves the cursor and picks up an end', () => {
+  for (const reduced of [false, true]) {
+    const game = linesGame.create(context(memory(), {motion: {reduced, effects: reduced ? 'off' : 'normal'}})) as never as Probe & {pulses: Map<number, number>; refreshMs: number};
+    game.key(text('5'));
+    game.key(text('t'));
+    assert.equal(game.pulses.size > 0, !reduced);
+    assert.equal(game.refreshMs > 0, !reduced);
+    game.animate(5000);
+    assert.equal(game.pulses.size, 0, 'the pulse ends');
+    game.dispose();
+  }
+  const game = linesGame.create(context()) as never as Probe & {layout(): {x: number; y: number; stepX: number; stepY: number}};
+  game.key(text('5'));
+  const l = game.layout();
+  const end = game.board.data.puzzle.ends[0]![0]!;
+  game.key({kind: 'mouseClick', x: l.x + (end % 5) * l.stepX + 2, y: l.y + Math.floor(end / 5) * l.stepY + 2});
+  assert.equal(game.cursor, end);
+  assert.equal(game.board.active, 0);
+  game.dispose();
+});
+
+test('without color each path cell is filled with its letter (capital ends, small path)', () => {
+  const game = linesGame.create(context(memory(), {color: 'none', safeGlyphs: true})) as never as Probe;
+  game.key(text('5')); game.key(text('t'));
+  const canvas = new Canvas(100, 34);
+  game.render(canvas, 0, arcadePalette());
+  const lines = canvas.plain({color: 'none', safe: true});
+  assert.ok(lines.some(line => /[A-E]{3}/.test(line)) || lines.some(line => /[a-e]{3}/.test(line)));
+  game.dispose();
 });
