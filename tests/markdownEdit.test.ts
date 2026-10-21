@@ -320,3 +320,23 @@ test('dirty recovered buffers: helpers edit the restored text and undo steps bac
   b.undo();
   assert.deepEqual(b.lines, ['disk']);
 });
+
+/** An array whose line reads are counted: deterministic evidence of how much work an action does. */
+function counted(lines: string[]): {lines: string[]; reads: () => number} {
+  let reads = 0;
+  const proxy = new Proxy(lines, {get(target, key, receiver) { if (typeof key === 'string' && /^\d+$/u.test(key)) reads += 1; return Reflect.get(target, key, receiver); }});
+  return {lines: proxy, reads: () => reads};
+}
+
+test('list actions read each line a bounded number of times: fence state is found once per action, not once per line looked at', () => {
+  const n = 30_000;
+  const source = Array.from({length: n}, (_, index) => `- item ${index}`);
+  for (const act of [(b: TextBuffer) => shiftListItems(b, false), (b: TextBuffer) => continueList(b), (b: TextBuffer) => toggleTask(b)]) {
+    const watched = counted([...source]);
+    const b = new TextBuffer(['x'], () => 0);
+    b.lines = watched.lines;
+    b.caret = at(n - 1, 12);
+    act(b);
+    assert.ok(watched.reads() < 8 * n, `${watched.reads()} line reads for ${n} lines`);
+  }
+});

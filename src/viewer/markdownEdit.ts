@@ -39,17 +39,26 @@ function parseItem(line: string): Item | undefined {
     ...(task === undefined ? {} : {task}), prefixLength: whole.length};
 }
 
-/** Whether line `index` sits inside a fenced code block (or is a fence line). */
-function inFence(lines: readonly string[], index: number): boolean {
+/** For lines 0..last: whether each sits inside a fenced code block (or is a fence line), found in one pass. */
+export function fenceMap(lines: readonly string[], last: number): boolean[] {
+  const inside: boolean[] = [];
   let open: {char: string; length: number} | undefined;
-  for (let at = 0; at <= index; at += 1) {
+  for (let at = 0; at <= last && at < lines.length; at += 1) {
     const match = FENCE.exec(lines[at]!);
-    if (!match) continue;
-    const run = match[1]!;
-    if (!open) { if (run[0] !== '`' || !match[2]!.includes('`')) { open = {char: run[0]!, length: run.length}; if (at === index) return true; } }
-    else if (run[0] === open.char && run.length >= open.length && match[2]!.trim() === '') { if (at === index) return true; open = undefined; }
+    let fence = false;
+    if (match) {
+      const run = match[1]!;
+      if (!open) { if (run[0] !== '`' || !match[2]!.includes('`')) { open = {char: run[0]!, length: run.length}; fence = true; } }
+      else if (run[0] === open.char && run.length >= open.length && match[2]!.trim() === '') { fence = true; open = undefined; }
+    }
+    inside.push(fence || open !== undefined);
   }
-  return open !== undefined;
+  return inside;
+}
+
+/** Whether line `index` sits inside a fenced code block (or is a fence line). */
+export function inFence(lines: readonly string[], index: number): boolean {
+  return fenceMap(lines, index)[index] ?? false;
 }
 
 const width = (text: string) => { let cells = 0; for (const character of text) cells += character === '\t' ? TAB - (cells % TAB) : 1; return cells; };
@@ -59,9 +68,9 @@ const indentOf = (line: string) => width(/^((?:[ ]{0,3}>[ ]?)*)([ \t]*)/u.exec(l
 const itemIndent = (item: Item) => width(item.indent);
 const quoteOf = (line: string) => /^((?:[ ]{0,3}>[ ]?)*)/u.exec(line)![1]!;
 
-function itemAt(lines: readonly string[], index: number): Item | undefined {
+function itemAt(lines: readonly string[], index: number, fenced: readonly boolean[]): Item | undefined {
   const line = lines[index];
-  return line === undefined || inFence(lines, index) ? undefined : parseItem(line);
+  return line === undefined || fenced[index] ? undefined : parseItem(line);
 }
 
 /** The lines the caret or selection covers (a selection ending at a line start does not include that line). */
@@ -73,7 +82,7 @@ function coveredLines(buffer: TextBuffer): {first: number; last: number} {
 }
 
 /** Replace whole lines first..last with `lines` as one edit; positions are mapped by `move`. */
-function replaceLines(buffer: TextBuffer, first: number, last: number, lines: string[], move: (position: Position) => Position): void {
+export function replaceLines(buffer: TextBuffer, first: number, last: number, lines: string[], move: (position: Position) => Position): void {
   const to = {line: last, column: buffer.lines[last]!.length};
   buffer.edit({line: first, column: 0}, to, lines.join('\n'), {caret: move(buffer.caret), ...(buffer.anchor ? {anchor: move(buffer.anchor)} : {})});
 }
@@ -109,10 +118,11 @@ function blockEnd(lines: readonly string[], start: number, indent: number): numb
 
 /** Enter on a list item: the next item (same marker, next number, unchecked box), or the end of the list on an empty item. Returns whether it handled the key. */
 export function continueList(buffer: TextBuffer): boolean {
+  const fenced = fenceMap(buffer.lines, buffer.lines.length - 1);
   if (buffer.selection) return false;
   const {line: row, column} = buffer.caret;
   const text = buffer.lines[row]!;
-  const item = itemAt(buffer.lines, row);
+  const item = itemAt(buffer.lines, row, fenced);
   if (!item || column < item.prefixLength) return false;
   const rest = text.slice(item.prefixLength);
   const from = {line: row, column: 0}, to = {line: row, column: text.length};
@@ -121,7 +131,7 @@ export function continueList(buffer: TextBuffer): boolean {
     if (item.indent === '') { buffer.edit(from, to, item.quote, {caret: {line: row, column: item.quote.length}}); return true; }
     let parentIndent = '';
     for (let at = row - 1; at >= 0; at -= 1) {
-      const above = itemAt(buffer.lines, at);
+      const above = itemAt(buffer.lines, at, fenced);
       if (above && above.quote === item.quote && itemIndent(above) < itemIndent(item)) { parentIndent = above.indent; break; }
       if (!isBlank(buffer.lines[at]!) && indentOf(buffer.lines[at]!) < itemIndent(item) && !above) break;
     }
@@ -140,16 +150,17 @@ export function continueList(buffer: TextBuffer): boolean {
 
 /** Tab or Shift+Tab over list items (and their children): one level in or out. False when no list item is covered, so the key keeps its ordinary meaning. */
 export function shiftListItems(buffer: TextBuffer, outdent: boolean): boolean {
+  const fenced = fenceMap(buffer.lines, buffer.lines.length - 1);
   const {first, last} = coveredLines(buffer);
   const selected: number[] = [];
-  for (let at = first; at <= last; at += 1) if (itemAt(buffer.lines, at)) selected.push(at);
+  for (let at = first; at <= last; at += 1) if (itemAt(buffer.lines, at, fenced)) selected.push(at);
   if (!selected.length) return false;
-  const lead = itemAt(buffer.lines, selected[0]!)!;
+  const lead = itemAt(buffer.lines, selected[0]!, fenced)!;
   let delta: number;
   if (outdent) {
     let target = 0;
     for (let at = selected[0]! - 1; at >= 0; at -= 1) {
-      const above = itemAt(buffer.lines, at);
+      const above = itemAt(buffer.lines, at, fenced);
       if (above && above.quote === lead.quote && itemIndent(above) < itemIndent(lead)) { target = itemIndent(above); break; }
     }
     delta = -(itemIndent(lead) - target);
@@ -157,7 +168,7 @@ export function shiftListItems(buffer: TextBuffer, outdent: boolean): boolean {
   } else {
     delta = lead.marker.length + lead.gap.length;
     for (let at = selected[0]! - 1; at >= 0; at -= 1) {
-      const above = itemAt(buffer.lines, at);
+      const above = itemAt(buffer.lines, at, fenced);
       if (above && above.quote === lead.quote && itemIndent(above) === itemIndent(lead)) { delta = above.marker.length + above.gap.length; break; }
       if (!isBlank(buffer.lines[at]!) && indentOf(buffer.lines[at]!) <= itemIndent(lead) && !above) break;
       if (above && itemIndent(above) < itemIndent(lead)) break;
@@ -166,7 +177,7 @@ export function shiftListItems(buffer: TextBuffer, outdent: boolean): boolean {
   const moved = new Map<number, number>();
   for (const at of selected) {
     if (moved.has(at)) continue;
-    const item = itemAt(buffer.lines, at)!;
+    const item = itemAt(buffer.lines, at, fenced)!;
     const end = blockEnd(buffer.lines, at, itemIndent(item));
     for (let inside = at; inside <= end; inside += 1) if (!isBlank(buffer.lines[inside]!)) moved.set(inside, 0);
   }
@@ -187,9 +198,10 @@ export function shiftListItems(buffer: TextBuffer, outdent: boolean): boolean {
 
 /** Toggle the task checkbox of the list items at the caret or in the selection. */
 export function toggleTask(buffer: TextBuffer): EditResult {
+  const fenced = fenceMap(buffer.lines, buffer.lines.length - 1);
   const {first, last} = coveredLines(buffer);
   const entries: Array<{at: number; item: Item}> = [];
-  for (let at = first; at <= last; at += 1) { const item = itemAt(buffer.lines, at); if (item) entries.push({at, item}); }
+  for (let at = first; at <= last; at += 1) { const item = itemAt(buffer.lines, at, fenced); if (item) entries.push({at, item}); }
   if (!entries.length) return {changed: false, note: 'Put the caret on a list item to toggle a task.'};
   const tasks = entries.filter(entry => entry.item.task !== undefined);
   const open = tasks.some(entry => entry.item.task![1] === ' ');
@@ -220,8 +232,9 @@ export function toggleTask(buffer: TextBuffer): EditResult {
 
 /** Renumber the ordered list at the caret from its first number; only the numbers (and the indentation of children, when a number gains or loses a digit) change. */
 export function renumberList(buffer: TextBuffer): EditResult {
+  const fenced = fenceMap(buffer.lines, buffer.lines.length - 1);
   const row = buffer.caret.line;
-  const base = itemAt(buffer.lines, row);
+  const base = itemAt(buffer.lines, row, fenced);
   if (!base || !base.ordered) return {changed: false, note: 'Put the caret on a numbered list item to renumber it.'};
   const level = itemIndent(base);
   const sameList = (item: Item | undefined): item is Item => Boolean(item && item.ordered && item.quote === base.quote && itemIndent(item) === level && item.delimiter === base.delimiter);
@@ -230,7 +243,7 @@ export function renumberList(buffer: TextBuffer): EditResult {
     for (let at = row + step; at >= 0 && at < buffer.lines.length; at += step) {
       const text = buffer.lines[at]!;
       if (isBlank(text)) continue;
-      const item = itemAt(buffer.lines, at);
+      const item = itemAt(buffer.lines, at, fenced);
       if (sameList(item)) { edge = at; continue; }
       if (indentOf(text) > level || (item && itemIndent(item) > level)) continue;
       break;
@@ -239,13 +252,13 @@ export function renumberList(buffer: TextBuffer): EditResult {
   };
   const first = scan(-1), last = scan(1);
   const members: number[] = [];
-  for (let at = first; at <= last; at += 1) if (sameList(itemAt(buffer.lines, at))) members.push(at);
-  const start = itemAt(buffer.lines, first)!.number;
+  for (let at = first; at <= last; at += 1) if (sameList(itemAt(buffer.lines, at, fenced))) members.push(at);
+  const start = itemAt(buffer.lines, first, fenced)!.number;
   const out = buffer.lines.slice(first, last + 1);
   const changes = new Map<number, number>();
   const markerEnds = new Map<number, number>();
   members.forEach((at, order) => {
-    const item = itemAt(buffer.lines, at)!;
+    const item = itemAt(buffer.lines, at, fenced)!;
     const wanted = `${start + order}${item.delimiter}`;
     if (wanted === item.marker) return;
     const numberAt = item.quote.length + item.indent.length;
