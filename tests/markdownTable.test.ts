@@ -156,3 +156,13 @@ test('a table with hundreds of columns and long cells is handled without delay',
   assert.deepEqual(b.lines, lines, 'insert then delete restores the source exactly');
   assert.ok(Date.now() - started < 1000);
 });
+
+test('a huge paragraph without a table is not scanned quadratically, and fences inside a long paragraph still cut it', () => {
+  const lines = Array.from({length: 40_000}, (_, index) => `line ${index} | x`);
+  const started = Date.now();
+  for (let index = 0; index < 20; index += 1) tableStatus(lines, at(20_000 + index, 3));
+  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+  const mixed = ['| a | b |', '|---|---|', '| 1 | 2 |', '```', '| x | y |', '```'];
+  assert.equal(findTable(mixed, 2)?.rows.last, 2, 'the fence ends the table');
+  assert.equal(findTable(mixed, 4), undefined);
+});

@@ -1,4 +1,4 @@
-import {inFence, replaceLines, type EditResult} from './markdownEdit.js';
+import {fenceMap, inFence, replaceLines, type EditResult} from './markdownEdit.js';
 import type {Position, TextBuffer} from './textBuffer.js';
 
 /**
@@ -42,17 +42,26 @@ function splitRow(text: string): Row {
   return {text, cells, leading, trailing};
 }
 
+/** How far from the caret a table's paragraph is searched. */
+const SCAN_LIMIT = 5000;
 const DELIMITER_CELL = /^\s*:?-+:?\s*$/u;
 const isDelimiter = (row: Row) => row.cells.every(cell => DELIMITER_CELL.test(row.text.slice(cell.from, cell.to)));
 
 /** The table containing line `index`, found by looking for a header row followed by a matching delimiter row. */
 export function findTable(lines: readonly string[], index: number): Table | undefined {
   const line = lines[index];
-  if (line === undefined || line.trim() === '' || inFence(lines, index)) return undefined;
-  let top = index;
-  while (top > 0 && lines[top - 1]!.trim() !== '' && !inFence(lines, top - 1)) top -= 1;
-  let bottom = index;
-  while (bottom + 1 < lines.length && lines[bottom + 1]!.trim() !== '' && !inFence(lines, bottom + 1)) bottom += 1;
+  if (line === undefined || line.trim() === '') return undefined;
+  // The paragraph around the line, bounded; text without pipes anywhere near is not a table and costs nothing more.
+  let top = index, bottom = index;
+  while (top > 0 && index - top < SCAN_LIMIT && lines[top - 1]!.trim() !== '') top -= 1;
+  while (bottom + 1 < lines.length && bottom - index < SCAN_LIMIT && lines[bottom + 1]!.trim() !== '') bottom += 1;
+  let withPipes = 0;
+  for (let at = top; at <= bottom && withPipes < 2; at += 1) if (lines[at]!.includes('|')) withPipes += 1;
+  if (!withPipes) return undefined;
+  const fenced = fenceMap(lines, bottom);
+  if (fenced[index]) return undefined;
+  while (top < index && fenced[top]) top += 1;
+  for (let at = top; at <= bottom; at += 1) if (fenced[at] && at > index) { bottom = at - 1; break; }
   for (let header = top; header + 1 <= bottom; header += 1) {
     if (!lines[header]!.includes('|') && !lines[header + 1]!.includes('|')) continue;
     const head = splitRow(lines[header]!), delimiter = splitRow(lines[header + 1]!);
