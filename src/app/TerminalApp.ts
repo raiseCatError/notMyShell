@@ -2498,6 +2498,7 @@ export class TerminalApp {
     }
     // Ctrl+T is NMSh's own key: it opens the Arcade (or says why not) and is never written to a program, so it is safe over a command.
     if (key.kind === 'arcade') { this.openArcade(undefined, 'Ctrl+T', true); return; }
+    if (key.kind === 'escape' && this.arcadeOffer()) { this.editor.clear(); this.runningDraft = undefined; this.render(); return; }
     if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
       const hold = this.ownershipLook;
@@ -4241,6 +4242,8 @@ export class TerminalApp {
     const activity = this.running || this.queueState.entries.length ? new BackgroundActivity() : undefined;
     const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows}, game, activity && this.arcadeCompanion(activity));
     this.arcadeClosing = undefined;
+    // Stop every clock that paints the shell's frame; render() recreates them when the Arcade closes.
+    this.cancelPresentation();
     const handoff = this.arcadeHandoff('in');
     this.arcade = {session, interval: 0, floor: 40, last: performance.now(), handoff, under: handoff?.under, ...(activity ? {activity} : {})};
     this.arcadePaintedAt = 0;
@@ -11862,7 +11865,8 @@ export class TerminalApp {
         }
       }
       let suffix = '';
-      if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
+      if (row === input.rows[input.rows.length - 1] && this.arcadeOffer()) suffix = `${ACCENT}  ·  Open Arcade while the command runs? Enter Open · Esc Cancel${RESET}`;
+      else if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
       const editorColumns = this.inputColumns(columns);
@@ -12140,8 +12144,9 @@ export class TerminalApp {
 
   /** Decorative frames reuse the base projection; they never walk transcript history. */
   private paintPresentation(now: number): void {
-    // Idle visuals are the sole owner of the screen while active.
-    if (this.idle) return;
+    // Idle visuals and the Arcade are each the sole owner of the screen while active: a clock the shell's own frame started
+    // (a running command's activity rows, a Chroma divider) must never paint between their frames.
+    if (this.idle || this.arcade) return;
     const cached = this.presentationFrame;
     if (!cached) return;
     const {frame, plan} = cached;
@@ -12634,6 +12639,22 @@ export class TerminalApp {
     return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
   }
 
+  /**
+   * The offer to open the Arcade over a running command, derived from the composer, never stored: it exists only while the
+   * composer text is exactly one valid Arcade command and everything the Ctrl+T path checks still holds. Editing the text,
+   * Esc, a question from the program or any change of ownership ends it by itself, so there is nothing to replay or approve.
+   */
+  private arcadeOffer(): {game?: string} | undefined {
+    if (!this.running) return undefined;
+    const text = this.editor.text;
+    if (!text || /[\r\n]/u.test(text) || !isSlashInput(text)) return undefined;
+    const slash = parseSlashCommand(text);
+    if (slash?.kind !== 'arcade' || (slash.game !== undefined && !findGame(slash.game))) return undefined;
+    if (this.queueCompose || this.queueEdit || this.answersByDefault() || this.replayingHeld || this.replayTypedWhile !== undefined) return undefined;
+    if (this.arcadeBlocker(true)) return undefined;
+    return slash.game === undefined ? {} : {game: slash.game};
+  }
+
   /** While a command runs, the empty composer says what Enter will do with what you type. */
   private composerHint(): {text: string; waiting: boolean} | undefined {
     // Typing held when a command ended right after its hidden input: whatever runs now, only the person settles it.
@@ -12929,6 +12950,15 @@ export class TerminalApp {
     }
     const slash = isSlashInput(text) ? parseSlashCommand(text) : undefined;
     if (this.running) {
+      // NMSh's own composer holds a complete, valid Arcade command and the offer is showing: this Enter accepts it. It is
+      // never queued, never sent to the shell and approves nothing.
+      const offer = intent === 'enter' ? this.arcadeOffer() : undefined;
+      if (offer) {
+        this.editor.clear();
+        this.runningDraft = undefined;
+        this.openArcade(offer.game, text.trim(), true);
+        return;
+      }
       if (intent !== 'send' && slash && slash.kind !== 'unknown') {
         const refused = ({zsh: 'Wait for the foreground command to finish or interrupt it, then run /zsh.', clear: 'Wait for the foreground command to finish before archiving this transcript.',
           resume: 'Wait for the foreground command to finish before switching transcripts.'} as Record<string, string>)[slash.kind === 'shell' && text.trim() === '/zsh' ? 'zsh' : slash.kind];

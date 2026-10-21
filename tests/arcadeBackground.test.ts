@@ -417,3 +417,178 @@ test('a paused game says why and how to answer, and Resume is not undone by the 
     assert.equal(t.app['arcade'].session.screen, 'playing', 'the same question does not pause it again');
   } finally { t.dispose(); }
 });
+
+/** Everything the host terminal would be shown: every renderer.render() call, in order. */
+function hostFrames(t: ReturnType<typeof setup>) {
+  const shown: string[][] = [];
+  const inner = t.app['renderer'].render;
+  t.app['renderer'].render = (value: {rows: string[]}) => { shown.push(value.rows.map(row => stripAnsi(row))); inner(value as never); };
+  return shown;
+}
+const isShellFrame = (rows: string[]) => rows.some(row => /Ctrl\+Q runs it after|Enter holds it for approval|current command/u.test(row));
+const isArcadeFrame = (rows: string[]) => rows.some(row => /Vespyr Arcade|running ·/u.test(row));
+
+test('rendering ownership: the shell\'s own presentation clocks never paint over the Arcade', () => {
+  const t = setup();
+  try {
+    t.begin('make', 'compiling\r\n');
+    t.app['render']();
+    assert.ok(t.app['presentationSubscription'] || t.app['presentationFrame'], 'a running command has live presentation state');
+    t.press(ARCADE);
+    t.app['arcade'].handoff = undefined;
+    const shown = hostFrames(t);
+    t.app['render']();
+    for (let index = 0; index < 40; index += 1) {
+      t.tick(100);
+      t.app['paintPresentation'](Date.now());   // what every presentation-clock subscriber of the shell does
+      t.app['onShellData'](`out ${index}\r\n`);
+      t.app['paintArcade']();
+    }
+    t.complete(0);
+    t.tick(5000);
+    t.app['render']();
+    assert.ok(shown.length > 0);
+    const foreign = shown.filter(rows => !isArcadeFrame(rows));
+    assert.equal(foreign.length, 0, `${foreign.length} of ${shown.length} host frames were not the Arcade's`);
+    assert.equal(shown.filter(isShellFrame).length, 0, 'no shell frame reached the host');
+    assert.equal(t.app['presentationSubscription'], undefined, 'the shell\'s presentation clock is stopped while the Arcade owns the screen');
+  } finally { t.dispose(); }
+});
+
+// ---- the /games offer over a running command ------------------------------------------------------------------
+
+const typeText = (t: ReturnType<typeof setup>, value: string) => { for (const char of value) t.press(t.text(char)); };
+const OFFER = /Open Arcade while the command runs\? Enter Open · Esc Cancel/u;
+
+test('/games over a running command: the offer shows as soon as the command is complete, one Enter opens it, nothing is queued or sent', () => {
+  const t = setup();
+  try {
+    t.begin('sleep 60; echo done');
+    typeText(t, '/gam');
+    assert.doesNotMatch(t.screen().join('\n'), OFFER, 'a partial command offers nothing');
+    typeText(t, 'es');
+    assert.match(t.screen().join('\n'), OFFER);
+    assert.equal(t.app['arcade'], undefined, 'nothing opens before Enter');
+    const running = t.app['running'];
+    t.press({kind: 'enter'});
+    assert.ok(t.app['arcade'], 'one Enter opens it');
+    assert.equal(t.app['running'], running, 'the command is the same one');
+    assert.equal(t.app['editor'].text, '');
+    assert.deepEqual(t.queued, []);
+    assert.equal(t.owner.state.entries.length, 0, '/games was not queued');
+    t.complete(0);
+    assert.equal(t.transcript().records.map(record => record.command).join(), 'sleep 60; echo done', 'no /games command in the journal');
+  } finally { t.dispose(); }
+});
+
+test('/arcade, /game and /game <id> offer the same; unknown and invalid ones do not', () => {
+  for (const [input, offered] of [['/arcade', true], ['/game', true], ['/game run', true], ['/game nosuchgame', false], ['/gamesx', false], ['/foo', false], ['games', false], ['/games run extra words', false]] as const) {
+    const t = setup();
+    try {
+      t.begin('sleep 60');
+      typeText(t, input);
+      assert.equal(OFFER.test(t.screen().join('\n')), offered, input);
+    } finally { t.dispose(); }
+  }
+});
+
+test('Esc cancels the offer and leaves nothing behind; editing it withdraws it', () => {
+  const t = setup();
+  try {
+    t.begin('sleep 60');
+    typeText(t, '/games');
+    t.press({kind: 'escape'});
+    assert.equal(t.app['editor'].text, '');
+    assert.equal(t.app['arcade'], undefined);
+    assert.deepEqual(t.queued, []);
+    assert.equal(t.owner.state.entries.length, 0);
+    typeText(t, '/games');
+    t.press({kind: 'backspace'}, {kind: 'backspace'});
+    assert.doesNotMatch(t.screen().join('\n'), OFFER);
+    assert.ok(t.app['running']);
+  } finally { t.dispose(); }
+});
+
+test('the offer disappears when ownership is no longer clear, and Enter then does what it always did', () => {
+  for (const [name, change] of [
+    ['a question', (t: ReturnType<typeof setup>) => t.app['onInputState']({request: {since: Date.now() + 1000, confidence: 'likely', mode: 'line', prompt: 'Continue? '}, timing: {waitedMs: 0, waits: 1}})],
+    ['a terminal owner', (t: ReturnType<typeof setup>) => t.app['onInputState']({terminalOwner: true, timing: {waitedMs: 0, waits: 0}})],
+    ['a queue review', (t: ReturnType<typeof setup>) => { t.app['queueReview'] = {kind: 'approve', id: 1}; }],
+    ['passthrough', (t: ReturnType<typeof setup>) => { t.app['passthrough'] = true; }],
+  ] as const) {
+    const t = setup();
+    try {
+      t.begin('sleep 60');
+      typeText(t, '/games');
+      assert.match(t.screen().join('\n'), OFFER, name);
+      // The existing rule hands text typed for a program that takes the terminal to that program; record it here.
+      (t.session as unknown as {write: (data: string) => void}).write = () => {};
+      change(t);
+      assert.equal(t.app['arcadeOffer'](), undefined, name);
+      if (!t.app['passthrough']) assert.doesNotMatch(t.screen().join('\n'), OFFER, name);
+      assert.equal(t.app['arcade'], undefined, name);
+      assert.deepEqual(t.queued, [], name);
+    } finally { t.dispose(); }
+  }
+});
+
+test('a held queue entry is untouched by the offer, and the command finishing while it shows queues nothing', () => {
+  const t = setup();
+  try {
+    t.begin('make');
+    t.owner.request({op: 'add', text: 'rm -r build', condition: 'approve'});
+    typeText(t, '/games');
+    t.press({kind: 'enter'});
+    assert.ok(t.app['arcade']);
+    assert.equal(t.owner.state.entries.length, 1);
+    assert.notEqual(t.owner.state.entries[0]?.approved, true);
+    while (t.app['arcade']) t.press({kind: 'interrupt'});
+    typeText(t, '/games');
+    assert.match(t.screen().join('\n'), OFFER);
+    t.complete(0);
+    assert.equal(t.app['arcadeOffer'](), undefined, 'the command is gone: no offer');
+    assert.equal(t.owner.state.entries.length, 1, 'still just the held entry');
+    assert.deepEqual(t.queued, []);
+  } finally { t.dispose(); }
+});
+
+test('at an idle prompt /games opens at once, with no offer', async () => {
+  const t = setup();
+  try {
+    typeText(t, '/games');
+    assert.doesNotMatch(t.screen().join('\n'), OFFER);
+    t.press({kind: 'enter'});
+    assert.ok(t.app['arcade']);
+  } finally { t.dispose(); }
+});
+
+test('rendering ownership: a command finishing never restarts the entry transition, a resize keeps the Arcade, and closing shows the live shell once', () => {
+  const t = setup();
+  try {
+    t.begin('make', 'go\r\n');
+    const shown = hostFrames(t);
+    t.press(ARCADE);
+    const handoff = t.app['arcade'].handoff;
+    t.app['arcade'].handoff = undefined;
+    for (let index = 0; index < 5; index += 1) { t.tick(50); t.app['onShellData'](`x${index}\r\n`); }
+    t.complete(0);
+    t.tick(200);
+    t.app['render']();
+    assert.equal(t.app['arcade'].handoff, undefined, 'completion did not start another handoff');
+    assert.ok(handoff === undefined || handoff.direction === 'in');
+    t.app['onResize']();
+    t.app['arcade'].handoff = undefined;
+    t.app['render']();
+    assert.ok(isArcadeFrame(shown.at(-1)!), 'after a resize the host still shows the Arcade');
+    assert.equal(shown.filter(isShellFrame).length, 0, 'never a shell frame while open');
+    // Close while a new command is running: the live shell, once.
+    t.begin('second');
+    t.press({kind: 'interrupt'});
+    t.app['arcadeClosing'] = undefined;
+    const before = shown.length;
+    t.app['render']();
+    const after = shown.slice(before);
+    assert.ok(after.length >= 1 && after.every(rows => !isArcadeFrame(rows) || rows.some(row => /current command|second/u.test(row))), 'only shell frames after closing');
+    assert.ok(t.app['running']);
+  } finally { t.dispose(); }
+});

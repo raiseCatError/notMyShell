@@ -35,6 +35,35 @@ and says why in the transcript's usual frontend-interaction line:
 
 The evidence is the session's `InputState` (InputWatch). Output text is never parsed to decide ownership.
 
+## Opening by typing `/games` (the offer)
+
+While a command runs, a complete, valid Arcade command in NMSh's own composer (`/games`, `/arcade`, `/game`, `/game <id>`) shows
+an inline offer after the text: `Open Arcade while the command runs? Enter Open · Esc Cancel`. It is **derived on every
+frame, never stored** (`arcadeOffer()`): it exists only while the composer text is exactly one valid Arcade command and
+`arcadeBlocker(true)` (the same checks as Ctrl+T) passes, and there is no queue compose/edit, no held-key replay and no
+`answersByDefault()` (a program probably reading). So editing the text, Esc, a question, a terminal owner, passthrough, a
+queue review or the command ending withdraws it with nothing to replay.
+
+| State | Enter | Esc |
+|---|---|---|
+| Offer showing | `routeComposer` opens the Arcade (same `openArcade` as Ctrl+T), clears the composer; nothing is queued or sent | clears the composer; nothing queued, approved or run |
+| Partial/unknown/invalid command (`/gam`, `/foo`, `/game nosuch`) | the existing path (unknown: shell; invalid game: the existing explanation) | unchanged |
+| Program asking, passthrough, ownership look, queue review | the existing path (the program's reply, the review, the hold); no offer | unchanged |
+| Idle prompt | `/games` opens at once, no confirmation | unchanged |
+
+Typing characters is never read by the offer: it only observes `editor.text` after NMSh's own ownership look has routed the keys
+to the composer. It never inspects a program's stdin.
+
+## Rendering ownership
+
+While the Arcade is open exactly one component paints: `paintArcade`. v0.23 development found the shell's own
+presentation-clock subscribers (the running command's activity rows, Chroma dividers, transitions) still firing
+`paintPresentation`, which wrote the cached shell frame to the renderer between Arcade frames, so the host alternated
+Arcade and shell. Fixed at the root: `paintPresentation` yields to the Arcade (as it does to idle visuals), and opening calls
+`cancelPresentation()` so those clocks stop (`render()` recreates them when the Arcade closes). Output chunks repaint the
+Arcade at most four times a second. Tests assert the host-bound stream (every `renderer.render` call, and the PTY's real byte
+stream) contains no shell frame while the Arcade is open, before and after the fix.
+
 ## While it is open
 
 - **Every key is the Arcade's** (the existing early branch in `handleKey`). Nothing reaches the PTY, the composer, history,

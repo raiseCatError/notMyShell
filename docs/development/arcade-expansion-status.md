@@ -199,6 +199,9 @@ a running command. Epic #481; the queue/input risks it touches are tracked in #4
 | Notification log in the hub (`n`) and pause sheet; any key returns | `tests/arcadeCompanion.test.ts` | NOT RUN |
 | No leaked clock subscription or timer after repeated open/close | `closing and quitting leave no clock subscription or timer behind` | n/a |
 
+| Rendering ownership: the host sees only Arcade frames while open (flicker fix) | `rendering ownership` tests (host-frame stream; failed 40/84 shell frames before the fix) and the live chatty-command test (0.08 CPU s in 3 s, ~106 KB host bytes) | **A person saw the flicker in a real terminal; re-check NOT RUN** |
+| `/games` offer over a running command (Enter opens, Esc cancels, nothing queued) | `tests/arcadeBackground.test.ts` offer tests, live PTY test | NOT RUN |
+
 Known limits (recorded, not hidden):
 
 - Over a running command the Arcade opens only by Ctrl+T. Typing `/games` into a running program is still that program's
