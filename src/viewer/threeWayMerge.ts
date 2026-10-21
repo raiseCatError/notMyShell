@@ -111,11 +111,15 @@ export function merge3(base: readonly string[], mine: readonly string[], theirs:
   for (const region of [...regionsMine, ...regionsTheirs]) widen(base, region);
   const items = [...regionsMine.map(region => ({region, side: 'mine' as const})), ...regionsTheirs.map(region => ({region, side: 'theirs' as const}))]
     .sort((a, b) => a.region.lo - b.region.lo || a.region.hi - b.region.hi);
-  const clusters: Array<{start: number; end: number; mine: Region[]; theirs: Region[]}> = [];
+  // Regions join a cluster when they touch where the aligner put them, or when the places they could slide to share lines: a slide
+  // that merely ends beside the other side's change does not make them conflict (the text is the same either way).
+  const clusters: Array<{start: number; end: number; wide: number; touch: number; mine: Region[]; theirs: Region[]}> = [];
   for (const item of items) {
     const last = clusters.at(-1);
-    if (last && item.region.lo <= last.end) { last.end = Math.max(last.end, item.region.hi); last[item.side].push(item.region); }
-    else clusters.push({start: item.region.lo, end: item.region.hi, mine: item.side === 'mine' ? [item.region] : [], theirs: item.side === 'theirs' ? [item.region] : []});
+    if (last && (item.region.lo < last.wide || item.region.start <= last.touch)) {
+      last.end = Math.max(last.end, item.region.hi); last.wide = Math.max(last.wide, item.region.hi); last.touch = Math.max(last.touch, item.region.end);
+      last[item.side].push(item.region);
+    } else clusters.push({start: item.region.lo, end: item.region.hi, wide: item.region.hi, touch: item.region.end, mine: item.side === 'mine' ? [item.region] : [], theirs: item.side === 'theirs' ? [item.region] : []});
   }
   const segments: Segment[] = [];
   const text = (lines: readonly string[]) => {

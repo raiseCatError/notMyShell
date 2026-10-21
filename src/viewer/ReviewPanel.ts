@@ -44,7 +44,8 @@ export function createReview(state: EditorState, theirs: EditableFile): ReviewSt
 export function beginReview(state: EditorState, theirs: EditableFile): {reviewing: boolean; note: string} {
   if (!theirs.identity) return {reviewing: false, note: `${state.file.title} was deleted; Save anyway recreates it.`};
   // The path now leads to a different file (a symlink was retargeted): its lines have nothing to do with the version opened.
-  if (theirs.realPath !== state.file.realPath) return {reviewing: false, note: `${state.file.title} now points to a different file (${theirs.title}). Nothing is merged: Overwrite would write there, Reload discards your changes, and saving a copy elsewhere keeps them.`};
+  // (A case-insensitive volume reports the same file under whatever case it was created with.)
+  if (theirs.realPath.toLowerCase() !== state.file.realPath.toLowerCase()) return {reviewing: false, note: `${state.file.title} now leads to a different file (${theirs.realPath}); your text was opened from ${state.file.realPath}. Nothing is merged. Keep editing to save a copy elsewhere, or Reload to read the new file.`};
   const review = createReview(state, theirs);
   if (!hunksOf(review.merge).length) {
     applyReview(state, theirs, review);
@@ -66,7 +67,7 @@ export function restartReview(state: EditorState, theirs: EditableFile): string 
 /** Whether `fresh` is exactly the disk version the review was built from. */
 export function sameDiskVersion(review: ReviewState, fresh: EditableFile): boolean {
   const a = review.theirs.identity, b = fresh.identity;
-  return Boolean(a && b && a.dev === b.dev && a.ino === b.ino && a.hash === b.hash && review.theirs.realPath === fresh.realPath
+  return Boolean(a && b && a.dev === b.dev && a.ino === b.ino && a.hash === b.hash && review.theirs.realPath.toLowerCase() === fresh.realPath.toLowerCase()
     && review.theirs.lineEnding === fresh.lineEnding && review.theirs.bom === fresh.bom && review.theirs.finalNewline === fresh.finalNewline);
 }
 
@@ -80,7 +81,8 @@ export function applyReview(state: EditorState, fresh: EditableFile, review: Rev
   const previous = state.file;
   if (!unchanged) {
     // Undo puts the old text back, so it must put the old base back too: otherwise a save after Ctrl+Z would pass the identity check and overwrite what the merge brought in.
-    buffer.replaceAll(merged, {undo: () => { state.file = previous; }, redo: () => { state.file = fresh; }});
+    // Only while nothing has replaced that version since: a save in between made the file what the buffer then was, and undo must not put an older one back.
+    buffer.replaceAll(merged, {undo: () => { if (state.file === fresh) state.file = previous; }, redo: () => { if (state.file === previous) state.file = fresh; }});
     const line = Math.min(caret.line, buffer.lines.length - 1);
     buffer.caret = {line, column: Math.min(caret.column, buffer.lines[line]!.length)};
     buffer.anchor = undefined;

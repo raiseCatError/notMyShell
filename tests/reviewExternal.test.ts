@@ -335,3 +335,50 @@ test('review (reviewer finding 4): a draft written before a no-change apply gets
     assert.equal(draft?.baseHash, editorOf(f).file.identity?.hash);
   } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
 });
+
+test('second review: a save between the apply and an undo does not put a stale file version back', async () => {
+  const f = executionFrameFixture(110, 30);
+  let root = '';
+  try {
+    const { root: r, file } = await opened(f, 'a.txt', lines('a', 'b', 'c'));
+    root = r;
+    typeAt(f, 0, 1, 'X');
+    writeFileSync(file, lines('a', 'b', 'C'));
+    await startReview(f);
+    await apply(f);
+    press(f, '\u0013');
+    await settled(() => readFileSync(file, 'utf8') === lines('aX', 'b', 'C'), 'the save after the merge');
+    await settled(() => !editorOf(f).buffer.dirty, 'clean');
+    press(f, '\u001a');
+    press(f, '\u0013');
+    await settled(() => readFileSync(file, 'utf8') === lines('aX', 'b', 'c') || editorOf(f).dialog?.kind === 'conflict', 'a save or a conflict, never a wrongly stale refusal');
+    assert.equal(editorOf(f).dialog, undefined, 'saving after undo past the merge is allowed: the disk holds my own save');
+    assert.equal(readFileSync(file, 'utf8'), lines('aX', 'b', 'c'));
+    await settled(() => !editorOf(f).busy && !editorOf(f).buffer.dirty, 'the save to finish');
+    press(f, '\u0019');
+    press(f, '\u0013');
+    await settled(() => readFileSync(file, 'utf8') === lines('aX', 'b', 'C') && !editorOf(f).busy, 'saving after redo');
+    assert.equal(editorOf(f).dialog, undefined);
+  } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});
+
+test('second review: the retargeted-link note names the real target and promises nothing about Overwrite', async () => {
+  const f = executionFrameFixture(110, 30);
+  let root = '';
+  try {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-review-')));
+    const a = join(root, 'a.txt'), b = join(root, 'b.txt'), link = join(root, 'link.txt');
+    writeFileSync(a, lines('one', 'two')); writeFileSync(b, lines('uno', 'dos'));
+    symlinkSync(a, link);
+    f.app['openTextEditor'](link, '/edit link.txt');
+    await settled(() => Boolean(f.app['textEditor']), 'the editor');
+    typeAt(f, 0, 3, '!');
+    unlinkSync(link); symlinkSync(b, link);
+    await conflictOnSave(f);
+    press(f, 'v');
+    await settled(() => !editorOf(f).busy, 'the review request');
+    const note = editorOf(f).note?.text ?? '';
+    assert.ok(note.includes(b), note);
+    assert.doesNotMatch(note, /Overwrite would write there/u);
+  } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});

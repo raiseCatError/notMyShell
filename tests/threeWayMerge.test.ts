@@ -171,3 +171,15 @@ test('reviewer finding 5: widening never loses or duplicates text when every con
     assert.deepEqual(mergedLines(merge), theirs.length ? theirs : [''], `all theirs: ${JSON.stringify([base, mine, theirs])}`);
   }
 });
+
+test('second review: edits that only sit next to a sliding insertion stay independent; a slide that would overlap the other side\'s lines is still a conflict', () => {
+  // The inserted blank line can sit before or after the blank line that is already there; only one placement avoids the edited title, and the text is the same either way.
+  const clean = merge3(['# Title', '', 'para'], ['# New title', '', 'para'], ['# Title', '', '', 'para']);
+  assert.equal(pendingConflicts(clean), 0);
+  assert.deepEqual(mergedLines(clean), ['# New title', '', '', 'para']);
+  const second = merge3(['x', 'a'], ['y', 'a'], ['x', 'a', 'a']);
+  assert.equal(pendingConflicts(second), 0);
+  assert.deepEqual(mergedLines(second), ['y', 'a', 'a']);
+  // Still ambiguous: my deletion could be either copy, and one placement removes the line the disk edited.
+  assert.equal(pendingConflicts(merge3(['a', 'b', 'a', 'b', 'c'], ['a', 'b', 'c'], ['A', 'b', 'a', 'b', 'c'])), 1);
+});
