@@ -15,6 +15,9 @@ import {InputWatch} from '../session/InputWatch.js';
 import type {InputState} from '../session/inputState.js';
 import {systemProbe, type TerminalProbe} from '../session/terminalProbe.js';
 
+/** How long typing held after a command is done waits for the rest of its line before it is held as it is. */
+const HELD_LINE_SETTLE_MS = 250;
+
 interface SessionEvents {
   data: [string];
   prompt: [ShellMarker];
@@ -77,6 +80,13 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private done = false;
   /** The first word of the running command line, to say whose typing a held line was. */
   private program = '';
+  /**
+   * Typing that arrived after the command was done (#426): input reaches the session in whatever pieces the terminal
+   * delivered it, so it is put back together as the lines the person typed before it is held. A partial line waits for
+   * the rest of it, and is held as it is when the prompt comes or the person stops typing.
+   */
+  private heldAfterDone = '';
+  private heldTimer: NodeJS.Timeout | undefined;
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env,
     shell: ShellId | ShellAdapter = 'zsh', probe: TerminalProbe | undefined = systemProbe()) {
@@ -191,7 +201,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     if (this.ready && !submission && !this.atPrompt) {
       // The command is done (its prompt hooks run): nothing can read this for it, and the shell's command reader is
       // next. It is held for the person, never written (#426).
-      if (this.done) { this.emit('unread', data, this.program); return; }
+      if (this.done) { this.holdAfterDone(data); return; }
       if (!this.delivered) {
         this.delivered = true;
         // Before the bytes: whatever reaches the terminal for this command, its end takes back what was never read.
@@ -201,6 +211,27 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     if (this.ready) { this.inputWatch.onInput(data); this.order.input(data); return; }
     if (this.pendingInputBytes() + Buffer.byteLength(data, 'utf8') <= PENDING_INPUT_LIMIT) this.pendingInput += data;
     else this.emit('inputRejected', data, submission);
+  }
+
+  private holdAfterDone(data: string): void {
+    this.heldAfterDone += data;
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    const end = Math.max(this.heldAfterDone.lastIndexOf('\r'), this.heldAfterDone.lastIndexOf('\n'));
+    if (end >= 0) {
+      const lines = this.heldAfterDone.slice(0, end + 1);
+      this.heldAfterDone = this.heldAfterDone.slice(end + 1);
+      this.emit('unread', lines, this.program);
+    }
+    if (!this.heldAfterDone) return;
+    this.heldTimer = setTimeout(() => this.releaseHeldAfterDone(), HELD_LINE_SETTLE_MS);
+    this.heldTimer.unref?.();
+  }
+
+  private releaseHeldAfterDone(): void {
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    const text = this.heldAfterDone;
+    this.heldAfterDone = '';
+    if (text && !this.exited) this.emit('unread', text, this.program);
   }
 
   interrupt(): void {
@@ -245,6 +276,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.order.dispose();
     this.inputWatch.dispose();
     if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    this.heldAfterDone = '';
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
@@ -287,6 +320,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         this.pendingInput = '';
         if (pending && !this.exited) this.pty.write(pending);
       } else {
+        this.releaseHeldAfterDone();
         this.atPrompt = true;
         this.done = false;
         this.delivered = false;

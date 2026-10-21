@@ -209,3 +209,27 @@ precmd_functions+=(fake_p10k_precmd)
     rmSync(home, {recursive: true, force: true});
   }
 });
+
+test('typing that arrives in pieces after the command is done is held as the lines typed, not as one entry per piece (#426)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-held-pieces-'));
+  writeFileSync(join(home, '.zshrc'), '');
+  const session = new ShellSession(home, 80, 24, home);
+  const held: string[] = [];
+  session.on('unread', text => held.push(text));
+  try {
+    await once(session, 'prompt');
+    // The shell has said the command is done and its prompt has not come back: nothing can read what is typed now.
+    const done = () => { session['atPrompt'] = false; session['done'] = true; session['delivered'] = true; };
+    done();
+    for (const piece of ['e', 'c', 'h', 'o', ' N', 'EXT-1']) session.write(piece);
+    assert.deepEqual(held, [], 'a partial line waits for the rest of it');
+    session.write('\r');
+    assert.deepEqual(held, ['echo NEXT-1\r'], 'one line, whole, as soon as its Enter arrives');
+    held.length = 0;
+    // A correction typed in a later piece reaches the text it corrects.
+    for (const piece of ['ab', '\u007f', 'c\r', 'second', ' line']) session.write(piece);
+    assert.deepEqual(held, ['ab\u007fc\r']);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.deepEqual(held, ['ab\u007fc\r', 'second line'], 'a line left without Enter is held once the typing stops');
+  } finally { session.kill(); rmSync(home, {recursive: true, force: true}); }
+});
