@@ -222,3 +222,31 @@ test('describeDifference: counts and locates the first change, identical text sa
   assert.match(describeDifference(['a'], ['a', 'b', 'c']), /adds 2 lines/u);
   assert.match(describeDifference(['a'], ['a']), /identical/u);
 });
+
+test('review: an interrupted write leaves no permanent debris; pruning removes stale temporaries but not a fresh one', () => {
+  const root = scratch();
+  try {
+    const dir = join(root, 'r');
+    const store = new DraftStore(dir, {now: () => Date.now()});
+    store.write(sample({savedAt: Date.now()}));
+    const stale = join(dir, '.aaaa.tmp'), fresh = join(dir, '.bbbb.tmp');
+    writeFileSync(stale, 'partial', {mode: 0o600}); writeFileSync(fresh, 'partial', {mode: 0o600});
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stale, old, old);
+    store.prune();
+    assert.equal(existsSync(stale), false);
+    assert.equal(existsSync(fresh), true, 'a write in progress is not removed');
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review: a draft whose process id now belongs to something else is still offered once it is a day old', () => {
+  const root = scratch();
+  try {
+    const store = new DraftStore(join(root, 'r'));
+    // pid 1 is always running: it stands for a reused process id.
+    store.write(sample({pid: 1, savedAt: Date.now() - 1000}));
+    assert.equal(store.recoverable('/w/a.md').length, 0, 'a recent draft of a running process is its own');
+    store.write(sample({pid: 1, savedAt: Date.now() - 25 * 60 * 60 * 1000}));
+    assert.equal(store.recoverable('/w/a.md').length, 1);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});

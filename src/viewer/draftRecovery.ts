@@ -23,6 +23,9 @@ export const MAX_DRAFT_BYTES = 2 * MAX_EDIT_BYTES;
 export const MAX_DRAFTS = 50;
 export const DRAFT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 export const DRAFT_DEBOUNCE_MS = 1500;
+/** A running process id older than this no longer vouches for its draft: ids are reused, and a window idle that long is not typing. */
+export const DRAFT_LIVENESS_MS = 24 * 60 * 60 * 1000;
+const STALE_TEMP_MS = 60 * 60 * 1000;
 
 export interface Draft {
   version: 1;
@@ -145,7 +148,7 @@ export class DraftStore {
       const draft = this.read(name);
       if (!draft || draft.realPath !== realPath) continue;
       const kept = name.endsWith('.kept.json');
-      if (!kept && (draft.pid === process.pid || alive(draft.pid))) continue;
+      if (!kept && (draft.pid === process.pid || (alive(draft.pid) && this.now() - draft.savedAt < DRAFT_LIVENESS_MS))) continue;
       found.push({draft, kept, path: join(this.directory, name)});
     }
     return found.sort((a, b) => b.draft.savedAt - a.draft.savedAt);
@@ -163,11 +166,18 @@ export class DraftStore {
   /** Remove what is too old or beyond the bound, oldest first; drafts of running processes and unreadable files are the exceptions. */
   prune(): void {
     const at = this.now();
+    // A write that was cut short leaves a temporary beside the drafts; one no write could still own is removed.
+    try {
+      for (const name of readdirSync(this.directory)) {
+        if (!name.startsWith('.') || !name.endsWith('.tmp')) continue;
+        try { if (Date.now() - lstatSync(join(this.directory, name)).mtimeMs > STALE_TEMP_MS) unlinkSync(join(this.directory, name)); } catch { /* gone */ }
+      }
+    } catch { /* no directory yet */ }
     const live: Array<{name: string; savedAt: number}> = [];
     for (const name of this.names()) {
       const draft = this.read(name);
       if (!draft) { try { unlinkSync(join(this.directory, name)); } catch { /* gone */ } continue; }
-      if (!name.endsWith('.kept.json') && draft.pid !== process.pid && alive(draft.pid)) continue;
+      if (!name.endsWith('.kept.json') && draft.pid !== process.pid && alive(draft.pid) && at - draft.savedAt < DRAFT_LIVENESS_MS) continue;
       if (at - draft.savedAt > this.maxAgeMs) { try { unlinkSync(join(this.directory, name)); } catch { /* gone */ } continue; }
       live.push({name, savedAt: draft.savedAt});
     }
