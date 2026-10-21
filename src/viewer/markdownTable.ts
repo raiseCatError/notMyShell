@@ -43,18 +43,35 @@ function splitRow(text: string): Row {
 }
 
 /** How far from the caret a table's paragraph is searched. */
-const SCAN_LIMIT = 5000;
+export const SCAN_LIMIT = 5000;
 const DELIMITER_CELL = /^\s*:?-+:?\s*$/u;
 const isDelimiter = (row: Row) => row.cells.every(cell => DELIMITER_CELL.test(row.text.slice(cell.from, cell.to)));
+
+/** The run of non-blank lines around `index`, looked at no further than SCAN_LIMIT lines either way; `clipped` when that cut it short. */
+function paragraphAround(lines: readonly string[], index: number): {top: number; bottom: number; clipped: boolean} {
+  let top = index, bottom = index;
+  while (top > 0 && index - top < SCAN_LIMIT && lines[top - 1]!.trim() !== '') top -= 1;
+  while (bottom + 1 < lines.length && bottom - index < SCAN_LIMIT && lines[bottom + 1]!.trim() !== '') bottom += 1;
+  const clipped = (top > 0 && lines[top - 1]!.trim() !== '') || (bottom + 1 < lines.length && lines[bottom + 1]!.trim() !== '');
+  return {top, bottom, clipped};
+}
+
+/** Why an action found no table at the caret: too large to look at, or simply not in one. */
+function missing(lines: readonly string[], line: number, doing: string): EditResult {
+  const text = lines[line];
+  return {changed: false, note: text !== undefined && text.includes('|') && paragraphAround(lines, line).clipped
+    ? `This text runs over ${SCAN_LIMIT.toLocaleString('en-US')} lines without a break, too much to edit as a table here.` : `Put the caret in a table to ${doing}.`};
+}
 
 /** The table containing line `index`, found by looking for a header row followed by a matching delimiter row. */
 export function findTable(lines: readonly string[], index: number): Table | undefined {
   const line = lines[index];
   if (line === undefined || line.trim() === '') return undefined;
   // The paragraph around the line, bounded; text without pipes anywhere near is not a table and costs nothing more.
-  let top = index, bottom = index;
-  while (top > 0 && index - top < SCAN_LIMIT && lines[top - 1]!.trim() !== '') top -= 1;
-  while (bottom + 1 < lines.length && bottom - index < SCAN_LIMIT && lines[bottom + 1]!.trim() !== '') bottom += 1;
+  const { top: scanTop, bottom: scanBottom, clipped } = paragraphAround(lines, index);
+  // A paragraph longer than the scan is never edited: part of a table is not a table, and editing it could leave rows disagreeing.
+  if (clipped) return undefined;
+  let top = scanTop, bottom = scanBottom;
   let withPipes = 0;
   for (let at = top; at <= bottom && withPipes < 2; at += 1) if (lines[at]!.includes('|')) withPipes += 1;
   if (!withPipes) return undefined;
@@ -131,7 +148,7 @@ function emptyRaw(row: Row, neighbour: number, delimiter: boolean): string {
 /** A new empty row below the caret's row (below the delimiter when the caret is in the header), shaped like the header. */
 export function insertRow(buffer: TextBuffer): EditResult {
   const table = findTable(buffer.lines, buffer.caret.line);
-  if (!table) return {changed: false, note: 'Put the caret in a table to add a row.'};
+  if (!table) return missing(buffer.lines, buffer.caret.line, 'add a row');
   const head = splitRow(buffer.lines[table.rows.header]!);
   const cells = head.cells.map((_, index) => ' '.repeat(Math.max(3, widthOf(head, index))));
   const text = `${head.leading ? '|' : ''}${cells.join('|')}${head.trailing ? '|' : ''}`;
@@ -145,7 +162,7 @@ export function insertRow(buffer: TextBuffer): EditResult {
 /** Remove the caret's body row. */
 export function deleteRow(buffer: TextBuffer): EditResult {
   const table = findTable(buffer.lines, buffer.caret.line);
-  if (!table) return {changed: false, note: 'Put the caret in a table row to remove it.'};
+  if (!table) return missing(buffer.lines, buffer.caret.line, 'remove a row');
   const line = buffer.caret.line;
   if (line === table.rows.header || line === table.rows.delimiter) return {changed: false, note: 'The header and delimiter rows stay; remove a body row.'};
   const column = cellAt(splitRow(buffer.lines[line]!), buffer.caret.column);
@@ -170,7 +187,7 @@ function columnTarget(buffer: TextBuffer): {table: Table; rows: Row[]; first: nu
 /** A new empty column to the right of the caret's column, in every row. */
 export function insertColumn(buffer: TextBuffer): EditResult {
   const target = columnTarget(buffer);
-  if (!target) return {changed: false, note: 'Put the caret in a table to add a column.'};
+  if (!target) return missing(buffer.lines, buffer.caret.line, 'add a column');
   const { table, rows, first, column } = target;
   const out = rows.map((row, offset) => {
     if (row.cells.length <= column) return row.text;
@@ -189,7 +206,7 @@ export function insertColumn(buffer: TextBuffer): EditResult {
 /** Remove the caret's column from every row. */
 export function deleteColumn(buffer: TextBuffer): EditResult {
   const target = columnTarget(buffer);
-  if (!target) return {changed: false, note: 'Put the caret in a table to remove a column.'};
+  if (!target) return missing(buffer.lines, buffer.caret.line, 'remove a column');
   const { table, rows, first, column } = target;
   if (table.columns === 1) return {changed: false, note: 'That is the last column; delete the table text instead.'};
   const out = rows.map(row => {
@@ -208,7 +225,7 @@ export function deleteColumn(buffer: TextBuffer): EditResult {
 /** Cycle the caret's column through no alignment, left, centre and right, keeping the delimiter cell's width. */
 export function alignColumn(buffer: TextBuffer): EditResult {
   const target = columnTarget(buffer);
-  if (!target) return {changed: false, note: 'Put the caret in a table to align a column.'};
+  if (!target) return missing(buffer.lines, buffer.caret.line, 'align a column');
   const { table, rows, first, column } = target;
   const delimiterRow = rows[table.rows.delimiter - first]!;
   const cell = delimiterRow.cells[column]!;

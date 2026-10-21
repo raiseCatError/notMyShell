@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TextBuffer, type Position} from '../src/viewer/textBuffer.js';
-import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from '../src/viewer/markdownTable.js';
+import {fenceMap} from '../src/viewer/markdownEdit.js';
+import {SCAN_LIMIT, alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from '../src/viewer/markdownTable.js';
 
 const at = (line: number, column: number): Position => ({line, column});
 const buf = (lines: string[], caret: Position, anchor?: Position) => {
@@ -157,12 +158,47 @@ test('a table with hundreds of columns and long cells is handled without delay',
   assert.ok(Date.now() - started < 1000);
 });
 
-test('a huge paragraph without a table is not scanned quadratically, and fences inside a long paragraph still cut it', () => {
-  const lines = Array.from({length: 40_000}, (_, index) => `line ${index} | x`);
-  const started = Date.now();
-  for (let index = 0; index < 20; index += 1) tableStatus(lines, at(20_000 + index, 3));
-  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
-  const mixed = ['| a | b |', '|---|---|', '| 1 | 2 |', '```', '| x | y |', '```'];
-  assert.equal(findTable(mixed, 2)?.rows.last, 2, 'the fence ends the table');
-  assert.equal(findTable(mixed, 4), undefined);
+function counted(lines: string[]): {lines: string[]; reads: () => number} {
+  let reads = 0;
+  const proxy = new Proxy(lines, {get(target, key, receiver) { if (typeof key === 'string' && /^\d+$/u.test(key)) reads += 1; return Reflect.get(target, key, receiver); }});
+  return {lines: proxy, reads: () => reads};
+}
+const bigTable = (rows: number) => ['| a | b |', '|---|---|', ...Array.from({length: rows}, (_, index) => `| ${index} | x |`)];
+
+test('bounded work: finding the table around a line reads at most about two scan limits of lines, however long the text is', () => {
+  const watched = counted(Array.from({length: 200_000}, (_, index) => `line ${index} | x`));
+  for (let index = 0; index < 5; index += 1) findTable(watched.lines, 100_000 + index);
+  assert.ok(watched.reads() / 5 < 6 * SCAN_LIMIT, `${watched.reads() / 5} reads per call`);
+  const text = counted(Array.from({length: 200_000}, (_, index) => `no pipes here ${index}`));
+  findTable(text.lines, 100_000);
+  assert.ok(text.reads() < 3 * SCAN_LIMIT, 'text without pipes stops at the pipe check');
+});
+
+test('a table that fits the scan is edited whole; one that does not is refused, never edited in part', () => {
+  const fits = bigTable(4000);
+  const b = buf(fits, at(2000, 3));
+  assert.equal(insertColumn(b).changed, true);
+  assert.ok(b.lines.every(line => (line.match(/\|/gu) ?? []).length === 4), 'every row gained the column');
+  const huge = bigTable(3 * SCAN_LIMIT);
+  const h = buf(huge, at(7500, 3));
+  for (const act of [insertColumn, deleteColumn, insertRow, deleteRow, alignColumn]) {
+    const result = act(h);
+    assert.equal(result.changed, false);
+    assert.match(result.note ?? '', /over 5,000 lines/u);
+  }
+  assert.deepEqual(h.lines, huge, 'the source is untouched');
+  assert.equal(tableTab(h, false).handled, false);
+  assert.equal(tableStatus(huge, at(7500, 3)), undefined);
+  // A delimiter-looking body row inside a clipped table cannot pass for a header.
+  const trap = bigTable(3 * SCAN_LIMIT); trap[7400] = '| --- | --- |'; trap[7399] = '| h | h |';
+  assert.equal(findTable(trap, 7401), undefined);
+  // A table the caret can see in full is edited even when it is longer than half the scan.
+  assert.equal(findTable(bigTable(SCAN_LIMIT + 500), 2500)?.columns, 2);
+});
+
+test('fenceMap: one pass, correct for nested, unclosed and mixed fences, and independent between calls', () => {
+  const lines = ['text', '```js', '| a | b |', '```', 'after', '~~~', 'x', '~~~~', 'y', '```', 'z'];
+  assert.deepEqual(fenceMap(lines, lines.length - 1), [false, true, true, true, false, true, true, true, false, true, true]);
+  const again = fenceMap(lines.slice(0, 3), 2);
+  assert.deepEqual(again, [false, true, true], 'no state carried between calls');
 });
