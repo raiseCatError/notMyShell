@@ -1,0 +1,34 @@
+# v0.24.0 ledger — editor, document and workspace functionality
+
+Durable progress record for the milestone. Another session can resume from here without repeating discovery. Baseline: `dev` = `master` = `bf9b532b` (v0.23.0 published; verified 2026-10-21). Work happens in disposable worktrees under `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/`, branches `feature/v024-*`, PRs target `dev`. Arcade: maintenance only. Nothing is merged to `master`, tagged or published without the maintainer.
+
+## Scope decision
+
+The paused issues #460–#469 are the milestone (the maintainer superseded the earlier "do not revive" instruction). Reliability work is supporting: only what blocks or hardens editor/workspace work, or a small independent fix. Parked outside this milestone: #473 item 2 (queue exec attribution; a failing test and a sketch of the fix exist as a git stash in the v024 worktree, needs a retitle of the active output block), #426/#436/#443 and the macOS live-test flake in #473 item 3.
+
+## What exists (v0.23.0)
+
+`/view` (read-only viewer, `ViewerPanel`), `/edit` (`EditorPanel` over `TextBuffer`, safe atomic save in `fileEdit.ts`), the document workspace for Markdown/HTML (`DocumentWorkspace`: source | edit | preview of one buffer; preview is Chromium when installed, else NMSh's renderer), `src/markdown/*` (marked-based blocks/inline/html, source-position-free), image/graphics transport, `/browser`. Not present: split view, hybrid rendering, any source-position map, diagnostics, snippets, recovery.
+
+## Issue map, dependencies, order
+
+| # | Feature | Depends on | Size | Order |
+|---|---|---|---|---|
+| 469 | Private crash recovery of unsaved buffers | `fileEdit`, `TextBuffer` only | S | **1 — this batch** |
+| 463 | Table/list helpers, footnotes; hunk review of external changes | `TextBuffer`; hunk review reuses 469's compare | M | 2 (list/task helpers first, hunk review after) |
+| 468 | Snippets and wrap actions; unsaved Playground | `TextBuffer` ops, workspace modes | M | 3 |
+| 462 | Heading slugs/outline, `<details>`; Mermaid/math later | `src/markdown`; graphics for diagrams | M–L | 4 (slugs, outline, details first) |
+| 466 | Static diagnostics (links, anchors, assets); runtime console later | slugs from 462; buffer versions | M | 5 |
+| 461 | Source/preview split in one pane | ScreenPlan layout, 460's source anchors | L | 6 |
+| 460 | Hybrid rendered Markdown with raw active line | source-span AST, 461 projection | L | 7 |
+| 465 / 467 / 464 | Viewport presets, visual snapshots, Inspect→Edit | Chromium preview + split (461) | L each | last; browser-backed, optional |
+
+469 first: no renderer dependency, protects every later editing mode, and its draft format carries cursor/scroll so split/hybrid reuse it. 462's slug rules feed 466. 460 and 461 share a source-position mapping that must be designed once (a source-span AST over `marked` tokens) before either starts.
+
+## Batches
+
+1. **#469 crash recovery** — branch `feature/v024-draft-recovery`. Done: `src/viewer/draftRecovery.ts`, editor `recover` dialog, app wiring, tests (`draftRecovery*.test.ts`), design section, changelog. Status of acceptance: restore/compare/discard/keep, byte/format preserved through the normal save, SIGKILL, symlinked store, liveness, bounds — automated. Not done: physical Ghostty/Zed pass (NOT RUN), encryption (decided against, see design), concurrent-window race beyond the per-pid files.
+
+## Environment notes
+
+Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).
