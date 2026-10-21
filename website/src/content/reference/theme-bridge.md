@@ -1,6 +1,6 @@
 ---
 title: "Theme Bridge design and ownership"
-description: "Canonical theme bridge design and ownership from the v0.22.0 published source."
+description: "Canonical theme bridge design and ownership from the v0.23.0 published source."
 group: Technical reference
 order: 106
 source: "docs/design/theme-bridge.md"

@@ -1,12 +1,12 @@
 {
   "verifiedAt": "2026-10-21",
-  "sourceCommit": "ef57ff4394b7e960730aafbad0c4fa07780ab311",
-  "tapVersion": "v0.22.0",
+  "sourceCommit": "58f2abb3dab2f214cdf8116c9a0ed2cc92e6ff11",
+  "tapVersion": "v0.23.0",
   "latest": {
-    "tag": "v0.22.0",
-    "version": "0.22.0",
+    "tag": "v0.23.0",
+    "version": "0.23.0",
     "date": "2026-10-21",
-    "url": "https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0"
+    "url": "https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0"
   },
   "requirements": {
     "node": "22+",
@@ -17,6 +17,12 @@
     ]
   },
   "history": [
+    {
+      "tag": "v0.23.0",
+      "date": "2026-10-21",
+      "url": "https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0",
+      "generatedSha256": "30a8bee4f831691eeafd933e941d080459417ffbfa956211899c251513514da9"
+    },
     {
       "tag": "v0.22.0",
       "date": "2026-10-21",

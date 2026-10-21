@@ -1,6 +1,6 @@
 ---
 title: "Runtime architecture"
-description: "Canonical runtime architecture from the v0.22.0 published source."
+description: "Canonical runtime architecture from the v0.23.0 published source."
 group: Technical reference
 order: 100
 source: "ARCHITECTURE.md"
