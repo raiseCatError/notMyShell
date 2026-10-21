@@ -145,3 +145,29 @@ test('large files: three edits per side in 50,000 lines merge exactly, and the w
   assert.equal(merge.aligned, true);
   assert.equal(hunksOf(merge).length, 3);
 });
+
+test('reviewer finding 5: where repeated lines make the alignment ambiguous the merge asks instead of picking one', () => {
+  // I deleted the first "a b"; the disk edited the first "a". Aligning my deletion to the second copy would call that a disk-only change.
+  assert.equal(pendingConflicts(merge3(['a', 'b', 'a', 'b', 'c'], ['a', 'b', 'c'], ['A', 'b', 'a', 'b', 'c'])), 1);
+  assert.equal(pendingConflicts(merge3(['x', 's', 'P', 'x', 's'], ['x', 's'], ['X', 's', 'P', 'x', 's'])), 1);
+  // Insertions among equal neighbours slide too.
+  assert.equal(pendingConflicts(merge3(['}', '}', 'z'], ['}', '}', '}', 'z'], ['}', 'Z', 'z'])), 1);
+  // Unambiguous edits far from any repetition still merge.
+  assert.equal(pendingConflicts(merge3(['a', 'b', 'a', 'b', 'c', 'd', 'e'], ['a', 'b', 'a', 'b', 'c', 'D', 'e'], ['A', 'b', 'a', 'b', 'c', 'd', 'e'])), 0);
+});
+
+test('reviewer finding 5: widening never loses or duplicates text when every conflict is resolved either way', () => {
+  let seed = 7;
+  const random = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const alphabet = ['', 'a', 'b', '}'];
+  const make = () => Array.from({length: random(8)}, () => alphabet[random(alphabet.length)]!);
+  for (let round = 0; round < 3000; round += 1) {
+    const base = make(), mine = make(), theirs = make();
+    const merge = merge3(base, mine, theirs);
+    for (const hunk of merge.segments.flatMap(segment => segment.kind === 'hunk' ? [segment.hunk] : [])) if (!hunk.resolution) setResolution(merge, hunk.id, 'mine');
+    for (const hunk of merge.segments.flatMap(segment => segment.kind === 'hunk' ? [segment.hunk] : [])) setResolution(merge, hunk.id, 'mine');
+    assert.deepEqual(mergedLines(merge), mine.length ? mine : [''], `all mine: ${JSON.stringify([base, mine, theirs])}`);
+    for (const hunk of merge.segments.flatMap(segment => segment.kind === 'hunk' ? [segment.hunk] : [])) setResolution(merge, hunk.id, 'theirs');
+    assert.deepEqual(mergedLines(merge), theirs.length ? theirs : [''], `all theirs: ${JSON.stringify([base, mine, theirs])}`);
+  }
+});

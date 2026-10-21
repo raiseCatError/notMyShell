@@ -203,7 +203,7 @@ export function describeDifference(disk: readonly string[], draft: readonly stri
 
 export interface DraftKeeperOptions {debounceMs?: number; onError?: (reason: string) => void; now?: () => number}
 
-interface Tracked {timer?: NodeJS.Timeout; wrote: boolean; written?: string}
+interface Tracked {timer?: NodeJS.Timeout; wrote: boolean; written?: string; writtenBase?: string; realPath?: string}
 
 /**
  * Keeps one editor's draft current. `note` is called after anything that may have changed a buffer; it never reads or
@@ -229,7 +229,7 @@ export class DraftKeeper {
     if (editor.dialog?.kind === 'recover') return;
     const entry = this.entry(editor);
     if (editor.buffer.dirty) {
-      if (entry.timer || entry.written === editor.buffer.text) return;
+      if (entry.timer || (entry.written === editor.buffer.text && entry.writtenBase === editor.file.identity?.hash)) return;
       entry.timer = setTimeout(() => { entry.timer = undefined; this.write(editor, entry); }, this.debounceMs);
       entry.timer.unref?.();
       return;
@@ -271,8 +271,8 @@ export class DraftKeeper {
 
   private clear(editor: EditorState, entry: Tracked): void {
     if (entry.timer) { clearTimeout(entry.timer); entry.timer = undefined; }
-    if (entry.wrote) this.store.retireOwn(editor.file.realPath);
-    entry.wrote = false; entry.written = undefined;
+    if (entry.wrote) this.store.retireOwn(entry.realPath ?? editor.file.realPath);
+    entry.wrote = false; entry.written = undefined; entry.writtenBase = undefined; entry.realPath = undefined;
   }
 
   private write(editor: EditorState, entry: Tracked): boolean {
@@ -280,7 +280,7 @@ export class DraftKeeper {
     const text = buffer.text;
     const result = this.store.write({version: 1, path: editor.file.path, realPath: editor.file.realPath, ...(editor.file.identity ? {baseHash: editor.file.identity.hash} : {}),
       lines: [...buffer.lines], caret: {...buffer.caret}, ...(buffer.anchor ? {anchor: {...buffer.anchor}} : {}), top: editor.top, savedAt: (this.options.now ?? Date.now)(), pid: process.pid});
-    if (result.ok) { entry.wrote = true; entry.written = text; this.reported = false; this.store.prune(); return true; }
+    if (result.ok) { entry.wrote = true; entry.written = text; entry.writtenBase = editor.file.identity?.hash; entry.realPath = editor.file.realPath; this.reported = false; this.store.prune(); return true; }
     if (!this.reported) { this.reported = true; this.options.onError?.(result.reason); }
     return false;
   }

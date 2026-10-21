@@ -43,6 +43,8 @@ export function createReview(state: EditorState, theirs: EditableFile): ReviewSt
 /** Start reviewing, or — when the disk's changes need no decision — just re-base on the disk's version. */
 export function beginReview(state: EditorState, theirs: EditableFile): {reviewing: boolean; note: string} {
   if (!theirs.identity) return {reviewing: false, note: `${state.file.title} was deleted; Save anyway recreates it.`};
+  // The path now leads to a different file (a symlink was retargeted): its lines have nothing to do with the version opened.
+  if (theirs.realPath !== state.file.realPath) return {reviewing: false, note: `${state.file.title} now points to a different file (${theirs.title}). Nothing is merged: Overwrite would write there, Reload discards your changes, and saving a copy elsewhere keeps them.`};
   const review = createReview(state, theirs);
   if (!hunksOf(review.merge).length) {
     applyReview(state, theirs, review);
@@ -54,9 +56,11 @@ export function beginReview(state: EditorState, theirs: EditableFile): {reviewin
 
 /** The file changed again while the review was open: start over from its newest version (decisions are not carried over). */
 export function restartReview(state: EditorState, theirs: EditableFile): string {
-  if (!theirs.identity) { state.review = undefined; return `${state.file.title} was deleted while you were reviewing; Save anyway recreates it.`; }
-  state.review = createReview(state, theirs);
-  return 'The file changed again while you were reviewing; the review starts over from its newest version.';
+  state.review = undefined;
+  if (!theirs.identity) return `${state.file.title} was deleted while you were reviewing; Save anyway recreates it.`;
+  const started = beginReview(state, theirs);
+  if (started.reviewing) return 'The file changed again while you were reviewing; the review starts over from its newest version.';
+  return `The file changed again while you were reviewing. ${started.note}`;
 }
 
 /** Whether `fresh` is exactly the disk version the review was built from. */
@@ -73,8 +77,10 @@ export function applyReview(state: EditorState, fresh: EditableFile, review: Rev
   const buffer = state.buffer;
   const unchanged = merged.length === buffer.lines.length && merged.every((line, index) => line === buffer.lines[index]);
   const caret = buffer.caret;
+  const previous = state.file;
   if (!unchanged) {
-    buffer.replaceAll(merged);
+    // Undo puts the old text back, so it must put the old base back too: otherwise a save after Ctrl+Z would pass the identity check and overwrite what the merge brought in.
+    buffer.replaceAll(merged, {undo: () => { state.file = previous; }, redo: () => { state.file = fresh; }});
     const line = Math.min(caret.line, buffer.lines.length - 1);
     buffer.caret = {line, column: Math.min(caret.column, buffer.lines[line]!.length)};
     buffer.anchor = undefined;

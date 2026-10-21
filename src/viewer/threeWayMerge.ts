@@ -39,7 +39,7 @@ export interface Merge {
   notes: string[];
 }
 
-interface Region {start: number; end: number; lines: string[]}
+interface Region {start: number; end: number; lines: string[]; lo: number; hi: number}
 
 function regionsOf(script: readonly DiffLine[]): Region[] {
   const regions: Region[] = [];
@@ -48,20 +48,43 @@ function regionsOf(script: readonly DiffLine[]): Region[] {
   for (const line of script) {
     if (line.kind === 'same') { current = undefined; position = line.a + 1; continue; }
     if (line.kind === 'remove') {
-      if (!current) { current = {start: line.a, end: line.a, lines: []}; regions.push(current); }
+      if (!current) { current = {start: line.a, end: line.a, lines: [], lo: line.a, hi: line.a}; regions.push(current); }
       current.end = line.a + 1; position = line.a + 1;
     } else {
-      if (!current) { current = {start: position, end: position, lines: []}; regions.push(current); }
+      if (!current) { current = {start: position, end: position, lines: [], lo: position, hi: position}; regions.push(current); }
       current.lines.push(line.text);
     }
   }
   return regions;
 }
 
+const SLIDE_LIMIT = 10_000;
+
+/**
+ * A pure insertion or deletion among equal neighbouring lines can be placed in several equally good ways (deleting either of
+ * two identical blocks leaves the same text). Where the aligner happened to put it is arbitrary, so the span it could be
+ * said to touch is the whole range it can slide over; the clustering uses that span, never the arbitrary one.
+ */
+function widen(base: readonly string[], region: Region): void {
+  const inserted = region.lines.length, removed = region.end - region.start;
+  region.lo = region.start; region.hi = region.end;
+  if (inserted && removed) return;
+  let left = 0, right = 0;
+  if (!inserted) {
+    while (left < SLIDE_LIMIT && region.start - left - 1 >= 0 && base[region.start - left - 1] === base[region.end - left - 1]) left += 1;
+    while (right < SLIDE_LIMIT && region.end + right < base.length && base[region.start + right] === base[region.end + right]) right += 1;
+  } else {
+    const n = inserted;
+    while (left < SLIDE_LIMIT && region.start - left - 1 >= 0 && base[region.start - left - 1] === region.lines[(((n - 1 - left) % n) + n) % n]) left += 1;
+    while (right < SLIDE_LIMIT && region.start + right < base.length && base[region.start + right] === region.lines[right % n]) right += 1;
+  }
+  region.lo = region.start - left; region.hi = region.end + right;
+}
+
 function applyRegions(base: readonly string[], from: number, to: number, regions: readonly Region[]): string[] {
   const out: string[] = [];
   let at = from;
-  for (const region of regions) { out.push(...base.slice(at, region.start), ...region.lines); at = region.end; }
+  for (const region of [...regions].sort((a, b) => a.start - b.start)) { out.push(...base.slice(at, region.start), ...region.lines); at = region.end; }
   out.push(...base.slice(at, to));
   return out;
 }
@@ -84,13 +107,15 @@ export function merge3(base: readonly string[], mine: readonly string[], theirs:
   if (same(mine, theirs)) return {segments: [{kind: 'text', lines: [...mine]}], aligned: true, notes: []};
   const toMine = diffLines(base, mine, bound), toTheirs = diffLines(base, theirs, bound);
   if (!toMine || !toTheirs) return coarse(mine, theirs, `Too different from the version you opened to align line by line (more than ${bound} edits); the differing region is one conflict.`);
-  const items = [...regionsOf(toMine).map(region => ({region, side: 'mine' as const})), ...regionsOf(toTheirs).map(region => ({region, side: 'theirs' as const}))]
-    .sort((a, b) => a.region.start - b.region.start || a.region.end - b.region.end);
+  const regionsMine = regionsOf(toMine), regionsTheirs = regionsOf(toTheirs);
+  for (const region of [...regionsMine, ...regionsTheirs]) widen(base, region);
+  const items = [...regionsMine.map(region => ({region, side: 'mine' as const})), ...regionsTheirs.map(region => ({region, side: 'theirs' as const}))]
+    .sort((a, b) => a.region.lo - b.region.lo || a.region.hi - b.region.hi);
   const clusters: Array<{start: number; end: number; mine: Region[]; theirs: Region[]}> = [];
   for (const item of items) {
     const last = clusters.at(-1);
-    if (last && item.region.start <= last.end) { last.end = Math.max(last.end, item.region.end); last[item.side].push(item.region); }
-    else clusters.push({start: item.region.start, end: item.region.end, mine: item.side === 'mine' ? [item.region] : [], theirs: item.side === 'theirs' ? [item.region] : []});
+    if (last && item.region.lo <= last.end) { last.end = Math.max(last.end, item.region.hi); last[item.side].push(item.region); }
+    else clusters.push({start: item.region.lo, end: item.region.hi, mine: item.side === 'mine' ? [item.region] : [], theirs: item.side === 'theirs' ? [item.region] : []});
   }
   const segments: Segment[] = [];
   const text = (lines: readonly string[]) => {

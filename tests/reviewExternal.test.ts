@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nmshConfigDirectory} from '../src/configuration/paths.js';
@@ -268,5 +268,70 @@ test('review: panel rows fit 30–120 columns and the narrowest layout still nam
     const { displayWidth } = await import('../src/util/text.js');
     for (const columns of [30, 50, 80, 120]) for (const row of renderEditor(editorOf(f), columns, 20)) assert.ok(displayWidth(stripAnsi(row)) <= columns, `${columns}: ${stripAnsi(row)}`);
     assert.match(renderEditor(editorOf(f), 30, 20).map(row => stripAnsi(row)).join('\n'), /Enter/u);
+  } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review (reviewer finding 1): undoing the merge puts the old base back, so saving then is a conflict again and nothing external is overwritten', async () => {
+  const f = executionFrameFixture(110, 30);
+  let root = '';
+  try {
+    const { root: r, file } = await opened(f, 'a.txt', lines('one', 'two', 'three', 'four'));
+    root = r;
+    typeAt(f, 0, 3, 'X');
+    const external = lines('one', 'two', 'three', 'FOUR-EXTERNAL');
+    writeFileSync(file, external);
+    await startReview(f);
+    await apply(f);
+    press(f, '\u001a');
+    assert.deepEqual(editorOf(f).buffer.lines, ['oneX', 'two', 'three', 'four']);
+    await conflictOnSave(f);
+    assert.equal(readFileSync(file, 'utf8'), external, 'the external edit is still on disk');
+    press(f, '\u001b');
+    press(f, '\u0019');
+    assert.deepEqual(editorOf(f).buffer.lines, ['oneX', 'two', 'three', 'FOUR-EXTERNAL']);
+    press(f, '\u0013');
+    await settled(() => readFileSync(file, 'utf8') === lines('oneX', 'two', 'three', 'FOUR-EXTERNAL'), 'the save after redo');
+  } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review (reviewer finding 2): a link retargeted to another file is not reviewed against the old file; nothing is written there', async () => {
+  const f = executionFrameFixture(110, 30);
+  let root = '';
+  try {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-review-')));
+    const a = join(root, 'a.txt'), b = join(root, 'b.txt'), link = join(root, 'link.txt');
+    writeFileSync(a, lines('alpha', 'common', 'end')); writeFileSync(b, lines('beta', 'common', 'end'));
+    symlinkSync(a, link);
+    f.app['openTextEditor'](link, '/edit link.txt');
+    await settled(() => Boolean(f.app['textEditor']), 'the editor');
+    typeAt(f, 2, 3, '!');
+    unlinkSync(link); symlinkSync(b, link);
+    await conflictOnSave(f);
+    press(f, 'v');
+    await settled(() => !editorOf(f).busy, 'the review request');
+    assert.equal(editorOf(f).review, undefined, 'no review across different files');
+    assert.match(editorOf(f).note?.text ?? '', /different file/u);
+    assert.equal(readFileSync(b, 'utf8'), lines('beta', 'common', 'end'));
+    assert.equal(readFileSync(a, 'utf8'), lines('alpha', 'common', 'end'));
+  } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review (reviewer finding 4): a draft written before a no-change apply gets the new base hash', async () => {
+  const f = executionFrameFixture(110, 30);
+  let root = '';
+  try {
+    const { root: r, file } = await opened(f, 'a.txt', lines('one', 'two'));
+    root = r;
+    typeAt(f, 0, 3, 'X');
+    f.app['draftKeeper'].flush();
+    writeFileSync(file, lines('oneX', 'two'));
+    await conflictOnSave(f);
+    press(f, 'v');
+    await settled(() => !editorOf(f).busy, 'the rebase');
+    assert.equal(editorOf(f).review, undefined, 'nothing to decide');
+    f.app['draftKeeper'].note(editorOf(f));
+    f.app['draftKeeper'].flush();
+    const draft = new DraftStore(join(nmshConfigDirectory(), 'recovery')).own(realpathSync(file));
+    assert.equal(draft?.baseHash, editorOf(f).file.identity?.hash);
   } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
 });
