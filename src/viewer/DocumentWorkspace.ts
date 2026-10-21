@@ -68,7 +68,7 @@ export type DocumentSessionAction =
   | {kind: 'open'; path: string}
   | {kind: 'image'; index: number}
   /** A recovered draft was restored, discarded or kept (#469): the app updates the draft store. */
-  | Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep' | 'review' | 'review-apply'}>;
+  | Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep' | 'review' | 'review-apply' | 'save-as'}>;
 
 /** The file's current text: the buffer's lines as one document, as the viewer reads it (unsaved edits included). */
 export function bufferText(editor: EditorState): string {
@@ -130,8 +130,8 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   const text = key.kind === 'text' ? key.value : undefined;
   state.note = undefined;
   // A save or conflict dialog belongs to the editor, whatever mode raised it.
-  if (editor.dialog || editor.review || editor.busy) return fromEditor(state, editorKey(editor, key, columns, height));
-  if (key.kind === 'sendToProgram') return {kind: 'save'};
+  if (editor.dialog || editor.review || editor.input || editor.busy) return fromEditor(state, editorKey(editor, key, columns, height));
+  if (key.kind === 'sendToProgram') return editor.file.scratch ? fromEditor(state, editorKey(editor, key, columns, height)) : {kind: 'save'};
 
   if (state.mode === 'edit') {
     if (key.kind === 'toggleDetails') { setDocumentMode(state, 'preview'); return {kind: 'preview', refresh: false}; }
@@ -185,7 +185,8 @@ function fromEditor(state: DocumentSession, action: EditorAction | undefined): D
   if (action.kind === 'close') return {kind: 'close'};
   if (action.kind === 'save') return {kind: 'save', ...(action.force ? {force: true} : {}), ...(action.thenClose ? {thenClose: true} : {})};
   if (action.kind === 'reload') return {kind: 'reload'};
-  if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep' || action.kind === 'review' || action.kind === 'review-apply') return action;
+  if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep' || action.kind === 'review' || action.kind === 'review-apply' || action.kind === 'save-as') return action;
+  if (action.kind === 'playground') return undefined;
   return {kind: 'copy', text: action.text};
 }
 
@@ -197,7 +198,7 @@ export function documentSessionLook(state: DocumentSession, look: ViewerLook = {
 export function renderDocumentSession(state: DocumentSession, columns: number, height: number, look: ViewerLook = {}): string[] {
   state.overlays = [];
   const editor = state.editor;
-  if (state.mode === 'edit' || editor.dialog || editor.review) return renderEditor(editor, columns, height);
+  if (state.mode === 'edit' || editor.dialog || editor.review || editor.input) return renderEditor(editor, columns, height);
   if (state.mode === 'preview' && state.preview) {
     const view = state.preview.render(columns, height);
     state.overlays = view.overlays ?? [];

@@ -40,6 +40,16 @@ export interface EditableFile {
   bom: boolean;
   finalNewline: boolean;
   lines: string[];
+  /** A Playground document (#468): not a file yet. `realPath` is `scratch:<id>`, a stable identity for recovery and never a path to read or write. */
+  scratch?: {id: string};
+}
+
+const STARTER_HTML = ['<!doctype html>', '<html lang="en">', '<head>', '  <meta charset="utf-8">', '  <title>Playground</title>', '</head>', '<body>', '  ', '</body>', '</html>'];
+
+/** An unsaved Markdown or HTML document: empty (Markdown) or a minimal page (HTML). It has no path and no disk identity; only Save As makes it a file. */
+export function createScratchFile(format: 'markdown' | 'html', id: string = randomBytes(8).toString('hex')): EditableFile {
+  return {path: format === 'html' ? 'Untitled.html' : 'Untitled.md', realPath: `scratch:${id}`, title: 'Untitled (not saved)', lineEnding: 'lf', bom: false, finalNewline: true,
+    lines: format === 'html' ? [...STARTER_HTML] : [''], scratch: {id}};
 }
 
 /**
@@ -166,6 +176,7 @@ const CONFLICTS: Record<SaveConflict, string> = {
  * (the person chose Overwrite), the content check is skipped, but only a regular file (or nothing) is ever replaced.
  */
 export async function saveFile(file: EditableFile, lines: readonly string[], options: {force?: boolean} = {}): Promise<SaveResult> {
+  if (file.scratch) return {ok: false, reason: 'This document is not a file yet; use Save As to choose where it goes.'};
   if (!options.force) {
     const conflict = await changedOnDisk(file);
     if (conflict) return {ok: false, conflict, reason: `${file.title} ${CONFLICTS[conflict]}.`};

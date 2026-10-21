@@ -51,6 +51,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/game queens', insertion: '/game queens', description: 'Vespyr Queens: one cat in every row, column and colored region, none touching'},
   {name: '/browser', insertion: '/browser', description: 'A real browser (Chromium) in NMSh: /browser · /browser https://example.com · /browser ./index.html. Needs an installed Chrome or Chromium; nothing is downloaded'},
   {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
+  {name: '/playground', insertion: '/playground ', description: 'An unsaved Markdown or HTML document to write and preview at once: /playground md · /playground html · /playground recover (Save As keeps it; nothing is saved for you)'},
   {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
   {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
@@ -186,6 +187,8 @@ export type ParsedSlashCommand =
   | {kind: 'browser'; target: string}
   /** /games, /game and /arcade are one command: the hub, or a game by id or alias. */
   | {kind: 'arcade'; game?: string}
+  /** /playground [md|html|recover]: an unsaved Markdown or HTML document, opened at once; no format asks which. */
+  | {kind: 'playground'; format?: 'markdown' | 'html' | 'recover'}
   /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
   | {kind: 'editFile'; target: string}
   | {kind: 'appearance'}
@@ -289,6 +292,12 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (arcade) return {kind: 'arcade', ...(arcade[1] ? {game: arcade[1]} : {})};
   const view = /^\/view(?:\s+([\s\S]*))?$/u.exec(input);
   if (view) return {kind: 'view', target: (view[1] ?? '').trim()};
+  const playground = /^\/playground(?:\s+(\S+))?\s*$/u.exec(input);
+  if (playground) {
+    const word = (playground[1] ?? '').toLowerCase();
+    const format = word === 'md' || word === 'markdown' ? 'markdown' : word === 'html' ? 'html' : word === 'recover' ? 'recover' : undefined;
+    return {kind: 'playground', ...(format ? {format} : {})};
+  }
   const editFile = /^\/edit(?:\s+([\s\S]*))?$/u.exec(input);
   if (editFile) return {kind: 'editFile', target: (editFile[1] ?? '').trim()};
   // /cp is /copy: one parser, one handler, every form.

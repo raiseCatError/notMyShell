@@ -49,6 +49,17 @@ Limits: code fences are recognised by a line scan (indented code blocks and fenc
 
 **Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
 
+## Playground
+
+`/playground [md|html|recover]` ([#468](https://github.com/raiseCatError/notMyShell/issues/468), slice 2) opens a **scratch document**: an `EditableFile` with `scratch: {id}`, `path` `Untitled.md` / `Untitled.html` (a display name that gives the format), `realPath` `scratch:<16 hex>` and no disk identity. The `scratch:` identity is what the recovery drafts of #469 are keyed by; it is never a path, and nothing reads or writes it as one.
+
+- **Entry:** a slash command (no existing `/playground`, `/scratch` or `/new`); with no argument a chooser (Markdown, HTML, and Recover (n) only when a draft exists; Esc creates nothing). Markdown starts empty, HTML with a minimal page; the workspace opens in edit mode.
+- **Save As:** Ctrl+S (and Save in the unsaved-changes dialog) asks for a name. The app resolves it with `openForEdit`: an existing file is refused (Save As never replaces), a missing folder is reported, otherwise `saveFile` writes the NEW file with the editor's exclusive-create save; then the scratch draft is retired under its `scratch:` key, the editor becomes that file (title, format, identity), the buffer is clean, and later saves are ordinary. Any failure leaves the document, its text and its draft untouched.
+- **Never silently saved:** `saveFile` refuses a scratch file outright. Closing a dirty scratch document uses the existing Save / Discard / Keep editing dialog (Save leads to the name prompt and closes after it succeeds). Reload, disk review, relative links and images are unavailable (no file, no folder) and say so.
+- **Preview:** the workspace's own renderer only. The browser-quality preview serves a saved file's folder, so it is not started for a scratch document (no process, no served folder, no network); HTML scripts are not run. Source, edit and preview are the modes the workspace has; **Split is #461's** and will apply to the Playground when it lands.
+- **Recovery:** the same keeper writes a dirty scratch buffer to a draft; a window that ends or is killed leaves it. `/playground recover` reopens the newest draft nobody owns under its original identity with the Restore / Compare / Discard / Keep for later choice.
+- **Verified by** `tests/playground.test.ts` (identity, slash parsing, scratch-draft listing, the Save As prompt and dirty-close dialog, app flows: preview without a browser, inert script, Save As success/refusal/missing folder, close-after-save, crash and `/playground recover`, chooser at 30–120 columns, disabled reload/review/links, and a real `SIGKILL`).
+
 ## Snippets
 
 `src/viewer/snippets.ts`, `EditorPalette.ts` and the palette/snippet-mode parts of `EditorPanel.ts` ([#468](https://github.com/raiseCatError/notMyShell/issues/468), slice 1).
