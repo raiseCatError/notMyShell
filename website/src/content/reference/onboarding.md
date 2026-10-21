@@ -1,6 +1,6 @@
 ---
 title: "First-run behavior and validation"
-description: "Canonical first-run behavior and validation from the v0.22.0 published source."
+description: "Canonical first-run behavior and validation from the v0.23.0 published source."
 group: Technical reference
 order: 121
 source: "docs/testing/post-v020-preferences-onboarding.md"

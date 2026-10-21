@@ -1,6 +1,6 @@
 ---
 title: "v0.20 physical QA checklist"
-description: "Canonical v0.20 physical qa checklist from the v0.22.0 published source."
+description: "Canonical v0.20 physical qa checklist from the v0.23.0 published source."
 group: Technical reference
 order: 111
 source: "docs/testing/v020-physical-qa.md"
