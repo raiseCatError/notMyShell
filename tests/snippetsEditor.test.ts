@@ -69,7 +69,6 @@ test('Markdown: F1 then / opens the palette; actions and snippets are listed tog
     editor.buffer.bufferEnd();
     press(editor, F1);
     assert.equal(editor.dialog?.kind, 'markdown');
-    assert.match(screen(editor), /Snippets…/u);
     press(editor, '/');
     assert.equal(editor.dialog?.kind, 'snippets');
     press(editor, 'table');

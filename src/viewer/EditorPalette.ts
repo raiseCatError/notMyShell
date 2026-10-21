@@ -23,6 +23,8 @@ const MARKDOWN_ACTIONS: ReadonlyArray<[action: string, title: string, descriptio
   ['Action.Code', 'Inline code', 'Wrap or unwrap the selection in backticks', 'code inline backtick wrap'],
   ['Action.Strike', 'Strikethrough', 'Wrap or unwrap the selection in ~~', 'strike strikethrough wrap'],
   ['Action.Footnote', 'Footnote', 'A numbered reference here and its definition at the end', 'footnote reference note'],
+  ['Action.Headings', 'Go to heading…', 'Search the document\'s headings and jump to one', 'heading outline navigate jump toc contents'],
+  ['Action.Back', 'Back to previous position', 'Return to where you were before the last jump', 'back return previous jump'],
 ];
 const TABLE_ACTIONS: ReadonlyArray<[string, string, string, string]> = [
   ['Action.RowAdd', 'Table: add row', 'A new empty row below the caret row', 'table row add insert'],

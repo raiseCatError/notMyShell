@@ -10,6 +10,7 @@ import {editText} from '../ui/formControls.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
+import {headingsOf, rowForLine, type HeadingEntry} from '../markdown/sourceMap.js';
 import {formatBytes, inert, type ViewDocument} from './document.js';
 
 /**
@@ -46,7 +47,9 @@ export interface ViewerState {
   numbers: boolean;
   /** Markdown drawn rendered (true) or as source. */
   rendered: boolean;
-  input?: {kind: 'search' | 'goto'; value: string};
+  input?: {kind: 'search' | 'goto' | 'heading'; value: string; focus?: number};
+  /** Where each heading jump started (newest last), for Backspace (#462). */
+  jumps?: Array<{top: number; sub: number}>;
   query?: string;
   match?: {unit: number; start: number; length: number};
   matchCount?: number;
@@ -365,6 +368,27 @@ function countMatches(state: ViewerState, width: number, look: ViewerLook): numb
   return total;
 }
 
+// ---- Headings ---------------------------------------------------------------------------------------------------
+
+const outlines = new WeakMap<ViewerState, {text: string; headings: HeadingEntry[]}>();
+
+/** The document's headings (computed once per text) that contain every word typed. */
+function headingMatches(state: ViewerState, query: string): HeadingEntry[] {
+  let cached = outlines.get(state);
+  if (cached?.text !== state.document.text) { cached = {text: state.document.text, headings: headingsOf(state.document.text, {html: true})}; outlines.set(state, cached); }
+  const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
+  return cached.headings.filter(heading => words.every(word => heading.text.toLowerCase().includes(word)));
+}
+
+function jumpToHeading(state: ViewerState, line: number, width: number, body: number, look: ViewerLook): void {
+  const jumps = state.jumps ??= [];
+  jumps.push({top: state.top, sub: state.sub});
+  if (jumps.length > 20) jumps.shift();
+  state.top = state.rendered ? rowForLine(markdownRows(state, width, look), line) : Math.min(line, Math.max(0, state.document.lines.length - 1));
+  state.sub = 0;
+  clampTop(state, width, body, look);
+}
+
 function step(state: ViewerState, direction: 1 | -1, width: number, height: number, look: ViewerLook): void {
   const from = state.match ? {unit: state.match.unit, offset: state.match.start + (direction === 1 ? 1 : 0)} : {unit: state.top, offset: 0};
   const found = findFrom(state, from.unit, from.offset, direction, width, look);
@@ -382,6 +406,21 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   if (state.input) {
     const input = state.input;
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.input = undefined; return undefined; }
+    if (input.kind === 'heading') {
+      const matches = headingMatches(state, input.value);
+      if (key.kind === 'up' || key.kind === 'focusPrevious') { input.focus = Math.max(0, (input.focus ?? 0) - 1); return undefined; }
+      if (key.kind === 'down' || key.kind === 'complete') { input.focus = Math.min(Math.max(0, matches.length - 1), (input.focus ?? 0) + 1); return undefined; }
+      if (key.kind === 'enter') {
+        const heading = matches[input.focus ?? 0];
+        state.input = undefined;
+        // The prompt's own footer is gone: the page is measured without it, or the last rows would be cut off.
+        if (heading) jumpToHeading(state, heading.line, width, bodyHeight(state, columns, height, look), look);
+        return undefined;
+      }
+      const edited = editText(input.value, key);
+      if (edited !== undefined) { input.value = edited.slice(0, 80); input.focus = 0; }
+      return undefined;
+    }
     if (key.kind === 'enter') {
       state.input = undefined;
       if (input.kind === 'goto') {
@@ -425,6 +464,14 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   }
   else if (text === '/' || key.kind === 'find') state.input = {kind: 'search', value: state.query ?? ''};
   else if (text === ':') state.input = {kind: 'goto', value: ''};
+  else if (text === '#' && renders(state.document)) state.input = {kind: 'heading', value: '', focus: 0};
+  else if (key.kind === 'backspace' && state.jumps) {
+    const back = state.jumps.pop();
+    if (!back) { state.note = 'No earlier position to go back to.'; return undefined; }
+    state.top = back.top; state.sub = back.sub;
+    clampTop(state, width, body, look);
+  }
+  else if (key.kind === 'backspace' && renders(state.document)) state.note = 'No earlier position to go back to.';
   else if (text === 'n' && state.query) step(state, 1, width, body, look);
   else if (text === 'N' && state.query) step(state, -1, width, body, look);
   else if (text === 'i' && state.rendered && look.images) {
@@ -472,18 +519,19 @@ function headerRows(state: ViewerState, columns: number, height: number, look: V
 
 function controls(state: ViewerState, columns: number, look: ViewerLook): string[] {
   const width = Math.max(1, columns - 4);
+  if (state.input?.kind === 'heading') return renderControlRows([['↑↓', 'choose'], ['Enter', 'go'], ['Esc', 'cancel']], width);
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
   if (look.workspace) {
     const preview = look.workspace.mode === 'preview';
     return renderControlRows([
-      ['↑↓', 'scroll'], ['/', 'find'], ...(preview ? [] : [[':', 'line'] as const]),
+      ['↑↓', 'scroll'], ['/', 'find'], ['#', 'headings'], ...(preview ? [] : [[':', 'line'] as const]),
       ['h', preview ? 'source' : 'preview'], ['e', 'edit'], ...(preview ? [['r', 'refresh'] as const] : []),
       ...(preview && state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
       ['Ctrl+S', 'save'], ['R', 'reload from disk'], ['Esc', preview ? 'source' : 'close'],
     ], width);
   }
   return renderControlRows([
-    ['↑↓', 'scroll'], ['/', 'find'], ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
+    ['↑↓', 'scroll'], ['/', 'find'], ...(renders(state.document) ? [['#', 'headings'] as const] : []), ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
     ...(state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
@@ -498,6 +546,14 @@ function bodyHeight(state: ViewerState, columns: number, height: number, look: V
 function statusRow(state: ViewerState, width: number, total: number): string {
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
+  if (state.input?.kind === 'heading') {
+    const matches = headingMatches(state, state.input.value);
+    const chosen = matches[state.input.focus ?? 0];
+    const label = 'Heading: ';
+    const detail = chosen ? `  ▸ ${'#'.repeat(chosen.level)} ${chosen.text}  (${(state.input.focus ?? 0) + 1}/${matches.length})` : state.input.value ? '  no heading matches' : '  no headings in this document';
+    const typed = truncateText(state.input.value.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), Math.max(1, width - label.length - 1));
+    return `  ${accent}${label}${RESET}${typed}${accent}▏${RESET}${subtle}${truncateText(inert(detail), Math.max(1, width - label.length - displayWidth(typed) - 2))}${RESET}`;
+  }
   if (state.input) {
     const label = state.input.kind === 'search' ? 'Find: ' : 'Go to line: ';
     return `  ${accent}${label}${RESET}${truncateText(state.input.value.replace(/[\u0000-\u001f\u007f-\u009f\p{Cf}]/gu, '·'), Math.max(1, width - label.length - 1))}${accent}▏${RESET}`;

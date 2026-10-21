@@ -74,10 +74,11 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, typ
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
+import {displayPath, loadFileDocument, outputDocument, resolveViewPath, splitHeadingTarget} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, offerDraft, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {createScratchFile, openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {headingsOf, resolveFragment} from '../markdown/sourceMap.js';
 import {DraftKeeper, DraftStore, type DraftOffer} from '../viewer/draftRecovery.js';
 import {applyReview, beginReview, restartReview, sameDiskVersion} from '../viewer/ReviewPanel.js';
 import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
@@ -4415,7 +4416,11 @@ export class TerminalApp {
    * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
    * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
    */
-  private openViewer(target: string, command: string): void {
+  private openViewer(rawTarget: string, command: string): void {
+    // `file.md#heading` opens the file at that heading (GitHub-style fragment) unless a file is really named with a '#'.
+    const split = /^[1-9]\d{0,2}$/u.test(rawTarget) ? {path: rawTarget} : splitHeadingTarget(rawTarget, path => existsSync(resolveViewPath(path, this.shellCwd)));
+    const target = split.path;
+    this.viewFragment = split.fragment;
     this.viewerLoad?.abort();
     this.viewerLoad = undefined;
     if (!target || /^[1-9]\d{0,2}$/u.test(target)) {
@@ -4529,6 +4534,19 @@ export class TerminalApp {
       this.drafts().note(editor);
       this.render();
     });
+  }
+
+  private viewFragment?: string;
+
+  /** `/view file.md#heading`: scroll the source view to the heading the fragment names, or say there is none. */
+  private jumpToViewFragment(session: DocumentSession): void {
+    const fragment = this.viewFragment;
+    this.viewFragment = undefined;
+    if (!fragment) return;
+    const heading = resolveFragment(headingsOf(bufferText(session.editor), {html: true}), fragment);
+    if (!heading) { session.note = `No heading “${fragment}” in this file; showing the top.`; return; }
+    session.viewer.top = heading.line;
+    session.viewer.sub = 0;
   }
 
   // ---- Playground (#468) --------------------------------------------------------------------------------------------
@@ -4674,6 +4692,7 @@ export class TerminalApp {
     this.viewer = undefined;
     this.docSession = createDocumentSession(result.file, mode);
     this.offerRecovery(this.docSession.editor);
+    this.jumpToViewFragment(this.docSession);
     if (mode === 'preview') this.beginPreview(this.docSession, false);
     this.render();
   }

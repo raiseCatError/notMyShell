@@ -11,6 +11,7 @@ import {formatForPath, inert} from './document.js';
 import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from './markdownTable.js';
 import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
 import {paletteEntries, type PaletteEntry, type PaletteFormat} from './EditorPalette.js';
+import {DocumentIndex, SourceAnchor, type HeadingEntry} from '../markdown/sourceMap.js';
 import {advanceSnippet, insertFootnote, insertSnippet, insideSnippet, type SnippetSession} from './snippets.js';
 import {continueList, insertLink, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
@@ -28,7 +29,7 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground';
+  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground' | 'outline';
   /** How many recoverable Playground documents the chooser can offer. */
   recoverable?: number;
   /** The snippet palette's search text. */
@@ -59,6 +60,9 @@ export interface EditorState {
   review?: ReviewState;
   /** Placeholders of an inserted snippet; while it lives Tab and Shift+Tab visit them and Esc ends it (#468). */
   snippet?: SnippetSession;
+  /** The parsed structure of the buffer (headings), kept until it changes; and where jumps came from, newest last (#462). */
+  index?: DocumentIndex;
+  jumps?: SourceAnchor[];
   note?: {text: string; tone: 'info' | 'error' | 'success'};
   /** A save or reload is in progress; keys wait. */
   busy?: boolean;
@@ -102,6 +106,7 @@ const MARKDOWN_ACTIONS = [
   {id: 'Action.Bold', label: 'Bold', key: 'b'}, {id: 'Action.Italic', label: 'Italic', key: 'i'},
   {id: 'Action.Code', label: 'Code', key: 'c'}, {id: 'Action.Strike', label: 'Strike', key: 's'},
   {id: 'Action.Search', label: 'Snippets…', key: '/'},
+  {id: 'Action.Headings', label: 'Headings…', key: 'h'}, {id: 'Action.Back', label: 'Back', key: 'j'},
 ] as const;
 
 export const isMarkdownFile = (state: EditorState) => formatForPath(state.file.path).format === 'markdown';
@@ -117,6 +122,51 @@ function paletteFormat(state: EditorState): PaletteFormat | undefined {
   return format === 'markdown' || format === 'html' ? format : undefined;
 }
 
+const MAX_JUMPS = 20;
+
+function headingIndex(state: EditorState): DocumentIndex {
+  return state.index ??= new DocumentIndex(state.buffer, {html: true});
+}
+
+/** The headings that match the outline's search words, in document order. */
+function outlineList(state: EditorState, dialog: EditorDialog): HeadingEntry[] {
+  const words = (dialog.query ?? '').toLowerCase().split(/\s+/u).filter(Boolean);
+  return headingIndex(state).headings().filter(heading => words.every(word => heading.text.toLowerCase().includes(word)));
+}
+
+/** Move the caret to a source line, remembering where it was; Back returns there even if the text moved meanwhile. */
+function jumpToLine(state: EditorState, line: number): void {
+  const jumps = state.jumps ??= [];
+  jumps.push(new SourceAnchor(state.buffer, state.buffer.caret));
+  while (jumps.length > MAX_JUMPS) jumps.shift()!.dispose();
+  state.buffer.caret = {line: Math.min(line, state.buffer.lines.length - 1), column: 0};
+  state.buffer.anchor = undefined;
+}
+
+function jumpBack(state: EditorState): void {
+  const last = state.jumps?.pop();
+  if (!last) { state.note = {text: 'No earlier position to go back to.', tone: 'info'}; return; }
+  state.buffer.caret = {...last.position};
+  state.buffer.anchor = undefined;
+  last.dispose();
+}
+
+function outlineKey(state: EditorState, dialog: EditorDialog, key: Key): void {
+  const headings = outlineList(state, dialog);
+  if (key.kind === 'escape' || key.kind === 'interrupt') { state.dialog = undefined; return; }
+  if (key.kind === 'up' || key.kind === 'focusPrevious' || key.kind === 'suggestPrevious') { dialog.focus = Math.max(0, dialog.focus - 1); return; }
+  if (key.kind === 'down' || key.kind === 'complete' || key.kind === 'suggestNext') { dialog.focus = Math.min(Math.max(0, headings.length - 1), dialog.focus + 1); return; }
+  if (key.kind === 'enter') {
+    const heading = headings[dialog.focus];
+    if (!heading) return;
+    state.dialog = undefined;
+    jumpToLine(state, heading.line);
+    return;
+  }
+  const next = editText(dialog.query ?? '', key);
+  if (next !== undefined) { dialog.query = next.slice(0, 80); dialog.focus = 0; }
+}
+
 function openPalette(state: EditorState): void {
   state.dialog = {kind: 'snippets', focus: 0, query: ''};
 }
@@ -129,6 +179,8 @@ function runPaletteEntry(state: EditorState, entry: PaletteEntry): void {
   endSnippet(state);
   if (entry.run.kind === 'snippet') { state.snippet = insertSnippet(state.buffer, entry.run.snippet); return; }
   if (entry.run.action === 'Action.Footnote') { state.snippet = insertFootnote(state.buffer); return; }
+  if (entry.run.action === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return; }
+  if (entry.run.action === 'Action.Back') { jumpBack(state); return; }
   const result = runMarkdownAction(state, entry.run.action);
   if (result.note) state.note = {text: result.note, tone: 'info'};
 }
@@ -229,6 +281,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
     return choice ? {kind: 'playground', choice} : undefined;
   }
   if (dialog.kind === 'snippets') { paletteKey(state, dialog, key); return undefined; }
+  if (dialog.kind === 'outline') { outlineKey(state, dialog, key); return undefined; }
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
   if (key.kind === 'left' || key.kind === 'focusPrevious') { dialog.focus = (dialog.focus + controls.length - 1) % controls.length; return undefined; }
@@ -241,6 +294,8 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
     state.dialog = undefined;
     if (chosen === 'Action.Keep') return undefined;
     if (chosen === 'Action.Search') { openPalette(state); return undefined; }
+    if (chosen === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return undefined; }
+    if (chosen === 'Action.Back') { jumpBack(state); return undefined; }
     const result = runMarkdownAction(state, chosen);
     if (result.note) state.note = {text: result.note, tone: 'info'};
     return undefined;
@@ -471,6 +526,21 @@ function recoverMessage(state: EditorState, dialog: EditorDialog): string {
 
 function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
+  if (state.dialog?.kind === 'outline') {
+    const dialog = state.dialog;
+    const headings = outlineList(state, dialog);
+    const accent = foreground(UI_COLORS.accent), subtle = foreground(UI_COLORS.subtle);
+    const size = 6;
+    const start = Math.max(0, Math.min(dialog.focus - Math.floor(size / 2), headings.length - size));
+    const shown = headings.slice(start, start + size).map((heading, offset) => {
+      const focused = start + offset === dialog.focus;
+      const label = `${'  '.repeat(Math.min(heading.depth, 4))}${'#'.repeat(heading.level)} ${heading.text}`;
+      return `${focused ? `${accent}▸ ` : '  '}${truncateText(inert(label), Math.max(4, width - 14))}${RESET}${subtle}  line ${heading.line + 1}${RESET}`;
+    });
+    if (!headings.length) shown.push(`${subtle}  ${(dialog.query ?? '') ? `No heading matches “${truncateText(inert(dialog.query ?? ''), 30)}”.` : 'This document has no headings.'}${RESET}`);
+    const header = `${foreground(UI_COLORS.warning)}Go to heading${RESET}${subtle} · ${headings.length} · ${RESET}${truncateText(inert(dialog.query ?? ''), Math.max(1, width - 24))}${accent}▏${RESET}`;
+    return [header, ...shown.map(row => truncateAnsi(row, width)), ...renderControlRows([['↑↓', 'choose'], ['Enter', 'go'], ['Esc', 'back']], width)];
+  }
   if (state.dialog?.kind === 'snippets') {
     const dialog = state.dialog;
     const entries = paletteList(state, dialog);
@@ -487,7 +557,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets · h headings · j back` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
