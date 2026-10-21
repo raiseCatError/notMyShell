@@ -1,9 +1,11 @@
 import {mixRgb} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
+import type {ActivityEntry, ActivityView} from '../notifications/backgroundActivity.js';
 import type {Key} from '../terminal/keys.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {typeset} from '../ui/typography.js';
+import {formatDuration} from '../status/commandTiming.js';
 import {displayWidth, truncateText} from '../util/text.js';
 import {Canvas, PixelBuffer, type Style, type TextOverlay} from './Canvas.js';
 import {localDateKey} from './engine/daily.js';
@@ -41,7 +43,19 @@ export interface ArcadeEnvironment {
   today?(): string;
 }
 
-type Screen = 'hub' | 'playing' | 'paused' | 'finale' | 'over';
+/**
+ * Read-only news about the shell work running behind the Arcade, supplied by the host. The Arcade never learns what a
+ * command is, only a short label, a status and a duration; it cannot answer, approve or write to anything.
+ */
+export interface ArcadeCompanion {
+  view(): ActivityView;
+  history(): readonly ActivityEntry[];
+  markRead(): void;
+  /** The command running behind the Arcade, if one is. */
+  running(): {label: string; elapsedMs: number} | undefined;
+}
+
+type Screen = 'hub' | 'playing' | 'paused' | 'finale' | 'over' | 'notes';
 export type HubTier = 'wide' | 'standard' | 'narrow' | 'tiny';
 
 /** Ignore Retry-type keys this long after a game ends, so the mashing that lost the run cannot also restart it. */
@@ -73,7 +87,14 @@ export class ArcadeSession {
   game: GameInstance | undefined;
   definition: GameDefinition | undefined;
   private columns: number;
+  /** Rows the library and games lay out in: the viewport minus the companion strip. */
   private rowsAvailable: number;
+  /** The whole viewport's rows. */
+  private outerRows: number;
+  /** 1 while the companion strip reserves the top row, else 0. Constant while a session runs, so a toast never resizes a game. */
+  private strip = 0;
+  private companion: ArcadeCompanion | undefined;
+  private notesReturn: Screen = 'hub';
   private canvas: Canvas | undefined;
   private preview: Canvas | undefined;
   private previewFrame = 0;
@@ -97,9 +118,13 @@ export class ArcadeSession {
   /** Viewport row → game entry index, from the last hub frame (mouse hit testing). */
   private rowHits = new Map<number, number>();
 
-  constructor(private readonly env: ArcadeEnvironment, private readonly games: readonly GameDefinition[], size: {columns: number; rows: number}, open?: GameDefinition) {
+  constructor(private readonly env: ArcadeEnvironment, private readonly games: readonly GameDefinition[], size: {columns: number; rows: number}, open?: GameDefinition,
+    companion?: ArcadeCompanion) {
     this.columns = Math.max(1, size.columns);
-    this.rowsAvailable = Math.max(1, size.rows);
+    this.outerRows = Math.max(1, size.rows);
+    this.companion = companion;
+    this.rowsAvailable = this.outerRows;
+    this.layout();
     this.notice = env.store.recovered;
     this.hub = env.store.hub();
     this.sparkles = new ParticleSystem(createRng(env.seed()).fork('arcade-sparkles'), 90, env.motion().effects);
@@ -226,15 +251,35 @@ export class ArcadeSession {
     return {columns: this.columns, rows: Math.max(4, this.rowsAvailable - this.controlRows())};
   }
 
+  /** The strip needs a row to spare and room for a sentence; smaller terminals keep every row for the Arcade. */
+  private layout(): void {
+    this.strip = this.companion && this.outerRows >= 14 && this.columns >= 40 ? 1 : 0;
+    this.rowsAvailable = Math.max(1, this.outerRows - this.strip);
+  }
+
   resize(columns: number, rows: number): void {
     this.columns = Math.max(1, columns);
-    this.rowsAvailable = Math.max(1, rows);
+    this.outerRows = Math.max(1, rows);
+    this.relayout();
+  }
+
+  private relayout(): void {
+    this.layout();
     if (this.game) {
       const size = this.playfield();
       this.canvas = new Canvas(size.columns, size.rows);
       this.game.resize(size);
     }
   }
+
+  /** Attach the companion (a command started behind an Arcade opened without one): the game re-lays out, it does not restart. */
+  setCompanion(companion: ArcadeCompanion | undefined): void {
+    if (this.companion === companion) return;
+    this.companion = companion;
+    this.relayout();
+  }
+
+  get hasCompanion(): boolean { return this.companion !== undefined; }
 
   /** A foreground app, a lost focus or a new command: the game stops where it is. */
   pause(): void {
@@ -245,7 +290,20 @@ export class ArcadeSession {
 
   /** Milliseconds between frames the session wants right now; 0 when nothing animates. */
   get interval(): number {
+    const base = this.baseInterval();
+    // A toast sliding in or out wants frames of its own, wherever the Arcade is otherwise still.
+    return this.toastMoving() ? (base > 0 ? Math.min(base, 40) : 40) : base;
+  }
+
+  private toastMoving(): boolean {
+    if (!this.companion || !this.env.motion().effects || this.env.motion().reduced) return false;
+    const phase = this.companion.view().toast?.phase;
+    return phase === 'in' || phase === 'out';
+  }
+
+  private baseInterval(): number {
     const motion = this.env.motion();
+    if (this.screen === 'notes') return 0;
     if (this.screen === 'hub') return motion.reduced ? 0 : HUB_PREVIEW_MS;
     if (!this.game) return 0;
     if (this.screen === 'finale') return 33;
@@ -263,7 +321,7 @@ export class ArcadeSession {
   // ---- frames ---------------------------------------------------------------------------------------------------
 
   frame(dtMs: number): void {
-    if (this.disposed) return;
+    if (this.disposed || this.screen === 'notes') return;
     if (this.screen === 'hub') {
       this.previewFade.update(dtMs);
       this.previewClock += dtMs;
@@ -315,6 +373,12 @@ export class ArcadeSession {
   key(key: Key): 'handled' | 'close' {
     if (this.disposed) return 'close';
     if (key.kind === 'interrupt') return 'close';
+    // Pointer rows are terminal rows: the strip's row is not the Arcade's, and everything below it moves up by one.
+    if (this.strip && 'y' in key && typeof key.y === 'number') {
+      if (key.y <= this.strip) return 'handled';
+      key = {...key, y: key.y - this.strip} as Key;
+    }
+    if (this.screen === 'notes') { if (isPress(key)) this.closeNotes(); return 'handled'; }
     if (this.screen === 'hub') return this.hubKey(key);
     if (this.screen === 'paused') return this.pausedKey(key);
     if (this.screen === 'finale') {
@@ -361,6 +425,7 @@ export class ArcadeSession {
       else if (value === ' ') this.play();
       else if (value === '/') { this.query = ''; this.moveTo(0); }
       else if (value === 'f') this.toggleFavorite();
+      else if (value === 'n' && this.companion) this.openNotes();
       else if (/^[1-9]$/u.test(value) && Number(value) <= list.length) this.moveTo(Number(value) - 1);
     }
     return 'handled';
@@ -415,8 +480,18 @@ export class ArcadeSession {
       {id: 'resume', label: 'Resume', key: 'c'}, {id: 'restart', label: 'Restart', key: 'r'}, {id: 'howto', label: 'How to play', key: 'h'},
       {id: 'back', label: 'Back to Arcade', key: 'b'}, {id: 'exit', label: 'Exit', key: 'x'},
     ];
+    if (this.companion) items.splice(3, 0, {id: 'notes', label: 'Notifications', key: 'n'});
     this.menu = new Menu(items);
   }
+
+  private openNotes(): void {
+    if (!this.companion || this.screen === 'notes') return;
+    this.notesReturn = this.screen;
+    this.screen = 'notes';
+    this.companion.markRead();
+  }
+
+  private closeNotes(): void { this.screen = this.notesReturn; }
 
   private pausedKey(key: Key): 'handled' | 'close' {
     if (this.howTo) { if (isPress(key)) this.howTo = false; return 'handled'; }
@@ -437,6 +512,7 @@ export class ArcadeSession {
   private choose(id: string | undefined): 'handled' | 'close' {
     if (id === 'resume') this.resume();
     else if (id === 'howto') this.howTo = true;
+    else if (id === 'notes') this.openNotes();
     else if (id === 'restart' || id === 'retry') this.start(this.definition!);
     else if (id === 'back') this.leaveGame();
     else if (id === 'exit') return 'close';
@@ -446,16 +522,29 @@ export class ArcadeSession {
   // ---- drawing --------------------------------------------------------------------------------------------------
 
   render(): ArcadeFrame {
+    const frame = this.renderInner();
+    if (!this.strip) return frame;
+    const look = arcadeLook(arcadePalette());
+    const encode = {color: this.env.color(), safe: this.env.safeGlyphs()};
+    return {
+      rows: [this.stripRow(look, encode), ...frame.rows].slice(0, this.outerRows),
+      overlays: frame.overlays.map(block => ({...block, y: block.y + this.strip})),
+    };
+  }
+
+  private renderInner(): ArcadeFrame {
     const palette = arcadePalette();
     const look = arcadeLook(palette);
     const encode = {color: this.env.color(), safe: this.env.safeGlyphs()};
-    if (this.screen === 'hub' || !this.game || !this.canvas) {
+    if (this.screen === 'hub' || (this.screen === 'notes' && this.notesReturn === 'hub') || !this.game || !this.canvas) {
       const canvas = this.hubCanvas(look, palette);
+      if (this.screen === 'notes') this.drawNotes(canvas, look);
       return {rows: canvas.rows(encode).slice(0, this.rowsAvailable), overlays: overlaysOf(canvas, encode)};
     }
     const canvas = this.canvas;
     this.game.render(canvas, this.alpha, palette);
-    if (this.screen === 'paused') this.drawPause(canvas, look);
+    if (this.screen === 'notes') this.drawNotes(canvas, look);
+    else if (this.screen === 'paused') this.drawPause(canvas, look);
     else if (this.screen === 'over') this.drawResults(canvas, look);
     else if (this.screen === 'finale' && canvas.height > 3 && !this.controlRows()) {
       const hint = 'any key to skip';
@@ -474,12 +563,97 @@ export class ArcadeSession {
     if (this.screen === 'playing') hints = [...this.game!.hints().filter(hint => !/^esc$/iu.test(hint.keys)), {keys: 'Esc', action: 'pause'}];
     else if (this.screen === 'finale') hints = [{keys: 'any key', action: 'skip'}];
     else if (this.screen === 'paused' && this.howTo) hints = [{keys: 'any key', action: 'back'}];
+    else if (this.screen === 'notes') hints = [{keys: 'any key', action: 'back'}];
     else hints = [{keys: '↑↓', action: 'choose'}, {keys: '⏎', action: 'select'}, {keys: 'Esc', action: this.screen === 'paused' ? 'resume' : 'arcade'}];
     const title = this.definition?.title ?? '';
     let x = 1;
     if (this.columns >= 60 && title) { row.text(x, 0, title, {fg: look.accent, bg: look.surface.raised, bold: true}); x += displayWidth(title) + 3; }
-    keycaps(row, x, 0, hints, look, this.columns - 1);
+    const marker = this.strip ? undefined : this.compactMarker(look);
+    const room = marker ? this.columns - 1 - displayWidth(marker.text) - 2 : this.columns - 1;
+    keycaps(row, x, 0, hints, look, room);
+    // A terminal too small for the strip still shows that something happened, in the one row that is not gameplay.
+    if (marker) row.text(this.columns - 1 - displayWidth(marker.text), 0, marker.text, {fg: marker.color, bg: look.surface.raised, bold: true});
     return row.rows(encode)[0]!;
+  }
+
+  // ---- companion: the strip, the compact marker and the log ---------------------------------------------------
+
+  private glyphFor(tone: 'ok' | 'fail' | 'attention' | 'info'): string {
+    const safe = this.env.safeGlyphs();
+    return tone === 'ok' ? (safe ? '+' : '✓') : tone === 'fail' ? (safe ? 'x' : '✕') : tone === 'attention' ? (safe ? '!' : '◷') : (safe ? '-' : '⊘');
+  }
+
+  private toneColor(look: ArcadeLook, tone: 'ok' | 'fail' | 'attention' | 'info'): Rgb {
+    return tone === 'ok' ? look.ok : tone === 'fail' ? look.bad : tone === 'attention' ? look.warn : look.text.dim;
+  }
+
+  /** One glyph and a count for terminals with no strip: what the latest news was, and how much is unread. */
+  private compactMarker(look: ArcadeLook): {text: string; color: Rgb} | undefined {
+    const view = this.companion?.view();
+    if (!view) return undefined;
+    const tone = view.attention?.tone ?? view.toast?.tone;
+    if (!tone && !view.unread) return undefined;
+    return {text: `${this.glyphFor(tone ?? 'info')}${view.unread ? ` ${view.unread}` : ''}`, color: this.toneColor(look, tone ?? 'info')};
+  }
+
+  /**
+   * The strip: what runs behind the Arcade on the left, the latest news on the right. Text only, no input: it cannot be
+   * focused, clicked or answered. A toast slides in from the right edge and out again unless motion is reduced.
+   */
+  private stripRow(look: ArcadeLook, encode: {color: ColorLevel; safe: boolean}): string {
+    const row = new Canvas(this.columns, 1);
+    const bg = look.surface.raised;
+    row.clear(bg);
+    const view = this.companion!.view();
+    const running = this.companion!.running();
+    const width = this.columns;
+    let right = '';
+    let rightColor = look.text.dim;
+    let slide = 0;
+    let fade = 0;
+    if (view.toast) {
+      right = ` ${this.glyphFor(view.toast.tone)} ${view.toast.text} `;
+      rightColor = this.toneColor(look, view.toast.tone);
+      if (view.toast.phase === 'in') slide = Math.round((1 - view.toast.progress) * 10);
+      else if (view.toast.phase === 'out') { slide = Math.round(view.toast.progress * 10); fade = view.toast.progress * 0.8; }
+    } else if (view.attention) {
+      right = ` ${this.glyphFor('attention')} ${view.attention.text} `;
+      rightColor = look.warn;
+    } else if (view.unread) {
+      right = ` ${view.unread} new · n `;
+    }
+    const maxRight = Math.max(0, width - 2);
+    if (displayWidth(right) > maxRight) right = truncateText(right, maxRight);
+    const rightX = width - displayWidth(right) - 1 + slide;
+    if (running) {
+      const left = ` ${this.glyphFor('attention')} ${running.label} running · ${formatDuration(running.elapsedMs)}`;
+      const room = rightX - 2;
+      if (room > 10) row.text(0, 0, truncateText(left, room), {fg: look.text.normal, bg});
+    } else if (width >= 60 && !view.toast) {
+      row.text(1, 0, 'Shell idle', {fg: look.text.dim, bg});
+    }
+    if (right) {
+      const chip = view.toast ? look.surface.selected : bg;
+      const fg = fade ? mixRgb(rightColor, chip, fade) : rightColor;
+      row.text(rightX, 0, right, {fg, bg: chip, bold: Boolean(view.toast || view.attention)});
+    }
+    return row.rows(encode)[0]!;
+  }
+
+  /** The notification log: the latest news, newest first. Facts only; the shell holds the output itself. */
+  private drawNotes(canvas: Canvas, look: ArcadeLook): void {
+    this.dim(canvas, look, 0.55);
+    const entries = [...(this.companion?.history() ?? [])].reverse();
+    const now = this.env.now();
+    const width = Math.max(20, Math.min(canvas.width - 10, 56));
+    const room = Math.max(1, canvas.height - 9);
+    const lines = entries.slice(0, Math.min(room, 10)).map(entry => {
+      const age = Math.max(0, now - entry.at);
+      return truncateText(`${this.glyphFor(entry.tone)} ${entry.text} · ${age < 1000 ? 'now' : `${formatDuration(age)} ago`}`, width);
+    });
+    if (!lines.length) lines.push('Nothing yet. Command results appear here while you play.');
+    lines.push('', 'The output itself is in NMSh: leave the Arcade to read it.');
+    this.drawCard(canvas, look, {text: 'Notifications', color: look.accent}, lines, undefined);
   }
 
   // ---- hub drawing ----------------------------------------------------------------------------------------------
@@ -519,11 +693,13 @@ export class ArcadeSession {
       canvas.text(x, 0, truncateText(field, fieldWidth), {bg: look.surface.selected, fg: look.text.strong});
       x += fieldWidth + 2;
     }
+    const marker = this.strip ? undefined : this.compactMarker(look);
+    if (marker) canvas.text(canvas.width - 1 - displayWidth(marker.text), 0, marker.text, {bg, fg: marker.color, bold: true});
     const right = this.notice ?? `${this.games.length} games · offline · local scores`;
-    const room = canvas.width - x - 1;
+    const room = canvas.width - x - 1 - (marker ? displayWidth(marker.text) + 2 : 0);
     if (room > 8) {
       const text = truncateText(right, room);
-      canvas.text(canvas.width - 1 - displayWidth(text), 0, text, {bg, fg: this.notice ? look.warn : look.text.dim});
+      canvas.text(canvas.width - 1 - displayWidth(text) - (marker ? displayWidth(marker.text) + 2 : 0), 0, text, {bg, fg: this.notice ? look.warn : look.text.dim});
     }
   }
 

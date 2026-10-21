@@ -9,6 +9,8 @@ export type Key =
   | {kind: 'historySearch' | 'historyDelete' | 'find' | 'previousFailure' | 'nextFailure'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'
     /** Ctrl+Q: add the composer's command to the queue; Ctrl+S: send it to the running program's input. */
     | 'queueCommand' | 'sendToProgram'
+    /** Ctrl+T: open the Arcade. NMSh's own key: it is never written to a program, so it is safe while a command runs. */
+    | 'arcade'
     /** Ctrl+Y: redo in NMSh's text editor (the composer ignores it, as it ignored the unmapped byte before). */
     | 'redo'} & {x?: number; y?: number};
 
@@ -108,6 +110,7 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[112;5u', 'suggestPrevious'], // Kitty Ctrl+P
   ['\u001B[113;5u', 'queueCommand'], // Kitty Ctrl+Q
   ['\u001B[115;5u', 'sendToProgram'], // Kitty Ctrl+S
+  ['\u001B[116;5u', 'arcade'], // Kitty Ctrl+T
   ['\u001B[121;5u', 'redo'], // Kitty Ctrl+Y
   ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
   ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
@@ -183,6 +186,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (value === '\u0011') keys.push({kind: 'queueCommand'} as Key); // Ctrl+Q: queue (the TTY is raw; no flow control)
     else if (value === '\u0013') keys.push({kind: 'sendToProgram'} as Key); // Ctrl+S: send to the running program
+    else if (value === '\u0014') keys.push({kind: 'arcade'} as Key); // Ctrl+T: the Arcade (frontend-owned; never reaches a program)
     else if (value === '\u0019') keys.push({kind: 'redo'} as Key); // Ctrl+Y: redo in the NMSh editor
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
     else if (value === '\u0010') keys.push({kind: 'suggestPrevious'} as Key); // Ctrl+P

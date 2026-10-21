@@ -10,7 +10,8 @@ import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
-import {ArcadeSession, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {ArcadeSession, type ArcadeCompanion, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {BackgroundActivity, safeCommandLabel, type ActivityEvent} from '../notifications/backgroundActivity.js';
 import {ARCADE_GAMES, findGame, gameNames} from '../arcade/registry.js';
 import {ArcadeStore} from '../arcade/scores.js';
 import {freshSeed} from '../arcade/rng.js';
@@ -1364,8 +1365,12 @@ export class TerminalApp {
       }
       return;
     }
-    if (this.arcade) {
-      // A command (a queued one, or one from another window) now owns the keyboard: the arcade closes first, so a game never
+    if (this.arcade && queued !== undefined) {
+      // The person's own queue started the next entry: it was authorised before it ran and is not interactive until the shell says so,
+      // so the Arcade stays and the strip appears. A question or a full-screen program closes or pauses it (onInputState, render).
+      this.arcadeCompanionOn();
+    } else if (this.arcade) {
+      // A command from another window or type-ahead now owns the keyboard: the arcade closes first, so a game never
       // takes a password or a reply meant for it.
       this.closeArcade(false);
       this.output.addFrontendInteraction('/games', 'Closed the arcade: a command started and owns the keyboard. Open it again at the prompt.', INFO);
@@ -2491,6 +2496,8 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    // Ctrl+T is NMSh's own key: it opens the Arcade (or says why not) and is never written to a program, so it is safe over a command.
+    if (key.kind === 'arcade') { this.openArcade(undefined, 'Ctrl+T', true); return; }
     if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
       const hold = this.ownershipLook;
@@ -4103,10 +4110,119 @@ export class TerminalApp {
     };
   }
 
-  /** /games, /game and /arcade: the hub, or one game by id or alias. Never while a program owns the terminal. */
-  private openArcade(name: string | undefined, command: string): void {
-    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
-      this.output.addFrontendInteraction(command, 'The arcade opens at the prompt: let the running command finish first, so its input is never taken by a game.', INFO);
+  /**
+   * Why the Arcade may not open now, or undefined when it may. At the prompt it opens as it always did. Over a running
+   * command it opens only by NMSh's own key (Ctrl+T, never typed text a program could read), and only when everything
+   * NMSh knows says the command is not reading the keyboard: any doubt about who owns the keys keeps it closed.
+   */
+  private arcadeBlocker(shortcut: boolean): string | undefined {
+    if (this.passthrough || this.externalPassthrough || this.frontendSuspended || this.startupPending || this.replaying) {
+      return 'A full-screen program or the shell start-up owns the terminal; the arcade opens once it is done.';
+    }
+    if (this.hasModalInput(true) || this.queueReview || this.queueEdit || this.queueCompose) return 'Close what is open first (Esc); the arcade needs the whole screen and every key.';
+    const run = this.running;
+    if (!run) return undefined;
+    if (!shortcut) return 'The arcade opens at the prompt: let the running command finish, or press Ctrl+T to play while it runs without asking for input.';
+    if (!this.session.features.has('input-state') || !this.session.features.has('input-look')) {
+      return 'This session cannot report whether the command is waiting for input, so the arcade stays closed over it. Let it finish.';
+    }
+    if (run.awaitingExec) return 'The command is still starting; press Ctrl+T again in a moment to open the arcade.';
+    if (run.stoppedAt !== undefined || run.interrupted || run.done || this.stopAhead) return 'The command is being stopped or is ending; the arcade opens at the prompt.';
+    if (this.ownershipLook) return 'NMSh is still checking who your last keys were for; press Ctrl+T again in a moment to open the arcade.';
+    const request = this.inputState?.request;
+    if (request || this.inputState?.terminalOwner) {
+      return `${request ? inputProgram(request, run.command) : 'The command'} is waiting for input, so the arcade stays closed. Answer it, or press Ctrl+Q to queue a command.`;
+    }
+    return undefined;
+  }
+
+  /** The Arcade's read-only view of shell work, for a session opened (or turned on) over a command or a queue. */
+  private arcadeCompanion(activity: BackgroundActivity): ArcadeCompanion {
+    return {
+      view: () => activity.view(Date.now(), this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff),
+      history: () => activity.history(),
+      markRead: () => activity.markRead(),
+      running: () => this.running && !this.running.done ? {label: safeCommandLabel(this.running.command), elapsedMs: Math.max(0, Date.now() - this.running.startedAt)} : undefined,
+    };
+  }
+
+  /** Give a bare Arcade its strip (a queued command began behind it); the game re-lays out, it does not restart. */
+  private arcadeCompanionOn(): void {
+    const arcade = this.arcade;
+    if (!arcade || arcade.activity) return;
+    arcade.activity = new BackgroundActivity();
+    arcade.session.setCompanion(this.arcadeCompanion(arcade.activity));
+    this.syncArcadeWake();
+  }
+
+  /** Presentation news from the shell, queue or input state. Nothing is recorded unless an Arcade is open to show it. */
+  private noteBackground(event: ActivityEvent): void {
+    const activity = this.arcade?.activity;
+    if (!activity) return;
+    if (activity.push(event) || event.kind === 'cleared') { this.syncArcadeClock(); this.syncArcadeWake(); }
+  }
+
+  /** One scheduled repaint for the next toast boundary, or the next second of the running clock; none when nothing changes. */
+  private syncArcadeWake(): void {
+    this.arcadeToast?.();
+    this.arcadeToast = undefined;
+    const arcade = this.arcade;
+    const activity = arcade?.activity;
+    if (!arcade || !activity || this.stopped) return;
+    const now = Date.now();
+    const motion = this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff;
+    const change = activity.nextChange(now, motion);
+    const tick = this.running && !this.running.done ? 1000 - (Math.max(0, now - this.running.startedAt) % 1000) : undefined;
+    const delay = Math.min(change === undefined ? Infinity : Math.max(16, change - now), tick ?? Infinity);
+    if (!Number.isFinite(delay)) return;
+    this.arcadeToast = presentationClock.after(() => {
+      this.arcadeToast = undefined;
+      if (!this.arcade || this.stopped) return;
+      this.syncArcadeClock();
+      this.render();
+      this.syncArcadeWake();
+    }, delay);
+  }
+
+  /** The Arcade's reaction to what the shell says about input while it is open: pause and tell, or give the keyboard back. */
+  private arcadeInputState(state: InputState): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    if (state.terminalOwner) { this.closeArcade(false, 'a program took the terminal'); return; }
+    if (state.request) {
+      // Evidence, not a guess: only the session's own report counts. The game stops where it is; no key is ever forwarded.
+      arcade.session.pause();
+      this.arcadeCompanionOn();
+      const program = state.request.program || commandWord(this.running?.command ?? '');
+      this.noteBackground({kind: 'attention', key: `input:${state.request.since}`, state: 'input', ...(program ? {program} : {}), confirmed: state.request.confidence === 'confirmed'});
+    } else this.noteBackground({kind: 'cleared', state: 'input'});
+  }
+
+  /** The queue's own news, turned into presentation events; it never changes the queue. */
+  private arcadeQueueNews(previous: QueueState, state: QueueState): void {
+    if (!this.arcade) return;
+    const chain = state.timeline;
+    if (chain?.endedAt !== undefined && chain.status !== 'active' && (chain.id !== previous.timeline?.id || previous.timeline?.status === 'active')) {
+      const {succeeded, failed, interrupted} = chain.counts;
+      const count = succeeded + failed + interrupted;
+      if (count > 1) this.noteBackground({kind: 'queue-finished', key: `queue:${chain.id}`, count, failed});
+    }
+    const head = state.entries[0];
+    const waiting = head && head.condition === 'approve' && !head.approved && !state.paused;
+    if (waiting) { this.arcadeCompanionOn(); this.noteBackground({kind: 'attention', key: `approval:${head.id}:${head.text.length}`, state: 'approval'}); }
+    else this.noteBackground({kind: 'cleared', state: 'approval'});
+    if (state.paused && state.entries.length) {
+      this.arcadeCompanionOn();
+      this.noteBackground({kind: 'attention', key: `paused:${state.paused.at}`, state: 'paused'});
+    } else this.noteBackground({kind: 'cleared', state: 'paused'});
+  }
+
+  /** /games, /game and /arcade: the hub, or one game by id or alias; Ctrl+T (`shortcut`) also over a command that is not reading. */
+  private openArcade(name: string | undefined, command: string, shortcut = false): void {
+    const blocked = this.arcadeBlocker(shortcut);
+    if (blocked) {
+      this.output.addFrontendInteraction(command, blocked, INFO);
+      this.render();
       return;
     }
     const game = name ? findGame(name) : undefined;
@@ -4118,11 +4234,18 @@ export class TerminalApp {
     // The Arcade is a full-viewport application: it draws over the whole terminal (no banner, Status Strip, sidebar,
     // transcript or composer), like the screensaver, and the PTY keeps its size. See docs/design/arcade-expansion.md.
     const {columns, rows} = this.terminalDimensions();
-    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows}, game);
+    // Shell work that continues behind the Arcade (a running command, queued entries) gets the strip from the start, so a
+    // toast never changes the games' size later; a bare Arcade stays exactly as it was.
+    const activity = this.running || this.queueState.entries.length ? new BackgroundActivity() : undefined;
+    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows}, game, activity && this.arcadeCompanion(activity));
     this.arcadeClosing = undefined;
     const handoff = this.arcadeHandoff('in');
-    this.arcade = {session, interval: 0, floor: 40, last: performance.now(), handoff, under: handoff?.under};
+    this.arcade = {session, interval: 0, floor: 40, last: performance.now(), handoff, under: handoff?.under, ...(activity ? {activity} : {})};
+    this.arcadePaintedAt = 0;
+    if (activity) this.arcadeQueueNews({entries: []}, this.queueState);
+    if (activity && this.inputState?.request) this.arcadeInputState(this.inputState);
     this.syncArcadeClock();
+    this.syncArcadeWake();
   }
 
   /** The rise-in or recede between NMSh and the Arcade; none under Reduced Motion, Effects Off or without color. */
@@ -4138,6 +4261,7 @@ export class TerminalApp {
     const arcade = this.arcade;
     if (!arcade) return;
     const {columns, rows} = this.terminalDimensions();
+    this.arcadePaintedAt = performance.now();
     const frame = arcade.session.render();
     let shown = frame.rows;
     const handoff = arcade.handoff;
@@ -4184,11 +4308,14 @@ export class TerminalApp {
     this.render();
   }
 
-  private closeArcade(restore = true): void {
+  private closeArcade(restore = true, because?: string): void {
     const arcade = this.arcade;
     if (!arcade) return;
     arcade.stop?.();
+    this.arcadeToast?.();
+    this.arcadeToast = undefined;
     this.arcade = undefined;
+    if (because) this.output.addFrontendInteraction('/games', `Closed the arcade: ${because}. Your keys are the program's again; the command was not touched.`, INFO);
     // The last Arcade frame recedes over NMSh's frame as it was when the Arcade opened; the real frame follows at once.
     const last = restore && arcade.handoff?.direction !== 'in' ? this.renderer.snapshot() : undefined;
     arcade.session.dispose();
@@ -4990,7 +5117,8 @@ export class TerminalApp {
         // Queries the program asked before taking the screen go to the terminal; they paint nothing.
         const queries = this.running ? this.queryExtractor.push(data) : '';
         if (queries) { process.stdout.write(queries); this.replyRouter.expect(Date.now()); }
-        this.render();
+        // Behind the Arcade the output is recorded as always but nothing visible changed: a chunk repaints it at most four times a second.
+        if (!this.arcade || performance.now() - this.arcadePaintedAt > 250) this.render();
       }
     }
   }
@@ -5048,6 +5176,8 @@ export class TerminalApp {
       try { void this.notificationService.notify(formatCommandNotification(notification)).catch(() => {}); } catch { /* best effort */ }
     }
     if (this.replaying) this.replayedCompletions += 1;
+    else this.noteBackground({kind: 'command', key: `command:${command.startId}:${command.startedAt}`, command: command.command, elapsedMs: notification.elapsedMs,
+      exitCode, interrupted: notification.interrupted});
     const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
@@ -10149,7 +10279,12 @@ export class TerminalApp {
   /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
   private pasteSteps?: {items: string[]; next: number; running: boolean};
   /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
-  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number; handoff?: ArcadeHandoff | undefined; under?: string[]};
+  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number; handoff?: ArcadeHandoff | undefined; under?: string[];
+    /** News about shell work that continues behind the Arcade; presentation only, absent when the Arcade opened with nothing running or queued. */
+    activity?: BackgroundActivity};
+  /** The one pending repaint for a toast boundary or the strip's running clock; cancelled when the Arcade closes. */
+  private arcadeToast?: () => void;
+  private arcadePaintedAt = 0;
   /** The Arcade receding after it closed: presentation only, ended by any render of the real frame. */
   private arcadeClosing?: ArcadeHandoff;
   private arcadeStore?: ArcadeStore;
@@ -11587,6 +11722,8 @@ export class TerminalApp {
     this.syncTypography();
     this.scheduleSequencePoke();
     this.reconcileOutputNavigation();
+    // A program that takes the terminal owns every key from here: the Arcade can never be what is listening.
+    if (this.arcade && (this.passthrough || this.externalPassthrough || this.frontendSuspended)) this.closeArcade(false, 'a program took the terminal');
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
@@ -12656,6 +12793,7 @@ export class TerminalApp {
     if (paused && paused.reason !== 'user' && paused.at !== previous.paused?.at && state.entries.length) {
       this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}`);
     }
+    this.arcadeQueueNews(previous, state);
     // A review is for what was shown: any change to what it would act on dismisses it, so nothing unseen runs.
     const review = this.queueReview;
     if (review && ((review.revision !== undefined && state.revision !== review.revision) || state.entries[0]?.id !== review.id || (review.kind === 'resume' && !state.paused)
@@ -13034,6 +13172,7 @@ export class TerminalApp {
       state = current;
     }
     this.inputState = state;
+    if (this.arcade) this.arcadeInputState(state);
     // The shell said the command is done: typing begun from now on is for the prompt, never a reply (#426, #436).
     if (state.done) this.running.done = true;
     if (state.request && stoppedAt !== undefined && state.request.since >= stoppedAt) {
