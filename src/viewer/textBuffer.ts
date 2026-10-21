@@ -156,6 +156,12 @@ export class TextBuffer {
     return true;
   }
 
+  /** Replace the whole text as one undoable edit (a recovered draft); the caret goes to the start. */
+  replaceAll(lines: readonly string[]): void {
+    const last = this.lines.length - 1;
+    this.replaceRange({line: 0, column: 0}, {line: last, column: this.lines[last]!.length}, (lines.length ? lines : ['']).join('\n'), 'other');
+  }
+
   // ---- Editing -----------------------------------------------------------------------------------------------------
 
   /** Typed or pasted text: CR LF and CR become line breaks, tabs stay, other control characters are dropped. */

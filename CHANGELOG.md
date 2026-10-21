@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Crash recovery for `/edit` and the document workspace** ([#469](https://github.com/raiseCatError/notMyShell/issues/469)). Unsaved changes are written, a moment after you stop typing, to a private draft in NMSh's data folder (`recovery/`, mode 0700; files 0600). After a crash, a kill or a closed window, opening the file offers **Restore draft**, **Compare with file**, **Discard draft** or **Keep for later**; nothing is applied until you choose, a draft made from an older version of the file says so, and the file itself is only ever written by the editor's normal checked save (which also retires the draft). Two windows on one file keep separate drafts, and a draft of a window that is still running is never offered. Drafts are bounded (2 MiB each, 50 in all, 30 days) and are never sent anywhere.
+
 ## [0.23.0] - 2026-10-21 — Vespyr Arcade
 
 The Arcade grows from five games to 33, and it can now be played while a command keeps running.

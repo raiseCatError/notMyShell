@@ -10,6 +10,7 @@ import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {inert} from './document.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
 import {displayColumn, TAB_WIDTH, TextBuffer, type Position} from './textBuffer.js';
+import {describeDifference, type DraftOffer} from './draftRecovery.js';
 
 /**
  * The native editor (#402): one small text file in a full-height panel. It owns keys only while open; the composer,
@@ -22,7 +23,11 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict';
+  kind: 'unsaved' | 'conflict' | 'recover';
+  /** A recovered draft this dialog offers (#469), the file's lines when it was offered, and what Compare found. */
+  offer?: DraftOffer;
+  disk?: string[];
+  detail?: string;
   focus: number;
   conflict?: SaveConflict;
   reason?: string;
@@ -47,14 +52,29 @@ export type EditorAction =
   | {kind: 'close'}
   | {kind: 'save'; force?: boolean; thenClose?: boolean}
   | {kind: 'reload'}
-  | {kind: 'copy'; text: string};
+  | {kind: 'copy'; text: string}
+  /** The draft was restored into the buffer, discarded for good, or kept for later (#469); the app updates the store. */
+  | {kind: 'draft'; target: DraftOffer}
+  | {kind: 'draft-discard'; target: DraftOffer}
+  | {kind: 'draft-keep'; target: DraftOffer};
 
 export function createEditor(file: EditableFile): EditorState {
   return {file, buffer: new TextBuffer(file.lines), top: 0, left: 0, ...(file.identity ? {} : {note: {text: 'New file: it is created when you save.', tone: 'info' as const}})};
 }
 
+/** Offer a draft recovered after a crash; nothing changes until the person chooses. */
+export function offerDraft(state: EditorState, offer: DraftOffer): void {
+  state.dialog = {kind: 'recover', focus: 0, offer, disk: [...state.buffer.lines]};
+}
+
 function dialogControls(dialog: EditorDialog): ActionControl[] {
   const focused = (index: number, destructive = false) => dialog.focus === index ? (destructive ? 'destructiveFocused' : 'focused') : destructive ? 'destructive' : 'default';
+  if (dialog.kind === 'recover') return [
+    {id: 'Action.Restore', label: 'Restore draft', state: focused(0), key: 'r', essential: true},
+    {id: 'Action.Compare', label: 'Compare with file', state: focused(1), key: 'c', essential: true},
+    {id: 'Action.Discard', label: 'Discard draft', state: focused(2, true), key: 'd', essential: true},
+    {id: 'Action.Keep', label: 'Keep for later', state: focused(3), key: 'Esc', essential: true},
+  ];
   if (dialog.kind === 'unsaved') return [
     {id: 'Action.Save', label: 'Save', state: focused(0), key: 's', essential: true},
     {id: 'Action.Discard', label: 'Discard changes', state: focused(1, true), key: 'd', essential: true},
@@ -67,6 +87,24 @@ function dialogControls(dialog: EditorDialog): ActionControl[] {
   ];
 }
 
+function recoverChoice(state: EditorState, dialog: EditorDialog, offer: DraftOffer, chosen: string): EditorAction | undefined {
+  if (chosen === 'Action.Compare') { dialog.detail = describeDifference(dialog.disk ?? state.buffer.lines, offer.draft.lines); return undefined; }
+  state.dialog = undefined;
+  if (chosen === 'Action.Keep') return {kind: 'draft-keep', target: offer};
+  if (chosen === 'Action.Discard') return {kind: 'draft-discard', target: offer};
+  const buffer = state.buffer;
+  buffer.replaceAll(offer.draft.lines);
+  const clamp = (at: Position): Position => {
+    const line = Math.min(at.line, buffer.lines.length - 1);
+    return {line, column: Math.min(at.column, buffer.lines[line]!.length)};
+  };
+  buffer.caret = clamp(offer.draft.caret);
+  buffer.anchor = offer.draft.anchor ? clamp(offer.draft.anchor) : undefined;
+  state.top = Math.min(offer.draft.top, buffer.lines.length - 1);
+  state.note = {text: 'Restored the recovered draft. It is not saved; the file is unchanged.', tone: 'info'};
+  return {kind: 'draft', target: offer};
+}
+
 function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAction | undefined {
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
@@ -76,6 +114,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
     : key.kind === 'escape' || key.kind === 'interrupt' ? 'Action.Keep'
     : controls.find(control => control.key && control.key.length === 1 && control.key === text)?.id;
   if (!chosen) return undefined;
+  if (dialog.kind === 'recover' && dialog.offer) return recoverChoice(state, dialog, dialog.offer, chosen);
   state.dialog = undefined;
   if (chosen === 'Action.Keep') return undefined;
   if (chosen === 'Action.Save') return {kind: 'save', thenClose: true};
@@ -245,14 +284,28 @@ function drawLine(state: EditorState, index: number, width: number): string {
   return out;
 }
 
+/** A draft made from a different version of the file than the one now on disk: said first, before anything is restored. */
+function draftIsStale(state: EditorState, offer: DraftOffer): boolean {
+  return (offer.draft.baseHash ?? null) !== (state.file.identity?.hash ?? null);
+}
+
+function recoverMessage(state: EditorState, dialog: EditorDialog): string {
+  const draft = dialog.offer!.draft;
+  const when = new Date(draft.savedAt).toLocaleString();
+  return `Recovered draft of ${state.file.title} (${draft.lines.length.toLocaleString('en-US')} lines, ${when}).`;
+}
+
 function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.reason ?? `${state.file.title} changed on disk.`;
+    const message = dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+      : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
-    return [`${accent}${truncateText(message, width)}${RESET}`, ...actions];
+    const stale = dialog.kind === 'recover' && dialog.offer && draftIsStale(state, dialog.offer) ? 'The file changed on disk since this draft was saved. ' : '';
+    const detail = dialog.detail || stale ? [`${foreground(UI_COLORS.subtle)}${truncateText(inert(`${stale}${dialog.detail ?? ''}`.trim()), width)}${RESET}`] : [];
+    return [`${accent}${truncateText(message, width)}${RESET}`, ...detail, ...actions];
   }
   if (state.input) return renderControlRows([['Enter', 'find'], ['Esc', 'cancel']], width);
   return renderControlRows([['Ctrl+S', 'save'], ['Esc', 'close'], ['Ctrl+Z', 'undo'], ['Ctrl+Y', 'redo'], ['Ctrl+F', 'find'], ['Ctrl+C', 'copy'], ['Ctrl+X', 'cut']], width);

@@ -66,7 +66,9 @@ export type DocumentSessionAction =
   | {kind: 'preview'; refresh: boolean}
   | {kind: 'trust'; on: boolean}
   | {kind: 'open'; path: string}
-  | {kind: 'image'; index: number};
+  | {kind: 'image'; index: number}
+  /** A recovered draft was restored, discarded or kept (#469): the app updates the draft store. */
+  | Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep'}>;
 
 /** The file's current text: the buffer's lines as one document, as the viewer reads it (unsaved edits included). */
 export function bufferText(editor: EditorState): string {
@@ -183,6 +185,7 @@ function fromEditor(state: DocumentSession, action: EditorAction | undefined): D
   if (action.kind === 'close') return {kind: 'close'};
   if (action.kind === 'save') return {kind: 'save', ...(action.force ? {force: true} : {}), ...(action.thenClose ? {thenClose: true} : {})};
   if (action.kind === 'reload') return {kind: 'reload'};
+  if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') return action;
   return {kind: 'copy', text: action.text};
 }
 

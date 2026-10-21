@@ -76,8 +76,9 @@ import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
 import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
-import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
+import {createEditor, editorKey, offerDraft, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {DraftKeeper, DraftStore} from '../viewer/draftRecovery.js';
 import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
 import {formatForPath} from '../viewer/document.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
@@ -1790,6 +1791,7 @@ export class TerminalApp {
       const {columns, rows} = this.dimensions();
       const action = editorKey(editor, key, columns, rows - 4);
       if (action) this.runEditorAction(editor, action);
+      this.drafts().note(editor);
       this.render();
       return;
     }
@@ -1818,6 +1820,7 @@ export class TerminalApp {
       const {columns, rows} = this.dimensions();
       const action = documentSessionKey(session, key, columns, rows - 4, this.documentViewerLook());
       if (action) this.runDocumentAction(session, action);
+      this.drafts().note(session.editor);
       // Leaving the preview closes its browser page; the engine stays warm for a while and stops by itself when idle.
       if (session.mode !== 'preview' && session.preview) { session.preview.dispose(); delete session.preview; }
       this.render();
@@ -4476,13 +4479,42 @@ export class TerminalApp {
       if (this.hasModalInput()) return;
       this.panelOrigin = undefined;
       this.textEditor = createEditor(result.file);
+      this.offerRecovery(this.textEditor);
       this.render();
     });
   }
 
+  // ---- Crash recovery of unsaved text (#469) -----------------------------------------------------------------------
+
+  private draftKeeper?: DraftKeeper;
+
+  /** The keeper of drafts for every open editor: one store in NMSh's own data directory, created when the first edit needs it. */
+  private drafts(): DraftKeeper {
+    return this.draftKeeper ??= new DraftKeeper(new DraftStore(join(nmshConfigDirectory(), 'recovery')), {onError: reason => {
+      const editor = this.textEditor ?? this.docSession?.editor;
+      if (editor) { editor.note = {text: `Unsaved text is not being protected against a crash: ${reason}.`, tone: 'error'}; this.render(); }
+    }});
+  }
+
+  /** A draft left by a window that died with unsaved changes is offered; nothing is restored or written until the person chooses. */
+  private offerRecovery(editor: EditorState): void {
+    try {
+      const [offer] = this.drafts().store.recoverable(editor.file.realPath);
+      if (offer) offerDraft(editor, offer);
+    } catch { /* an unreadable store is never a reason not to open the file */ }
+  }
+
+  private runDraftAction(editor: EditorState, action: Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep'}>): void {
+    const keeper = this.drafts();
+    if (action.kind === 'draft') keeper.restored(editor, action.target);
+    else if (action.kind === 'draft-keep') keeper.kept(editor, action.target);
+    else { keeper.store.retire(action.target); editor.note = {text: 'Discarded the recovered draft.', tone: 'info'}; }
+  }
+
   /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
   private runEditorAction(editor: EditorState, action: EditorAction): void {
-    if (action.kind === 'close') { this.textEditor = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
+    if (action.kind === 'close') { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
     if (action.kind === 'copy') {
       void this.copyText(action.text, 'Copied').then(note => { if (note && this.textEditor === editor) { editor.note = {text: note, tone: 'success'}; this.render(); } });
       return;
@@ -4493,6 +4525,7 @@ export class TerminalApp {
         editor.busy = false;
         if (this.textEditor !== editor) return;
         if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; this.render(); return; }
+        this.drafts().discard(editor);
         this.textEditor = {...createEditor(result.file), note: {text: 'Reloaded from disk; your changes were discarded.', tone: 'info'}};
         this.render();
       });
@@ -4506,7 +4539,8 @@ export class TerminalApp {
         editor.file = result.file;
         // Only what was written is clean: typing during the save stays unsaved.
         if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
-        if (action.thenClose) { this.textEditor = undefined; this.returnFromPanel(); }
+        this.drafts().note(editor);
+        if (action.thenClose) { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); }
         else editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
       } else if (result.conflict) {
         editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
@@ -4543,6 +4577,7 @@ export class TerminalApp {
     this.releaseViewerImages();
     this.viewer = undefined;
     this.docSession = createDocumentSession(result.file, mode);
+    this.offerRecovery(this.docSession.editor);
     if (mode === 'preview') this.beginPreview(this.docSession, false);
     this.render();
   }
@@ -4600,6 +4635,7 @@ export class TerminalApp {
     const session = this.docSession;
     if (!session) return;
     this.docSession = undefined;
+    this.drafts().discard(session.editor);
     session.preview?.dispose();
     this.releaseViewerImages();
     this.returnFromPanel();
@@ -4608,6 +4644,7 @@ export class TerminalApp {
   /** The session's requests that touch the disk, the clipboard or the preview. */
   private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
     const editor = session.editor;
+    if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
     if (action.kind === 'close') { this.closeDocumentSession(); return; }
     if (action.kind === 'copy') {
       void this.copyText(action.text, 'Copied').then(note => { if (note && this.docSession === session) { editor.note = {text: note, tone: 'success'}; session.viewer.note = note; this.render(); } });
@@ -4627,6 +4664,7 @@ export class TerminalApp {
         editor.busy = false;
         if (this.docSession !== session) return;
         if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
+        this.drafts().discard(editor);
         const fresh = createDocumentSession(result.file, session.mode === 'edit' ? 'edit' : 'source');
         fresh.note = 'Reloaded from disk; your changes were discarded.';
         fresh.viewer.note = fresh.note;
@@ -4644,6 +4682,7 @@ export class TerminalApp {
         editor.file = result.file;
         if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
         if (action.thenClose) { this.closeDocumentSession(); this.render(); return; }
+        this.drafts().note(editor);
         editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
         session.viewer.note = `Saved ${editor.file.title}.`;
         syncDocumentViewer(session, session.mode === 'preview');
@@ -13805,6 +13844,8 @@ export class TerminalApp {
     this.closeArcade(false);
     this.closeBrowser(false);
     this.docSession?.preview?.dispose();
+    // Unsaved editor text is written before the window ends, so closing it never costs the text.
+    this.draftKeeper?.dispose();
     void this.browserHost?.shutdown();
     this.releaseViewerImages();
     this.graphics?.releaseAll();

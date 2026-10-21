@@ -30,6 +30,16 @@ the preview always show what is in the buffer, including unsaved edits, and noth
 - **No browser, or Real browser Off:** NMSh's own renderer draws the preview (headings, lists, tables, code, local images through the graphics service, sized headings where the terminal proved text sizing). The two previews share the keys above; the Chromium one adds zoom (`+`/`-`/`0`) and Chromium's find.
 - The rendered Markdown is `marked` (GFM) with the document's raw HTML passed through to the sandboxed page and a built-in stylesheet that follows the theme's light or dark.
 
+## Crash recovery
+
+Unsaved text is protected by `src/viewer/draftRecovery.ts` ([#469](https://github.com/raiseCatError/notMyShell/issues/469)); the editor, the workspace and `fileEdit.ts` stay the only owners of the buffer and of the file.
+
+- **When:** a dirty buffer is written 1.5 s after the last change, and at once when the window ends (`stop`). A buffer that is clean again (saved, or undone to the saved text), closed or reloaded retires its draft. A failing store is reported once in the editor's status row and never interrupts typing.
+- **Where and how:** `<NMSh config dir>/recovery/<hash of real path>-<pid>.json`, written beside and renamed into place, fsynced, 0600 in a 0700 directory that must be a real directory owned by the user (never followed through a symlink). Persistent app data, not scratch: it lives with the configuration, not under a temporary volume.
+- **Offer:** opening a file lists drafts of that real path whose process is no longer running (and ones kept earlier). The offer is a dialog of the editor (`recover`): Restore puts the draft in the buffer as one undoable, unsaved edit (the caret and scroll come back; the file is unchanged); Compare says where the draft differs; Discard retires that draft only; Esc keeps it under a name of its own so later edits cannot replace it. A draft whose base hash differs from the file now on disk says the file changed since.
+- **Not provided:** encryption (a key store would be needed to mean anything; the directory is private instead), a hunk-by-hunk merge (#463), recovery of read-only viewer state, a guarantee after every filesystem failure. A window killed within 1.5 s of the last keystroke loses those keystrokes.
+- **Verified by** `tests/draftRecovery.test.ts` (store permissions, symlinked directory, liveness, corruption, bounds, keeper debounce/flush/retire, dialog choices), `tests/draftRecoveryApp.test.ts` (the real app: offer, restore, checked save, discard, window end, and a real `SIGKILL` of a process with unsaved text).
+
 ## Not provided
 
 No split view, so no automatic refresh while typing; the preview refreshes on request. There is no "open in an external browser" action.
