@@ -68,7 +68,7 @@ function walk(blocks: readonly Block[], lines: readonly string[], out: Array<Hea
   for (const block of blocks) {
     if (block.kind === 'heading' && block.from !== undefined) {
       out.push({level: block.level, text: plainInline(block.text).trim(), line: block.from, depth: 0, ...(lines[block.from]?.trimStart().startsWith('<') ? {fromHtml: true} : {})});
-    } else if (block.kind === 'quote') walk(block.blocks, lines, out);
+    } else if (block.kind === 'quote' || block.kind === 'details') walk(block.blocks, lines, out);
     else if (block.kind === 'list') for (const item of block.items) walk(item.blocks, lines, out);
   }
 }

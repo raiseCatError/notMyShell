@@ -22,6 +22,8 @@ export type Block = (
   | {kind: 'quote'; blocks: Block[]}
   | {kind: 'table'; align: Alignment[]; header: string[]; rows: string[][]}
   | {kind: 'rule'}
+  /** `<details>`: a disclosure, collapsed unless `open`; its content is blocks (Markdown between GitHub-style tags is Markdown). */
+  | {kind: 'details'; open: boolean; summary: string; blocks: Block[]}
 ) & {
   /** The source lines the block came from (0-based; `to` is exclusive), when `parseBlocks` knows them: the shared source-position map. */
   from?: number;
@@ -167,6 +169,38 @@ function htmlBlockKind(line: string): 1 | 2 | 6 | 7 | undefined {
   return KNOWN.has(name) && text.length <= 4096 && /^<[^<>]*>\s*$/u.test(text) ? 7 : undefined;
 }
 
+const OPENS = /<details\b/giu, CLOSES = /<\/details\s*>/giu;
+const count = (pattern: RegExp, text: string) => (text.match(pattern) ?? []).length;
+
+/**
+ * GitHub writes a disclosure as `<details>` + `<summary>` in one HTML block, Markdown after a blank line, and `</details>` in a
+ * later block. When the first block opens a details it does not close, find the line that closes it (nesting counted, within a
+ * bound) and return what the first block holds: whether it is open, its summary and any content written right after it.
+ */
+function detailsAcross(lines: readonly string[], start: number, end: number): {close: number; open: boolean; summary: string; head: string} | undefined {
+  const chunk = lines.slice(start, end).join('\n');
+  if (!/^\s*<details\b/iu.test(chunk)) return undefined;
+  let depth = count(OPENS, chunk) - count(CLOSES, chunk);
+  if (depth <= 0) return undefined;
+  for (let at = end; at < Math.min(lines.length, end + 5000); at += 1) {
+    depth += count(OPENS, lines[at]!) - count(CLOSES, lines[at]!);
+    if (depth <= 0) {
+      if (!/^\s*<\/details\s*>\s*$/iu.test(lines[at]!)) return undefined;
+      const opening = /^\s*<details\b([^>]*)>/iu.exec(chunk);
+      const summary = /<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/iu.exec(chunk);
+      const head = chunk.slice((opening?.[0].length ?? 0)).replace(summary?.[0] ?? '', '').trim();
+      return {close: at, open: /\bopen\b/iu.test(opening?.[1] ?? ''), summary: summaryText(summary?.[1] ?? ''), head};
+    }
+  }
+  return undefined;
+}
+
+function summaryText(inner: string): string {
+  const paragraph = htmlToBlocks(`<summary>${inner}</summary>`)[0];
+  const text = paragraph && paragraph.kind === 'paragraph' ? paragraph.text.replace(/^<b>([\s\S]*)<\/b>$/u, '$1') : '';
+  return text.trim() || 'Details';
+}
+
 /** Index just past an HTML block starting at `start`: kinds 1 and 2 to their end marker, the others to a blank line. */
 function htmlBlockEnd(lines: readonly string[], start: number, kind: 1 | 2 | 6 | 7): number {
   const closes = kind === 1 ? /<\/(?:pre|script|style|textarea)>/iu : kind === 2 ? /-->/u : undefined;
@@ -218,6 +252,13 @@ function parseLines(lines: readonly string[], depth: number, html = false, offse
     const markup = html ? htmlBlockKind(line) : undefined;
     if (markup) {
       const end = htmlBlockEnd(lines, index, markup);
+      const disclosure = markup === 6 && depth < MAX_DEPTH ? detailsAcross(lines, index, end) : undefined;
+      if (disclosure) {
+        const content = [...(disclosure.head ? htmlToBlocks(disclosure.head) : []), ...parseLines(lines.slice(end, disclosure.close), depth + 1, html, offset + end)];
+        blocks.push({kind: 'details', open: disclosure.open, summary: disclosure.summary, blocks: content});
+        index = disclosure.close + 1;
+        continue;
+      }
       blocks.push(...htmlToBlocks(lines.slice(index, end).join('\n')));
       index = end;
       continue;

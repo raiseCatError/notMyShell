@@ -50,6 +50,8 @@ export interface ViewerState {
   input?: {kind: 'search' | 'goto' | 'heading'; value: string; focus?: number};
   /** Where each heading jump started (newest last), for Backspace (#462). */
   jumps?: Array<{top: number; sub: number}>;
+  /** The person's choices for `<details>` (key → open); a block without one shows its own `open` state (#462). */
+  disclosure?: Map<string, boolean>;
   query?: string;
   match?: {unit: number; start: number; length: number};
   matchCount?: number;
@@ -168,12 +170,13 @@ function gutterWidth(state: ViewerState): number {
 }
 
 function markdownRows(state: ViewerState, width: number, look: ViewerLook): MarkdownRow[] {
-  const version = `${look.images?.version ?? 0}|${look.sized ? 'sized' : 'plain'}`;
+  const version = `${look.images?.version ?? 0}|${look.sized ? 'sized' : 'plain'}|${[...(state.disclosure ?? [])].map(([key, open]) => `${key}=${open}`).join(',')}`;
   if (state.markdown?.width !== width || state.markdown.version !== version) {
     const options = {
       ...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks),
       ...(look.images ? {images: look.images} : {}),
       ...(look.sized ? {sizedHeadings: {maxRows: 3}} : {}),
+      ...(state.disclosure?.size ? {disclosure: {isOpen: (key: string, open: boolean) => state.disclosure!.get(key) ?? open}} : {}),
     };
     state.markdown = {width, version, rows: state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true})};
   }
@@ -370,6 +373,33 @@ function countMatches(state: ViewerState, width: number, look: ViewerLook): numb
   return total;
 }
 
+// ---- Disclosure -------------------------------------------------------------------------------------------------
+
+/**
+ * `z` opens or closes the `<details>` summary at or below the top of the screen (else the last one above it); `Z` all the
+ * summaries now in the rendered rows. The choices live in the viewer, keyed by summary text, and never touch the source.
+ */
+function toggleDetails(state: ViewerState, every: boolean, width: number, body: number, look: ViewerLook): void {
+  if (!state.rendered) { state.note = 'Details open and close in the rendered view (m).'; return; }
+  const rows = markdownRows(state, width, look);
+  const keys: Array<{key: string; at: number}> = [];
+  rows.forEach((row, at) => { if (row.details) keys.push({key: row.details, at}); });
+  if (!keys.length) { state.note = 'No details in this document.'; return; }
+  const disclosure = state.disclosure ??= new Map();
+  // Whether a summary is open is read from how its row was drawn (▾ or v), so a block's own `open` attribute is respected.
+  const isOpen = (at: number) => /^(▾|v )/u.test(rows[at]!.plain);
+  if (every) {
+    const anyClosed = keys.some(({at}) => !isOpen(at));
+    for (const {key} of keys) disclosure.set(key, anyClosed);
+  } else {
+    const target = keys.find(({at}) => at >= state.top) ?? keys.at(-1)!;
+    disclosure.set(target.key, !isOpen(target.at));
+  }
+  delete state.markdown;
+  state.sub = 0;
+  clampTop(state, width, body, look);
+}
+
 // ---- Headings ---------------------------------------------------------------------------------------------------
 
 const outlines = new WeakMap<ViewerState, {text: string; headings: HeadingEntry[]}>();
@@ -474,6 +504,7 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
     else { state.rendered = !state.rendered; state.numbers = !state.rendered; state.top = 0; state.sub = 0; state.match = undefined; state.matchCount = undefined; }
   }
   else if (text === '/' || key.kind === 'find') state.input = {kind: 'search', value: state.query ?? ''};
+  else if (text === 'z' || text === 'Z') toggleDetails(state, text === 'Z', width, body, look);
   else if (text === ':') state.input = {kind: 'goto', value: ''};
   else if (text === '#' && renders(state.document)) state.input = {kind: 'heading', value: '', focus: 0};
   else if (key.kind === 'backspace' && state.jumps) {
@@ -536,14 +567,14 @@ function controls(state: ViewerState, columns: number, look: ViewerLook): string
   if (look.workspace) {
     const preview = look.workspace.mode === 'preview';
     return renderControlRows([
-      ['↑↓', 'scroll'], ['/', 'find'], ['#', 'headings'], ...(preview ? [] : [[':', 'line'] as const]),
+      ['↑↓', 'scroll'], ['/', 'find'], ['#', 'headings'], ...(state.rendered && state.markdown?.rows.some(row => row.details) ? [['z', 'details'] as const] : []), ...(preview ? [] : [[':', 'line'] as const]),
       ['h', preview ? 'source' : 'preview'], ['e', 'edit'], ...(preview ? [['r', 'refresh'] as const] : []),
       ...(preview && state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
       ['Ctrl+S', 'save'], ['R', 'reload from disk'], ['Esc', preview ? 'source' : 'close'],
     ], width);
   }
   return renderControlRows([
-    ['↑↓', 'scroll'], ['/', 'find'], ...(renders(state.document) ? [['#', 'headings'] as const] : []), ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
+    ['↑↓', 'scroll'], ['/', 'find'], ...(renders(state.document) ? [['#', 'headings'] as const] : []), ...(state.rendered && state.markdown?.rows.some(row => row.details) ? [['z', 'details'] as const] : []), ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
     ...(state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
