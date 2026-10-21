@@ -345,6 +345,11 @@ export class PixelBuffer {
     this.data[py * this.width + px] = color;
   }
   clear(): void { this.data.fill(undefined); }
+  /** Make this buffer a copy of `source` (same size): how a cached backdrop starts each frame. */
+  copyFrom(source: PixelBuffer): void {
+    if (source.width !== this.width || source.height !== this.height) throw new RangeError('buffer sizes differ');
+    for (let index = 0; index < this.data.length; index += 1) this.data[index] = source.data[index];
+  }
   rect(x: number, y: number, width: number, height: number, color: Rgb): void {
     for (let row = 0; row < height; row += 1) for (let column = 0; column < width; column += 1) this.set(x + column, y + row, color);
   }

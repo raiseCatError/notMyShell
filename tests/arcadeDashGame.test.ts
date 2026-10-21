@@ -203,10 +203,14 @@ test('pause: the game does not advance without steps and animate never moves the
   assert.equal(f.world.hash(), hash);
 });
 
-test('color phases: a new tint every PHASE_METERS, blended smoothly with mixRgb, all from palette roles', () => {
+test('color phases: a new neon every PHASE_METERS, blended smoothly, all distinct and never the spike color', async () => {
+  const {deltaE} = await import('../src/arcade/look.js');
+  const {spikeSprite} = await import('../src/arcade/games/dash/sprites.js');
   const tones = phaseTones(palette);
-  const roles = [palette.accent, palette.ok, palette.warn, palette.accentSoft, palette.bad];
-  assert.deepEqual(tones, roles);
+  assert.equal(tones.length, 5);
+  for (let a = 0; a < tones.length; a += 1) for (let b = a + 1; b < tones.length; b += 1) assert.ok(deltaE(tones[a]!, tones[b]!) >= 10, `phases ${a} and ${b}`);
+  const spike = spikeSprite(palette).pixels.find(Boolean)!;
+  for (const tone of tones) assert.ok(deltaE(tone, spike) >= 12, 'a spike never blends into a phase');
   assert.deepEqual(phaseTint(palette, 10), tones[0]);
   const before = phaseTint(palette, PHASE_PX - 1);
   const start = phaseTint(palette, PHASE_PX);

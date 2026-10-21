@@ -336,8 +336,8 @@ function drawPreview(canvas: Canvas, frame: number, palette: ArcadePalette): voi
       const x = left + 1 + column * (cw + 1);
       const y = top + (ch === 2 ? 1 : 0) + row * pitchY;
       canvas.fill(x, y, cw, ch, ' ', {bg});
-      if (column > 0 && demo.regions[cell - 1] === region) canvas.fill(x - 1, y, 1, ch, ' ', {bg: mixRgb(bg, look.surface.base, 0.3)});
-      if (ch === 2 && row > 0 && demo.regions[cell - size] === region) canvas.fill(x, y - 1, cw, 1, ' ', {bg: mixRgb(bg, look.surface.base, 0.3)});
+      if (column > 0 && demo.regions[cell - 1] === region) canvas.fill(x - 1, y, 1, ch, ' ', {bg: mixRgb(bg, look.surface.base, 0.14)});
+      if (ch === 2 && row > 0 && demo.regions[cell - size] === region) canvas.fill(x, y - 1, cw, 1, ' ', {bg: mixRgb(bg, look.surface.base, 0.14)});
       if (demo.regions.indexOf(region) === cell) canvas.text(x, y, regionLetter(region), {fg: mixRgb(bg, look.surface.sunken, 0.62), bg});
       if (demo.solution[row] === column && row < placed) {
         canvas.fill(x, y + ch - 1, cw, 1, ' ', {bg: look.surface.sunken});

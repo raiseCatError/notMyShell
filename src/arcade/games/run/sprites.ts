@@ -87,15 +87,20 @@ const ART: Readonly<Record<ObstacleKind, readonly string[]>> = {
 };
 const BIRD_DOWN = ['..........', '..AAAAAA..', 'BAAAAAAAA.', '.A......A.'];
 
-/** Base colors for each obstacle, all from the palette. */
-export function obstacleColor(kind: ObstacleKind, palette: ArcadePalette): Rgb {
+const hex = (value: number): Rgb => ({red: (value >> 16) & 255, green: (value >> 8) & 255, blue: value & 255});
+
+/**
+ * Base colors for each obstacle: a fixed hazard palette that never shares Vespyr's lavender, so a hazard reads at a glance
+ * whatever the theme. Without color the canvas drops these and the silhouettes carry the meaning.
+ */
+export function obstacleColor(kind: ObstacleKind, _palette: ArcadePalette): Rgb {
   switch (kind) {
-    case 'crates': case 'crate': return palette.warn;
-    case 'yarn': return palette.accent;
-    case 'stones': return mixRgb(palette.muted, palette.ink, 0.35);
-    case 'cans': return palette.ink;
-    case 'bird': return palette.bad;
-    default: return palette.haze;
+    case 'crates': case 'crate': return hex(0xdba36a);
+    case 'yarn': return hex(0xff8fb3);
+    case 'stones': return hex(0xb9b5cc);
+    case 'cans': return hex(0x7fd6d2);
+    case 'bird': return hex(0xff8f6e);
+    default: return hex(0xffe08a);
   }
 }
 
@@ -103,7 +108,7 @@ export function obstacleColor(kind: ObstacleKind, palette: ArcadePalette): Rgb {
 export function obstacleSprite(kind: ObstacleKind, palette: ArcadePalette, flap = false): Sprite {
   const base = obstacleColor(kind, palette);
   const rows = kind === 'bird' && flap ? BIRD_DOWN : ART[kind];
-  return spriteFromRows(rows, {A: base, B: mixRgb(base, palette.deep, 0.5)});
+  return spriteFromRows(rows, {A: base, B: mixRgb(base, palette.deep, 0.55)});
 }
 
 /** Rows of an obstacle's art, for tests (width and height must match the kind's physics box). */

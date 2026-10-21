@@ -608,7 +608,7 @@ export class ArcadeSession {
     const howTo = (game.howToPlay ?? []).slice(0, 2).flatMap(line => wrap(line, textWidth));
     const needed = 3 + description.length + (howTo.length ? howTo.length + 1 : 0) + 3;
     // The preview takes what the details do not need, up to a 16:9 picture (cells are about twice as tall as wide).
-    const previewHeight = Math.max(3, Math.min(Math.round(width * 0.3), Math.round(height * 0.58), height - needed - 1));
+    const previewHeight = Math.max(3, Math.min(Math.round(width * 0.3), Math.round(height * 0.64), height - needed - 1));
     const previewTop = top + 1;
     this.drawPreview(canvas, look, palette, game, x, previewTop, width, previewHeight);
     let y = previewTop + previewHeight + 1;

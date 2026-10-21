@@ -256,13 +256,16 @@ test('the cat poses are Vespyr: ears, eyes, whiskers, four legs and a tail from 
 
 test('wings and tail animate from flaps and motion in the rendered game', () => {
   const frames = new Set<string>();
-  const {game, world, draw} = make();
+  const {game, world, draw, canvas} = make();
   game.key(SPACE);
   for (let i = 0; i < 90; i += 1) {
     if (i % 25 === 0) game.key(SPACE);
     game.animate(16.7); game.step(1000 / 60);
     if (!world.alive) break;
-    frames.add(draw().slice(Math.max(0, Math.floor(world.y / 2) - 1), Math.floor(world.y / 2) + 8).join('\n'));
+    // The sky is drawn in pixels, so compare colored rows around the cat (plain text would be solid blocks).
+    draw();
+    const cat = canvas.rows({color: 'truecolor', safe: false}).slice(Math.max(0, Math.floor(world.y / 2) - 1), Math.floor(world.y / 2) + 8);
+    frames.add(cat.map(row => [...row.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+)m./gu)].filter(match => Number(match[1]) > 150 && Number(match[3]) > 180).length).join(','));
   }
   assert.ok(frames.size > 5, `${frames.size} distinct cat frames`);
 });
