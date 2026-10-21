@@ -86,6 +86,17 @@ terminal: A1, A9, A10 and B1 no longer stand for the new candidate and are repla
 **NOT RUN is not PASS.** The nine required passes above were not performed; if the release goes ahead without them, that
 is a recorded acceptance of their risk (below), not a result.
 
+### Release decision (2026-10-21)
+
+The maintainer decided to publish v0.22.0 without the physical passes marked NOT RUN above (the nine required passes and F1–F7) and accepted
+the risk in writing. That is an acceptance of risk, **not** a result: no row above changed to PASS because of it, and no automated run stands in
+for a person at a real terminal. What stands in for them is automated only: hosted CI on the exact release commit (pull-request and dispatched
+runs), a local full run on a loaded 8 GB machine (3,730 of 3,741 passing, the 11 load-sensitive live-terminal non-passes passing when rerun
+alone), and real-PTY smokes of the image viewer, the document workspace, `/browser` and the arcade. Open risks that remain, none shown harmless:
+the unperformed physical checks, intermittent hosted macOS live-terminal tests, the frontend's attribution of a line entered in the few
+milliseconds around a queued command's approval, Kitty/OSC 66/Chromium output untried in a real Ghostty or Kitty, and the graphics and browser
+limits listed in the changelog.
+
 ### Reduced coverage: what is and is not proven
 
 - **Proven physically (Ghostty, zsh):** everything in sitting A except A12 (failed, now fixed: R1) and A9's load step.

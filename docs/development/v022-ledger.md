@@ -416,6 +416,13 @@ Added to the candidate after the hardening pass. Everything below is automated e
 - The first CI attempt on #458 failed two macOS live tests (`reattaching across profiles…`, `NMSh inside GNU screen…`) that do not touch the multiline code and passed on the rerun of the failed jobs; the earlier live paste tests that did fail were real consequences of the new default and were updated.
 - `git diff --check` found blank lines at the end of new files in three branches; fixed and checked on every branch.
 
+### Publication (2026-10-21)
+
+The maintainer approved publishing v0.22.0 on release commit `a46492580398da39b740e6967c14ee6bdda28a66`'s tree plus the release-metadata commit (changelog
+date, current-stable text, this record), accepting the documented physical-QA waiver and the known intermittent live-test risks. Decisions kept apart:
+the waiver is an acceptance, not evidence; the local full run (3,730 of 3,741; 11 load-sensitive non-passes that passed alone) is a record, not a
+clean pass; hosted CI on the exact publication commit is the gate and is recorded in the release notes.
+
 ### Open risks
 
 - Kitty placeholders, OSC 66 and Chromium frames are untested in a real Ghostty or Kitty; the game feel and look are unverified; Zed shows character art only.

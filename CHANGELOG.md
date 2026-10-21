@@ -6,13 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.22.0] - Unreleased (release candidate)
+## [0.22.0] - 2026-10-21
 
 **Native viewing and editing, Semantic Output, `/track` and input you can trust.** NMSh still runs your real zsh, Bash or Fish in one persistent session. This release reads files and completed output without leaving it (`/view`), makes a quick edit to a small text file (`/edit`) or opens it in your own editor, puts a test run's or a build's counts and failures in one row above its raw output (Semantic Output), and keeps one live, refreshed result of a command in the transcript (`/track`). Typing while a command runs now goes where it belongs on evidence only: a password is never shown, queued or run as a command because NMSh could not yet tell who reads it, and a slow prompt hook no longer eats the next command. Up and Down step through history one command at a time with the position shown, Ask can suggest a command from your local model (never run for you), and there are Bun, Nix shell and container modules, `/modules explain` and five more theme families.
 
 v0.21.0 was prepared as a release candidate ([#429](https://github.com/raiseCatError/notMyShell/pull/429)) but never published; its work first ships here, so this section lists everything since v0.20.0.
 
-This is a release candidate: it is published only after its physical-terminal QA passes ([v0.22 physical QA](docs/testing/v022-physical-qa.md); state and evidence in the [v0.22 ledger](docs/development/v022-ledger.md)).
+**How this release was verified.** Automated: hosted CI (unit and real-PTY suites on macOS and Ubuntu, Node 22 and 26, a Fedora portability subset and the timing smokes) on the exact release commit, in a pull-request run and a dispatched run, both green. The maintainer accepted that hosted run in place of a local `npm run verify:release` on an 8 GB machine; the one local full run made (3,730 of 3,741 passing) had 11 load-sensitive live-terminal non-passes that passed when rerun alone, which is recorded here as that and not as a clean pass. **Physical: not performed for the nine required passes and the final-addition passes (multiline modes, images, text sizing, the document workspace, `/browser`, the arcade). The maintainer decided to release without them and accepted that risk; that is an acceptance, not a test result.** State, evidence and every open risk are in the [v0.22 physical QA record](docs/testing/v022-physical-qa.md) and the [v0.22 ledger](docs/development/v022-ledger.md).
 
 ### Added
 
@@ -109,6 +109,7 @@ This is a release candidate: it is published only after its physical-terminal QA
 - Keys typed *during* a Fish `read` stay subject to Fish's own editor queries ([#356](https://github.com/raiseCatError/notMyShell/issues/356)). Keys typed after its answer, before the prompt is back, are no longer read by Fish as the next command: they are taken back when the command ends and wait for approval, never lost.
 - Ask's command suggestions use your local model only; remote providers are not part of this release ([#432](https://github.com/raiseCatError/notMyShell/issues/432)). A suggestion is only as good as the model: the small recommended model (Qwen3 0.6B) often suggests an imprecise command or none; NMSh labels each one with its own check and never runs it.
 - NMSh's own HTML renderer (the fallback preview when no browser is installed or the setting is Off) shows a subset: no CSS layout, forms or embedded media. With a browser installed the preview is Chromium's.
+- **Hosted macOS live-terminal tests are intermittent.** Over the last two days about 4 in 10 of the repository's hosted CI runs passed on the first attempt, before and after this integration; the failures were live-PTY tests on macOS (typing-after-read, input ownership, queue ownership) and, before they were fixed, two multiplexer tests. Two causes were found and fixed (test timing assumptions; typing held in pieces after a command was done), but the cause of the remaining macOS failures is not established, and they are not shown to be harmless. A failed hosted job on a pull request that passes on the dispatched run is that known instability and not by itself a regression; a failure that repeats on a rerun is not.
 - **Not physically verified (NOT RUN):** Kitty graphics and Unicode placeholders in Ghostty and Kitty, OSC 66 text sizing in any terminal, character art in Zed and Terminal.app, iTerm2 and Sixel output, Chromium frames in any terminal, and play of the five games. Automated tests cover the protocol output, fallbacks and game rules, not how any of it looks or feels in a real terminal. See [v0.22 physical QA](docs/testing/v022-physical-qa.md).
 - Ghostty accepts text sizing sequences but is not known to draw scaled glyphs, so Auto leaves it off there; Enhanced is the explicit override.
 - Images are never fetched from the network, animated images show their first frame, and WebP needs a converter that is already installed (`sips` on macOS, `dwebp`, ImageMagick or `ffmpeg`).
@@ -719,8 +720,8 @@ Session & Interaction UX, plus the appearance and customization system.
 ### Fixed
 - Process cleanup teardown to safely kill detached helper shells and delete temporary configuration directories during testing.
 
-[Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...HEAD
-[0.22.0]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...release/v0.22.0
+[Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/raiseCatError/notMyShell/compare/v0.20.0...v0.22.0
 [0.20.0]: https://github.com/raiseCatError/notMyShell/compare/v0.18.0...v0.20.0
 [0.18.0]: https://github.com/raiseCatError/notMyShell/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/raiseCatError/notMyShell/compare/v0.16.0...v0.17.0
