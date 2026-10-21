@@ -154,6 +154,19 @@ export class DraftStore {
     return found.sort((a, b) => b.draft.savedAt - a.draft.savedAt);
   }
 
+  /** Drafts of Playground documents (#468) that no running window owns, newest first. */
+  recoverableScratch(): DraftOffer[] {
+    const found: DraftOffer[] = [];
+    for (const name of this.names()) {
+      const draft = this.read(name);
+      if (!draft || !draft.realPath.startsWith('scratch:')) continue;
+      const kept = name.endsWith('.kept.json');
+      if (!kept && (draft.pid === process.pid || (alive(draft.pid) && this.now() - draft.savedAt < DRAFT_LIVENESS_MS))) continue;
+      found.push({draft, kept, path: join(this.directory, name)});
+    }
+    return found.sort((a, b) => b.draft.savedAt - a.draft.savedAt);
+  }
+
   retireOwn(realPath: string): void { try { unlinkSync(join(this.directory, this.nameOf(realPath, process.pid))); } catch { /* none */ } }
   retire(offer: DraftOffer): void { try { unlinkSync(offer.path); } catch { /* already gone */ } }
 

@@ -28,7 +28,9 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets';
+  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground';
+  /** How many recoverable Playground documents the chooser can offer. */
+  recoverable?: number;
   /** The snippet palette's search text. */
   query?: string;
   /** The Markdown menu opened with the caret in a table: the table actions come first. */
@@ -49,7 +51,8 @@ export interface EditorState {
   buffer: TextBuffer;
   top: number;
   left: number;
-  input?: {kind: 'find'; value: string};
+  /** The find prompt, or (Playground) the file name a Save As asks for. */
+  input?: {kind: 'find' | 'saveas'; value: string; thenClose?: boolean};
   query?: string;
   dialog?: EditorDialog;
   /** Hunk-by-hunk review of changes made on disk while editing (#463); while it is open it owns the keys and the panel. */
@@ -72,7 +75,11 @@ export type EditorAction =
   | {kind: 'draft-keep'; target: DraftOffer}
   /** Load the disk's version to review it; or apply the finished review (the app revalidates the disk first). */
   | {kind: 'review'}
-  | {kind: 'review-apply'};
+  | {kind: 'review-apply'}
+  /** A Playground document: save it as this file, only if no file of that name exists (the app does the checked save). */
+  | {kind: 'save-as'; path: string; thenClose?: boolean}
+  /** The Playground chooser's pick. */
+  | {kind: 'playground'; choice: 'markdown' | 'html' | 'recover'};
 
 export function createEditor(file: EditableFile): EditorState {
   return {file, buffer: new TextBuffer(file.lines), top: 0, left: 0, ...(file.identity ? {} : {note: {text: 'New file: it is created when you save.', tone: 'info' as const}})};
@@ -160,6 +167,11 @@ function runMarkdownAction(state: EditorState, id: string): EditResult {
 
 function dialogControls(dialog: EditorDialog): ActionControl[] {
   const focused = (index: number, destructive = false) => dialog.focus === index ? (destructive ? 'destructiveFocused' : 'focused') : destructive ? 'destructive' : 'default';
+  if (dialog.kind === 'playground') return [
+    {id: 'Action.PlaygroundMarkdown', label: 'Markdown', state: focused(0), key: 'm', essential: true},
+    {id: 'Action.PlaygroundHtml', label: 'HTML', state: focused(1), key: 'h', essential: true},
+    ...(dialog.recoverable ? [{id: 'Action.PlaygroundRecover', label: `Recover (${dialog.recoverable})`, state: focused(2), key: 'r', essential: true} as ActionControl] : []),
+  ];
   if (dialog.kind === 'markdown') return [...(dialog.table ? TABLE_ACTIONS : []), ...MARKDOWN_ACTIONS].map((action, index) => ({id: action.id, label: action.label, state: focused(index), key: action.key, essential: true}));
   if (dialog.kind === 'recover') return [
     {id: 'Action.Restore', label: 'Restore draft', state: focused(0), key: 'r', essential: true},
@@ -198,7 +210,24 @@ function recoverChoice(state: EditorState, dialog: EditorDialog, offer: DraftOff
   return {kind: 'draft', target: offer};
 }
 
+/** Ctrl+S, or Save in the unsaved-changes dialog: a file is saved by the app; a Playground document asks for a name first. */
+function saveRequest(state: EditorState, thenClose: boolean): EditorAction | undefined {
+  if (!state.file.scratch) return {kind: 'save', ...(thenClose ? {thenClose: true} : {})};
+  state.input = {kind: 'saveas', value: '', ...(thenClose ? {thenClose: true} : {})};
+  return undefined;
+}
+
 function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAction | undefined {
+  if (dialog.kind === 'playground') {
+    const picks: Record<string, 'markdown' | 'html' | 'recover'> = {m: 'markdown', h: 'html', r: 'recover'};
+    const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
+    if (key.kind === 'escape' || key.kind === 'interrupt') { state.dialog = undefined; return {kind: 'close'}; }
+    const choice = key.kind === 'enter' ? (['markdown', 'html', 'recover'] as const)[dialog.focus] : text ? picks[text] : undefined;
+    if (choice === 'recover' && !dialog.recoverable) { dialog.focus = 0; return undefined; }
+    if (key.kind === 'left' || key.kind === 'focusPrevious') { dialog.focus = Math.max(0, dialog.focus - 1); return undefined; }
+    if (key.kind === 'right' || key.kind === 'complete') { dialog.focus = Math.min(dialog.recoverable ? 2 : 1, dialog.focus + 1); return undefined; }
+    return choice ? {kind: 'playground', choice} : undefined;
+  }
   if (dialog.kind === 'snippets') { paletteKey(state, dialog, key); return undefined; }
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
@@ -219,7 +248,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
   if (dialog.kind === 'recover' && dialog.offer) return recoverChoice(state, dialog, dialog.offer, chosen);
   state.dialog = undefined;
   if (chosen === 'Action.Keep') return undefined;
-  if (chosen === 'Action.Save') return {kind: 'save', thenClose: true};
+  if (chosen === 'Action.Save') return saveRequest(state, true);
   if (chosen === 'Action.Discard') return {kind: 'close'};
   if (chosen === 'Action.Review') return {kind: 'review'};
   if (chosen === 'Action.Overwrite') return {kind: 'save', force: true, ...(dialog.thenClose ? {thenClose: true} : {})};
@@ -260,6 +289,12 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
   if (state.input) {
     const input = state.input;
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.input = undefined; return undefined; }
+    if (key.kind === 'enter' && input.kind === 'saveas') {
+      const path = input.value.trim();
+      if (!path) { state.note = {text: 'Type a file name, for example notes.md.', tone: 'error'}; return undefined; }
+      state.input = undefined;
+      return {kind: 'save-as', path, ...(input.thenClose ? {thenClose: true} : {})};
+    }
     if (key.kind === 'enter') {
       state.input = undefined;
       state.query = input.value;
@@ -294,7 +329,7 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
     case 'escape':
       if (buffer.dirty) { state.dialog = {kind: 'unsaved', focus: 0}; return undefined; }
       return {kind: 'close'};
-    case 'sendToProgram': return {kind: 'save'};
+    case 'sendToProgram': return saveRequest(state, false);
     case 'suspend': if (!buffer.undo()) state.note = {text: 'Nothing to undo.', tone: 'info'}; break;
     case 'redo': if (!buffer.redo()) state.note = {text: 'Nothing to redo.', tone: 'info'}; break;
     case 'find': state.input = {kind: 'find', value: state.query ?? ''}; return undefined;
@@ -452,7 +487,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
@@ -460,7 +495,7 @@ function footerRows(state: EditorState, columns: number): string[] {
     const detail = dialog.detail || stale ? [`${foreground(UI_COLORS.subtle)}${truncateText(inert(`${stale}${dialog.detail ?? ''}`.trim()), width)}${RESET}`] : [];
     return [`${accent}${truncateText(message, width)}${RESET}`, ...detail, ...actions];
   }
-  if (state.input) return renderControlRows([['Enter', 'find'], ['Esc', 'cancel']], width);
+  if (state.input) return renderControlRows([['Enter', state.input.kind === 'saveas' ? 'save here' : 'find'], ['Esc', 'cancel']], width);
   return renderControlRows([['Ctrl+S', 'save'], ['Esc', 'close'], ['Ctrl+Z', 'undo'], ['Ctrl+Y', 'redo'], ['Ctrl+F', 'find'], ['Ctrl+C', 'copy'], ['Ctrl+X', 'cut'],
     ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : paletteFormat(state) ? [['F1', 'Snippets']] as Array<[string, string]> : [])], width);
 }
@@ -488,7 +523,7 @@ export function renderEditor(state: EditorState, columns: number, height: number
   const selected = state.buffer.selection ? ` · ${state.buffer.selectedText().length.toLocaleString('en-US')} selected` : '';
   const table = isMarkdownFile(state) ? tableStatus(state.buffer.lines, caret) : undefined;
   const status = state.input
-    ? `${foreground(UI_COLORS.accent)}Find: ${RESET}${truncateText(inert(state.input.value), Math.max(1, columns - 12))}${foreground(UI_COLORS.accent)}▏${RESET}`
+    ? `${foreground(UI_COLORS.accent)}${state.input.kind === 'saveas' ? 'Save as (a new file; an existing one is never replaced): ' : 'Find: '}${RESET}${truncateText(inert(state.input.value), Math.max(1, columns - 12))}${foreground(UI_COLORS.accent)}▏${RESET}`
     : `${subtle}${truncateText(`${position}${selected}${table ? ` · ${table}` : ''}${state.busy ? ' · saving…' : ''}`, Math.max(1, columns - 4))}${RESET}${state.note ? `  ${state.note.tone === 'error' ? foreground(UI_COLORS.failure) : state.note.tone === 'success' ? foreground(UI_COLORS.success) : subtle}${truncateText(inert(state.note.text), Math.max(1, columns - 8 - displayWidth(position + selected)))}${RESET}` : ''}`;
   out.push(`  ${status}`, ...footerRows(state, columns).map(row => `  ${row}`));
   const rule = framePanel([], columns)[0]!;

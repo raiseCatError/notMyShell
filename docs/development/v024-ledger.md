@@ -35,6 +35,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 4. **#468 slice 1: snippets** — branch `feature/v024-snippets` (worktree `v024-snip`), stacked on slice 3 (#492). Done: snippet engine, searchable palette, snippet mode, HTML and Markdown catalogs, footnote action, tests, docs. **#468 remaining:** the unsaved Playground (scratch document identity for recovery, Save As, dirty-close) — next slice; Split preview is **deferred to #461** (Playground must use whatever modes the workspace has: source, edit, preview).
 
+5. **#468 slice 2: Playground** — branch `feature/v024-playground` (worktree `v024-snip`), stacked on slice 1. Done: scratch identity, Save As, dirty close, `/playground`, crash recovery of scratch drafts, native-renderer preview only. **#468 status:** snippets, structure actions and the unsaved Playground are implemented; the Source/Preview/Split acceptance item is met for Source and Preview, **Split is deferred to #461** (recorded, not faked). Also fixed on #492 after the independent review (see its design section). **#463** still lacks footnote renumbering (the footnote *insert* exists in the snippet palette) and all physical QA.
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).

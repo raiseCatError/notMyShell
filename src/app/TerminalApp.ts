@@ -77,8 +77,8 @@ import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePan
 import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
 import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
 import {createEditor, editorKey, offerDraft, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
-import {openForEdit, saveFile} from '../viewer/fileEdit.js';
-import {DraftKeeper, DraftStore} from '../viewer/draftRecovery.js';
+import {createScratchFile, openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {DraftKeeper, DraftStore, type DraftOffer} from '../viewer/draftRecovery.js';
 import {applyReview, beginReview, restartReview, sameDiskVersion} from '../viewer/ReviewPanel.js';
 import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
 import {formatForPath} from '../viewer/document.js';
@@ -3164,6 +3164,7 @@ export class TerminalApp {
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
+    else if (slash.kind === 'playground') await this.openPlayground(slash.format);
     else if (slash.kind === 'arcade') this.openArcade(slash.game, command.trim());
     else if (slash.kind === 'browser') await this.openBrowser(slash.target, command.trim());
     else if (slash.kind === 'editFile') {
@@ -4072,6 +4073,8 @@ export class TerminalApp {
   /** Start the document session's Chromium preview (the native renderer shows meanwhile, and stays if no browser can be used). */
   private async startBrowserPreview(session: DocumentSession): Promise<void> {
     if (this.previewStarting === session || session.preview || this.promptConfiguration.browser === 'off') return;
+    // A Playground document has no folder to serve and no business with a browser process: NMSh's own renderer shows it.
+    if (session.editor.file.scratch) { session.note = 'The Playground previews with NMSh\'s own renderer. Save the document to use the browser preview.'; return; }
     this.previewStarting = session;
     try {
       const host = this.browserHostService();
@@ -4528,6 +4531,71 @@ export class TerminalApp {
     });
   }
 
+  // ---- Playground (#468) --------------------------------------------------------------------------------------------
+
+  /**
+   * /playground: an unsaved Markdown or HTML document in the document workspace. No format asks which (and offers a draft left
+   * by a window that ended); `recover` brings the newest such draft back through the same Restore / Compare / Discard / Keep choice
+   * as a crashed file. Nothing is saved for you: Save As is the only way to a file.
+   */
+  private async openPlayground(choice: 'markdown' | 'html' | 'recover' | undefined): Promise<void> {
+    if (this.hasModalInput()) return;
+    let recoverable: DraftOffer[] = [];
+    try { recoverable = this.drafts().store.recoverableScratch(); } catch { /* an unreadable store only means nothing to offer */ }
+    if (choice === undefined) {
+      this.panelOrigin = undefined;
+      const chooser = createEditor(createScratchFile('markdown'));
+      chooser.dialog = {kind: 'playground', focus: 0, recoverable: recoverable.length};
+      this.textEditor = chooser;
+      this.render();
+      return;
+    }
+    if (choice === 'recover' && !recoverable.length) { this.output.addFrontendInteraction('/playground', 'No Playground document to recover.', INFO); this.render(); return; }
+    const offer = choice === 'recover' ? recoverable[0]! : undefined;
+    const format = offer ? (/\.html?$/iu.test(offer.draft.path) ? 'html' : 'markdown') : choice === 'recover' ? 'markdown' : choice!;
+    const id = offer ? offer.draft.realPath.slice('scratch:'.length) : undefined;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    const session = createDocumentSession(createScratchFile(format, id), 'edit');
+    this.docSession = session;
+    if (offer) offerDraft(session.editor, offer);
+    this.render();
+  }
+
+  /**
+   * Save As for a Playground document: the checked save of a NEW file (never over one that exists), then the document is that
+   * file and its scratch draft is retired. A refusal leaves the document, its text and its draft exactly as they were.
+   */
+  private saveAs(editor: EditorState, input: string, thenClose: boolean, active: () => boolean, close: () => void, session?: DocumentSession): void {
+    editor.busy = true;
+    void (async () => {
+      const failure = (text: string) => { editor.note = {text, tone: 'error'}; if (session) session.viewer.note = text; };
+      try {
+        const opened = await openForEdit(input, this.shellCwd);
+        if (!active() || this.stopped) return;
+        if (!opened.ok) { failure(opened.reason); return; }
+        if (opened.file.identity) { failure(`${opened.file.title} already exists; Save As never replaces a file. Choose another name.`); return; }
+        const lines = [...editor.buffer.lines];
+        const saved = await saveFile(opened.file, lines);
+        if (!active() || this.stopped) return;
+        if (!saved.ok) { failure(`${saved.reason} Your text is still here.`); return; }
+        this.drafts().discard(editor);
+        editor.file = saved.file;
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        editor.note = {text: `Saved as ${saved.file.title}.`, tone: 'success'};
+        if (session) { session.viewer.note = editor.note.text; syncDocumentViewer(session, session.mode === 'preview'); }
+        if (thenClose) close();
+      } catch (error) {
+        failure(`Could not save: ${error instanceof Error ? error.message : 'unknown error'}. Your text is still here.`);
+      } finally {
+        editor.busy = false;
+        this.drafts().note(editor);
+        this.render();
+      }
+    })();
+  }
+
   private runDraftAction(editor: EditorState, action: Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep'}>): void {
     const keeper = this.drafts();
     if (action.kind === 'draft') keeper.restored(editor, action.target);
@@ -4538,6 +4606,9 @@ export class TerminalApp {
   /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
   private runEditorAction(editor: EditorState, action: EditorAction): void {
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
+    if (action.kind === 'playground') { this.drafts().discard(editor); this.textEditor = undefined; void this.openPlayground(action.choice); return; }
+    if (action.kind === 'save-as') { this.saveAs(editor, action.path, Boolean(action.thenClose), () => this.textEditor === editor, () => { this.textEditor = undefined; this.returnFromPanel(); }); return; }
+    if (editor.file.scratch && (action.kind === 'review' || action.kind === 'review-apply' || action.kind === 'reload' || action.kind === 'save')) { editor.note = {text: 'A Playground document has no file yet: Save As creates one.', tone: 'info'}; return; }
     if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.textEditor === editor); return; }
     if (action.kind === 'close') { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
     if (action.kind === 'copy') {
@@ -4637,7 +4708,7 @@ export class TerminalApp {
   private refreshDocumentImages(session: DocumentSession): void {
     if (this.promptConfiguration.graphicsMode === 'off') return;
     const document = session.viewer.document;
-    if (document.origin.kind !== 'file') return;
+    if (document.origin.kind !== 'file' || session.editor.file.scratch) return;
     const base = dirname(document.origin.realPath);
     this.releaseViewerImages();
     const images = new DocumentImages(this.graphicsService(), base, base, () => { if (!this.stopped && this.docSession === session) this.render(); });
@@ -4670,6 +4741,9 @@ export class TerminalApp {
   private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
     const editor = session.editor;
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
+    if (action.kind === 'save-as') { this.saveAs(editor, action.path, Boolean(action.thenClose), () => this.docSession === session, () => this.closeDocumentSession(), session); return; }
+    if (editor.file.scratch && (action.kind === 'review' || action.kind === 'review-apply' || action.kind === 'reload' || action.kind === 'save')) { editor.note = {text: 'A Playground document has no file yet: Save As creates one.', tone: 'info'}; session.viewer.note = editor.note.text; return; }
+    if (editor.file.scratch && (action.kind === 'open' || action.kind === 'image')) { session.note = 'A Playground document has no folder: links and images cannot be followed until it is saved.'; return; }
     if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.docSession === session); return; }
     if (action.kind === 'close') { this.closeDocumentSession(); return; }
     if (action.kind === 'copy') {
