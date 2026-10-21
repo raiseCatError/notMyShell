@@ -426,7 +426,9 @@ test('a paused game says why and how to answer, and Resume is not undone by the 
 function hostFrames(t: ReturnType<typeof setup>) {
   const shown: string[][] = [];
   const inner = t.app['renderer'].render;
-  t.app['renderer'].render = (value: {rows: string[]}) => { shown.push(value.rows.map(row => stripAnsi(row))); inner(value as never); };
+  let raw: string[] = [];
+  t.app['renderer'].render = (value: {rows: string[]}) => { raw = [...value.rows]; shown.push(value.rows.map(row => stripAnsi(row))); inner(value as never); };
+  t.app['renderer'].snapshot = () => raw;   // what the host last showed, as the real renderer keeps it
   return shown;
 }
 const isShellFrame = (rows: string[]) => rows.some(row => /Ctrl\+Q runs it after|Enter holds it for approval|current command/u.test(row));
@@ -619,5 +621,41 @@ test('typing /games and pressing Enter at once never opens silently: the offer i
     assert.ok(t.app['arcade'], 'accepted once seen');
     assert.deepEqual(t.queued, []);
     assert.equal(t.owner.state.entries.length, 0);
+  } finally { t.dispose(); }
+});
+
+test('exit animation: the Arcade recedes over the shell as it is now, and nothing else paints until it ends', () => {
+  const t = setup();
+  try {
+    t.app['decorativeMotionAllowed'] = () => true;
+    t.begin('make', 'FIRST-OUTPUT\r\n');
+    const shown = hostFrames(t);
+    t.app['render']();
+    t.press(ARCADE);
+    t.app['arcade'].handoff = undefined;
+    t.app['render']();
+    t.app['onShellData']('LATE-OUTPUT-AFTER-OPEN\r\n');
+    shown.length = 0;
+    t.press({kind: 'interrupt'});
+    assert.ok(t.app['running'], 'the command was not touched');
+    assert.equal(shown.length, 1, 'closing restores the shell exactly once');
+    shown.length = 0;
+    // What the recede draws over: the live shell, taken without painting it.
+    const live = t.app['captureShellFrame']();
+    assert.match((live ?? []).map((row: string) => stripAnsi(row)).join('\n'), /LATE-OUTPUT-AFTER-OPEN/u, 'the live frame, not the one from when the Arcade opened');
+    assert.equal(shown.length, 0, 'capturing paints nothing');
+    t.app['arcadeClosing'] = {direction: 'out', started: performance.now(), under: live, arcade: []};
+    for (let index = 0; index < 20; index += 1) {   // everything that normally repaints the shell during the recede
+      t.app['paintPresentation'](Date.now());
+      t.app['onShellData'](`chunk ${index}\r\n`);
+    }
+    assert.equal(shown.filter(isShellFrame).length, 0, 'no shell frame while the Arcade recedes');
+    // The end of the recede: one real frame with everything that arrived meanwhile.
+    t.app['arcadeClosing'] = undefined;
+    t.app['renderer'].invalidate();
+    t.app['render']();
+    const last = shown.at(-1)!.join('\n');
+    assert.match(last, /chunk 19/u);
+    assert.doesNotMatch(last, /Vespyr Arcade/u);
   } finally { t.dispose(); }
 });

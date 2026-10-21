@@ -202,6 +202,9 @@ a running command. Epic #481; the queue/input risks it touches are tracked in #4
 | Rendering ownership: the host sees only Arcade frames while open (flicker fix) | `rendering ownership` tests (host-frame stream; failed 40/84 shell frames before the fix) and the live chatty-command test (0.08 CPU s in 3 s, ~106 KB host bytes) | **A person saw the flicker in a real terminal; re-check NOT RUN** |
 | `/games` offer over a running command (Enter opens, Esc cancels, nothing queued) | `tests/arcadeBackground.test.ts` offer tests, live PTY test | NOT RUN |
 
+| Persistent accent-bar banner; activity list (3 rows + overflow; foreground, queue, /bg, /track, settled); live-frame exit recede; offer read-gate | `tests/backgroundActivity.test.ts`, `tests/arcadeCompanion.test.ts`, `tests/arcadeBackground.test.ts`, live: banner still shown 5 s later after a forced repaint | **NOT RUN** |
+| Color Orbit retuned (soft taps, hover window, spaced prisms) | `tests/arcadeOrbit.test.ts`, `tests/arcadeOrbitPlay.test.ts` (seeded bots; mash and idle bots die) | **NOT RUN** (needs a person's feel check) |
+
 Known limits (recorded, not hidden):
 
 - Over a running command the Arcade opens only by Ctrl+T. Typing `/games` into a running program is still that program's

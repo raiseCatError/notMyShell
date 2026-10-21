@@ -4358,6 +4358,16 @@ export class TerminalApp {
     this.render();
   }
 
+  /** The ordinary frame as it would be painted right now, taken without painting it. */
+  private captureShellFrame(): string[] | undefined {
+    const renderer = this.renderer;
+    const original = renderer.render;
+    let rows: string[] | undefined;
+    renderer.render = ((frame: {rows: string[]}) => { rows = [...frame.rows]; }) as typeof renderer.render;
+    try { this.arcadeClosing = undefined; this.render(); } catch { rows = undefined; } finally { renderer.render = original; }
+    return rows;
+  }
+
   private closeArcade(restore = true, because?: string): void {
     const arcade = this.arcade;
     if (!arcade) return;
@@ -4372,8 +4382,10 @@ export class TerminalApp {
     this.renderer.setTextBlocks([]);
     if (!restore) return;
     this.returnFromPanel();
-    const under = arcade.under;
-    if (last && under?.length && this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff && colorLevel() !== 'none') {
+    // The Arcade recedes over the shell as it is NOW (not as it was when the Arcade opened).
+    const receding = Boolean(last?.length && arcade.under?.length && this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff && colorLevel() !== 'none');
+    const under = receding ? this.captureShellFrame() ?? arcade.under : undefined;
+    if (last && under?.length && receding) {
       this.arcadeClosing = {direction: 'out', started: performance.now(), under, arcade: last};
       const stop = presentationClock.subscribe(() => {
         const closing = this.arcadeClosing;
@@ -5168,7 +5180,7 @@ export class TerminalApp {
         const queries = this.running ? this.queryExtractor.push(data) : '';
         if (queries) { process.stdout.write(queries); this.replyRouter.expect(Date.now()); }
         // Behind the Arcade the output is recorded as always but nothing visible changed: a chunk repaints it at most four times a second.
-        if (!this.arcade || performance.now() - this.arcadePaintedAt > 250) this.render();
+        if ((!this.arcade && !this.arcadeClosing) || (this.arcade && performance.now() - this.arcadePaintedAt > 250)) this.render();
       }
     }
   }
@@ -11782,7 +11794,7 @@ export class TerminalApp {
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
     if (this.idle) { this.paintIdle(); return; }
-    // A real frame ends the Arcade's recede at once.
+    // A real frame (a key, a prompt) ends the Arcade's recede at once; output chunks and the shell's clocks never do (below).
     this.arcadeClosing = undefined;
     if (this.arcade) { this.paintArcade(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
@@ -12197,7 +12209,7 @@ export class TerminalApp {
   private paintPresentation(now: number): void {
     // Idle visuals and the Arcade are each the sole owner of the screen while active: a clock the shell's own frame started
     // (a running command's activity rows, a Chroma divider) must never paint between their frames.
-    if (this.idle || this.arcade) return;
+    if (this.idle || this.arcade || this.arcadeClosing) return;
     const cached = this.presentationFrame;
     if (!cached) return;
     const {frame, plan} = cached;

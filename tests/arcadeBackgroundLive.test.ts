@@ -37,7 +37,7 @@ test('live zsh: play over a running command; it finishes unharmed, the toast app
     const arcadeMark = frontend.mark;
     frontend.pty.write('\u0014');
     await frontend.waitFor(/Vespyr Arcade/u, arcadeMark);
-    await frontend.waitFor(/sh running/u, arcadeMark);
+    await frontend.waitFor(/◷ sh /u, arcadeMark);
     await pause(700);
     const playMark = frontend.mark;
     assert.ok(alive(pid), 'opening the Arcade did not touch the command');
@@ -49,7 +49,7 @@ test('live zsh: play over a running command; it finishes unharmed, the toast app
     assert.ok(alive(pid), 'game keys did not stop it');
 
     writeFileSync(release, 'go');
-    await frontend.waitFor(/sh finished/u, playMark);
+    await frontend.waitFor(/Command completed/u, playMark);
     await until(async () => !alive(pid), 10_000, 'the command to end');
     assert.doesNotMatch(strip(frontend.output.slice(playMark)), /LATE-OUT|RAN-OK/u, 'shell output, even a clear-screen, never reached the Arcade\'s screen');
     assert.match(strip(frontend.output.slice(arcadeMark)), /Vespyr Arcade|Vespyr|Arcade/u, 'the Arcade stayed open');
@@ -79,7 +79,7 @@ test('live zsh: while the Arcade is open over a chatty command, the host never s
     await frontend.waitFor(/tick 1\b/u, mark);
     const open = frontend.mark;
     frontend.pty.write('\u0014');
-    await frontend.waitFor(/running/u, open);
+    await frontend.waitFor(/◷ sh /u, open);
     await pause(900);                       // the entry transition is over
     const steady = frontend.mark;
     frontend.pty.write('\r');               // start a game
@@ -123,14 +123,37 @@ test('live zsh: typing /games over a running command offers the Arcade; Enter op
     await pause(400);                       // read it
     frontend.pty.write('\r');
     await frontend.waitFor(/Vespyr Arcade/u, openMark);
-    await frontend.waitFor(/nmsh-fixture running|sh running/u, openMark);
+    await frontend.waitFor(/◷ sh /u, openMark);
     writeFileSync(release, 'go');
-    await frontend.waitFor(/finished/u, openMark);
+    await frontend.waitFor(/Command completed/u, openMark);
     frontend.pty.write('\u0003');
     await frontend.waitFor(/OFFER-DONE/u, openMark);
     await frontend.run('echo AFTER-OFFER', /AFTER-OFFER/u);
     assert.equal(await frontend.completions('/games'), 0, '/games never reached the shell as a command');
     assert.doesNotMatch(strip(frontend.output), /command not found: \/?games|no such file or directory: \/games/iu);
     assert.equal((await sandbox.sessions()).length, 1);
+  } finally { await sandbox.dispose(); }
+});
+
+test('live zsh: the finish banner stays visible while playing, with the command listed as settled work', {skip: supported ? false : 'needs a POSIX PTY', timeout: 120_000}, async () => {
+  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh'});
+  const frontend = sandbox.launch([], {cols: 110, rows: 32}, {});
+  try {
+    await frontend.waitFor(/notMyShell|zsh/u);
+    await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 20_000, 'the shell authenticated prompt');
+    await frontend.run('echo READY', /READY/u);
+    const mark = frontend.mark;
+    frontend.pty.write(`sh -c 'printf "BAN-%s\\\\n" RUN; sleep 1.5; exit 3'\r`);
+    await frontend.waitFor(/BAN-RUN/u, mark);
+    frontend.pty.write('\u0014');
+    await frontend.waitFor(/▎ ✕ Command failed/u, mark);
+    await pause(5000);                       // far longer than the old 3.6 s toast
+    const settledMark = frontend.mark;
+    frontend.pty.resize(111, 32);            // the renderer only sends changed cells: a resize repaints everything
+    await pause(500);
+    const frame = strip(frontend.output.slice(settledMark));
+    assert.match(frame, /▎ ✕ Command failed/u, 'the banner is still there');
+    assert.match(frame, /✕ sh\s+exit 3/u, 'and the command is listed as settled work');
+    frontend.pty.write('\u0003');
   } finally { await sandbox.dispose(); }
 });

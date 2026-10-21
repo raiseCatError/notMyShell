@@ -9,13 +9,14 @@ import {orbitGame} from '../src/arcade/games/orbit/index.js';
 const DT = 10;
 const clear = (obstacle: Extract<Obstacle, {kind: 'ring'}>) => obstacle.r - RING_T / 2 - BALL_R;
 
-/** A bot that can only tap: `gap` ms apart (jittered) when adjusting, about 160-240 ms when it has more than 10 units to climb. */
+/** A bot that can only tap: `gap` ms apart (jittered) when adjusting, about 110-170 ms when it has more than 5 units to climb. */
 export function bot(state: OrbitState, rng: Rng, options: {gap: [number, number]}) {
   let last = -1e9;
   let wait = rng.range(options.gap[0], options.gap[1]);
+  let committed: Obstacle | undefined;
+  let exiting: Obstacle | undefined;
   return (now: number): void => {
     if (!state.alive) return;
-    if (process.env.ORBIT_TRACE && Math.floor(now / 250) !== Math.floor((now - 10) / 250)) console.log(now, state.y.toFixed(1), state.vy.toFixed(1), state.color, state.score, state.obstacles.find(o => o.y + 19 > state.y)?.y);
     const next = state.obstacles.find(o => o.y + (o.kind === 'ring' ? o.r : 3) + 4 > state.y);
     let target = state.y + 20;
     if (next) {
@@ -27,20 +28,22 @@ export function bot(state: OrbitState, rng: Rng, options: {gap: [number, number]
       };
       if (next.kind === 'bar') {
         target = next.y - 9;
-        if ([0.9, 1.2, 1.5].every(lead)) target = next.y + 10;
-        if (state.y > next.y - 6) target = next.y + 10;
+        if (state.y > next.y - 18 && [0.1, 0.4, 0.8, 1.2].every(lead)) committed = next;
+        if (committed === next) target = next.y + 10;
       } else if (state.y < next.y - next.r - 4) {
         target = next.y - next.r - 8;
-        if ([0.6, 0.9, 1.2].every(lead) ) target = next.y;
+        if (state.y > next.y - next.r - 14 && [0.1, 0.35, 0.7, 1.0].every(lead)) committed = next;
+        if (committed === next) target = next.y;
       } else if (state.y < next.y + next.r - 6) {
         // inside the ring: hover at the centre until the top arc matches, then rise
         target = next.y;
-        const topMatches = [0.7, 1.0, 1.3].every(t => OrbitState.ringColor(next, state.time + t, -Math.PI / 2) === state.color);
-        if (topMatches) target = next.y + next.r + 8;
+        const topMatches = [0.1, 0.4, 0.7, 1.0].every(t => OrbitState.ringColor(next, state.time + t, -Math.PI / 2) === state.color);
+        if (topMatches) exiting = next;
+        if (exiting === next) target = next.y + next.r + 8;
       } else target = next.y + next.r + 10;
     }
-    const far = target - state.y > 10;
-    if (now - last < (far ? Math.min(wait, 160 + (wait % 80)) : wait)) return;
+    const far = target - state.y > 5;
+    if (now - last < (far ? Math.min(wait, 110 + (wait % 60)) : wait)) return;
     const want = Math.max(-8, Math.min(26, (target - state.y) * 2.2));
     if (state.vy < want) { state.tap(); last = now; wait = rng.range(options.gap[0], options.gap[1]); }
   };
@@ -92,23 +95,25 @@ test('hovering: ordinary tap intervals keep the ball in the central band of a ri
   }
 });
 
-test('entering a ring and leaving through the matching colour of the upper ring', () => {
-  const s = new OrbitState(createRng(7)); s.prisms = [];
-  const low = {kind: 'ring' as const, y: 40, r: RING_R, speed: 0.6, phase: 0};
-  const high = {kind: 'ring' as const, y: 105, r: RING_R, speed: 0.6, phase: 1};
-  s.obstacles = [low, high]; s.started = true;
-  s.y = 40 - RING_R - 12;
-  s.color = OrbitState.ringColor(low, 0, Math.PI / 2);
-  let entered = false, exited = false, next = 0;
-  for (let t = 0; t < 40_000 && s.alive && !exited; t += DT) {
-    const topMatch = [0.4, 0.8, 1.2].every(d => OrbitState.ringColor(high, s.time + d, Math.PI / 2) === s.color);
-    const target = s.y < low.y - 2 && !entered ? low.y : topMatch || s.y > high.y - 25 ? high.y : low.y;
-    if (t >= next && s.vy < (target - s.y) * 2.2) { s.tap(); next = t + 300; }
-    s.step(DT);
-    if (Math.abs(s.y - low.y) < 3) entered = true;
-    if (s.y > high.y + RING_R + 4) exited = true;
+test('entering a ring, hovering at its centre, then leaving through the matching colour of the upper ring', () => {
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const s = new OrbitState(createRng(seed)); s.prisms = [];
+    const low = {kind: 'ring' as const, y: 50, r: RING_R, speed: 0.9, phase: seed};
+    const high = {kind: 'ring' as const, y: 115, r: RING_R, speed: 1.0, phase: 2 * seed};
+    s.obstacles = [low, high];
+    const play = bot(s, createRng(seed + 50), {gap: [250, 450]});
+    s.tap();
+    let entered = 0, centred = 0, longest = 0, exited = false;
+    for (let t = 0; t < 60_000 && s.alive && !exited; t += DT) {
+      play(t);
+      s.step(DT);
+      if (Math.abs(s.y - low.y) < 3) entered += DT;
+      if (Math.abs(s.y - low.y) < clear(low) - 1.5) { centred += DT; longest = Math.max(longest, centred); } else centred = 0;
+      exited = s.y > high.y + RING_R + 4;
+    }
+    assert.ok(entered > 0 && exited && s.alive, `seed ${seed}: entered ${entered}, exited ${exited}, alive ${s.alive}`);
+    assert.ok(longest >= 300, `seed ${seed}: spent ${longest} ms in the centre band`);
   }
-  assert.ok(entered && exited && s.alive, `entered ${entered}, exited ${exited}, alive ${s.alive}`);
 });
 
 test('wrong colour contact ends the run', () => {
@@ -171,6 +176,10 @@ test('generated sequences are never unavoidable: every window outlasts crossing,
         }
       } else assert.ok(Math.abs(o.speed) > 1 && 12 / Math.abs(o.speed) > 0.9 && Math.abs(o.speed) < 14, `bar ${index}`);
       if (index > 0) assert.ok(o.y - s.obstacles[index - 1]!.y >= 2 * RING_R + 20, 'obstacles never overlap');
+      // No prism inside any obstacle's contact band: a forced colour change mid-crossing would be unavoidable.
+      const half = o.kind === 'ring' ? RING_T / 2 + BALL_R : 3 / 2 + BALL_R;
+      const radii = o.kind === 'ring' ? [o.r] : [0];
+      for (const prism of s.prisms) for (const radius of radii) for (const edge of [o.y - radius, o.y + radius]) assert.ok(Math.abs(prism.y - edge) > half + 2.5, `prism at ${prism.y} touches the band at ${edge}`);
     });
   }
 });

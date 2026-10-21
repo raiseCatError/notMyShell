@@ -51,6 +51,10 @@ queue review or the command ending withdraws it with nothing to replay.
 | Program asking, passthrough, ownership look, queue review | the existing path (the program's reply, the review, the hold); no offer | unchanged |
 | Idle prompt | `/games` opens at once, no confirmation | unchanged |
 
+**Seen before accepted.** The offer is recorded when it is first drawn (`arcadeOfferSeen`); Enter accepts it only after it has been
+on screen for 250 ms. An Enter that arrives with the text (typed and entered at once, or pasted) just presents the offer; a
+second Enter accepts. So `/games` can never open without having been shown.
+
 Typing characters is never read by the offer: it only observes `editor.text` after NMSh's own ownership look has routed the keys
 to the composer. It never inspects a program's stdin.
 
@@ -124,23 +128,40 @@ shell/queue/input events ──► TerminalApp (noteBackground / arcadeQueueNews
 - Games see none of it. `ArcadeSession` lays games out in the viewport minus the strip and shifts pointer rows by one.
 - Future full-screen experiences can take the same `ArcadeCompanion` shape.
 
-### The strip and toasts
+### The header: activities (left) and the banner (right)
 
-- The strip row is **reserved from the moment the Arcade opens with a command running or queue entries waiting**, and when a
-  queued entry starts behind a bare Arcade (the game re-lays out through the existing `resize` path; it is not restarted). It is
-  constant while a session runs, so a toast **never resizes or covers a game**.
-- It needs 14 rows and 40 columns. Smaller terminals keep every row for the game and show a one-glyph marker plus the unread
-  count in the row that is not gameplay (the Stage's controls row, the hub header, or the tiny hub's title line); the detail is
-  in the log.
-- A toast shows 3.6 s (extended to at most 8 s while a burst keeps arriving), slides in over 180 ms and out over 240 ms, and is
-  static under Reduced Motion or Effects Off. Glyph + words carry meaning: `✓`/`✕`/`⊘`/`◷`, `+`/`x`/`-`/`!` in Safe Glyphs;
-  NO_COLOR keeps the same text.
-- **Coalescing**: bursts become `N commands finished · M failed`; a queue chain's own summary replaces the per-command toast;
-  a quiet success never hides an attention toast, a failure always replaces one. Duplicate events are dropped by key.
-- **Log**: `n` in the hub and *Notifications* in the pause sheet show the last 24 entries, newest first, with ages, and say that
-  the output is in NMSh. Any key returns.
-- **Privacy**: text comes only from a *label* (the program word, plus a script/verb for `npm|pnpm|yarn|bun run X|test|build…`),
-  a status and a duration. Arguments, paths, tokens and output never appear. Nothing derives from command output.
+One shared surface at the top of the Arcade, laid out by `ArcadeSession.stripRows`, so the two halves can never overlap.
+
+- **Height.** Two rows from the start on terminals of at least 70 columns and 16 rows (the banner needs two), so the first
+  completion never resizes a game. It grows to three or four rows only when more activities exist than it can show
+  (`growHud`, capped by terminal height), **never shrinks**, and the game re-lays out through the existing `resize` path
+  without restarting. Below 70 columns it is one row (activity left, a one-line banner right); below 40×14 there is no header
+  and a one-glyph marker plus the unread count sits in the controls row, the hub header or the tiny hub's title.
+- **Activities** (`TerminalApp.arcadeActivities`, read from state the host already holds; no polling, nothing inferred from
+  output): the foreground command; the queue as one row (`Queue · N waiting`: `approval needed`, `paused` or `next up`);
+  `/bg` tasks and Ask-started tasks (running); `/track` watchers; then commands that finished in the last minute
+  (`completed`, `exit N`, `interrupted`). Up to three rows, then `+ N more activities`. Labels are `safeCommandLabel` program
+  words only. A tracker is a scheduled check, so it shows its schedule (`next 4.0s`, `checking`, `paused`, `failing · next …`),
+  never a running clock, and the service's own timers are reused (watch/task change callbacks already repaint).
+  Statuses carry a glyph and words (`◷ ✓ ✕ ≡ ‖ ◉ ■`; `~ + x ? = o -` in Safe Glyphs); finished rows get a restrained tint.
+- **Banner**: a small surface with a vertical accent bar on its left in the active theme's accent (`▎`, `|` in Safe Glyphs),
+  a status glyph and title (`✓ Command completed`, `✕ Command failed`, `◷ Queue waiting`, `◷ Input needed`) and a detail line
+  (`npm run build · 42.0s · exit 0`). It slides in from the right over 180 ms (instant under Reduced Motion) and **stays**: there is
+  no expiry and no timer once it is in place. A later completion replaces it; completions within 3.6 s of each other coalesce
+  (`Commands completed · 6 commands`); a queue chain's own summary replaces its per-command banner; a failure is not hidden by
+  later successes until the person has opened the log (`n`) or a newer failure arrives; an attention banner (question,
+  approval) yields only to a failure and goes away when its state clears. It is text only: no keys, clicks or focus.
+- **Leaving** takes the banner with the Arcade (it is part of the frame that recedes); nothing is left over the shell, and a
+  later Arcade starts with an empty banner (history is separate, in the log).
+- The **log** (`n`, or Notifications in the pause sheet) keeps the last 24 events; the banner never replaces it.
+
+### Entry and exit
+
+Opening rises from the bottom over the shell as it is when it opens. Closing (Esc/Exit, the pause menu, Ctrl+C) recedes toward
+the bottom over **the live shell frame**, captured at close without painting it (`captureShellFrame`), not the frame from when
+the Arcade opened. While it recedes the shell's own clocks and output chunks never paint; any real frame (a key, a prompt, a
+resize) ends it at once with the true state. Reduced Motion, Effects Off and NO_COLOR skip it, and every ownership handoff
+(a question, a full-screen program) closes immediately: a program never waits for an animation.
 
 ## Resource lifecycle
 

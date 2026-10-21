@@ -33,6 +33,8 @@ export const RING_T = 3;
 export const BAR_H = 3;
 export const BAR_SEG = 12;
 export const SPACING = 46;
+/** How far from a prism's height the ball still picks it up. */
+export const PRISM_REACH = 2.5;
 
 export type Obstacle =
   | {kind: 'ring'; y: number; r: number; speed: number; phase: number}
@@ -80,11 +82,17 @@ export class OrbitState {
     const sign = this.rng.chance(0.5) ? 1 : -1;
     const speed = (0.9 + level * 0.9) * sign;
     const barSpeed = (5 + level * 7) * sign;
-    const y = this.nextY + RING_R + 4;
-    if (index > 3 && index % 4 === 0) this.obstacles.push({kind: 'bar', y, speed: barSpeed, phase: this.rng.range(0, BAR_SEG * COLORS)});
-    else this.obstacles.push({kind: 'ring', y, r: RING_R + (index % 5 === 4 ? 5 : 0), speed, phase: this.rng.range(0, TAU)});
+    const bar = index > 3 && index % 4 === 0;
+    const r = bar ? BAR_H / 2 : RING_R + (index % 5 === 4 ? 5 : 0);
+    // The prism stands clear of the obstacle above it, and the next obstacle stands clear of the prism, so the ball
+    // can never be forced to change color while it is inside a band (a bigger ring once put its top arc on the prism).
+    const reach = (half: number) => half + (bar ? 0 : RING_T / 2) + BALL_R;
+    const previous = this.prisms[this.prisms.length - 1];
+    const y = Math.max(this.nextY + RING_R + 4, previous ? previous.y + PRISM_REACH + 1.5 + reach(r) : 0);
+    if (bar) this.obstacles.push({kind: 'bar', y, speed: barSpeed, phase: this.rng.range(0, BAR_SEG * COLORS)});
+    else this.obstacles.push({kind: 'ring', y, r, speed, phase: this.rng.range(0, TAU)});
     // A prism above every obstacle switches to a color other than the current one.
-    this.prisms.push({y: y + RING_R + 8, taken: false, color: -1});
+    this.prisms.push({y: y + reach(r) + PRISM_REACH + 1.5, taken: false, color: -1});
     this.nextY = y + Math.max(32, SPACING - level * 10);
   }
 
@@ -122,7 +130,7 @@ export class OrbitState {
       if (this.touches(obstacle)) { this.alive = false; this.events.push({kind: 'hit', y: this.y}); return; }
     }
     for (const prism of this.prisms) {
-      if (prism.taken || Math.abs(prism.y - this.y) > 2.5) continue;
+      if (prism.taken || Math.abs(prism.y - this.y) > PRISM_REACH) continue;
       prism.taken = true;
       let next = this.rng.int(0, COLORS - 2);
       if (next >= this.color) next += 1;
