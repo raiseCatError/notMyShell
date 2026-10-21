@@ -1,9 +1,11 @@
 # Vespyr Arcade
 
-`/games`, `/game` and `/arcade` open one hub with five games, all offline and local: **Vespyr Run**, **Vespyr Flight**,
-**Vespyr Dash**, **Classic Sudoku** and **Vespyr Queens**. `/game run|flight|dash|sudoku|queens` (or any alias, see
-`src/arcade/registry.ts`) opens a game directly. There is one command implementation and no per-game global command: a
-new game is one directory under `src/arcade/games/` and one line in the registry.
+`/games`, `/game` and `/arcade` open one full-screen arcade, all offline and local: **Vespyr Run**, **Vespyr Flight**,
+**Vespyr Dash**, **Classic Sudoku** and **Vespyr Queens** (formerly Vespyr Doku). `/game run|flight|dash|sudoku|queens`
+(or any alias, see `src/arcade/registry.ts`) opens a game directly. There is one command implementation and no
+per-game global command: a new game is one directory under `src/arcade/games/` and one line in the registry. The
+program growing it to 33 games, its hub, Stage, visual system and acceptance matrix are in
+[arcade-expansion.md](arcade-expansion.md).
 
 Vespyr, the NMSh cat (`src/idle/catSprite.ts`), is the player in every action game. Games draw their cat from that
 sprite's silhouette, tinted by the theme through `arcadePalette().cat`.
@@ -12,16 +14,19 @@ sprite's silhouette, tinted by the theme through `arcadePalette().cat`.
 
 | Piece | File | Responsibility |
 |---|---|---|
-| Session | `ArcadeSession.ts` | The hub, a running game, pause and game over menus. The only code that talks to a game. Owns keys and frames while the panel is open. |
-| Host wiring | `app/TerminalApp.ts` (`openArcade`, `closeArcade`, `syncArcadeClock`) | Refuses to open over a running command or a foreground program; closes if a command starts; subscribes to `presentationClock` for exactly as long as the session wants frames; releases everything on close and on stop. |
+| Session | `ArcadeSession.ts` | The Horizon hub (library, preview, details), a running game on the Stage, the pause sheet, the finale and the results sheet. The only code that talks to a game. Owns keys and frames while the Arcade is open. |
+| Host wiring | `app/TerminalApp.ts` (`openArcade`, `paintArcade`, `closeArcade`, `syncArcadeClock`) | Paints the whole viewport while open (an early branch in `render`, like the screensaver; the PTY is never resized), with the rise-in and recede handoff; refuses to open over a running command or a foreground program; closes if a command starts; subscribes to `presentationClock` for exactly as long as the session wants frames; releases everything on close and on stop. |
 | Contract | `types.ts` | `GameDefinition`, `GameInstance`, `GameContext`. |
 | Drawing | `Canvas.ts` | Cell grid, half-block `PixelBuffer`, `BrailleBuffer`, cached row encoding that honours color level, NO_COLOR and Safe Glyphs. |
 | Loop | `loop.ts` | `FixedStep`: equal simulation steps at any frame rate; stalls are clamped. |
 | Randomness | `rng.ts` | Seeded `Rng` (mulberry32). Never `Math.random`. |
 | Effects | `effects.ts` | `ParticleSystem`, `Trail`, `Popups`, `Flash`, `Shake`, scaled by the effects level; reduced motion removes shake and flashes. |
-| Colors | `palette.ts` | Everything derives from the active theme and Chroma roles (`arcadePalette()`, `skyAt`, `regionColors`). No private arcade palette. |
+| Celebrations | `fx/sequence.ts`, `fx/cells.ts` | `Tween`, `Sequence`, `CountUp`, `Combo`; `Reveal`, `Ripple`, `shatter`, `confetti`. Clock-free, skippable, still under Reduced Motion. A game's `finale` is one of these. |
+| Colors | `palette.ts`, `look.ts` | `arcadePalette()` derives from the active theme and Chroma roles; `arcadeLook()` adds the Arcade's own surfaces (tested lightness steps and contrast), text tones and eight distinct gameplay hues, anchored on Vespyr's lavender. |
+| Scenery | `scenery.ts` | Gradient skies, stars, sun and moon, seeded ridges and skylines for the action games' worlds. |
+| Engine | `engine/` | Collision (`collide.ts`), grid searches (`grid.ts`), undo (`history.ts`), offline daily seeds (`daily.ts`). |
 | Menus | `menu.ts` | The shared vertical choice list with the standard selection treatment. |
-| Scores | `scores.ts` | `<config dir>/arcade.json`: versioned, bounded, validated, atomically written, owner-only. A damaged file is set aside; a newer file is read-only. |
+| Scores | `scores.ts` | `<config dir>/arcade.json` (version 2): versioned, bounded, validated, atomically written, owner-only, with the hub's state (selection, favorites, recent). A damaged file is set aside; a newer file is read-only; a version 1 file is kept as `arcade.json.v1-backup` on the first version 2 write. |
 | Typography | `ui/typography.ts` | Semantic roles (`title`, `celebration`, `counter`…); scaled by OSC 66 where verified, ordinary styled text elsewhere. |
 
 ## Game contract
@@ -33,10 +38,11 @@ handle and `now()`.
 - `step(dtMs)` is called with exactly one fixed step (1000/60 ms) and only while `status === 'playing'`.
 - `animate(dtMs)` is called every frame with real elapsed time, for purely visual timers.
 - `render(canvas, alpha, palette)` draws the whole playfield and HUD into the canvas it is given (any size from 20 × 8).
-- `key(key)` receives every key except Esc and `p` while `status === 'playing'` (the session pauses the game and shows the shared pause menu) and Ctrl+C (the session closes).
+- `key(key)` receives every key except Esc and `p` while `status === 'playing'` (the session pauses the game and shows the shared pause menu) and Ctrl+C (the session closes). A game with `typing: true` also receives `p`.
   Return `'back'` to leave to the hub, `'exit'` to close the arcade.
 - Status is `ready → playing → over | won`; `result` carries the score text, `record: true` for a new best, and detail
   lines for the shared game over card (Retry, Back to Arcade, Exit).
+- `finale`, when set after the game ends, plays before the results sheet; any key skips it.
 - `persist()` saves whatever must survive leaving (a puzzle in progress); `dispose()` releases everything.
 
 NMSh delivers key presses only (no key release). A held key repeats, so "variable jump height" is built from repeated
