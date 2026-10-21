@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BackgroundActivity, HISTORY_LIMIT, TOAST_MAX_MS, TOAST_MS, safeCommandLabel, type ActivityEvent} from '../src/notifications/backgroundActivity.js';
+import {BackgroundActivity, COALESCE_MS, HISTORY_LIMIT, TOAST_IN_MS, safeCommandLabel, type ActivityEvent} from '../src/notifications/backgroundActivity.js';
 
 const command = (key: string, text: string, exitCode = 0, elapsedMs = 42_000, interrupted = false): ActivityEvent =>
   ({kind: 'command', key, command: text, elapsedMs, exitCode, interrupted});
@@ -66,47 +66,61 @@ test('a burst coalesces into one toast with counts; a failure is never lost, and
   assert.ok(activity.history().some(entry => entry.tone === 'fail' && /job4 failed · exit 1/u.test(entry.text)));
 });
 
-test('a burst never keeps a toast on screen longer than the cap', () => {
+test('the banner has no expiry: it stays until something newer replaces it, and the history stays bounded', () => {
   const t = clock();
   const activity = new BackgroundActivity(t.now);
-  const start = t.now();
   for (let index = 0; index < 400; index += 1) { activity.push(command(`k${index}`, 'job')); t.advance(100); }
-  const last = t.now();
-  assert.ok(last - start > TOAST_MAX_MS, 'the burst outlasted the cap');
-  t.advance(TOAST_MS);
-  assert.equal(activity.view(t.now()).toast, undefined, 'the toast has ended');
   assert.ok(activity.history().length <= HISTORY_LIMIT, 'history is bounded');
+  t.advance(60 * 60_000);
+  assert.ok(activity.view(t.now()).toast, 'an hour later it is still there');
+  activity.push(command('new', 'make'));
+  assert.match(activity.view(t.now()).toast!.detail, /^make · /u, 'a later one replaces it, as news and not as a burst');
 });
 
-test('expiry: the toast moves in, holds, leaves, and is gone; reduced motion is always steady', () => {
+test('the slide-in lasts 180 ms and then the banner is steady; reduced motion is always steady', () => {
   const t = clock();
   const activity = new BackgroundActivity(t.now);
   activity.push(command('1', 'make'));
   assert.equal(activity.view(t.now()).toast?.phase, 'in');
-  t.advance(500);
+  t.advance(TOAST_IN_MS + 1);
   assert.equal(activity.view(t.now()).toast?.phase, 'steady');
-  t.advance(TOAST_MS - 500 - 100);
-  assert.equal(activity.view(t.now()).toast?.phase, 'out');
-  t.advance(200);
-  assert.equal(activity.view(t.now()).toast, undefined);
   const still = new BackgroundActivity(t.now);
   still.push(command('2', 'make'));
   assert.equal(still.view(t.now(), false).toast?.phase, 'steady');
 });
 
-test('nextChange names the single next instant, and nothing once the toast is gone', () => {
+test('nextChange is only the end of the slide-in: a steady banner needs no timer at all', () => {
   const t = clock();
   const activity = new BackgroundActivity(t.now);
   assert.equal(activity.nextChange(t.now()), undefined);
   activity.push(command('1', 'make'));
-  const moments: number[] = [];
-  for (let at = activity.nextChange(t.now()); at !== undefined; at = activity.nextChange(at)) moments.push(at);
-  assert.equal(moments.length, 3, 'in, out, end');
-  assert.equal(moments.at(-1), t.now() + TOAST_MS);
-  assert.deepEqual(moments, [...moments].sort((a, b) => a - b));
-  const still = new BackgroundActivity(t.now);
-  still.push(command('2', 'make'));
-  assert.deepEqual([still.nextChange(t.now(), false)], [t.now() + TOAST_MS]);
+  assert.equal(activity.nextChange(t.now()), t.now() + TOAST_IN_MS);
+  assert.equal(activity.nextChange(t.now() + TOAST_IN_MS), undefined);
+  assert.equal(activity.nextChange(t.now(), false), undefined, 'none under reduced motion');
+});
+
+test('a failure stays over later successes until the log is looked at; a newer failure or acknowledgement releases it', () => {
+  const t = clock();
+  const activity = new BackgroundActivity(t.now);
+  activity.push(command('bad', 'npm test', 1, 83_000));
+  assert.deepEqual([activity.view().toast?.title, activity.view().toast?.detail], ['Command failed', 'npm test · 1m 23s · exit 1']);
+  t.advance(COALESCE_MS + 1000);
+  activity.push(command('ok', 'ls'));
+  assert.equal(activity.view(t.now()).toast?.title, 'Command failed', 'a plain success does not hide it');
+  activity.markRead();
+  t.advance(COALESCE_MS + 1000);
+  activity.push(command('ok2', 'ls'));
+  assert.equal(activity.view(t.now()).toast?.title, 'Command completed');
+});
+
+test('the banner carries a title and a detail line; settled commands feed the activity list for a minute', () => {
+  const t = clock();
+  const activity = new BackgroundActivity(t.now);
+  activity.push(command('1', 'npm run build', 0, 42_000));
+  assert.deepEqual([activity.view().toast?.title, activity.view().toast?.detail], ['Command completed', 'npm run build · 42.0s · exit 0']);
+  assert.deepEqual(activity.settled(t.now()).map(entry => entry.command?.label), ['npm run build']);
+  t.advance(61_000);
+  assert.deepEqual(activity.settled(t.now()), []);
 });
 
 test('queue finish reads as a count; attention states persist until cleared and never expire by themselves', () => {
@@ -117,7 +131,7 @@ test('queue finish reads as a count; attention states persist until cleared and 
   activity.push({kind: 'attention', key: 'a1', state: 'approval'});
   t.advance(60_000);
   const view = activity.view(t.now());
-  assert.equal(view.toast, undefined);
+  assert.equal(view.toast?.title, 'Queue waiting');
   assert.deepEqual([view.attention?.state, view.attention?.text], ['approval', 'Queue waiting for approval']);
   activity.push({kind: 'cleared', state: 'approval'});
   assert.equal(activity.view(t.now()).attention, undefined);
@@ -131,7 +145,7 @@ test('an input request outranks a paused queue, and a quiet success never hides 
   assert.equal(activity.view().attention?.state, 'input');
   assert.equal(activity.view().attention?.text, 'sudo is waiting for input');
   activity.push(command('ok', 'ls'));
-  assert.equal(activity.view().toast?.text, 'sudo is waiting for input', 'a success waits in the history');
+  assert.equal(activity.view().toast?.text, 'sudo is waiting for input', 'a success waits in the log');
   activity.push(command('bad', 'make', 2, 1_000));
   assert.match(activity.view().toast!.text, /make failed/u, 'a failure replaces it');
   assert.equal(activity.view().attention?.state, 'input', 'the attention state stays in the strip');

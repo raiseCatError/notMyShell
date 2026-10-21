@@ -10,7 +10,7 @@ import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
-import {ArcadeSession, type ArcadeCompanion, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {ArcadeSession, type ActivityRow, type ArcadeCompanion, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
 import {BackgroundActivity, safeCommandLabel, type ActivityEvent} from '../notifications/backgroundActivity.js';
 import {ARCADE_GAMES, findGame, gameNames} from '../arcade/registry.js';
 import {ArcadeStore} from '../arcade/scores.js';
@@ -418,6 +418,8 @@ import {defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from '../sess
 /** Editor text that marks interactive history search. */
 /** The Arcade's rise-in and recede: First Prompt's handoff idea, without its Aurora. */
 const ARCADE_HANDOFF_MS = 320;
+/** An Arcade offer must have been on screen this long before Enter accepts it. */
+const ARCADE_OFFER_READ_MS = 250;
 interface ArcadeHandoff { direction: 'in' | 'out'; started: number; under: string[]; arcade?: string[] }
 const HISTORY_SEARCH = '/history ';
 const DIRECTORY_SEARCH = '/dirs ';
@@ -4145,7 +4147,49 @@ export class TerminalApp {
       history: () => activity.history(),
       markRead: () => activity.markRead(),
       running: () => this.running && !this.running.done ? {label: safeCommandLabel(this.running.command), elapsedMs: Math.max(0, Date.now() - this.running.startedAt)} : undefined,
+      activities: () => this.arcadeActivities(activity),
     };
+  }
+
+  /**
+   * What the shell side is doing, read from the state the host already holds (no polling, no inference from output):
+   * the foreground command, the queue, /bg tasks, /track watchers and Ask-started tasks, then recently settled commands.
+   * Labels are program words only. A tracker is a scheduled check, so it shows its schedule, not a running clock.
+   */
+  private arcadeActivities(activity: BackgroundActivity): ActivityRow[] {
+    const rows: ActivityRow[] = [];
+    const now = Date.now();
+    const run = this.running;
+    if (run && !run.done) rows.push({id: 'run', label: safeCommandLabel(run.command), status: 'running', detail: formatDuration(Math.max(0, now - run.startedAt))});
+    const queue = this.queueState;
+    if (queue.entries.length) {
+      const approval = queue.entries.filter(entry => entry.condition === 'approve' && !entry.approved).length;
+      rows.push({id: 'queue', label: `Queue · ${queue.entries.length} waiting`, status: queue.paused ? 'paused' : 'waiting',
+        detail: queue.paused ? 'paused' : approval ? 'approval needed' : 'next up'});
+    }
+    for (const task of this.background.records) {
+      if (task.state === 'running' || task.state === 'stopping') rows.push({id: task.id, label: `${safeCommandLabel(task.command)} (bg)`, status: 'running', detail: formatDuration(Math.max(0, now - task.startedAt))});
+    }
+    for (const task of this.managedTasks.live()) rows.push({id: task.id, label: `${safeCommandLabel(task.argv.join(' '))} (task)`, status: 'running', detail: formatDuration(Math.max(0, now - task.startedAt))});
+    for (const watch of this.watches.active()) {
+      const last = watch.current ? watch.current.at + watch.current.durationMs : undefined;
+      const failing = Boolean(watch.current && watch.current.exitCode !== 0);
+      const detail = watch.status === 'paused' ? 'paused' : this.watches.sampling(watch.id) ? 'checking' : last === undefined ? 'first check soon'
+        : `${failing ? 'failing · ' : ''}next ${formatDuration(Math.max(0, last + watch.intervalMs - now))}`;
+      rows.push({id: watch.id, label: `track ${safeCommandLabel(watch.command)}`, status: watch.status === 'paused' ? 'paused' : 'tracking', detail});
+    }
+    for (const entry of activity.settled(now)) {
+      const done = entry.command!;
+      rows.push({id: `done:${entry.id}`, label: done.label, status: done.ok ? 'done' : done.interrupted ? 'stopped' : 'failed',
+        detail: done.ok ? 'completed' : done.interrupted ? 'interrupted' : `exit ${done.exitCode}`});
+    }
+    return rows;
+  }
+
+  /** Whether anything the header lists changes with time by itself (a clock or a schedule), so it needs its one-second repaint. */
+  private arcadeTicking(): boolean {
+    return Boolean((this.running && !this.running.done) || this.watches.active().length || this.background.records.some(task => task.state === 'running' || task.state === 'stopping')
+      || this.managedTasks.live().length);
   }
 
   /** Give a bare Arcade its strip (a queued command began behind it); the game re-lays out, it does not restart. */
@@ -4174,7 +4218,7 @@ export class TerminalApp {
     const now = Date.now();
     const motion = this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff;
     const change = activity.nextChange(now, motion);
-    const tick = this.running && !this.running.done ? 1000 - (Math.max(0, now - this.running.startedAt) % 1000) : undefined;
+    const tick = this.arcadeTicking() ? 1000 - (now % 1000) : undefined;
     const delay = Math.min(change === undefined ? Infinity : Math.max(16, change - now), tick ?? Infinity);
     if (!Number.isFinite(delay)) return;
     this.arcadeToast = presentationClock.after(() => {
@@ -4239,7 +4283,7 @@ export class TerminalApp {
     const {columns, rows} = this.terminalDimensions();
     // Shell work that continues behind the Arcade (a running command, queued entries) gets the strip from the start, so a
     // toast never changes the games' size later; a bare Arcade stays exactly as it was.
-    const activity = this.running || this.queueState.entries.length ? new BackgroundActivity() : undefined;
+    const activity = this.running || this.queueState.entries.length || this.arcadeTicking() ? new BackgroundActivity() : undefined;
     const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows}, game, activity && this.arcadeCompanion(activity));
     this.arcadeClosing = undefined;
     // Stop every clock that paints the shell's frame; render() recreates them when the Arcade closes.
@@ -10290,6 +10334,8 @@ export class TerminalApp {
     activity?: BackgroundActivity};
   /** The one pending repaint for a toast boundary or the strip's running clock; cancelled when the Arcade closes. */
   private arcadeToast?: () => void;
+  /** The composer text of the Arcade offer last drawn, and when it first appeared: an Enter accepts only an offer that was seen. */
+  private arcadeOfferSeen?: {text: string; since: number};
   private arcadePaintedAt = 0;
   /** The input request the Arcade last paused for, so Resume is not undone by the next report of the same one. */
   private arcadeInputSince?: number;
@@ -11865,7 +11911,12 @@ export class TerminalApp {
         }
       }
       let suffix = '';
-      if (row === input.rows[input.rows.length - 1] && this.arcadeOffer()) suffix = `${ACCENT}  ·  Open Arcade while the command runs? Enter Open · Esc Cancel${RESET}`;
+      const offering = row === input.rows[input.rows.length - 1] ? this.arcadeOffer() : undefined;
+      if (offering) {
+        // Presented: from now on an Enter may accept it, once it has been on screen long enough to be read.
+        if (this.arcadeOfferSeen?.text !== this.editor.text) this.arcadeOfferSeen = {text: this.editor.text, since: Date.now()};
+        suffix = `${ACCENT}  ·  Open Arcade while the command runs? Enter Open · Esc Cancel${RESET}`;
+      } else if (row === input.rows[input.rows.length - 1] && this.arcadeOfferSeen) this.arcadeOfferSeen = undefined;
       else if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
@@ -12953,7 +13004,13 @@ export class TerminalApp {
       // NMSh's own composer holds a complete, valid Arcade command and the offer is showing: this Enter accepts it. It is
       // never queued, never sent to the shell and approves nothing.
       const offer = intent === 'enter' ? this.arcadeOffer() : undefined;
+      if (offer && (this.arcadeOfferSeen?.text !== text || Date.now() - this.arcadeOfferSeen.since < ARCADE_OFFER_READ_MS)) {
+        // Enter arrived before the offer was presented (typed and entered at once, or pasted): show it first; a second Enter accepts.
+        this.render();
+        return;
+      }
       if (offer) {
+        this.arcadeOfferSeen = undefined;
         this.editor.clear();
         this.runningDraft = undefined;
         this.openArcade(offer.game, text.trim(), true);

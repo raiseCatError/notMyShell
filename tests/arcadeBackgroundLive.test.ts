@@ -120,6 +120,7 @@ test('live zsh: typing /games over a running command offers the Arcade; Enter op
     const openMark = frontend.mark;
     frontend.pty.write('/games');
     await frontend.waitFor(/Open Arcade while the command runs\?/u, openMark);
+    await pause(400);                       // read it
     frontend.pty.write('\r');
     await frontend.waitFor(/Vespyr Arcade/u, openMark);
     await frontend.waitFor(/nmsh-fixture running|sh running/u, openMark);

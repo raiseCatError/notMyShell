@@ -53,6 +53,16 @@ export interface ArcadeCompanion {
   markRead(): void;
   /** The command running behind the Arcade, if one is. */
   running(): {label: string; elapsedMs: number} | undefined;
+  /** Known shell-side work, most important first: only facts the host holds (running, settled, queued, tracked). */
+  activities(): readonly ActivityRow[];
+}
+
+/** One line of the activity list. `detail` carries the status in words, so meaning never depends on color. */
+export interface ActivityRow {
+  id: string;
+  label: string;
+  status: 'running' | 'done' | 'failed' | 'waiting' | 'paused' | 'tracking' | 'stopped';
+  detail: string;
 }
 
 type Screen = 'hub' | 'playing' | 'paused' | 'finale' | 'over' | 'notes';
@@ -93,6 +103,8 @@ export class ArcadeSession {
   private outerRows: number;
   /** 1 while the companion strip reserves the top row, else 0. Constant while a session runs, so a toast never resizes a game. */
   private strip = 0;
+  /** Header rows reserved (the banner needs two, so a capable terminal starts there); only ever grows, so a game is re-laid out rarely and never every time something finishes. */
+  private hud = 2;
   private companion: ArcadeCompanion | undefined;
   private notesReturn: Screen = 'hub';
   private canvas: Canvas | undefined;
@@ -253,8 +265,29 @@ export class ArcadeSession {
 
   /** The strip needs a row to spare and room for a sentence; smaller terminals keep every row for the Arcade. */
   private layout(): void {
-    this.strip = this.companion && this.outerRows >= 14 && this.columns >= 40 ? 1 : 0;
+    this.strip = this.companion && this.outerRows >= 14 && this.columns >= 40 ? Math.min(this.hud, this.maxHud()) : 0;
     this.rowsAvailable = Math.max(1, this.outerRows - this.strip);
+  }
+
+  /** The tallest header the terminal can spare: games keep the room. */
+  private maxHud(): number { return this.columns < 70 ? 1 : this.outerRows >= 30 ? 4 : this.outerRows >= 22 ? 3 : this.outerRows >= 16 ? 2 : 1; }
+
+  /** Activity rows to draw in `capacity` lines: all of them, or one fewer and a "+N more" line. */
+  private activitySlice(capacity: number): {shown: readonly ActivityRow[]; more: number} {
+    const all = this.companion?.activities() ?? [];
+    // At most three rows; a fourth line says how many more (when there is no room for it, the last row gives way to it).
+    if (all.length <= Math.min(3, capacity)) return {shown: all, more: 0};
+    const shown = all.slice(0, Math.min(3, Math.max(0, capacity - 1)));
+    return {shown, more: all.length - shown.length};
+  }
+
+  /** Grow the header when more is going on than it can show; never shrink it (no jumping playfield). */
+  private growHud(): void {
+    if (!this.companion || !this.strip) return;
+    const max = this.maxHud();
+    const rows = this.companion.activities().length;
+    const wanted = Math.min(max, Math.max(rows > 3 ? 4 : rows, this.companion.view().toast && this.columns >= 70 ? 2 : 1));
+    if (wanted > this.hud) { this.hud = wanted; this.relayout(); }
   }
 
   resize(columns: number, rows: number): void {
@@ -297,8 +330,7 @@ export class ArcadeSession {
 
   private toastMoving(): boolean {
     if (!this.companion || !this.env.motion().effects || this.env.motion().reduced) return false;
-    const phase = this.companion.view().toast?.phase;
-    return phase === 'in' || phase === 'out';
+    return this.companion.view().toast?.phase === 'in';
   }
 
   private baseInterval(): number {
@@ -522,12 +554,13 @@ export class ArcadeSession {
   // ---- drawing --------------------------------------------------------------------------------------------------
 
   render(): ArcadeFrame {
+    this.growHud();
     const frame = this.renderInner();
     if (!this.strip) return frame;
     const look = arcadeLook(arcadePalette());
     const encode = {color: this.env.color(), safe: this.env.safeGlyphs()};
     return {
-      rows: [this.stripRow(look, encode), ...frame.rows].slice(0, this.outerRows),
+      rows: [...this.stripRows(look, encode), ...frame.rows].slice(0, this.outerRows),
       overlays: frame.overlays.map(block => ({...block, y: block.y + this.strip})),
     };
   }
@@ -596,48 +629,70 @@ export class ArcadeSession {
     return {text: `${this.glyphFor(tone ?? 'info')}${view.unread ? ` ${view.unread}` : ''}`, color: this.toneColor(look, tone ?? 'info')};
   }
 
+  private activityGlyph(status: ActivityRow['status']): string {
+    const safe = this.env.safeGlyphs();
+    return status === 'running' ? (safe ? '~' : '◷') : status === 'done' ? (safe ? '+' : '✓') : status === 'failed' ? (safe ? 'x' : '✕')
+      : status === 'waiting' ? (safe ? '?' : '≡') : status === 'paused' ? (safe ? '=' : '‖') : status === 'tracking' ? (safe ? 'o' : '◉') : (safe ? '-' : '■');
+  }
+
+  private activityColor(look: ArcadeLook, status: ActivityRow['status']): Rgb {
+    return status === 'done' ? look.ok : status === 'failed' ? look.bad : status === 'waiting' || status === 'paused' ? look.warn : status === 'tracking' ? look.accent : look.text.normal;
+  }
+
   /**
-   * The strip: what runs behind the Arcade on the left, the latest news on the right. Text only, no input: it cannot be
-   * focused, clicked or answered. A toast slides in from the right edge and out again unless motion is reduced.
+   * The header: one surface in `hud` rows. Activities stack at the top-left (at most three, then "+N more"); the persistent
+   * banner sits at the top-right with a theme-accent bar on its left edge. They share the row budget and never overlap.
+   * Text only, no input: nothing here can be focused, clicked or answered. A banner slides in from the right unless motion
+   * is reduced, and stays; leaving the Arcade takes it along.
    */
-  private stripRow(look: ArcadeLook, encode: {color: ColorLevel; safe: boolean}): string {
-    const row = new Canvas(this.columns, 1);
+  private stripRows(look: ArcadeLook, encode: {color: ColorLevel; safe: boolean}): string[] {
+    const rows = this.strip;
+    const canvas = new Canvas(this.columns, rows);
     const bg = look.surface.raised;
-    row.clear(bg);
+    canvas.clear(bg);
     const view = this.companion!.view();
-    const running = this.companion!.running();
     const width = this.columns;
-    let right = '';
-    let rightColor = look.text.dim;
-    let slide = 0;
-    let fade = 0;
-    if (view.toast) {
-      right = ` ${this.glyphFor(view.toast.tone)} ${view.toast.text} `;
-      rightColor = this.toneColor(look, view.toast.tone);
-      if (view.toast.phase === 'in') slide = Math.round((1 - view.toast.progress) * 10);
-      else if (view.toast.phase === 'out') { slide = Math.round(view.toast.progress * 10); fade = view.toast.progress * 0.8; }
+    const banner = view.toast && rows >= 2 && width >= 70 ? view.toast : undefined;
+    const bannerWidth = banner ? Math.min(46, Math.max(34, Math.floor(width * 0.4))) : 0;
+    const slide = banner?.phase === 'in' ? Math.round((1 - banner.progress) * (bannerWidth + 2)) : 0;
+    const leftWidth = banner ? width - bannerWidth - 3 : width - 1;
+    // Activities, top-left.
+    const {shown, more} = this.activitySlice(rows);
+    shown.forEach((activity, index) => {
+      const tint = activity.status === 'done' ? look.ok : activity.status === 'failed' ? look.bad : undefined;
+      const rowBg = tint ? mixRgb(bg, tint, 0.16) : bg;
+      const span = Math.min(leftWidth, 56);
+      canvas.fill(0, index, span, 1, ' ', {bg: rowBg});
+      const detail = truncateText(activity.detail, Math.max(0, Math.floor(span / 2)));
+      const label = truncateText(`${this.activityGlyph(activity.status)} ${activity.label}`, Math.max(4, span - displayWidth(detail) - 3));
+      canvas.text(1, index, label, {fg: this.activityColor(look, activity.status), bg: rowBg, bold: activity.status === 'failed'});
+      canvas.text(span - displayWidth(detail) - 1, index, detail, {fg: look.text.dim, bg: rowBg});
+    });
+    if (more) canvas.text(1, shown.length, truncateText(`+ ${more} more ${more === 1 ? 'activity' : 'activities'}`, Math.max(1, leftWidth - 1)), {fg: look.text.dim, bg});
+    if (!shown.length && !more && width >= 60) canvas.text(1, 0, 'Shell idle', {fg: look.text.dim, bg});
+    // The banner, top-right.
+    if (banner) {
+      const x = width - bannerWidth - 1 + slide;
+      const surface = look.surface.sunken;
+      canvas.fill(x, 0, bannerWidth, 2, ' ', {bg: surface});
+      const bar = this.env.safeGlyphs() ? '|' : '▎';
+      for (let row = 0; row < 2; row += 1) canvas.text(x, row, bar, {fg: look.accent, bg: surface});
+      const inner = bannerWidth - 4;
+      canvas.text(x + 2, 0, truncateText(`${this.glyphFor(banner.tone)} ${banner.title}`, inner), {fg: this.toneColor(look, banner.tone), bg: surface, bold: true});
+      canvas.text(x + 4, 1, truncateText(banner.detail, inner - 2), {fg: look.text.dim, bg: surface});
+    } else if (view.toast && rows >= 1) {
+      // Too small for the banner: the same news on one line, still persistent.
+      const text = ` ${this.glyphFor(view.toast.tone)} ${view.toast.text} `;
+      const fit = truncateText(text, Math.max(0, Math.floor(width / 2)));
+      canvas.text(width - displayWidth(fit) - 1, 0, fit, {fg: this.toneColor(look, view.toast.tone), bg: look.surface.selected, bold: true});
     } else if (view.attention) {
-      right = ` ${this.glyphFor('attention')} ${view.attention.text} `;
-      rightColor = look.warn;
+      const text = truncateText(` ${this.glyphFor('attention')} ${view.attention.text} `, Math.max(0, Math.floor(width / 2)));
+      canvas.text(width - displayWidth(text) - 1, 0, text, {fg: look.warn, bg, bold: true});
     } else if (view.unread) {
-      right = ` ${view.unread} new · n `;
+      const text = ` ${view.unread} new · n `;
+      canvas.text(width - displayWidth(text) - 1, 0, text, {fg: look.text.dim, bg});
     }
-    const maxRight = Math.max(0, width - 2);
-    if (displayWidth(right) > maxRight) right = truncateText(right, maxRight);
-    const rightX = width - displayWidth(right) - 1 + slide;
-    if (running) {
-      const left = ` ${this.glyphFor('attention')} ${running.label} running · ${formatDuration(running.elapsedMs)}`;
-      const room = rightX - 2;
-      if (room > 10) row.text(0, 0, truncateText(left, room), {fg: look.text.normal, bg});
-    } else if (width >= 60 && !view.toast) {
-      row.text(1, 0, 'Shell idle', {fg: look.text.dim, bg});
-    }
-    if (right) {
-      const chip = view.toast ? look.surface.selected : bg;
-      const fg = fade ? mixRgb(rightColor, chip, fade) : rightColor;
-      row.text(rightX, 0, right, {fg, bg: chip, bold: Boolean(view.toast || view.attention)});
-    }
-    return row.rows(encode)[0]!;
+    return canvas.rows(encode).slice(0, rows);
   }
 
   /** The notification log: the latest news, newest first. Facts only; the shell holds the output itself. */

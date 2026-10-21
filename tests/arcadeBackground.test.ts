@@ -34,6 +34,8 @@ function setup(columns = 100, rows = 30, mode: Parameters<typeof executionFrameF
 }
 
 const ARCADE: Key = {kind: 'arcade'};
+/** The shared header: the activity list and the banner. */
+const top = (rows: string[]) => rows.slice(0, 4).join('\n');
 
 test('Ctrl+T decodes to a frontend key and is never text', () => {
   assert.deepEqual(decodeKeys('\u0014'), [ARCADE]);
@@ -53,8 +55,8 @@ test('opening over a running command: the command, its identity and the PTY are 
     assert.equal(t.app['running'].startId, startId);
     const rows = t.screen();
     assert.equal(rows.length, 30);
-    assert.match(rows[0]!, /npm run build running/u, 'the strip names what runs behind');
-    assert.match(rows[1]!, /Vespyr Arcade/u, 'the hub starts below the strip');
+    assert.match(rows[0]!, /◷ npm run build/u, 'the activity list names what runs behind');
+    assert.match(rows[2]!, /Vespyr Arcade/u, 'the hub starts below the two-row header');
     // Gameplay and navigation keys, including those that mean something to the shell: none may reach the PTY or the queue.
     t.press({kind: 'enter'}, t.text(' '), {kind: 'queueCommand'}, {kind: 'sendToProgram'}, t.text('y'), t.text('a'), {kind: 'enter'}, {kind: 'down'}, {kind: 'complete'});
     assert.deepEqual(t.queued, [], 'no queue operation');
@@ -90,8 +92,9 @@ test('a completion behind the Arcade: the game stays open, one toast appears, an
     assert.ok(t.app['arcade'], 'completion does not close the Arcade');
     assert.equal(t.app['arcade'].session.screen, 'playing', 'nor pause the game');
     const rows = t.settled();
-    assert.match(rows[0]!, /✓ npm test finished · 42\.0s/u);
-    assert.equal(rows.filter(row => /npm test finished/u.test(row)).length, 1, 'one toast');
+    assert.match(top(rows), /✓ Command completed/u);
+    assert.match(top(rows), /npm test · 42\.0s · exit 0/u);
+    assert.equal(rows.filter(row => /Command completed/u.test(row)).length, 1, 'one banner');
     const [record] = t.transcript().records;
     assert.equal(record?.command, 'npm test');
     assert.equal(record?.exitCode, 0);
@@ -102,8 +105,8 @@ test('a completion behind the Arcade: the game stays open, one toast appears, an
     assert.ok(t.app['arcade']);
     // Gone after its time, without a stale cell.
     t.tick(5_000);
-    assert.doesNotMatch(t.screen()[0]!, /finished/u);
-    assert.match(t.screen()[0]!, /Shell idle/u);
+    assert.match(top(t.screen()), /Command completed/u, 'the banner stays: it does not expire');
+    assert.match(t.screen()[0]!, /✓ npm test\s+completed/u, 'and the command is listed as settled');
   } finally { t.dispose(); }
 });
 
@@ -115,7 +118,7 @@ test('a failure is distinct, concise and does not leave the Arcade', () => {
     t.tick(3_000);
     t.complete(1);
     assert.ok(t.app['arcade']);
-    assert.match(t.settled()[0]!, /✕ npm test failed · exit 1 · 3\.0s/u);
+    assert.match(top(t.settled()), /✕ Command failed[\s\S]*npm test · 3\.0s · exit 1/u);
     assert.equal(t.transcript().records[0]?.exitCode, 1);
   } finally { t.dispose(); }
 });
@@ -129,8 +132,8 @@ test('a toast never covers the game: the strip is reserved from the start, so th
     t.complete(0);
     const after = t.settled();
     assert.equal(after.length, before.length);
-    assert.deepEqual(after.slice(1), before.slice(1), 'every row below the strip is identical');
-    assert.notEqual(after[0], before[0]);
+    assert.deepEqual(after.slice(2), before.slice(2), 'every row below the two-row header is identical');
+    assert.notEqual(top(after), top(before));
   } finally { t.dispose(); }
 });
 
@@ -144,12 +147,12 @@ test('a burst of completions is one toast, then the chain\'s own summary; nothin
     for (let index = 1; index < 6; index += 1) {
       assert.ok(t.app['arcade'], `the queue starting job${index} keeps the Arcade open`);
       t.begin(`job${index}`);
-      if (index < 5) assert.match(t.screen()[0]!, /job\d running/u, 'the strip follows the command that runs now');
+      if (index < 5) assert.match(top(t.screen()), /◷ job\d/u, 'the list follows the command that runs now');
       t.complete(0);
     }
     const rows = t.settled();
-    assert.match(rows[0]!, /Queue finished · 5 commands/u, 'the chain covers the five queued entries; job0 was typed');
-    assert.equal(rows.filter(row => /Queue finished|commands finished/u.test(row)).length, 1, 'one toast, not a stack');
+    assert.match(top(rows), /Queue finished[\s\S]*5 commands/u, 'the chain covers the five queued entries; job0 was typed');
+    assert.equal(rows.filter(row => /Queue finished|commands finished/u.test(row)).length, 1, 'one banner, not a stack');
     assert.equal(t.transcript().records.length, 6);
     assert.deepEqual(t.transcript().records.map(record => record.command).sort(), ['job0', 'job1', 'job2', 'job3', 'job4', 'job5'], 'each ran exactly once');
   } finally { t.dispose(); }
@@ -168,12 +171,12 @@ test('a failure in the queue obeys the existing policy: it pauses, the rest wait
     assert.equal(t.owner.state.paused?.reason, 'failed', 'the queue paused itself, as it always does');
     assert.equal(t.owner.state.entries.length, 1, 'job2 still waits and never ran');
     const rows = t.settled();
-    assert.match(rows[0]!, /job1 failed · exit 2|Queue paused/u);
+    assert.match(top(rows), /job1[\s\S]*exit 2|Queue paused/u);
     t.press({kind: 'enter'}, t.text(' '), t.text('y'), {kind: 'queueCommand'});
     assert.equal(t.owner.state.paused?.reason, 'failed', 'no key resumed it');
     assert.equal(t.owner.state.entries.length, 1);
     assert.deepEqual(t.queued, []);
-    assert.match(t.settled()[0]!, /Queue paused/u, 'the persistent marker stays after the failure toast');
+    assert.match(top(t.settled()), /Queue · 1 waiting\s+paused/u, 'the list keeps saying the queue is paused');
   } finally { t.dispose(); }
 });
 
@@ -220,7 +223,7 @@ test('a program asking for input: the Arcade pauses, says so, and never forwards
     t.app['onInputState']({request: {since: Date.now(), confidence: 'confirmed', mode: 'hidden', program: 'sudo'}, timing: {waitedMs: 0, waits: 1}});
     assert.ok(t.app['arcade'], 'the Arcade stays; the process and its state are preserved');
     assert.notEqual(t.app['arcade'].session.screen, 'playing', 'the game is paused');
-    assert.match(t.settled()[0]!, /sudo is waiting for input/u);
+    assert.match(top(t.settled()), /Input needed[\s\S]*sudo is waiting/u);
     // A password typed into the game goes nowhere: write() would throw in this fixture.
     for (const char of 'hunter2') t.press(t.text(char));
     t.press({kind: 'enter'}, {kind: 'queueCommand'});
@@ -302,7 +305,7 @@ test('queue: a held entry stays held whatever is pressed in the Arcade, and appr
     t.tick(10);
     assert.equal(t.owner.state.entries.length, 1, 'the held entry did not run');
     assert.notEqual(t.owner.state.entries[0]?.approved, true);
-    assert.match(t.settled()[0]!, /Queue waiting for approval/u, 'the strip says it is waiting');
+    assert.match(top(t.settled()), /Queue · 1 waiting\s+approval needed/u, 'the list says it is waiting');
     assert.ok(t.app['arcade'], 'and the Arcade stays open');
     t.press({kind: 'interrupt'});
     assert.equal(t.owner.state.entries.length, 1, 'closing the Arcade did not approve it either');
@@ -324,7 +327,7 @@ test('queue: an authorised entry starts behind the Arcade, runs once, and its co
     const records = t.transcript().records.map(record => record.command);
     assert.deepEqual([...records].sort(), ['first', 'second'], 'both ran, in the intended order, none twice');
     assert.equal(records.filter(command => command === 'second').length, 1, 'ran exactly once');
-    assert.match(t.settled()[0]!, /Queue finished · 2 commands/u);
+    assert.match(top(t.settled()), /Queue finished[\s\S]*2 commands/u);
   } finally { t.dispose(); }
 });
 
@@ -358,7 +361,7 @@ test('small terminals: no strip and no game resize; a compact marker shows in th
   try {
     t.begin('make');
     t.press(ARCADE, {kind: 'enter'});
-    assert.doesNotMatch(t.screen()[0]!, /running/u, 'no strip to cover the game');
+    assert.doesNotMatch(top(t.screen()), /◷ make/u, 'no header to cover the game');
     t.complete(1);
     const rows = t.screen();
     assert.equal(rows.length, 12);
@@ -382,8 +385,9 @@ test('Reduced Motion, NO_COLOR and Safe Glyphs: static, readable, and no color-o
       frame.tick(300);
       app['arcade'].handoff = undefined;
       app['render']();
-      const row = stripAnsi(painted[0]!);
-      assert.match(row, mode === 'reduced' ? /✕ npm test failed · exit 1/u : /x npm test failed [·.] exit 1/u, mode);
+      const row = painted.slice(0, 3).map(line => stripAnsi(line)).join('\n');
+      assert.match(row, mode === 'reduced' ? /✕ Command failed/u : /x Command failed/u, mode);
+      assert.match(row, /npm test [·.] 1\.0s [·.] exit 1/u, mode);
       if (mode === 'safe-no-color') assert.doesNotMatch(painted[0]!, /\u001b\[[0-9;]*38;/u, 'no color escapes');
     } finally { frame.dispose(); }
   }
@@ -458,6 +462,8 @@ test('rendering ownership: the shell\'s own presentation clocks never paint over
 // ---- the /games offer over a running command ------------------------------------------------------------------
 
 const typeText = (t: ReturnType<typeof setup>, value: string) => { for (const char of value) t.press(t.text(char)); };
+/** The offer has been drawn and read: a frame, then time. */
+const readOffer = (t: ReturnType<typeof setup>) => { t.screen(); t.tick(300); t.screen(); };
 const OFFER = /Open Arcade while the command runs\? Enter Open · Esc Cancel/u;
 
 test('/games over a running command: the offer shows as soon as the command is complete, one Enter opens it, nothing is queued or sent', () => {
@@ -470,8 +476,9 @@ test('/games over a running command: the offer shows as soon as the command is c
     assert.match(t.screen().join('\n'), OFFER);
     assert.equal(t.app['arcade'], undefined, 'nothing opens before Enter');
     const running = t.app['running'];
+    readOffer(t);
     t.press({kind: 'enter'});
-    assert.ok(t.app['arcade'], 'one Enter opens it');
+    assert.ok(t.app['arcade'], 'one Enter opens it once the offer has been seen');
     assert.equal(t.app['running'], running, 'the command is the same one');
     assert.equal(t.app['editor'].text, '');
     assert.deepEqual(t.queued, []);
@@ -538,6 +545,7 @@ test('a held queue entry is untouched by the offer, and the command finishing wh
     t.begin('make');
     t.owner.request({op: 'add', text: 'rm -r build', condition: 'approve'});
     typeText(t, '/games');
+    readOffer(t);
     t.press({kind: 'enter'});
     assert.ok(t.app['arcade']);
     assert.equal(t.owner.state.entries.length, 1);
@@ -590,5 +598,26 @@ test('rendering ownership: a command finishing never restarts the entry transiti
     const after = shown.slice(before);
     assert.ok(after.length >= 1 && after.every(rows => !isArcadeFrame(rows) || rows.some(row => /current command|second/u.test(row))), 'only shell frames after closing');
     assert.ok(t.app['running']);
+  } finally { t.dispose(); }
+});
+
+test('typing /games and pressing Enter at once never opens silently: the offer is shown first, a second Enter accepts', () => {
+  const t = setup();
+  try {
+    t.begin('sleep 60');
+    const keys = [...'/games'].map(char => t.text(char));
+    t.press(...keys, {kind: 'enter'});            // one input chunk: no frame, no time between
+    assert.equal(t.app['arcade'], undefined, 'nothing opened');
+    assert.match(t.screen().join('\n'), OFFER, 'the offer is now on screen');
+    assert.equal(t.app['editor'].text, '/games', 'the text stays so the offer can be answered');
+    assert.deepEqual(t.queued, []);
+    t.press({kind: 'enter'});                     // too soon after it appeared
+    assert.equal(t.app['arcade'], undefined, 'an Enter before the offer could be read does not accept it');
+    t.tick(300);
+    t.screen();
+    t.press({kind: 'enter'});
+    assert.ok(t.app['arcade'], 'accepted once seen');
+    assert.deepEqual(t.queued, []);
+    assert.equal(t.owner.state.entries.length, 0);
   } finally { t.dispose(); }
 });

@@ -8,8 +8,25 @@ import type {Rng} from '../../rng.js';
  * units (one unit is one pixel row) and grows upward; the ball's x is the column's center.
  */
 export const COLORS = 4;
-export const GRAVITY = 300;
-export const TAP = 128;
+/**
+ * Movement tuning (units are pixel rows). The old model reset vy to 128 under gravity 300: about 27 units per tap
+ * against a ring radius of 15, so the ball could enter a ring but never stay in it. Now the ball is a damped float:
+ *  - GRAVITY 36 with DRAG 3/s gives a terminal fall of 12 units/s. A ring's clear centre is about 20 units across,
+ *    so a fall through it takes roughly 1.5 s, and the view floor (34 below the best height) still ends a run that
+ *    stops tapping after about 3 s.
+ *  - A tap adds TAP 14 to vy instead of resetting it, after braking any fall to at most BRAKE 8 so a tap always
+ *    answers. One tap from rest lifts about 1.6 units. Taps every ~400 ms hold the height (the average rise is
+ *    zero there); every 250 ms drifts up about 6 units/s, every 450 ms sinks slowly, so a human tapping 250-450 ms
+ *    hovers inside a ring for seconds with small corrections. Taps every ~120 ms cruise upward at about 23 units/s.
+ *  - TAP_CAP 26 caps the climb speed and TAP_GAP 80 ms is a cooldown, so mashing cannot stack into a launch.
+ * Integration is exact for gravity plus linear drag, so results do not depend on the step size.
+ */
+export const GRAVITY = 36;
+export const DRAG = 3;
+export const TAP = 14;
+export const BRAKE = 8;
+export const TAP_CAP = 26;
+export const TAP_GAP = 0.08;
 export const BALL_R = 1.6;
 export const RING_R = 15;
 export const RING_T = 3;
@@ -36,6 +53,7 @@ export class OrbitState {
   /** The lowest y the view may show: falling below it ends the run. */
   floor = -30;
   events: OrbitEvent[] = [];
+  private sinceTap = 1;
   private nextY = 40;
   private passed = new Set<number>();
 
@@ -47,16 +65,23 @@ export class OrbitState {
   tap(): void {
     if (!this.alive) return;
     this.started = true;
-    this.vy = TAP;
+    if (this.sinceTap < TAP_GAP) return;
+    this.sinceTap = 0;
+    this.vy = Math.min(TAP_CAP, Math.max(this.vy, -BRAKE) + TAP);
   }
 
   /** Obstacles get faster and denser as the climb goes on; every fourth is a double ring or a bar. */
   private spawn(): void {
     const index = this.obstacles.length;
-    const level = Math.min(1, index / 30);
-    const speed = (1 + level * 1.4) * (this.rng.chance(0.5) ? 1 : -1);
+    const level = Math.min(1, index / 40);
+    // Rings turn from 0.9 to 1.8 rad/s (a quarter turn lasts 1.7 s down to 0.87 s, a half turn, the wait between entering and leaving, 3.5 s down to 1.7 s); bars slide 5 to 12 units/s
+    // (a block lasts 2.4 s down to 1 s). Every ring shows all four colours at its top and bottom in turn, so it
+    // can always be passed by waiting, and each window outlasts the ~0.3 s it takes to cross the band.
+    const sign = this.rng.chance(0.5) ? 1 : -1;
+    const speed = (0.9 + level * 0.9) * sign;
+    const barSpeed = (5 + level * 7) * sign;
     const y = this.nextY + RING_R + 4;
-    if (index > 2 && index % 4 === 3) this.obstacles.push({kind: 'bar', y, speed: speed * 26, phase: this.rng.range(0, BAR_SEG * COLORS)});
+    if (index > 3 && index % 4 === 0) this.obstacles.push({kind: 'bar', y, speed: barSpeed, phase: this.rng.range(0, BAR_SEG * COLORS)});
     else this.obstacles.push({kind: 'ring', y, r: RING_R + (index % 5 === 4 ? 5 : 0), speed, phase: this.rng.range(0, TAU)});
     // A prism above every obstacle switches to a color other than the current one.
     this.prisms.push({y: y + RING_R + 8, taken: false, color: -1});
@@ -80,8 +105,11 @@ export class OrbitState {
     const dt = dtMs / 1000;
     this.time += dt;
     if (!this.started) return;
-    this.vy -= GRAVITY * dt;
-    this.y += this.vy * dt;
+    this.sinceTap += dt;
+    const fall = GRAVITY / DRAG;
+    const decay = Math.exp(-DRAG * dt);
+    this.y += -fall * dt + ((this.vy + fall) * (1 - decay)) / DRAG;
+    this.vy = (this.vy + fall) * decay - fall;
     this.floor = Math.max(this.floor, this.y - 34);
     if (this.y < this.floor) { this.alive = false; this.events.push({kind: 'hit', y: this.y}); return; }
     while (this.nextY < this.y + 300) this.spawn();

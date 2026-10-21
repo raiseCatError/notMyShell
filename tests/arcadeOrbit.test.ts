@@ -20,11 +20,11 @@ const context = (record = memory(), options: Partial<GameContext> = {}): GameCon
 });
 
 test('motion: a tap kicks the ball up, gravity brings it down, the same at any frame rate', () => {
-  const at = (step: number) => { const s = new OrbitState(createRng(1)); s.obstacles = []; s.tap(); for (let t = 0; t < 300; t += step) s.step(step); return s.y; };
+  const at = (step: number) => { const s = new OrbitState(createRng(1)); s.obstacles = []; s.tap(); for (let t = 0; t < 300; t += step) { if (t === 120) s.tap(); s.step(step); } return s.y; };
   assert.ok(at(STEP) > 0);
   assert.ok(Math.abs(at(STEP) - at(STEP / 2)) < 0.8, 'within a fraction of a pixel');
   const s = new OrbitState(createRng(1)); s.obstacles = []; s.tap();
-  for (let t = 0; t < 3000; t += STEP) s.step(STEP);
+  for (let t = 0; t < 8000; t += STEP) s.step(STEP);
   assert.equal(s.alive, false, 'falling off the bottom ends it');
 });
 
@@ -40,7 +40,7 @@ test('collision: crossing a ring through your own color passes, any other color 
     s.y = 30 - RING_R - 6;
     s.vy = TAP;
     let crossed = false;
-    for (let t = 0; t < 400 && s.alive; t += STEP) { s.step(STEP); if (s.y > 30 - RING_R + 2) crossed = true; }
+    for (let t = 0; t < 4000 && s.alive; t += STEP) { if (s.vy < 15) s.tap(); s.step(STEP); if (s.y > 30 - RING_R + 2) crossed = true; }
     assert.equal(crossed, match, match ? 'through the matching arc' : 'stopped by the wrong color');
   }
 });
@@ -51,13 +51,13 @@ test('prisms always switch to a different color; obstacles keep spawning above t
   s.prisms = [{y: 5, taken: false, color: -1}];
   const before = s.color;
   s.tap();
-  for (let t = 0; t < 200; t += STEP) s.step(STEP);
+  for (let t = 0; t < 4000 && !s.prisms[0]!.taken; t += STEP) { if (s.vy < 10) s.tap(); s.step(STEP); }
   assert.ok(s.prisms[0]!.taken);
   assert.notEqual(s.color, before);
   const climb = new OrbitState(createRng(4));
   climb.obstacles = []; climb.prisms = [];
-  for (let i = 0; i < 400; i += 1) { if (climb.vy <= 0) climb.tap(); climb.step(STEP); climb.obstacles = climb.obstacles.filter(o => o.y > climb.y + 200); }
-  assert.ok(climb.y > 300);
+  for (let i = 0; i < 400; i += 1) { if (climb.vy < 10) climb.tap(); climb.step(STEP); climb.obstacles = climb.obstacles.filter(o => o.y > climb.y + 200); }
+  assert.ok(climb.y > 60);
 });
 
 test('game: tapping in a fixed rhythm is deterministic and ends with a saved result', () => {
