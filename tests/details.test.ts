@@ -153,3 +153,14 @@ test('preview, split and hybrid all show details; z works in the preview and in 
     assert.equal(state.editor.buffer.text, `${DOC}\n`.replace(/\n$/u, ''));
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+test('many unclosed <details> cost a bounded amount in total (one scan budget per parse), and a normal document still pairs its tags', () => {
+  const lines: string[] = [];
+  for (let index = 0; index < 15_000; index += 1) lines.push('<details>', `<summary>s${index}</summary>`, '');
+  const started = process.hrtime.bigint();
+  const blocks = parseBlocks(lines.join('\n'), {html: true});
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e9 < 3, 'bounded');
+  assert.ok(blocks.length > 0);
+  const paired = parseBlocks(['<details>', '<summary>a</summary>', '', 'x', '', '</details>', '', '<details>', '<summary>b</summary>', '', 'y', '', '</details>'].join('\n'), {html: true});
+  assert.deepEqual(paired.map(block => block.kind), ['details', 'details']);
+});

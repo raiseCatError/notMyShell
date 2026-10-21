@@ -152,6 +152,7 @@ export function parseBlocks(source: string, options: {html?: boolean} = {}): Blo
 
 /** The same, for lines already cut (a buffer's): a stray CR inside a line stays in it and cannot shift the line numbers after it. */
 export function parseBlockLines(lines: readonly string[], options: {html?: boolean} = {}): Block[] {
+  detailsBudget = DETAILS_SCAN_LINES;
   return parseLines(lines.length > MAX_LINES ? lines.slice(0, MAX_LINES) : lines, 0, Boolean(options.html), 0);
 }
 
@@ -170,6 +171,9 @@ function htmlBlockKind(line: string): 1 | 2 | 6 | 7 | undefined {
 }
 
 const OPENS = /<details\b/giu, CLOSES = /<\/details\s*>/giu;
+/** Lines the whole parse may look through to find closing `</details>` tags: one budget for all openers, so many unclosed ones cost a bounded amount in total. */
+const DETAILS_SCAN_LINES = 100_000;
+let detailsBudget = DETAILS_SCAN_LINES;
 const count = (pattern: RegExp, text: string) => (text.match(pattern) ?? []).length;
 
 /**
@@ -183,6 +187,7 @@ function detailsAcross(lines: readonly string[], start: number, end: number): {c
   let depth = count(OPENS, chunk) - count(CLOSES, chunk);
   if (depth <= 0) return undefined;
   for (let at = end; at < Math.min(lines.length, end + 5000); at += 1) {
+    if (--detailsBudget < 0) return undefined;
     depth += count(OPENS, lines[at]!) - count(CLOSES, lines[at]!);
     if (depth <= 0) {
       if (!/^\s*<\/details\s*>\s*$/iu.test(lines[at]!)) return undefined;
