@@ -11,6 +11,7 @@ import {brickfallGame} from './games/brickfall/index.js';
 import {towerGame} from './games/tower/index.js';
 import {bullseyeGame} from './games/bullseye/index.js';
 import {orbitGame} from './games/orbit/index.js';
+import {treatsGame} from './games/treats/index.js';
 import {mergeGame} from './games/merge/index.js';
 import {minesGame} from './games/mines/index.js';
 import {purrwordGame} from './games/purrword/index.js';
@@ -23,7 +24,7 @@ export const ARCADE_GAMES: readonly GameDefinition[] = [
   runGame, flightGame, dashGame, leapGame,
   snakeGame, pongGame, brickfallGame,
   towerGame, bullseyeGame, orbitGame,
-  sudokuGame, queensGame, minesGame, mergeGame, purrwordGame,
+  sudokuGame, queensGame, minesGame, mergeGame, treatsGame, purrwordGame,
 ];
 
 /** The game a `/game <name>` argument names (id or alias, case-insensitive, spaces as dashes), or undefined. */

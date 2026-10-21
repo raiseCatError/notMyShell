@@ -106,6 +106,6 @@ test('render: every size and mode draws inside its bounds, mid-game and finished
     game.render(canvas, 0, palette);
     for (let i = 0; i < 40; i += 1) game.animate(100);
     game.render(canvas, 0, palette);
-    for (const line of canvas.toLines?.() ?? []) assert.ok(displayWidth(line) <= columns);
+    for (const line of canvas.plain()) assert.ok(displayWidth(line) <= columns);
   }
 });
