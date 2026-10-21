@@ -13,7 +13,7 @@ import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
 import {paletteEntries, type PaletteEntry, type PaletteFormat} from './EditorPalette.js';
 import {DocumentIndex, SourceAnchor, type HeadingEntry} from '../markdown/sourceMap.js';
 import {advanceSnippet, insertFootnote, insertSnippet, insideSnippet, type SnippetSession} from './snippets.js';
-import {continueList, insertLink, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
+import {continueList, insertLink, renumberFootnotes, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
 import {displayColumn, TAB_WIDTH, TextBuffer, type Position} from './textBuffer.js';
 import {describeDifference, type DraftOffer} from './draftRecovery.js';
@@ -181,6 +181,7 @@ function runPaletteEntry(state: EditorState, entry: PaletteEntry): void {
   endSnippet(state);
   if (entry.run.kind === 'snippet') { state.snippet = insertSnippet(state.buffer, entry.run.snippet); return; }
   if (entry.run.action === 'Action.Footnote') { state.snippet = insertFootnote(state.buffer); return; }
+  if (entry.run.action === 'Action.FootnoteRenumber') { const result = renumberFootnotes(state.buffer); if (result.note) state.note = {text: result.note, tone: 'info'}; return; }
   if (entry.run.action === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return; }
   if (entry.run.action === 'Action.Back') { jumpBack(state); return; }
   const result = runMarkdownAction(state, entry.run.action);

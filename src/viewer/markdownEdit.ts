@@ -407,3 +407,76 @@ export function wrapSelection(buffer: TextBuffer, kind: WrapKind): EditResult {
   replaceLines(buffer, start.line, last, out, position => (position === buffer.caret ? caretAfter : anchorAfter));
   return {changed: true};
 }
+
+// ---- Footnotes --------------------------------------------------------------------------------------------------
+
+const DEFINITION = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3})\[\^([^\]\s]+)\]:/u;
+
+/** Spans of inline code on a line, blanked with spaces so a reference inside them is not seen. */
+function maskCode(line: string): string {
+  return line.replace(/(`+)[\s\S]*?\1/gu, span => ' '.repeat(span.length));
+}
+
+/**
+ * Renumber the numbered footnotes 1, 2, 3… in the order of their first reference, definitions following their references. Named
+ * footnotes, escaped references, code spans and fenced code are left alone; a definition nobody references keeps its number
+ * unless a renumbered footnote needs it, and is then given the next free one. One undo step; only the labels change.
+ */
+export function renumberFootnotes(buffer: TextBuffer): EditResult {
+  const lines = buffer.lines;
+  const fenced = fenceMap(lines, lines.length - 1);
+  const numeric = (label: string) => /^\d+$/u.test(label);
+  interface Token {line: number; start: number; end: number; label: string}
+  const references: Token[] = [], definitions: Token[] = [];
+  lines.forEach((text, line) => {
+    if (fenced[line]) return;
+    const masked = maskCode(text);
+    const definition = DEFINITION.exec(masked);
+    let from = 0;
+    if (definition) {
+      const start = definition[1]!.length + 2;
+      definitions.push({line, start, end: start + definition[2]!.length, label: definition[2]!});
+      from = definition[0].length;
+    }
+    for (const match of masked.slice(from).matchAll(/(?<!\\)\[\^([^\]\s]+)\]/gu)) {
+      const start = from + match.index! + 2;
+      references.push({line, start, end: start + match[1]!.length, label: match[1]!});
+    }
+  });
+  const renamed = new Map<string, string>();
+  let next = 1;
+  for (const reference of references) if (numeric(reference.label) && !renamed.has(reference.label)) renamed.set(reference.label, String(next++));
+  const used = new Set(renamed.values());
+  const referenced = new Set(references.map(reference => reference.label));
+  const taken = new Set([...used, ...definitions.filter(d => !numeric(d.label) || !referenced.has(d.label)).map(d => d.label).filter(numeric)]);
+  for (const definition of definitions) {
+    if (!numeric(definition.label) || renamed.has(definition.label)) continue;
+    if (!used.has(definition.label)) continue;
+    let free = 1;
+    while (taken.has(String(free)) || used.has(String(free))) free += 1;
+    renamed.set(definition.label, String(free)); taken.add(String(free));
+  }
+  const changes = new Map<number, Array<Token & {to: string}>>();
+  for (const token of [...references, ...definitions]) {
+    const to = numeric(token.label) ? renamed.get(token.label) : undefined;
+    if (to === undefined || to === token.label) continue;
+    const list = changes.get(token.line) ?? [];
+    list.push({...token, to}); changes.set(token.line, list);
+  }
+  if (!changes.size) return {changed: false, note: 'The footnotes are already numbered in order.'};
+  const first = Math.min(...changes.keys()), last = Math.max(...changes.keys());
+  const out = lines.slice(first, last + 1);
+  for (const [line, list] of changes) {
+    let text = lines[line]!;
+    for (const token of [...list].sort((a, b) => b.start - a.start)) text = text.slice(0, token.start) + token.to + text.slice(token.end);
+    out[line - first] = text;
+  }
+  replaceLines(buffer, first, last, out, position => {
+    const list = changes.get(position.line);
+    if (!list) return position;
+    let column = position.column;
+    for (const token of list) if (position.column >= token.end) column += token.to.length - token.label.length;
+    return {line: position.line, column};
+  });
+  return {changed: true};
+}
