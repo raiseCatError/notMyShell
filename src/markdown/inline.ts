@@ -1,4 +1,5 @@
 import {safeHyperlinkTarget} from '../output/Hyperlinks.js';
+import {renderMath} from './math.js';
 import {decodeEntities, decodeEntity, DROPPED, imageLabel, KNOWN, RAW_TEXT, readTag} from './markup.js';
 
 /**
@@ -20,6 +21,8 @@ export interface InlineStyle {
   strike?: boolean;
   /** A safe http(s) target; present only on link text. */
   link?: string;
+  /** Rendered inline mathematics (`$…$`): the text is the formula as one row of Unicode. */
+  math?: boolean;
   /** Text of an image (its alt text): shown, never fetched. */
   image?: boolean;
   /** The image's source reference as written (bounded). Never fetched here: the graphics service decides what may be read. */
@@ -48,6 +51,8 @@ function safeLink(url: string): string | undefined {
 export interface InlineOptions {
   /** Read the HTML tags `/view` renders (see the module comment); otherwise tags are text. */
   html?: boolean;
+  /** Read `$…$` as mathematics (documents only): `ascii` draws it without box and bracket pieces. */
+  math?: {ascii: boolean};
 }
 
 /** Raw tokens before emphasis resolution: literal text, finished spans (code, links) and delimiter runs. */
@@ -202,6 +207,27 @@ function tokenize(source: string, options: InlineOptions): Token[] {
         continue;
       }
       text += fence; index += run; continue;
+    }
+    if (char === '$' && options.math) {
+      // GitHub's rules: `$x$` needs a non-space after the opener and before the closer, and the closer must not be followed by a digit
+      // (so prices are not formulas); `$$x$$` may sit inside a paragraph too. A formula that cannot be drawn stays as written.
+      const run = source[index + 1] === '$' ? 2 : 1;
+      const open = index + run;
+      let close = -1;
+      if (open < source.length && !/\s/u.test(source[open]!)) {
+        for (let at = open; at < Math.min(source.length, open + 1000); at += 1) {
+          if (source[at] === '\\') { at += 1; continue; }
+          if (source[at] === '$' && (run === 1 || source[at + 1] === '$')) { close = at; break; }
+        }
+      }
+      if (close > open && !/\s/u.test(source[close - 1]!) && !(run === 1 && /[0-9]/u.test(source[close + 1] ?? ''))) {
+        const result = renderMath(source.slice(open, close), {display: false, ascii: options.math.ascii});
+        const end = close + run;
+        if (result.ok) { flush(); tokens.push({kind: 'span', span: [{text: result.rows[0]!, style: {math: true}}]}); }
+        else text += source.slice(index, end);
+        index = end;
+        continue;
+      }
     }
     if (char === '<') {
       const auto = /^<(https?:\/\/[^\s<>]{1,2000})>/iu.exec(source.slice(index, index + 2100));

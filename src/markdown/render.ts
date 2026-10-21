@@ -1,3 +1,4 @@
+import {renderMath} from './math.js';
 import {colorEscape} from '../chroma/escape.js';
 import {colorLevel, type ColorLevel} from '../presentation/capabilities.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
@@ -76,6 +77,8 @@ export interface MarkdownOptions {
   tone?: 'primary' | 'secondary';
   /** Render HTML inside the Markdown (`/view`, QA F01); otherwise tags are shown as text. */
   html?: boolean;
+  /** Read `$…$` and `$$…$$` (and ```math fences) as mathematics: documents opened in the viewer, not agent replies or GitHub bodies. */
+  math?: boolean;
   /** Real images: an image alone in its paragraph is drawn as rows when the provider can show it; otherwise `[image: alt]`. */
   images?: ImageProvider;
   /** The most rows one image may take. */
@@ -106,8 +109,14 @@ interface Context {
   maxImageRows: number;
   sizedHeadings?: {maxRows: number};
   disclosure?: {isOpen(key: string, defaultOpen: boolean): boolean};
+  math?: boolean;
   detailsSeen: Map<string, number>;
   blockIds: {next: number};
+}
+
+/** Inline options: HTML tags when the document is HTML, mathematics when the caller asked for it (documents, not agent replies). */
+function inlineOptions(context: Context): {html: boolean; math?: {ascii: boolean}} {
+  return {html: context.html, ...(context.math ? {math: {ascii: context.safe}} : {})};
 }
 
 function glyph(context: Context, nerd: string, safe: string): string {
@@ -245,7 +254,7 @@ function wrapAtoms(atoms: readonly Atom[], width: number, first: string, rest: s
 
 function inlineRows(source: string, width: number, context: Context, base: string, first = '', rest = first): Array<{ansi: string; plain: string}> {
   // A hard break inside a paragraph is a new row with the same hanging indent.
-  return source.split('\n').flatMap((line, index) => wrapAtoms(atomsOf(parseInline(line, {html: context.html}), context, base), width, index === 0 ? first : rest, rest));
+  return source.split('\n').flatMap((line, index) => wrapAtoms(atomsOf(parseInline(line, inlineOptions(context)), context, base), width, index === 0 ? first : rest, rest));
 }
 
 // ---- Code ---------------------------------------------------------------------------------------------------------
@@ -321,11 +330,11 @@ function alignCell(text: string, width: number, align: Alignment): string {
 function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, context: Context): MarkdownRow[] {
   const columns = block.header.length;
   const all = [block.header, ...block.rows];
-  const natural = Array.from({length: columns}, (_, column) => Math.max(1, ...all.map(row => displayWidth(plainInline(row[column] ?? '', {html: context.html})))));
+  const natural = Array.from({length: columns}, (_, column) => Math.max(1, ...all.map(row => displayWidth(plainInline(row[column] ?? '', inlineOptions(context))))));
   const separator = glyph(context, ' │ ', ' | ');
   const chrome = 3 * (columns - 1);
   const available = width - chrome;
-  const minimum = Array.from({length: columns}, (_, column) => Math.min(natural[column]!, Math.max(3, Math.min(10, ...[block.header[column] ?? ''].map(cell => displayWidth(plainInline(cell, {html: context.html})))))));
+  const minimum = Array.from({length: columns}, (_, column) => Math.min(natural[column]!, Math.max(3, Math.min(10, ...[block.header[column] ?? ''].map(cell => displayWidth(plainInline(cell, inlineOptions(context))))))));
   if (available < minimum.reduce((a, b) => a + b, 0)) {
     // Too narrow for a grid: each row becomes a short record of "Header: value" lines.
     const rows: MarkdownRow[] = [];
@@ -333,7 +342,7 @@ function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, contex
     block.rows.forEach((row, index) => {
       if (index) rows.push({ansi: '', plain: '', kind: 'blank'});
       row.forEach((cell, column) => {
-        const label = plainInline(block.header[column] ?? '', {html: context.html});
+        const label = plainInline(block.header[column] ?? '', inlineOptions(context));
         const lead = `${subtle}${label}:${RESET} `;
         for (const line of inlineRows(cell || '—', width, context, base, lead, '  ')) rows.push({...line, kind: 'table'});
       });
@@ -379,7 +388,7 @@ function tableRows(block: Extract<Block, {kind: 'table'}>, width: number, contex
  */
 function sizedHeading(block: Extract<Block, {kind: 'heading'}>, width: number, context: Context, sgr: string, ordinary: MarkdownRow[]): MarkdownRow[] | undefined {
   if (!context.sizedHeadings || ordinary.length !== 1) return undefined;
-  const spans = parseInline(block.text, {html: context.html});
+  const spans = parseInline(block.text, inlineOptions(context));
   const segments = spans.filter(span => span.text).map(span => ({text: span.text.replace(/\s+/gu, ' '), sgr: spanSgr(span.style, context, sgr)}));
   const text = segments.map(segment => segment.text).join('').trim();
   if (!text || segments.length > 24) return undefined;
@@ -400,7 +409,7 @@ function sizedHeading(block: Extract<Block, {kind: 'heading'}>, width: number, c
 function imageParagraph(source: string, width: number, context: Context): MarkdownRow[] | undefined {
   const provider = context.images;
   if (!provider || width < 8) return undefined;
-  const spans = parseInline(source, {html: context.html});
+  const spans = parseInline(source, inlineOptions(context));
   const images = spans.filter(span => span.style.image && span.style.src);
   if (!images.length || spans.some(span => !(span.style.image && span.style.src) && span.text.trim())) return undefined;
   const placed: Array<{span: InlineSpan; slot: ImageSlot; shown: {lines: string[]; columns: number; rows: number}}> = [];
@@ -416,6 +425,33 @@ function imageParagraph(source: string, width: number, context: Context): Markdo
     if (span.style.link) rows.push({ansi: `${context.fg(UI_COLORS.subtle)}${glyph(context, '↗', '->')} ${hostOf(span.style.link)}${RESET}`, plain: `-> ${hostOf(span.style.link)}`, kind: 'text'});
   }
   return rows;
+}
+
+/**
+ * Display mathematics: drawn when the subset covers it and it fits the width, otherwise the source exactly as written, dimmed,
+ * with the reason on a last row. Re-evaluated on every render, so a wider window can draw what a narrow one could not.
+ */
+function mathRows(source: string, width: number, context: Context): MarkdownRow[] {
+  const result = renderMath(source, {display: true, ascii: context.safe});
+  if (result.ok && result.width <= width - 2) return result.rows.map(row => ({ansi: `  ${row}${RESET}`, plain: `  ${row}`.trimEnd(), kind: 'text' as const}));
+  const reason = result.ok ? `it needs ${result.width + 2} columns and the window has ${width}` : result.reason;
+  const dim = context.fg(UI_COLORS.subtle);
+  const lines = ['$$', ...source.split('\n'), '$$'];
+  const rows: MarkdownRow[] = [];
+  for (const line of lines) for (const piece of wrapPlain(line, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
+  for (const piece of wrapPlain(`(not rendered: ${reason})`, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
+  return rows;
+}
+
+function wrapPlain(text: string, width: number): string[] {
+  const out: string[] = [];
+  let current = '';
+  for (const char of text) {
+    if (displayWidth(current + char) > width) { out.push(current); current = ''; }
+    current += char;
+  }
+  out.push(current);
+  return out;
 }
 
 // ---- Blocks -------------------------------------------------------------------------------------------------------
@@ -441,7 +477,11 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
         break;
       }
       case 'code':
-        out.push(...codeRows(block, width, context));
+        if (context.math && block.language === 'math') out.push(...mathRows(block.lines.join('\n'), width, context));
+        else out.push(...codeRows(block, width, context));
+        break;
+      case 'math':
+        out.push(...mathRows(block.source, width, context));
         break;
       case 'details': {
         const nth = context.detailsSeen.get(block.summary) ?? 0;
@@ -503,7 +543,7 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
 
 /** Rows for untrusted Markdown at `columns` cells. */
 export function renderMarkdown(source: string, columns: number, options: MarkdownOptions = {}): MarkdownRow[] {
-  return renderSource(source, columns, options, safe => parseBlocks(safe, {html: Boolean(options.html)}));
+  return renderSource(source, columns, options, safe => parseBlocks(safe, {html: Boolean(options.html), math: Boolean(options.math)}));
 }
 
 /** Rows for an untrusted HTML document at `columns` cells (`/view`, QA F01): its supported subset, never run or loaded. */
@@ -527,6 +567,7 @@ function renderSource(source: string, columns: number, options: MarkdownOptions,
     maxImageRows: Math.max(1, options.maxImageRows ?? 16),
     ...(options.sizedHeadings ? {sizedHeadings: options.sizedHeadings} : {}),
     ...(options.disclosure ? {disclosure: options.disclosure} : {}),
+    ...(options.math ? {math: true} : {}),
     detailsSeen: new Map(),
     blockIds: {next: 1},
   };

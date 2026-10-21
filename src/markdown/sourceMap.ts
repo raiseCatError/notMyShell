@@ -155,7 +155,7 @@ export class DocumentIndex {
     if (this.cached?.version === this.versionCounter) return this.cached;
     this.parseCount += 1;
     this.options.onParse?.();
-    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false});
+    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false, math: true});
     this.cached = {version: this.versionCounter, blocks, headings: outline(blocks, this.buffer.lines)};
     return this.cached;
   }

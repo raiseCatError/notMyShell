@@ -150,7 +150,7 @@ function renderedOf(editor: EditorState, hybrid: HybridState, layout: Layout, in
   let rows = hybrid.cache.get(key);
   if (!rows) {
     hybrid.stats.renders += 1;
-    const rendered = renderMarkdown(text, layout.width, {...(layout.look.syntax ? {syntax: layout.look.syntax} : {}), hyperlinks: Boolean(layout.look.hyperlinks), html: true});
+    const rendered = renderMarkdown(text, layout.width, {...(layout.look.syntax ? {syntax: layout.look.syntax} : {}), hyperlinks: Boolean(layout.look.hyperlinks), html: true, math: true});
     rows = rendered.map(row => row.ansi);
     if (text.length <= MAX_CACHED_TEXT) {
       hybrid.cache.set(key, rows);
