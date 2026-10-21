@@ -4,12 +4,24 @@ import {flightGame} from './games/flight/index.js';
 import {dashGame} from './games/dash/index.js';
 import {sudokuGame} from './games/sudoku/index.js';
 import {queensGame} from './games/queens/index.js';
+import {leapGame} from './games/leap/index.js';
+import {snakeGame} from './games/snake/index.js';
+import {pongGame} from './games/pong/index.js';
+import {brickfallGame} from './games/brickfall/index.js';
+import {towerGame} from './games/tower/index.js';
+import {bullseyeGame} from './games/bullseye/index.js';
+import {orbitGame} from './games/orbit/index.js';
 
 /**
- * Every arcade game, in hub order. A future game (a crossword, Snake, Minesweeper) is one more entry here and one
+ * Every arcade game, in hub order within its category (the hub groups them). A new game is one more entry here and one
  * directory under `games/`; there is no per-game global command, and `/game <name>` finds it by id or alias.
  */
-export const ARCADE_GAMES: readonly GameDefinition[] = [runGame, flightGame, dashGame, sudokuGame, queensGame];
+export const ARCADE_GAMES: readonly GameDefinition[] = [
+  runGame, flightGame, dashGame, leapGame,
+  snakeGame, pongGame, brickfallGame,
+  towerGame, bullseyeGame, orbitGame,
+  sudokuGame, queensGame,
+];
 
 /** The game a `/game <name>` argument names (id or alias, case-insensitive, spaces as dashes), or undefined. */
 export function findGame(name: string, games: readonly GameDefinition[] = ARCADE_GAMES): GameDefinition | undefined {

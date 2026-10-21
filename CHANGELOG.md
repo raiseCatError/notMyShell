@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Seven new Arcade games** ([#475](https://github.com/raiseCatError/notMyShell/issues/475), [#476](https://github.com/raiseCatError/notMyShell/issues/476)): **Vespyr Leap** (bounce up from platform to platform; sliding and crumbling platforms, springs, a generator that always leaves the next platform in reach), **Tail Chase** (Snake in Classic, Wrap-around and Garden modes, with a golden fish that does not wait), **Purr Pong** (first to seven against Vespyr at three levels or a friend on the same keyboard), **Brickfall** (Breakout with original layouts, steel bricks, three power-ups and combos), **Cat Tower** (precision stacking; perfect drops grow the slab back), **Vespyr Bullseye** (darts into a spinning, reversing target without touching the darts already in it) and **Color Orbit** (rise through rings and bars only where the color matches).
+
 ### Changed
 
 - **Vespyr Arcade is a full-screen application** ([design](docs/design/arcade-expansion.md), [#474](https://github.com/raiseCatError/notMyShell/issues/474)). `/games` now takes the whole terminal: no banner, Status Strip, sidebar, transcript or composer around it, the shell's size unchanged, and the ordinary screen back exactly on exit. It rises in and recedes (none under Reduced Motion, Effects Off or without color). The hub is a library grouped by category with Favorites (`f`), Recently played, search (`/`), Tab between groups, the mouse wheel and clicks, and a live preview of the highlighted game; it remembers the game you played last. Narrow terminals show one game at a time. A game fills the screen with one row of controls; Esc opens a pause sheet with How to play, and finishing plays the game's own celebration before a results card that counts the score up.

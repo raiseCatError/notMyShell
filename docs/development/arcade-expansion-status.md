@@ -10,18 +10,18 @@ Legend: ✓ done with evidence · ◐ in progress · · not started · — not a
 | 3 | Vespyr Dash | 1b | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 4 | Classic Sudoku | 1b | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 5 | Vespyr Queens | 1b | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
-| 6 | Vespyr Leap | 2 | · | · | · | · | · | · | · | · | · | · |
+| 6 | Vespyr Leap | 2 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 7 | Alley Sprint | 4 | · | · | · | · | · | · | · | · | · | · |
-| 8 | Color Orbit | 2 | · | · | · | · | · | · | · | · | · | · |
+| 8 | Color Orbit | 2 | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | · | ✓ | · |
 | 9 | Glass Rush | 4 | · | · | · | · | · | · | · | · | · | · |
 | 10 | Kitten Parade | 4 | · | · | · | · | · | · | · | · | · | · |
 | 11 | Vespyr Rover | 4 | · | · | · | · | · | · | · | · | · | · |
-| 12 | Brickfall | 2 | · | · | · | · | · | · | · | · | · | · |
-| 13 | Purr Pong | 2 | · | · | · | · | · | · | · | · | · | · |
-| 14 | Tail Chase | 2 | · | · | · | · | · | · | · | · | · | · |
-| 15 | Cat Tower | 2 | · | · | · | · | · | · | · | · | · | · |
+| 12 | Brickfall | 2 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
+| 13 | Purr Pong | 2 | ✓ | — | ✓ | ✓ | ✓ | ◐ | ◐ | · | ✓ | · |
+| 14 | Tail Chase | 2 | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | · | ✓ | · |
+| 15 | Cat Tower | 2 | ✓ | — | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 16 | Catapult Cats | 4 | · | · | · | · | · | · | · | · | · | · |
-| 17 | Vespyr Bullseye | 2 | · | · | · | · | · | · | · | · | · | · |
+| 17 | Vespyr Bullseye | 2 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | · | ✓ | · |
 | 18 | Vespyr Pinball | 4 | · | · | · | · | · | · | · | · | · | · |
 | 19 | Maze Prowler | 4 | · | · | · | · | · | · | · | · | · | · |
 | 20 | Sandfall | 4 | · | · | · | · | · | · | · | · | · | · |
@@ -62,4 +62,5 @@ finale. Not yet captured: Reduced Motion and NO_COLOR / Safe Glyphs for every ga
 ## Log
 
 - 2026-10-21: program started; spec and status written. Worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/arcade`.
+- 2026-10-21: batch 2 on `feature/arcade-batch2`: Vespyr Leap, Tail Chase, Purr Pong, Brickfall, Cat Tower, Vespyr Bullseye, Color Orbit (shared `kit.ts`; `outlineSprite` keeps Vespyr readable over lavender skies). FX ◐ where the game has hit and pass effects but no dedicated record celebration beyond the shared results sheet.
 - 2026-10-21: batch 1 and 1b on `feature/arcade-expansion`: records v2 + Queens migration, look/fx/engine, full-viewport hub and Stage, Sudoku and Queens redesigns, Run/Flight/Dash worlds.

@@ -396,6 +396,23 @@ export interface Sprite {
   pixels: Array<Rgb | undefined>;
 }
 
+/**
+ * The sprite with a one-pixel `color` outline around its silhouette (four-neighbour), one pixel larger on every side: how
+ * Vespyr stays readable over a sky close to his own lavender.
+ */
+export function outlineSprite(sprite: Sprite, color: Rgb): Sprite {
+  const width = sprite.width + 2;
+  const height = sprite.height + 2;
+  const at = (x: number, y: number): Rgb | undefined => (x < 0 || y < 0 || x >= sprite.width || y >= sprite.height ? undefined : sprite.pixels[y * sprite.width + x]);
+  const pixels: Array<Rgb | undefined> = [];
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const own = at(x - 1, y - 1);
+    if (own) { pixels.push(own); continue; }
+    pixels.push(at(x - 2, y - 1) || at(x, y - 1) || at(x - 1, y - 2) || at(x - 1, y) ? color : undefined);
+  }
+  return {width, height, pixels};
+}
+
 /** Author a sprite as rows of characters; `palette` maps a character to a color, any other character is transparent. */
 export function spriteFromRows(rows: readonly string[], palette: Readonly<Record<string, Rgb>>): Sprite {
   const width = Math.max(0, ...rows.map(row => row.length));
