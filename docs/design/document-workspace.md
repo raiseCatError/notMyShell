@@ -51,6 +51,12 @@ Limits: code fences are recognised by a line scan (indented code blocks and fenc
 
 **Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
 
+## Disclosure (`<details>`)
+
+`Block` gains `{kind: 'details'; open; summary; blocks}` (#462). Two sources: `htmlToBlocks` (an HTML document or a self-contained element) and `parseLines`, which recognises GitHub's layout — an HTML block that opens a `<details>` it does not close, Markdown after a blank line, `</details>` alone on a later line (nesting counted, within 5,000 lines) — and parses the lines between as Markdown at the right source offset, so inner blocks keep exact spans. Content written in the opening chunk is kept; anything that does not match the layout is left to the old HTML-block path, so no text is dropped. A summary is HTML, as on GitHub: Markdown punctuation in it stays literal; no summary reads "Details".
+
+`renderMarkdown` takes `disclosure.isOpen(key, defaultOpen)`; the summary row carries `MarkdownRow.details`, the key (summary text and which one of that text). The viewer keeps `disclosure: Map<key, open>` (never persisted, never in the file); `z`/`Z` read each row's drawn state (▾/v), so a block's own `open` is respected, and set the opposite. The state is part of the rendered-rows cache key. The hybrid view renders inactive details as written (no toggle there yet), and the plain-text fallback is the source.
+
 ## Hybrid view
 
 `DocumentMode` gains `'hybrid'` (#460), implemented in `src/viewer/HybridView.ts` over the shared source map (`docs/architecture/document-source-map.md`). It is a presentation of the one `TextBuffer`; there is no second editor and no second document.

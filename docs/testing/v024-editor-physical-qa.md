@@ -21,6 +21,9 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
 - [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
 
+## Details (#462)
+- [ ] A Markdown file with GitHub-style `<details>`: closed shows `▸ Summary`; `z` opens it; `Z`; in the preview, the split's preview pane and the hybrid view; narrow widths; Safe Glyphs (`>`/`v`); a hostile file.
+
 ## Hybrid view (#460)
 - [ ] Open a Markdown file, F3 (is F3 delivered by the terminal and by Zed?): headings, bold, links, lists, tables, quotes and fences render; the block under the caret shows its source; moving with the arrows swaps blocks without the screen jumping.
 - [ ] Type in every kind of block; select across blocks with Shift+Down (both show source); undo/redo; insert a snippet and Tab through it.
