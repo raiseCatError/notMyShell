@@ -30,6 +30,23 @@ the preview always show what is in the buffer, including unsaved edits, and noth
 - **No browser, or Real browser Off:** NMSh's own renderer draws the preview (headings, lists, tables, code, local images through the graphics service, sized headings where the terminal proved text sizing). The two previews share the keys above; the Chromium one adds zoom (`+`/`-`/`0`) and Chromium's find.
 - The rendered Markdown is `marked` (GFM) with the document's raw HTML passed through to the sandboxed page and a built-in stylesheet that follows the theme's light or dark.
 
+## Markdown editing helpers
+
+`src/viewer/markdownEdit.ts` ([#463](https://github.com/raiseCatError/notMyShell/issues/463), slice 1) works on the editor's `TextBuffer` and nothing else. The source text is the authority: each helper reads the lines it needs, replaces only the lines it names with `TextBuffer.edit` (one undoable edit that also restores the caret and selection), and leaves everything it does not clearly understand to the editor's ordinary behavior. It is active only for `.md`, `.markdown` and `.mdx` files.
+
+| Key | Behavior |
+|---|---|
+| Enter | On a list item with the caret after the marker: a new item with the same quote prefix, indentation and marker (ordered: next number, same delimiter; task: unchecked box); the rest of the line moves to it. An empty item ends the list: top level is cleared, a nested one steps out to its parent's level. Not handled (plain newline): a selection, the caret inside the marker, code fences, rules (`---`, `* * *`), escaped markers, non-items. Later numbers are not renumbered. |
+| Tab / Shift+Tab | List items covered by the caret or selection move one level with their children and continuation lines. In: by the previous sibling's marker width, so a child still nests under `10.`. Out: to the parent item's indentation. Not a list item: Tab inserts a tab as before. |
+| F1 → t | Task: no box → `[ ]`; any open box → check the open ones; all checked → uncheck. Only list items change. |
+| F1 → n | Renumber the ordered list at the caret from its first number (same delimiter), across loose items; an item's children follow if its number gains or loses a digit. A bullet or other delimiter at the same level ends the list. |
+| F1 → l / p | Link / image around the selection with the address selected for typing; a selected web address becomes the destination and the text is selected; brackets in the text are escaped; no selection inserts a placeholder; multi-line selections are refused. |
+| F1 → b i c s | Wrap or unwrap bold, italic, code (a fence longer than any backtick run inside) or strikethrough; the selection stays on the same text. A multi-line selection wraps each non-blank line inside its own quote and list prefix. A marker that is escaped, or part of a longer run (`**x**` is not italic `x`), is text. |
+
+Limits: code fences are recognised by a line scan (indented code blocks and fences inside block quotes are not); nesting is by indentation columns with tabs as four; HTML blocks are not parsed. Table editing and hunk-by-hunk review of external changes are separate slices of #463.
+
+**Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
+
 ## Crash recovery
 
 Unsaved text is protected by `src/viewer/draftRecovery.ts` ([#469](https://github.com/raiseCatError/notMyShell/issues/469)); the editor, the workspace and `fileEdit.ts` stay the only owners of the buffer and of the file.
