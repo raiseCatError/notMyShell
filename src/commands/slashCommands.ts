@@ -42,7 +42,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status; --semantic or --both the Semantic Output reading'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
   {name: '/games', insertion: '/games', description: 'Vespyr Arcade: offline games with local high scores (/game run · /game sudoku · /arcade queens)'},
-  {name: '/game', insertion: '/game', description: 'Same as /games; /game <name> opens a game directly: run, flight, dash, sudoku, queens'},
+  {name: '/game', insertion: '/game', description: 'Same as /games; /game <name> opens a game directly: run, flight, dash, leap, snake, pong, brickfall, tower, bullseye, orbit, sudoku, queens'},
   {name: '/arcade', insertion: '/arcade', description: 'Same as /games'},
   {name: '/game run', insertion: '/game run', description: 'Vespyr Run: an endless runner. Space or ↑ jumps, ↓ ducks'},
   {name: '/game flight', insertion: '/game flight', description: 'Vespyr Flight: fly through endless gaps. Space or ↑ flaps'},
