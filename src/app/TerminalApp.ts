@@ -4120,6 +4120,7 @@ export class TerminalApp {
       return 'A full-screen program or the shell start-up owns the terminal; the arcade opens once it is done.';
     }
     if (this.hasModalInput(true) || this.queueReview || this.queueEdit || this.queueCompose) return 'Close what is open first (Esc); the arcade needs the whole screen and every key.';
+    if (this.ownershipLook) return 'NMSh is still checking who your last keys were for; try the arcade again in a moment.';
     const run = this.running;
     if (!run) return undefined;
     if (!shortcut) return 'The arcade opens at the prompt: let the running command finish, or press Ctrl+T to play while it runs without asking for input.';
@@ -4191,7 +4192,8 @@ export class TerminalApp {
     if (state.terminalOwner) { this.closeArcade(false, 'a program took the terminal'); return; }
     if (state.request) {
       // Evidence, not a guess: only the session's own report counts. The game stops where it is; no key is ever forwarded.
-      arcade.session.pause();
+      if (this.arcadeInputSince !== state.request.since) arcade.session.pause();
+      this.arcadeInputSince = state.request.since;
       this.arcadeCompanionOn();
       const program = state.request.program || commandWord(this.running?.command ?? '');
       this.noteBackground({kind: 'attention', key: `input:${state.request.since}`, state: 'input', ...(program ? {program} : {}), confirmed: state.request.confidence === 'confirmed'});
@@ -4242,7 +4244,8 @@ export class TerminalApp {
     const handoff = this.arcadeHandoff('in');
     this.arcade = {session, interval: 0, floor: 40, last: performance.now(), handoff, under: handoff?.under, ...(activity ? {activity} : {})};
     this.arcadePaintedAt = 0;
-    if (activity) this.arcadeQueueNews({entries: []}, this.queueState);
+    // Only the attention states are news at open; a chain that ended earlier is not.
+    if (activity) this.arcadeQueueNews({entries: [], ...(this.queueState.timeline ? {timeline: this.queueState.timeline} : {})}, this.queueState);
     if (activity && this.inputState?.request) this.arcadeInputState(this.inputState);
     this.syncArcadeClock();
     this.syncArcadeWake();
@@ -10285,6 +10288,8 @@ export class TerminalApp {
   /** The one pending repaint for a toast boundary or the strip's running clock; cancelled when the Arcade closes. */
   private arcadeToast?: () => void;
   private arcadePaintedAt = 0;
+  /** The input request the Arcade last paused for, so Resume is not undone by the next report of the same one. */
+  private arcadeInputSince?: number;
   /** The Arcade receding after it closed: presentation only, ended by any render of the real frame. */
   private arcadeClosing?: ArcadeHandoff;
   private arcadeStore?: ArcadeStore;

@@ -1,7 +1,7 @@
 # Arcade expansion status
 
 Live status of the [33-game program](../design/arcade-expansion.md). Update this file in the same commit as the work.
-Release status: **not release-ready until the physical checks below are done by a person.** Automated evidence is complete; physical QA has not been run.
+Release status: **automated evidence is complete; the maintainer has played the 33-game Arcade and approved it, but physical Ghostty/Zed QA of the new background-command behavior (Ctrl+T over a running command, strip and toasts) has NOT been run.** See [Background work](#background-work-ctrlt-strip-and-toasts) and the physical checks below.
 Legend: ✓ done with evidence · ◐ in progress · · not started · — not applicable. "Physical" is filled only by a person.
 
 | # | Game | Batch | Rules | Gen | Det | Input | Records | FX | Visual | Perf | Docs | Physical |
@@ -175,7 +175,42 @@ None of these has been run; the Physical column stays empty until a person fills
 - Driftkeys: typed keys never reach the shell, and the running-command guard holds.
 - Hex Minefield: rendering in the real font.
 - NO_COLOR and Safe Glyphs; terminal resize; Reduced Motion.
+- Background work (all NOT RUN): start `sleep 20; echo done` or `npm test`, press Ctrl+T, play, watch the strip and the finish
+  toast; press Ctrl+T over `sudo -v` and over `read -s` (it must refuse or pause and say why); queue three commands, press
+  Ctrl+T, confirm they run once in order; hold a command for approval and mash Enter/Space/Ctrl+Q in a game (it must stay held);
+  leave with Ctrl+C and check the transcript shows the full output; confirm Ctrl+T is not swallowed by Ghostty or Zed.
 - Sudoku, Merge 2048 and Minefield squareness in the real font's cell aspect (the board layout assumes `CELL_ASPECT` = 2).
+
+## Background work (Ctrl+T, strip and toasts)
+
+Design: [arcade-background-work.md](../design/arcade-background-work.md). Replaces the v0.22 rule that the Arcade never opens over
+a running command. Epic #481; the queue/input risks it touches are tracked in #473 (not changed, not hidden).
+
+| Requirement | Evidence | Physical |
+|---|---|---|
+| Opens over a running noninteractive command by NMSh's own key; typed `/games` stays refused | `tests/arcadeBackground.test.ts` (fixture whose PTY `write()` throws), `tests/arcadeSession.test.ts` | NOT RUN |
+| Same shell, session, command object, no resize/kill/interrupt; Ctrl+C leaves the Arcade only | same file; `tests/arcadeBackgroundLive.test.ts` (real zsh PTY + session service: session id and service pid unchanged, command pid alive then ends normally) | NOT RUN |
+| Output is recorded, never painted over the Arcade, repainted on return; bursts do not repaint per chunk | app test (3000 chunks, < 20 paints); live test (late `ESC[2J ESC[H` stays off the Arcade, `RAN-OK` appears after leaving) | NOT RUN |
+| No game key reaches the shell, queue or composer; held entries are never approved; nothing replays after close | app tests (Enter, Space, `y`, `a`, Ctrl+Q, Ctrl+S, Tab); live test (`hunter2`, `rm -rf nothing`: zero completions) | NOT RUN |
+| Fail-closed ownership: question (confirmed/likely), terminal owner, passthrough, ownership look, queue review, starting/stopping command, old session without `input-state`/`input-look` | `it will not open when ownership of the keyboard is not clear` | NOT RUN |
+| A question after opening pauses the game and says so; a terminal owner / passthrough closes it; no key forwarded | app tests | NOT RUN |
+| Queue: authorised entries run behind it exactly once in order; failure pauses per existing policy; approval stays held; chain summary replaces per-command toasts | app tests with the real `QueueDispatcher` | NOT RUN |
+| Toasts: strip row reserved up front (a game never resizes), top-right, 3.6 s, slide in/out, static under Reduced Motion, glyph + words under NO_COLOR/Safe Glyphs, bursts coalesced, failures preserved, bounded history, privacy-safe labels | `tests/backgroundActivity.test.ts`, `tests/arcadeCompanion.test.ts` (160x50 to 40x14, compact marker below 40x14) | NOT RUN |
+| Notification log in the hub (`n`) and pause sheet; any key returns | `tests/arcadeCompanion.test.ts` | NOT RUN |
+| No leaked clock subscription or timer after repeated open/close | `closing and quitting leave no clock subscription or timer behind` | n/a |
+
+Known limits (recorded, not hidden):
+
+- Over a running command the Arcade opens only by Ctrl+T. Typing `/games` into a running program is still that program's
+  input, by design.
+- Ownership evidence is the session's `InputState` (InputWatch). A program that reads the keyboard without the session ever
+  reporting it (a read that starts between samples) can be open under a game for up to one sampling window before the
+  report arrives; when it does, the game pauses and the strip says so. No key is ever forwarded in that window, but the
+  person must leave the Arcade (Ctrl+C) to answer it. The existing likely/confirmed wording is used as is.
+- A command that starts from type-ahead or another window still closes the Arcade (unchanged).
+- The 14 row x 40 column minimum for the strip; smaller terminals show a one-glyph marker plus the unread count instead.
+- Ghostty/Zed behavior of Ctrl+T (the byte `0x14` / Kitty `CSI 116;5u`), toast legibility on the real fonts and the feel of
+  the slide are unverified by a person.
 
 ## Shared foundations
 

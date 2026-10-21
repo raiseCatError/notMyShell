@@ -17,7 +17,9 @@ complete until every row of the [acceptance matrix](#acceptance-matrix) is.
 - Gameplay stays in NMSh's terminal UI, drawn through the arcade `Canvas` and the shared renderer. No Kitty graphics,
   browser or external runtime is required; capability-dependent touches (OSC 66 typography) keep text fallbacks.
 - Input ownership: while the Arcade is open it owns every key. Nothing typed reaches the PTY, the composer, command
-  history or the transcript. The Arcade never opens over a running command, and a command that starts closes it.
+  history or the transcript. It opens over a running command only by NMSh's own Ctrl+T key and only when the session's
+  evidence says the command is not reading the keyboard; a program that asks for input pauses it, and one that takes the
+  terminal closes it ([background work](arcade-background-work.md)).
 - No new shell session, no transcript loss, no PTY resize (see [Viewport ownership](#viewport-ownership)).
 - 8 GB Apple Silicon target: one running game, one animated hub preview, bounded pools, no background simulation.
 - Saved data is never silently lost; renames migrate ([Records v2](#records-v2)).
@@ -89,8 +91,10 @@ The Arcade is a full-viewport application. It follows the idle screensaver's pre
 - Opening and closing use one presentation-only transition (First Prompt's handoff idea, no Aurora): the hub rises in
   from the bottom edge over ~320 ms and recedes the same way on exit; any key finishes it; Reduced Motion, Effects Off or
   NO_COLOR skip it. During the transition the rows outside the Arcade's part are the real frame's rows.
-- Every existing guard stays: refused over a running command or foreground program; closed by a starting command; focus
-  out pauses; Ctrl+C closes; resize re-lays out without restarting a game.
+- Guards: typed `/games` is refused over a running command or foreground program (Ctrl+T is the explicit way, with its own
+  fail-closed checks); a command that starts from outside the queue closes it, while an authorised queued entry runs behind
+  it; focus out pauses; Ctrl+C closes (it never interrupts a command); resize re-lays out without restarting a game. See
+  [arcade-background-work.md](arcade-background-work.md).
 - Mouse: wheel scrolls the library; a click selects a game, a second click plays it. Games may opt in to clicks.
 
 ## Horizon hub
@@ -135,6 +139,9 @@ powerline-style selected segment, square keycaps) without its sky, Aurora or sta
 - Esc or `p` opens the shared pause sheet (Resume, Restart, How to play, Back to Arcade, Exit) over the dimmed playfield;
   effects follow NMSh's own motion settings (Reduced Motion, Effects Off), so there is no separate Arcade toggle. Results
   use the shared results sheet (score count-up, details, record badge, Retry, Back, Exit) after the game's own finale.
+
+With a command or queue behind it the Arcade reserves its top row for a strip (running label, toasts, attention state), so
+games keep a constant size; see [arcade-background-work.md](arcade-background-work.md).
 
 ## Visual system
 

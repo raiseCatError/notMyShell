@@ -902,7 +902,10 @@ export class ArcadeSession {
       this.drawCard(canvas, look, {text: 'How to play', color: look.accent}, lines, undefined, undefined, definition.title);
       return;
     }
-    this.drawCard(canvas, look, {text: 'Paused', color: look.accent}, [], this.menu!, undefined, definition.title);
+    const waiting = this.companion?.view().attention;
+    // Whatever the layout, the pause sheet says why a command needs the person and how to get back to it.
+    const lines = waiting?.state === 'input' ? [waiting.text, 'Ctrl+C returns to NMSh to answer'] : [];
+    this.drawCard(canvas, look, {text: 'Paused', color: look.accent}, lines, this.menu!, undefined, definition.title);
   }
 
   private drawResults(canvas: Canvas, look: ArcadeLook): void {

@@ -388,3 +388,32 @@ test('Reduced Motion, NO_COLOR and Safe Glyphs: static, readable, and no color-o
     } finally { frame.dispose(); }
   }
 });
+
+test('opening shows no stale news from a queue chain that ended earlier', () => {
+  const t = setup();
+  try {
+    t.owner.request({op: 'add', text: 'one'});
+    t.owner.request({op: 'add', text: 'two'});
+    t.begin('first'); t.complete(0);
+    t.begin('one'); t.complete(0);
+    t.begin('two'); t.complete(0);
+    t.begin('sleep 9');
+    t.press(ARCADE);
+    assert.doesNotMatch(t.settled()[0]!, /Queue finished/u);
+  } finally { t.dispose(); }
+});
+
+test('a paused game says why and how to answer, and Resume is not undone by the same report', () => {
+  const t = setup(60, 12);
+  try {
+    t.begin('sudo true');
+    t.press(ARCADE, {kind: 'enter'}, t.text(' '));
+    const request = {since: Date.now(), confidence: 'confirmed', mode: 'hidden', program: 'sudo'};
+    t.app['onInputState']({request, timing: {waitedMs: 0, waits: 1}});
+    assert.match(t.screen().join('\n'), /sudo is waiting for input[\s\S]*Ctrl\+C returns to NMSh/u);
+    t.press({kind: 'escape'});
+    assert.equal(t.app['arcade'].session.screen, 'playing');
+    t.app['onInputState']({request, timing: {waitedMs: 5, waits: 1}});
+    assert.equal(t.app['arcade'].session.screen, 'playing', 'the same question does not pause it again');
+  } finally { t.dispose(); }
+});

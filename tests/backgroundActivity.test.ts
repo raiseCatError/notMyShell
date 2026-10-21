@@ -155,3 +155,12 @@ test('nothing derived from output can appear: text is built only from a label, a
   activity.push(command('1', 'deploy --password hunter2 --token ghp_abc', 1, 1_000));
   for (const entry of activity.history()) assert.doesNotMatch(entry.text, /hunter2|ghp_|password|token/u);
 });
+
+test('an attention state can return after it clears, even with the same key', () => {
+  const activity = new BackgroundActivity(clock().now);
+  activity.push({kind: 'attention', key: 'approval:1:5', state: 'approval'});
+  activity.push({kind: 'cleared', state: 'approval'});
+  assert.equal(activity.view().attention, undefined);
+  activity.push({kind: 'attention', key: 'approval:1:5', state: 'approval'});
+  assert.equal(activity.view().attention?.state, 'approval');
+});

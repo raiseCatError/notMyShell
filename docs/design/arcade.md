@@ -62,8 +62,10 @@ else. QA launchers use their own `XDG_CONFIG_HOME`, so test sessions never touch
 - NO_COLOR: nothing relies on color alone; solid glyphs, patterns and labels carry meaning (the canvas encoder degrades
   pixels to solid glyphs, and Safe Glyphs to ASCII).
 - Reduced motion: no screen shake, no flashes, no parallax drift beyond what play needs; the hub stops animating.
-- The arcade never opens over a running command, and a command that starts closes it, so a game cannot take a password
-  or reply meant for a program. It does not touch queues, sessions or background tasks.
+- Typed `/games` never opens over a running command. Ctrl+T (NMSh's own key, never sent to a program) may, only while the
+  session's evidence says the command is not reading input; a question or a full-screen program pauses or closes the
+  arcade, so a game cannot take a password or reply meant for a program. It never writes to queues, sessions or tasks; it
+  only reads their state for toasts ([arcade-background-work.md](arcade-background-work.md)).
 - Frames are drawn into the panel; they are never written to the transcript or history.
 
 ## Libraries evaluated

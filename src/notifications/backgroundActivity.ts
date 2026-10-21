@@ -106,6 +106,8 @@ export class BackgroundActivity {
     const at = this.now();
     if (event.kind === 'cleared') {
       this.states.delete(event.state);
+      // A state that clears must be able to come back with the same key (a pause and resume of the same head).
+      for (let index = this.seen.length - 1; index >= 0; index -= 1) if (this.seen[index]!.startsWith(`${event.state}:`)) this.seen.splice(index, 1);
       return false;
     }
     if (this.seen.includes(event.key)) return false;
