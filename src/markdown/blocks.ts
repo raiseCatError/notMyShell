@@ -145,9 +145,12 @@ function interrupts(line: string, next: string | undefined): boolean {
 }
 
 export function parseBlocks(source: string, options: {html?: boolean} = {}): Block[] {
-  const lines = source.replace(/\r\n?/gu, '\n').split('\n');
-  if (lines.length > MAX_LINES) lines.length = MAX_LINES;
-  return parseLines(lines, 0, Boolean(options.html), 0);
+  return parseBlockLines(source.replace(/\r\n?/gu, '\n').split('\n'), options);
+}
+
+/** The same, for lines already cut (a buffer's): a stray CR inside a line stays in it and cannot shift the line numbers after it. */
+export function parseBlockLines(lines: readonly string[], options: {html?: boolean} = {}): Block[] {
+  return parseLines(lines.length > MAX_LINES ? lines.slice(0, MAX_LINES) : lines, 0, Boolean(options.html), 0);
 }
 
 /** The kind of HTML block a line starts (CommonMark 1, 2, 6, 7), or undefined. */

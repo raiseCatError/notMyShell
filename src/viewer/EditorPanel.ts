@@ -126,7 +126,7 @@ function paletteFormat(state: EditorState): PaletteFormat | undefined {
 
 const MAX_JUMPS = 20;
 
-function headingIndex(state: EditorState): DocumentIndex {
+export function headingIndex(state: EditorState): DocumentIndex {
   return state.index ??= new DocumentIndex(state.buffer, {html: true});
 }
 
@@ -465,10 +465,10 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
 
 // ---- Drawing ------------------------------------------------------------------------------------------------------
 
-interface Cell {text: string; width: number; offset: number}
+export interface Cell {text: string; width: number; offset: number}
 
 /** A line's drawn cells from display column 0: tabs as spaces, unsafe characters as marks, each with its offset. */
-function lineCells(line: string, limit: number): Cell[] {
+export function lineCells(line: string, limit: number): Cell[] {
   const cells: Cell[] = [];
   let column = 0;
   let offset = 0;
@@ -489,7 +489,7 @@ function lineCells(line: string, limit: number): Cell[] {
   return cells;
 }
 
-const inside = (position: Position, start: Position, end: Position) =>
+export const inside = (position: Position, start: Position, end: Position) =>
   (position.line > start.line || (position.line === start.line && position.column >= start.column)) && (position.line < end.line || (position.line === end.line && position.column < end.column));
 
 function drawLine(state: EditorState, index: number, width: number): string {

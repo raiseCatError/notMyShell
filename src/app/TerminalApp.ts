@@ -4784,7 +4784,7 @@ export class TerminalApp {
         if (this.docSession !== session) return;
         if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
         this.drafts().discard(editor);
-        const fresh = createDocumentSession(result.file, session.mode === 'edit' ? 'edit' : 'source');
+        const fresh = createDocumentSession(result.file, session.mode === 'edit' || session.mode === 'hybrid' ? session.mode : 'source');
         fresh.note = 'Reloaded from disk; your changes were discarded.';
         fresh.viewer.note = fresh.note;
         session.preview?.dispose();

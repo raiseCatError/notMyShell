@@ -1,6 +1,6 @@
 import type {Position, TextBuffer} from '../viewer/textBuffer.js';
 import {mapPosition} from '../viewer/snippets.js';
-import {parseBlocks, type Block} from './blocks.js';
+import {parseBlockLines, parseBlocks, type Block} from './blocks.js';
 import type {MarkdownRow} from './render.js';
 
 /**
@@ -131,21 +131,27 @@ export interface DocumentIndexOptions {
 
 /** The parsed structure of a buffer, kept until the buffer changes. */
 export class DocumentIndex {
-  private version = 0;
+  private versionCounter = 0;
+  /** How many times the buffer was parsed: tests and budgets read it. */
+  parseCount = 0;
   private cached?: {version: number; blocks: Block[]; headings: HeadingEntry[]};
   private readonly stop: () => void;
   constructor(private readonly buffer: TextBuffer, private readonly options: DocumentIndexOptions = {}) {
-    this.stop = buffer.observe(() => { this.version += 1; });
+    this.stop = buffer.observe(() => { this.versionCounter += 1; });
   }
+
+  /** Changes whenever the buffer's text does. */
+  get version(): number { return this.versionCounter; }
 
   /** The document was longer than the parser reads; only its first lines are indexed. */
   get truncated(): boolean { return this.buffer.lines.length > 50_000; }
 
   private ensure() {
-    if (this.cached?.version === this.version) return this.cached;
+    if (this.cached?.version === this.versionCounter) return this.cached;
+    this.parseCount += 1;
     this.options.onParse?.();
-    const blocks = parseBlocks(this.buffer.text, {html: this.options.html ?? false});
-    this.cached = {version: this.version, blocks, headings: outline(blocks, this.buffer.lines)};
+    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false});
+    this.cached = {version: this.versionCounter, blocks, headings: outline(blocks, this.buffer.lines)};
     return this.cached;
   }
 

@@ -21,6 +21,12 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
 - [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
 
+## Hybrid view (#460)
+- [ ] Open a Markdown file, F3 (is F3 delivered by the terminal and by Zed?): headings, bold, links, lists, tables, quotes and fences render; the block under the caret shows its source; moving with the arrows swaps blocks without the screen jumping.
+- [ ] Type in every kind of block; select across blocks with Shift+Down (both show source); undo/redo; insert a snippet and Tab through it.
+- [ ] Resize the window while editing; NO_COLOR; Safe Glyphs; 30, 50, 80 and 120 columns; a large file.
+- [ ] F2 with F3: the split with a hybrid text pane; Esc, Ctrl+O, Save, recovery after a kill, hunk review.
+
 ## Split view (#461)
 - [ ] F2 is delivered by the terminal and by Zed's terminal (otherwise use `s` from the read-only view). The split shows the text and the rendered document side by side; typing updates the preview; the preview follows the caret; `l` unlinks.
 - [ ] Ctrl+O switches panes; letters typed in the preview pane never change the text; `x`, `<`, `>` behave; below 100 columns one pane at a time; widen the window and the split returns.

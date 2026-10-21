@@ -6,7 +6,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch' | 'historyDelete' | 'find' | 'previousFailure' | 'nextFailure'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails' | 'splitToggle'
+  | {kind: 'historySearch' | 'historyDelete' | 'find' | 'previousFailure' | 'nextFailure'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails' | 'splitToggle' | 'hybridToggle'
     /** Ctrl+Q: add the composer's command to the queue; Ctrl+S: send it to the running program's input. */
     | 'queueCommand' | 'sendToProgram'
     /** Ctrl+T: open the Arcade. NMSh's own key: it is never written to a program, so it is safe while a command runs. */
@@ -106,6 +106,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001BOP', 'palette'], ['\u001B[11~', 'palette'],
   // F2 opens or closes the document workspace's split view.
   ['\u001BOQ', 'splitToggle'], ['\u001B[12~', 'splitToggle'], ['\u001B[Q', 'splitToggle'],
+  // F3 switches the document workspace's text between its source and the hybrid view.
+  ['\u001BOR', 'hybridToggle'], ['\u001B[13~', 'hybridToggle'],
   // Kitty keyboard protocol functional-key form (`CSI 1 P`, the 1 omitted when unmodified); NMSh enables that protocol where supported.
   ['\u001B[P', 'palette'],
   ['\u001B[110;5u', 'suggestNext'], // Kitty Ctrl+N

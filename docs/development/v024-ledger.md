@@ -41,6 +41,7 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 7. **#461: split view** — branch `feature/v024-split` (stacked on #462 slice 1). Done: `split` mode with editor + native preview of one buffer, linked scrolling, focus/ownership, swap/ratio, narrow collapse, F2. **#461 remaining:** pointer input and hit testing, vertical orientation, the Chromium preview inside the split, preview→caret sync; physical QA. **Next:** #460 (hybrid Markdown editing) builds on `blockAt`/`rowForLine`; #466 diagnostics uses the heading index and block spans; #462's details/Mermaid/math slices; #463 footnote renumbering.
 
+8. **#460: hybrid Markdown editing** — branch `feature/v024-hybrid` (from `dev` after #489–#496 merged). Done: hybrid mode, items from the source map, active-block raw editing, anchored viewport, split text-pane toggle, tests, independent review (see its section). **#460 remaining:** images in place, visual-line movement, pointer input, tables as a grid, HTML. **#461** still lacks pointer input, preview→caret sync, vertical orientation and the Chromium preview; **#463** footnote renumbering; **#466**, **#462** (details/Mermaid/math), **#464/#465/#467** not started.
 9. **#463: footnote renumbering** — branch `feature/v024-footnotes`, from `dev`. Done (tests in `footnotes.test.ts`). **#463 acceptance:** every implemented item is covered by automated tests; the only open requirement is the physical Ghostty/Zed pass (NOT RUN), so the issue stays open.
 
 ## Environment notes
