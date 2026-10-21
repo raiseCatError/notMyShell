@@ -65,6 +65,14 @@ const FILE_NAMES: Record<string, string> = {makefile: 'makefile', gnumakefile: '
   '.bashrc': 'shell', '.zshrc': 'shell', '.zshenv': 'shell', '.profile': 'shell', '.bash_profile': 'shell', 'config.fish': 'fish', justfile: 'makefile'};
 
 /** How a file reads: Markdown, HTML and diffs by their extension, syntax roles by extension or well-known name. */
+/** `/view README.md#install`: the path and the heading fragment, unless a file really is named with a `#`. */
+export function splitHeadingTarget(target: string, exists: (path: string) => boolean): {path: string; fragment?: string} {
+  const at = target.lastIndexOf('#');
+  if (at <= 0 || exists(target)) return {path: target};
+  const fragment = target.slice(at + 1);
+  return fragment ? {path: target.slice(0, at), fragment} : {path: target.slice(0, at)};
+}
+
 export function formatForPath(path: string): {format: DocumentFormat; language?: string} {
   const name = basename(path).toLowerCase();
   const extension = extname(name).slice(1);

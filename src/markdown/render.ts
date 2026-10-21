@@ -59,6 +59,8 @@ export interface MarkdownRow {
   block?: RowBlock;
   /** Set on image rows: the image's index in the document. */
   image?: number;
+  /** The source line (0-based) of the block this row belongs to: the shared source-position map (blank gap rows have none). */
+  line?: number;
 }
 
 export interface MarkdownOptions {
@@ -420,6 +422,7 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
   const base = context.fg(context.tone);
   for (const block of blocks) {
     if (!tight) gap();
+    const firstRow = out.length;
     switch (block.kind) {
       case 'paragraph':
         out.push(...(imageParagraph(block.text, width, context) ?? inlineRows(block.text, width, context, base).map(row => ({...row, kind: 'text' as const}))));
@@ -442,7 +445,7 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
       case 'quote': {
         const bar = `${context.fg(UI_COLORS.subtle)}${glyph(context, '▎', '|')}${RESET} `;
         const inner = renderBlocks(block.blocks, Math.max(1, width - 2), {...context, tone: UI_COLORS.secondary}, depth + 1);
-        for (const row of inner) out.push({ansi: `${bar}${row.ansi}`, plain: `${glyph(context, '▎', '|')} ${row.plain}`.trimEnd(), kind: 'quote', ...(row.code !== undefined ? {code: row.code} : {})});
+        for (const row of inner) out.push({ansi: `${bar}${row.ansi}`, plain: `${glyph(context, '▎', '|')} ${row.plain}`.trimEnd(), kind: 'quote', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
         break;
       }
       case 'table':
@@ -464,12 +467,14 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
           if (!inner.length) inner.push({ansi: '', plain: '', kind: 'text'});
           inner.forEach((row, line) => {
             const prefix = line === 0 ? `${markerSgr}${marker}${RESET} ` : ' '.repeat(lead);
-            out.push({ansi: `${prefix}${row.ansi}`, plain: `${line === 0 ? `${marker} ` : ' '.repeat(lead)}${row.plain}`.trimEnd(), kind: row.kind === 'blank' ? 'blank' : 'list', ...(row.code !== undefined ? {code: row.code} : {})});
+            out.push({ansi: `${prefix}${row.ansi}`, plain: `${line === 0 ? `${marker} ` : ' '.repeat(lead)}${row.plain}`.trimEnd(), kind: row.kind === 'blank' ? 'blank' : 'list', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
           });
         });
         break;
       }
     }
+    // Rows no nested block placed take their block's first source line.
+    if (block.from !== undefined) for (let at = firstRow; at < out.length; at += 1) if (out[at]!.line === undefined && out[at]!.kind !== 'blank') out[at] = {...out[at]!, line: block.from};
   }
   return out;
 }

@@ -37,6 +37,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 5. **#468 slice 2: Playground** — branch `feature/v024-playground` (worktree `v024-snip`), stacked on slice 1. Done: scratch identity, Save As, dirty close, `/playground`, crash recovery of scratch drafts, native-renderer preview only. **#468 status:** snippets, structure actions and the unsaved Playground are implemented; the Source/Preview/Split acceptance item is met for Source and Preview, **Split is deferred to #461** (recorded, not faked). Also fixed on #492 after the independent review (see its design section). **#463** still lacks footnote renumbering (the footnote *insert* exists in the snippet palette) and all physical QA.
 
+6. **#462 slice 1: source-position map and heading navigation** — branch `feature/v024-outline` (stacked on the Playground slice). Done: spans on every block, `MarkdownRow.line`, `DocumentIndex`, `SourceAnchor`, GitHub slugs, viewer `#` prompt + Backspace, editor *Go to heading…*/*Back*, `/view file#heading`, architecture note `docs/architecture/document-source-map.md`. **#462 remaining:** `<details>/<summary>` disclosure, Mermaid, math (distinct later slices), a persistent outline rail (not started: the prompt/palette fit the existing layout without taking width), following `#fragment` links inside a rendered document (no link focus exists yet). **Next in order:** #461 (Source/Preview/Split, using `rowForLine`/`lineForRow`), then #460, then #466. **#463** still lacks footnote renumbering.
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).

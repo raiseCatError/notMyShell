@@ -21,6 +21,11 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
 - [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
 
+## Heading navigation (#462)
+- [ ] In a long Markdown file `#` opens the heading prompt (is `#` delivered by your terminal and Zed?); type, Up/Down, Enter jumps in both the source and the rendered view; Backspace returns.
+- [ ] `/view README.md#some-heading` opens at the heading. In `/edit`, F1 then `h` lists headings with indentation; `j` returns after editing above the starting point.
+- [ ] 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs.
+
 ## Playground (#468)
 - [ ] `/playground` offers Markdown and HTML (no Recover entry on a clean machine); `/playground md` opens at once. Type, Ctrl+O previews with NMSh's renderer; Esc / `e` / `h` as in the workspace. No browser window or process appears.
 - [ ] Ctrl+S asks for a name; an existing name is refused; a new one creates the file and the title changes. Closing with unsaved text asks.
