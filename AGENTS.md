@@ -145,7 +145,7 @@ Key references:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the human-readable architecture overview (runtime and data flows, repository map); deeper detail in `docs/architecture/` and `docs/design/`
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
-- [v0.22.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) — current stable release, merged through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); v0.19.0 and v0.21.0 were never published separately
+- [v0.23.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0) — current stable release; [v0.22.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) (merged through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444)) is the previous one; v0.19.0 and v0.21.0 were never published separately
 - [v0.20.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — previous stable release, merged through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392)
 - [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release
 - [PR #328](https://github.com/raiseCatError/notMyShell/pull/328) — merged checkpoint on master; included in the published v0.18.0 release through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345)

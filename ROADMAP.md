@@ -4,9 +4,10 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.22.0 — Native viewing, images, a real browser and Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) — released 2026-10-21 through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); includes the never-published v0.21.0 candidate; physical QA partial and its remainder waived by the maintainer ([record](docs/testing/v022-physical-qa.md), [ledger](docs/development/v022-ledger.md)) |
+| **Current release** | [v0.23.0 — Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0) — released 2026-10-21: 33 offline games, playable while a command keeps running (Ctrl+T or `/games`), with a persistent notification banner and an activity list; see the [changelog](CHANGELOG.md#0230---2026-10-21--vespyr-arcade) |
+| **Previous release** | [v0.22.0 — Native viewing, images, a real browser and Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) — released 2026-10-21 through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); includes the never-published v0.21.0 candidate; physical QA partial and its remainder waived by the maintainer ([record](docs/testing/v022-physical-qa.md), [ledger](docs/development/v022-ledger.md)) |
 | **Not released separately** | v0.21.0 — release candidate ([#429](https://github.com/raiseCatError/notMyShell/pull/429)); never tagged or published, its work first ships in v0.22.0 |
-| **Previous release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); includes the v0.19.0 candidate, never published separately (physical QA partial, [record](docs/testing/v020-physical-qa.md)) |
+| **Earlier release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); includes the v0.19.0 candidate, never published separately (physical QA partial, [record](docs/testing/v020-physical-qa.md)) |
 | **Earlier release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
 | **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
@@ -14,7 +15,7 @@
 | **Development branch** | `dev` |
 | **Public planning** | [Open issues](https://github.com/raiseCatError/notMyShell/issues); the owner-only project board is not a public status source |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release is 0.22.0.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release is 0.23.0.
 
 ## Native modules and Context Engine — released foundation, ongoing expansion
 

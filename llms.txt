@@ -1,6 +1,6 @@
 # notMyShell (NMSh)
 
-Latest published stable release: v0.22.0 (see CHANGELOG.md). Homebrew is the recommended macOS install: brew install raiseCatError/tap/nmsh. Source installation remains available.
+Latest published stable release: v0.23.0 (see CHANGELOG.md). Homebrew is the recommended macOS install: brew install raiseCatError/tap/nmsh. Source installation remains available.
 
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 

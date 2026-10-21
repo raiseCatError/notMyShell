@@ -1,7 +1,7 @@
 # Arcade expansion status
 
 Live status of the [33-game program](../design/arcade-expansion.md). Update this file in the same commit as the work.
-Release status: **automated evidence is complete; the maintainer has played the 33-game Arcade and approved it, but physical Ghostty/Zed QA of the new background-command behavior (Ctrl+T over a running command, strip and toasts) has NOT been run.** See [Background work](#background-work-ctrlt-strip-and-toasts) and the physical checks below.
+Release status: **shipped in v0.23.0.** Automated evidence is complete, and the maintainer physically confirmed the 33-game Arcade and the background-command behavior (see [the v0.23 physical QA record](../testing/v023-physical-qa.md)); NO_COLOR, Safe Glyphs, Reduced Motion and narrow terminals remain automated-only.
 Legend: ✓ done with evidence · ◐ in progress · · not started · — not applicable. "Physical" is filled only by a person.
 
 | # | Game | Batch | Rules | Gen | Det | Input | Records | FX | Visual | Perf | Docs | Physical |

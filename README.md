@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest stable release: [v0.22.0 — Native viewing, images, a real browser and Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0), released 2026-10-21: `/view` and `/edit`, images, a Markdown and HTML workspace with an optional Chromium preview, `/browser`, Vespyr Arcade, three ways to run a reviewed multiline paste, Semantic Output, `/track`, safer typing while commands run, history browsing, Ask command suggestions from your local model, more native modules and theme families. It includes the v0.21.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0220---2026-10-21) for its scope, upgrade notes and known limitations, including what was not verified in a physical terminal. The previous stable release is [v0.20.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0).
+Latest stable release: [v0.23.0 — Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0), released 2026-10-21: 33 offline Arcade games, playable while a command keeps running (Ctrl+T or `/games`, with a persistent notification banner and an activity list), on top of v0.22.0's `/view` and `/edit`, images, a Markdown and HTML workspace with an optional Chromium preview, `/browser`, Vespyr Arcade, three ways to run a reviewed multiline paste, Semantic Output, `/track`, safer typing while commands run, history browsing, Ask command suggestions from your local model, more native modules and theme families. It includes the v0.21.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0230---2026-10-21--vespyr-arcade) for its scope, upgrade notes and known limitations, including what was not verified in a physical terminal. The previous stable release is [v0.20.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0).
 
 ## See notMyShell in motion
 
@@ -174,7 +174,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
 | Files and output (v0.22) | `/view` (files, images and completed output; Markdown and HTML open as source, editor and preview of one buffer), `/edit`, `/browser` (a real browser, optional), `/track` (one live result of a command), `/copy --semantic` |
-| Games | `/games` (`/game`, `/arcade`; 33 games, e.g. `/game run`, `leap`, `pinball`, `rover`, `sudoku`, `queens`, `mines`, `merge`, `wordle`; unreleased beyond v0.22.0's five) |
+| Games | `/games` (`/game`, `/arcade`; 33 games, e.g. `/game run`, `leap`, `pinball`, `rover`, `sudoku`, `queens`, `mines`, `merge`, `wordle`; Ctrl+T opens it while a command runs) |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
@@ -229,7 +229,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
 - Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours.
 - Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
-- Images, scaled headings, the Chromium frames and the games are covered by automated tests but have not been physically verified in a real terminal; character art is the fallback everywhere a graphics protocol is not proven. See the [v0.22 physical QA record](docs/testing/v022-physical-qa.md).
+- Images, scaled headings and the Chromium frames are covered by automated tests but have not been physically verified in a real terminal (the Arcade was played by the maintainer for v0.23); character art is the fallback everywhere a graphics protocol is not proven. See the [v0.22 physical QA record](docs/testing/v022-physical-qa.md).
 
 ## Documentation
 
