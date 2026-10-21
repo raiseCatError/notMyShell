@@ -80,6 +80,7 @@ import {createEditor, editorKey, offerDraft, renderEditor, type EditorAction, ty
 import {createScratchFile, openForEdit, saveFile} from '../viewer/fileEdit.js';
 import {headingsOf, resolveFragment} from '../markdown/sourceMap.js';
 import {DraftKeeper, DraftStore, type DraftOffer} from '../viewer/draftRecovery.js';
+import {ProblemsRunner} from '../viewer/problems.js';
 import {applyReview, beginReview, restartReview, sameDiskVersion} from '../viewer/ReviewPanel.js';
 import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
 import {formatForPath} from '../viewer/document.js';
@@ -1063,6 +1064,8 @@ export class TerminalApp {
   private finish!: (exitCode: number) => void;
 
   constructor(connection?: SessionConnection, preset?: SessionPreset) {
+    // A finished check redraws the panel that shows its counts.
+    ProblemsRunner.notify = () => { if (!this.stopped) this.render(); };
     if (preset) {
       if (!connection || connection.mode !== 'service' || connection.attached) throw new Error('Presets require a new live session.');
       this.presetStartup = new PresetStartup(preset);
@@ -4601,6 +4604,7 @@ export class TerminalApp {
         this.drafts().discard(editor);
         editor.file = saved.file;
         if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        editor.problems?.refresh();
         editor.note = {text: `Saved as ${saved.file.title}.`, tone: 'success'};
         if (session) { session.viewer.note = editor.note.text; syncDocumentViewer(session, session.mode === 'preview'); }
         if (thenClose) close();
@@ -4614,6 +4618,13 @@ export class TerminalApp {
     })();
   }
 
+  /** An editor is going away (closed, reloaded, replaced): its recovery draft goes and its checking and parsed index stop. */
+  private releaseEditor(editor: EditorState): void {
+    this.drafts().discard(editor);
+    editor.problems?.dispose();
+    editor.index?.dispose();
+  }
+
   private runDraftAction(editor: EditorState, action: Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep'}>): void {
     const keeper = this.drafts();
     if (action.kind === 'draft') keeper.restored(editor, action.target);
@@ -4624,11 +4635,11 @@ export class TerminalApp {
   /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
   private runEditorAction(editor: EditorState, action: EditorAction): void {
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
-    if (action.kind === 'playground') { this.drafts().discard(editor); this.textEditor = undefined; void this.openPlayground(action.choice); return; }
+    if (action.kind === 'playground') { this.releaseEditor(editor); this.textEditor = undefined; void this.openPlayground(action.choice); return; }
     if (action.kind === 'save-as') { this.saveAs(editor, action.path, Boolean(action.thenClose), () => this.textEditor === editor, () => { this.textEditor = undefined; this.returnFromPanel(); }); return; }
     if (editor.file.scratch && (action.kind === 'review' || action.kind === 'review-apply' || action.kind === 'reload' || action.kind === 'save')) { editor.note = {text: 'A Playground document has no file yet: Save As creates one.', tone: 'info'}; return; }
     if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.textEditor === editor); return; }
-    if (action.kind === 'close') { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'close') { this.releaseEditor(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
     if (action.kind === 'copy') {
       void this.copyText(action.text, 'Copied').then(note => { if (note && this.textEditor === editor) { editor.note = {text: note, tone: 'success'}; this.render(); } });
       return;
@@ -4654,8 +4665,8 @@ export class TerminalApp {
         // Only what was written is clean: typing during the save stays unsaved.
         if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
         this.drafts().note(editor);
-        if (action.thenClose) { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); }
-        else editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+        if (action.thenClose) { this.releaseEditor(editor); this.textEditor = undefined; this.returnFromPanel(); }
+        else { editor.problems?.refresh(); editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'}; }
       } else if (result.conflict) {
         editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
       } else editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'};
@@ -4750,7 +4761,7 @@ export class TerminalApp {
     const session = this.docSession;
     if (!session) return;
     this.docSession = undefined;
-    this.drafts().discard(session.editor);
+    this.releaseEditor(session.editor);
     session.preview?.dispose();
     this.releaseViewerImages();
     this.returnFromPanel();
@@ -4802,6 +4813,7 @@ export class TerminalApp {
         if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
         if (action.thenClose) { this.closeDocumentSession(); this.render(); return; }
         this.drafts().note(editor);
+        editor.problems?.refresh();
         editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
         session.viewer.note = `Saved ${editor.file.title}.`;
         syncDocumentViewer(session, session.mode === 'preview');
@@ -13965,6 +13977,7 @@ export class TerminalApp {
     this.docSession?.preview?.dispose();
     // Unsaved editor text is written before the window ends, so closing it never costs the text.
     this.draftKeeper?.dispose();
+    this.textEditor?.problems?.dispose(); this.docSession?.editor.problems?.dispose();
     void this.browserHost?.shutdown();
     this.releaseViewerImages();
     this.graphics?.releaseAll();

@@ -8,10 +8,13 @@ import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {formatForPath, inert} from './document.js';
+import {getIconStyle} from '../ui/glyphs.js';
 import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from './markdownTable.js';
 import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
 import {paletteEntries, type PaletteEntry, type PaletteFormat} from './EditorPalette.js';
 import {DocumentIndex, SourceAnchor, type HeadingEntry} from '../markdown/sourceMap.js';
+import {ProblemsRunner, SEVERITY_ORDER} from './problems.js';
+import type {Diagnostic, Severity} from '../markdown/diagnostics.js';
 import {advanceSnippet, insertFootnote, insertSnippet, insideSnippet, type SnippetSession} from './snippets.js';
 import {continueList, insertLink, renumberFootnotes, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
@@ -29,7 +32,9 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground' | 'outline';
+  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground' | 'outline' | 'problems';
+  /** Problems: which severities are listed (all, problems = errors and warnings, errors). */
+  filter?: 'all' | 'problems' | 'errors';
   /** How many recoverable Playground documents the chooser can offer. */
   recoverable?: number;
   /** The snippet palette's search text. */
@@ -63,6 +68,12 @@ export interface EditorState {
   /** The parsed structure of the buffer (headings), kept until it changes; and where jumps came from, newest last (#462). */
   index?: DocumentIndex;
   jumps?: SourceAnchor[];
+  /** Static diagnostics for the document, once turned on by opening Problems (#466). */
+  problems?: ProblemsRunner;
+  /** The source line of the last jump from a list (the workspace scrolls its read-only views there). */
+  lastJump?: number;
+  /** The caret moved without a key press in the editor (a jump from a list): the next draw scrolls it into view. */
+  revealPending?: boolean;
   /** The editor sits in a document workspace: its footer names the split key. */
   workspace?: boolean;
   note?: {text: string; tone: 'info' | 'error' | 'success'};
@@ -108,7 +119,7 @@ const MARKDOWN_ACTIONS = [
   {id: 'Action.Bold', label: 'Bold', key: 'b'}, {id: 'Action.Italic', label: 'Italic', key: 'i'},
   {id: 'Action.Code', label: 'Code', key: 'c'}, {id: 'Action.Strike', label: 'Strike', key: 's'},
   {id: 'Action.Search', label: 'Snippets…', key: '/'},
-  {id: 'Action.Headings', label: 'Headings…', key: 'h'}, {id: 'Action.Back', label: 'Back', key: 'j'},
+  {id: 'Action.Headings', label: 'Headings…', key: 'h'}, {id: 'Action.Back', label: 'Back', key: 'j'}, {id: 'Action.Problems', label: 'Problems…', key: 'e'},
 ] as const;
 
 export const isMarkdownFile = (state: EditorState) => formatForPath(state.file.path).format === 'markdown';
@@ -143,6 +154,7 @@ function jumpToLine(state: EditorState, line: number): void {
   while (jumps.length > MAX_JUMPS) jumps.shift()!.dispose();
   state.buffer.caret = {line: Math.min(line, state.buffer.lines.length - 1), column: 0};
   state.buffer.anchor = undefined;
+  state.revealPending = true;
 }
 
 function jumpBack(state: EditorState): void {
@@ -150,7 +162,58 @@ function jumpBack(state: EditorState): void {
   if (!last) { state.note = {text: 'No earlier position to go back to.', tone: 'info'}; return; }
   state.buffer.caret = {...last.position};
   state.buffer.anchor = undefined;
+  state.revealPending = true;
   last.dispose();
+}
+
+/** Problems (#466): checking starts the first time it is opened and follows the text from then on. */
+export function openProblems(state: EditorState): void {
+  state.problems ??= new ProblemsRunner(state);
+  if (state.problems.enabled) state.problems.refresh(); else state.problems.enable();
+  state.dialog = {kind: 'problems', focus: 0, query: '', filter: 'all'};
+}
+
+const FILTERS: Array<'all' | 'problems' | 'errors'> = ['all', 'problems', 'errors'];
+
+function problemList(state: EditorState, dialog: EditorDialog): Diagnostic[] {
+  const words = (dialog.query ?? '').toLowerCase().split(/\s+/u).filter(Boolean);
+  const allowed: Severity[] = dialog.filter === 'errors' ? ['error'] : dialog.filter === 'problems' ? ['error', 'warning'] : SEVERITY_ORDER;
+  return (state.problems?.visible() ?? []).filter(item => allowed.includes(item.severity) && words.every(word => `${item.message} ${item.code}`.toLowerCase().includes(word)))
+    .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0));
+}
+
+/** Go to a finding: its exact text is selected when the span is known, otherwise the caret goes to the start of its line. */
+function jumpToDiagnostic(state: EditorState, item: Diagnostic): void {
+  const jumps = state.jumps ??= [];
+  jumps.push(new SourceAnchor(state.buffer, state.buffer.caret));
+  while (jumps.length > MAX_JUMPS) jumps.shift()!.dispose();
+  const line = Math.min(item.line, state.buffer.lines.length - 1);
+  const length = state.buffer.lines[line]!.length;
+  if (item.exact && item.column !== undefined && item.endColumn !== undefined && item.endColumn <= length) {
+    state.buffer.caret = {line, column: item.endColumn};
+    state.buffer.anchor = {line, column: item.column};
+  } else { state.buffer.caret = {line, column: 0}; state.buffer.anchor = undefined; }
+  state.lastJump = line;
+  state.revealPending = true;
+}
+
+function problemsKey(state: EditorState, dialog: EditorDialog, key: Key): void {
+  const items = problemList(state, dialog);
+  if (key.kind === 'escape' || key.kind === 'interrupt') { state.dialog = undefined; return; }
+  if (key.kind === 'up' || key.kind === 'focusPrevious' || key.kind === 'suggestPrevious') { dialog.focus = Math.max(0, dialog.focus - 1); return; }
+  if (key.kind === 'down' || key.kind === 'suggestNext') { dialog.focus = Math.min(Math.max(0, items.length - 1), dialog.focus + 1); return; }
+  if (key.kind === 'complete') { dialog.filter = FILTERS[(FILTERS.indexOf(dialog.filter ?? 'all') + 1) % FILTERS.length]; dialog.focus = 0; return; }
+  if (key.kind === 'historySearch') { state.problems?.refresh(); return; }
+  if (key.kind === 'delete') { const item = items[dialog.focus]; if (item) state.problems?.dismissed.add(item.id); dialog.focus = Math.max(0, Math.min(dialog.focus, items.length - 2)); return; }
+  if (key.kind === 'enter') {
+    const item = items[dialog.focus];
+    if (!item) return;
+    state.dialog = undefined;
+    jumpToDiagnostic(state, item);
+    return;
+  }
+  const next = editText(dialog.query ?? '', key);
+  if (next !== undefined) { dialog.query = next.slice(0, 80); dialog.focus = 0; }
 }
 
 function outlineKey(state: EditorState, dialog: EditorDialog, key: Key): void {
@@ -182,6 +245,7 @@ function runPaletteEntry(state: EditorState, entry: PaletteEntry): void {
   if (entry.run.kind === 'snippet') { state.snippet = insertSnippet(state.buffer, entry.run.snippet); return; }
   if (entry.run.action === 'Action.Footnote') { state.snippet = insertFootnote(state.buffer); return; }
   if (entry.run.action === 'Action.FootnoteRenumber') { const result = renumberFootnotes(state.buffer); if (result.note) state.note = {text: result.note, tone: 'info'}; return; }
+  if (entry.run.action === 'Action.Problems') { openProblems(state); return; }
   if (entry.run.action === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return; }
   if (entry.run.action === 'Action.Back') { jumpBack(state); return; }
   const result = runMarkdownAction(state, entry.run.action);
@@ -285,6 +349,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
   }
   if (dialog.kind === 'snippets') { paletteKey(state, dialog, key); return undefined; }
   if (dialog.kind === 'outline') { outlineKey(state, dialog, key); return undefined; }
+  if (dialog.kind === 'problems') { problemsKey(state, dialog, key); return undefined; }
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
   if (key.kind === 'left' || key.kind === 'focusPrevious') { dialog.focus = (dialog.focus + controls.length - 1) % controls.length; return undefined; }
@@ -297,6 +362,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
     state.dialog = undefined;
     if (chosen === 'Action.Keep') return undefined;
     if (chosen === 'Action.Search') { openPalette(state); return undefined; }
+    if (chosen === 'Action.Problems') { openProblems(state); return undefined; }
     if (chosen === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return undefined; }
     if (chosen === 'Action.Back') { jumpBack(state); return undefined; }
     const result = runMarkdownAction(state, chosen);
@@ -423,6 +489,7 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
       break;
     }
     case 'palette':
+      if (!isMarkdownFile(state) && !paletteFormat(state) && /\.css$/iu.test(state.file.path)) { openProblems(state); return undefined; }
       if (isMarkdownFile(state)) state.dialog = {kind: 'markdown', focus: 0, ...(findTable(buffer.lines, buffer.caret.line) ? {table: true} : {})};
       else if (paletteFormat(state)) openPalette(state);
       return undefined;
@@ -529,6 +596,29 @@ function recoverMessage(state: EditorState, dialog: EditorDialog): string {
 
 function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
+  if (state.dialog?.kind === 'problems') {
+    const dialog = state.dialog;
+    const runner = state.problems;
+    const items = problemList(state, dialog);
+    const accent = foreground(UI_COLORS.accent), subtle = foreground(UI_COLORS.subtle);
+    const safe = getIconStyle() === 'safe';
+    const glyph = (severity: Severity) => safe ? ({error: 'E', warning: 'W', info: 'i', unverified: '?'})[severity] : ({error: '✖', warning: '▲', info: 'ℹ', unverified: '?'})[severity];
+    const tone = (severity: Severity) => severity === 'error' ? foreground(UI_COLORS.failure) : severity === 'warning' ? foreground(UI_COLORS.warning) : subtle;
+    const counts = runner?.counts() ?? {error: 0, warning: 0, info: 0, unverified: 0};
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const summary = [plural(counts.error, 'error'), plural(counts.warning, 'warning'), ...(counts.info ? [`${counts.info} note${counts.info === 1 ? '' : 's'}`] : []), ...(counts.unverified ? [`${counts.unverified} unverified`] : [])].join(' · ');
+    const size = 6;
+    const start = Math.max(0, Math.min(dialog.focus - Math.floor(size / 2), items.length - size));
+    const shown = items.slice(start, start + size).map((item, offset) => {
+      const focused = start + offset === dialog.focus;
+      return `${focused ? `${accent}▸ ` : '  '}${tone(item.severity)}${glyph(item.severity)}${RESET} ${subtle}${String(item.line + 1).padStart(4)}${RESET} ${truncateText(inert(item.message), Math.max(4, width - 12))}`;
+    });
+    if (!items.length) shown.push(`${subtle}  ${!runner?.report ? 'Checking…' : runner.visible().length ? 'Nothing matches this filter.' : 'No problems found.'}${RESET}`);
+    const external = runner?.report?.external ? ` · ${runner.report.external} external link${runner.report.external === 1 ? '' : 's'} not checked` : '';
+    const state_ = runner?.busy ? ' · checking…' : runner?.report?.truncated ? ' · stopped at the limit' : '';
+    const header = `${foreground(UI_COLORS.warning)}Problems${RESET}${subtle} · ${summary}${external}${state_} · ${dialog.filter ?? 'all'} · ${RESET}${truncateText(inert(dialog.query ?? ''), Math.max(1, width - 40))}${accent}▏${RESET}`;
+    return [truncateAnsi(header, width), ...shown.map(row => truncateAnsi(row, width)), ...renderControlRows([['↑↓', 'choose'], ['Enter', 'go to it'], ['Tab', 'filter'], ['Del', 'dismiss'], ['Ctrl+R', 'check again'], ['Esc', 'back']], width)];
+  }
   if (state.dialog?.kind === 'outline') {
     const dialog = state.dialog;
     const headings = outlineList(state, dialog);
@@ -560,7 +650,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets · h headings · j back` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets · h headings · j back · e problems` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
@@ -576,6 +666,7 @@ function footerRows(state: EditorState, columns: number): string[] {
 
 export function renderEditor(state: EditorState, columns: number, height: number): string[] {
   if (state.review) return renderReview(state, columns, height);
+  if (state.revealPending) { state.revealPending = false; reveal(state, columns, height); }
   const width = textWidth(state, columns);
   const rows = textRows(state, columns, height);
   state.top = Math.max(0, Math.min(state.top, Math.max(0, state.buffer.lines.length - 1)));
@@ -596,9 +687,10 @@ export function renderEditor(state: EditorState, columns: number, height: number
   const position = `Ln ${caret.line + 1}, Col ${displayColumn(state.buffer.lines[caret.line]!, caret.column) + 1}`;
   const selected = state.buffer.selection ? ` · ${state.buffer.selectedText().length.toLocaleString('en-US')} selected` : '';
   const table = isMarkdownFile(state) ? tableStatus(state.buffer.lines, caret) : undefined;
+  const problemsNote = state.problems?.report ? (() => { const c = state.problems!.counts(); const safe = getIconStyle() === 'safe'; return [c.error ? `${safe ? 'E' : '✖'} ${c.error}` : '', c.warning ? `${safe ? 'W' : '▲'} ${c.warning}` : ''].filter(Boolean).join(' '); })() : '';
   const status = state.input
     ? `${foreground(UI_COLORS.accent)}${state.input.kind === 'saveas' ? 'Save as (a new file; an existing one is never replaced): ' : 'Find: '}${RESET}${truncateText(inert(state.input.value), Math.max(1, columns - 12))}${foreground(UI_COLORS.accent)}▏${RESET}`
-    : `${subtle}${truncateText(`${position}${selected}${table ? ` · ${table}` : ''}${state.busy ? ' · saving…' : ''}`, Math.max(1, columns - 4))}${RESET}${state.note ? `  ${state.note.tone === 'error' ? foreground(UI_COLORS.failure) : state.note.tone === 'success' ? foreground(UI_COLORS.success) : subtle}${truncateText(inert(state.note.text), Math.max(1, columns - 8 - displayWidth(position + selected)))}${RESET}` : ''}`;
+    : `${subtle}${truncateText(`${position}${selected}${table ? ` · ${table}` : ''}${problemsNote ? ` · ${problemsNote}` : ''}${state.busy ? ' · saving…' : ''}`, Math.max(1, columns - 4))}${RESET}${state.note ? `  ${state.note.tone === 'error' ? foreground(UI_COLORS.failure) : state.note.tone === 'success' ? foreground(UI_COLORS.success) : subtle}${truncateText(inert(state.note.text), Math.max(1, columns - 8 - displayWidth(position + selected)))}${RESET}` : ''}`;
   out.push(`  ${status}`, ...footerRows(state, columns).map(row => `  ${row}`));
   const rule = framePanel([], columns)[0]!;
   if (height <= 1) return [rule].slice(0, Math.max(0, height));
