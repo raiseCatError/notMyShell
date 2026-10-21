@@ -93,6 +93,11 @@ export function headingsOf(source: string, options: {html?: boolean} = {}): Head
   return outline(parseBlocks(source, {html: options.html ?? false}), lines);
 }
 
+/** The headings of lines already cut (a buffer's), so a stray CR cannot shift a line number. */
+export function headingsFromLines(lines: readonly string[], options: {html?: boolean} = {}): HeadingEntry[] {
+  return outline(parseBlockLines(lines, {html: options.html ?? false}), lines);
+}
+
 /** The heading a `#fragment` names (case-insensitive, percent-decoded), if any. */
 export function resolveFragment(headings: readonly HeadingEntry[], fragment: string): HeadingEntry | undefined {
   let wanted = fragment.replace(/^#/u, '');

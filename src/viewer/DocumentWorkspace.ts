@@ -1,6 +1,6 @@
 import type {Key} from '../terminal/keys.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
-import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from './EditorPanel.js';
+import {createEditor, editorKey, openProblems, renderEditor, type EditorAction, type EditorState} from './EditorPanel.js';
 import {formatForPath, type ViewDocument} from './document.js';
 import type {EditableFile} from './fileEdit.js';
 import {displayWidth, stripAnsi, truncateAnsi} from '../util/text.js';
@@ -184,7 +184,14 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   const text = key.kind === 'text' ? key.value : undefined;
   state.note = undefined;
   // A save or conflict dialog belongs to the editor, whatever mode raised it.
-  if (editor.dialog || editor.review || editor.input || editor.busy) return fromEditor(state, editorKey(editor, key, columns, height));
+  if (editor.dialog || editor.review || editor.input || editor.busy) {
+    const action = fromEditor(state, editorKey(editor, key, columns, height));
+    // A jump from Problems or the outline moved the caret: the read-only views follow it.
+    const jumped = editor.lastJump;
+    editor.lastJump = undefined;
+    if (jumped !== undefined && (state.mode === 'source' || state.mode === 'preview')) showSourceLine(state.viewer, jumped, columns, height, documentSessionLook(state, look));
+    return action;
+  }
   if (key.kind === 'splitToggle') { setDocumentMode(state, state.mode === 'split' ? (state.split?.hybrid ? 'hybrid' : 'edit') : 'split'); return undefined; }
   if (key.kind === 'hybridToggle') { toggleHybrid(state); return undefined; }
   if (state.mode === 'split') return splitKey(state, key, columns, height, look);
@@ -205,6 +212,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (!searching) {
     if (text === 'e') { setDocumentMode(state, 'edit'); return undefined; }
     if (text === 's') { setDocumentMode(state, 'split'); return undefined; }
+    if (text === 'P') { openProblems(editor); return undefined; }
     if (text === 'H') { toggleHybrid(state); return undefined; }
     if (key.kind === 'toggleDetails' && state.mode === 'preview') { setDocumentMode(state, state.before); return undefined; }
     if (text === 'h' || key.kind === 'toggleDetails') {
@@ -280,6 +288,7 @@ function splitKey(state: DocumentSession, key: Key, columns: number, height: num
   const viewer = state.viewer;
   if (!viewer.input) {
     if (key.kind === 'escape' && !viewer.query) { setDocumentMode(state, 'source'); return undefined; }
+    if (text === 'P') { openProblems(editor); return undefined; }
     if (text === 'x') { split.swapped = !split.swapped; return undefined; }
     if (text === '<' || text === '>') { split.ratio = Math.max(RATIO_MIN, Math.min(RATIO_MAX, split.ratio + (text === '>' ? RATIO_STEP : -RATIO_STEP))); return undefined; }
     if (text === 'l') { split.linked = !split.linked; return undefined; }

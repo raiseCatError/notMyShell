@@ -164,3 +164,10 @@ test('many unclosed <details> cost a bounded amount in total (one scan budget pe
   const paired = parseBlocks(['<details>', '<summary>a</summary>', '', 'x', '', '</details>', '', '<details>', '<summary>b</summary>', '', 'y', '', '</details>'].join('\n'), {html: true});
   assert.deepEqual(paired.map(block => block.kind), ['details', 'details']);
 });
+
+import {diagnose} from '../src/markdown/diagnostics.js';
+
+test('diagnostics look inside <details>: a broken link in its content is found, code inside it is not scanned', async () => {
+  const report = await diagnose({lines: ['<details>', '<summary>s</summary>', '', '[bad](#nope)', '', '```', '[code](#nope)', '```', '', '</details>'], format: 'markdown'});
+  assert.deepEqual(report.diagnostics.map(item => `${item.code}@${item.line}`), ['broken-fragment@3']);
+});
