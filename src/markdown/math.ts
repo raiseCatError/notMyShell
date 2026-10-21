@@ -71,7 +71,7 @@ type Token = ({kind: 'command'; name: string} | {kind: 'char'; char: string} | {
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
   for (let at = 0; at < source.length;) {
-    const char = source[at]!;
+    const char = String.fromCodePoint(source.codePointAt(at)!);
     if (/\s/u.test(char)) { if (tokens.length) tokens[tokens.length - 1]!.spaced = true; at += 1; continue; }
     if (char === '\\') {
       const word = /^[A-Za-z]+/u.exec(source.slice(at + 1, at + 40));
@@ -141,6 +141,7 @@ class Parser {
     let sup: Node | undefined, sub: Node | undefined;
     for (;;) {
       const token = this.peek();
+      if (token?.kind === 'command' && (token.name === 'limits' || token.name === 'nolimits')) { this.next(); continue; }
       if (token?.kind === 'sup') { if (sup) fail('two superscripts on one symbol'); this.next(); sup = this.argument(depth); }
       else if (token?.kind === 'sub') { if (sub) fail('two subscripts on one symbol'); this.next(); sub = this.argument(depth); }
       else break;
@@ -173,6 +174,7 @@ class Parser {
       if (!part) return fail('a brace is never closed');
       if (part.kind === 'open') { open += 1; if (part.spaced) text += ' '; continue; }
       if (part.kind === 'close') { open -= 1; if (!open) return text; if (part.spaced) text += ' '; continue; }
+      if (part.kind === 'char' && /[\p{C}\p{Zl}\p{Zp}]/u.test(part.char)) return fail('control characters are not allowed in text');
       if (part.kind === 'char') text += part.char; else if (part.kind === 'number') text += part.text; else if (part.kind === 'command' && part.name === ' ') text += ' '; else return fail('only plain text is supported inside \\text');
       if (part.spaced) text += ' ';
     }
@@ -181,6 +183,7 @@ class Parser {
   }
 
   private atom(depth: number): Node {
+    if (depth > MATH_LIMITS.depth) fail('the formula is nested too deeply');
     this.count();
     const token = this.next();
     if (!token) return fail('the formula ends too soon');
@@ -220,6 +223,7 @@ class Parser {
     if (name === 'lbrace') return {t: 'open', s: '{'}; if (name === 'rbrace') return {t: 'close', s: '}'};
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac' || name === 'binom' || name === 'dbinom') {
       const num = this.argument(depth + 1), den = this.argument(depth + 1);
+      if (isEmpty(num) || isEmpty(den)) return fail('a fraction argument is empty');
       return name.endsWith('binom') ? {t: 'delim', left: '(', right: ')', body: {t: 'frac', num, den, bar: false}} : {t: 'frac', num, den, bar: true};
     }
     if (name === 'sqrt') {
@@ -235,9 +239,12 @@ class Parser {
         }
         index = {t: 'group', items};
       }
-      return {t: 'sqrt', body: this.argument(depth + 1), ...(index ? {index} : {})};
+      const body = this.argument(depth + 1);
+      if (isEmpty(body)) return fail('a root has nothing under it');
+      return {t: 'sqrt', body, ...(index ? {index} : {})};
     }
-    if (name === 'text' || name === 'mathrm' || name === 'textrm' || name === 'operatorname' || name === 'mbox' || name === 'textit' || name === 'textbf') return {t: 'text', s: this.text(depth)};
+    if (name === 'operatorname') return {t: 'func', s: this.text(depth)};
+    if (name === 'text' || name === 'mathrm' || name === 'textrm' || name === 'mbox' || name === 'textit' || name === 'textbf') return {t: 'text', s: this.text(depth)};
     if (FONT_COMMANDS[name]) {
       const body = this.argument(depth + 1);
       const flat = flatText(body);
@@ -296,6 +303,8 @@ class Parser {
   }
 }
 
+const isEmpty = (node: Node) => node.t === 'group' && node.items.length === 0;
+
 /** The plain text of a node made only of letters, digits and symbols (for font and accent commands), or undefined. */
 /** A script's content written without operator spacing (x_{n+1} is `n+1`), or undefined if it holds anything but plain symbols. */
 function compact(node: Node): string | undefined {
@@ -352,7 +361,13 @@ class Layout {
   constructor(private readonly context: Context) {}
   private get inline() { return !this.context.display; }
 
-  node(node: Node, previous?: Node): Box {
+  node(node: Node): Box {
+    const box = this.build(node);
+    if (box.rows.length > MATH_LIMITS.rows || box.width > MATH_LIMITS.width) return fail('the formula is too large to draw');
+    return box;
+  }
+
+  private build(node: Node): Box {
     switch (node.t) {
       case 'ord': case 'punct': return text(node.s);
       case 'bin': case 'rel': return text(node.s);
@@ -369,29 +384,29 @@ class Layout {
       case 'accent': return text(node.body + node.mark);
       case 'grid': return this.grid(node);
     }
-    void previous;
   }
 
   /** Items in order with the spacing TeX gives operators and relations. */
   sequence(items: readonly Node[]): Box {
     const boxes: Box[] = [];
     let before: Node | undefined;
+    const isOperand = (node: Node | undefined) => Boolean(node) && !(node!.t === 'bin' || node!.t === 'rel' || node!.t === 'open' || node!.t === 'punct' || node!.t === 'space' || node!.t === 'func' || node!.t === 'big' || (node!.t === 'script' && (node!.base.t === 'func' || node!.base.t === 'big')));
+    const isFunc = (node: Node) => node.t === 'func' || node.t === 'big' || (node.t === 'script' && (node.base.t === 'func' || node.base.t === 'big'));
     items.forEach((item, index) => {
       const next = items[index + 1];
-      const operand = Boolean(before) && !(before!.t === 'bin' || before!.t === 'rel' || before!.t === 'open' || before!.t === 'punct' || before!.t === 'space') ;
-      if ((item.t === 'bin' || item.t === 'rel') && (item.t === 'rel' || operand) ) {
+      const operand = Boolean(before) && !(before!.t === 'bin' || before!.t === 'rel' || before!.t === 'open' || before!.t === 'punct' || before!.t === 'space' || before!.t === 'func');
+      if ((item.t === 'bin' || item.t === 'rel') && (item.t === 'rel' || operand)) {
         const rightOperand = Boolean(next) && next!.t !== 'close';
         boxes.push(text(item.t === 'bin' && !rightOperand ? item.s : ` ${item.s} `));
       } else if (item.t === 'punct') boxes.push(text(`${item.s} `));
-      else if (item.t === 'func' || item.t === 'big') {
+      else if (isFunc(item)) {
+        if (isOperand(before) && before!.t !== 'close' && !(before!.t === 'ord' && /^\d$/u.test(before!.s))) boxes.push(text(' '));
+        else if (before?.t === 'ord' || before?.t === 'close') boxes.push(text(' '));
         boxes.push(this.node(item));
-        const following = items[index + 1];
-        if (item.t === 'func' && following && !(following.t === 'open' || following.t === 'script' || following.t === 'close' || following.t === 'bin' || following.t === 'rel' || following.t === 'punct' || following.t === 'space')) boxes.push(text(' '));
-        if (item.t === 'big' && following && !(following.t === 'open' || following.t === 'close' || following.t === 'bin' || following.t === 'rel' || following.t === 'punct' || following.t === 'space')) boxes.push(text(' '));
-      } else if (item.t === 'script' && (item.base.t === 'func' || item.base.t === 'big')) {
-        boxes.push(this.node(item));
-        const following = items[index + 1];
-        if (following && !(following.t === 'open' || following.t === 'close' || following.t === 'bin' || following.t === 'rel' || following.t === 'punct' || following.t === 'space')) boxes.push(text(' '));
+        if (next && !(next.t === 'open' || next.t === 'close' || next.t === 'rel' || next.t === 'punct' || next.t === 'space' || (next.t === 'script' && false) || (item.t === 'big' && next.t === 'script'))) boxes.push(text(' '));
+      } else if (this.inline && (item.t === 'frac' || item.t === 'sqrt') && (isOperand(before) || isOperand(next))) {
+        const box = this.node(item);
+        boxes.push(text(`(${box.rows[0]!.trim()})`));
       } else boxes.push(this.node(item));
       before = item;
     });
@@ -399,7 +414,8 @@ class Layout {
   }
 
   private script(node: Extract<Node, {t: 'script'}>): Box {
-    const base = this.node(node.base);
+    let base = this.node(node.base);
+    if (this.inline && (node.base.t === 'frac' || node.base.t === 'sqrt')) base = text(`(${base.rows[0]!.trim()})`);
     const baseNode = node.base;
     if (baseNode.t === 'big' && LIMITS_ABOVE.has(baseNode.name) && this.context.display) {
       const up = node.sup ? this.node(node.sup) : undefined, down = node.sub ? this.node(node.sub) : undefined;
@@ -421,31 +437,29 @@ class Layout {
     }
     // Two dimensions: the superscript ends on the row above the baseline, the subscript starts on the row below it.
     const baseline = base.baseline;
-    const supAbove = sup ? Math.max(0, sup.rows.length - (baseline > 0 ? baseline : 0) - (baseline > 0 ? 0 : 0)) : 0;
-    const top = Math.min(0, baseline - 1 - (sup ? sup.rows.length - 1 : 0));
-    const subBottom = sub ? baseline + 1 + sub.rows.length : 0;
-    const height = Math.max(base.rows.length, subBottom) - top;
-    const width = base.width + Math.max(sup?.width ?? 0, sub?.width ?? 0);
-    const rows = Array.from({length: height}, () => ' '.repeat(width));
-    const put = (box: Box, x: number, y: number) => box.rows.forEach((row, index) => {
-      const target = y - top + index;
-      const line = rows[target]!;
-      rows[target] = line.slice(0, x) + pad(row, box.width) + line.slice(x + box.width);
-    });
-    put(base, 0, 0);
-    if (sup) put(sup, base.width, baseline - 1 - (sup.rows.length - 1));
-    if (sub) put(sub, base.width, baseline + 1);
-    void supAbove;
-    return {rows, width, baseline: baseline - top};
+    const supTop = sup ? baseline - sup.rows.length : 0;
+    const subTop = baseline + 1;
+    const top = Math.min(0, supTop);
+    const bottom = Math.max(base.rows.length, sub ? subTop + sub.rows.length : 0);
+    const side = Math.max(sup?.width ?? 0, sub?.width ?? 0);
+    // Rows are composed from whole cells, never cut by string index: wide and astral characters keep their columns.
+    const rows: string[] = [];
+    for (let y = top; y < bottom; y += 1) {
+      const left = y >= 0 && y < base.rows.length ? pad(base.rows[y]!, base.width) : ' '.repeat(base.width);
+      const supRow = sup && y >= supTop && y < supTop + sup.rows.length ? sup.rows[y - supTop]! : undefined;
+      const subRow = sub && y >= subTop && y < subTop + sub.rows.length ? sub.rows[y - subTop]! : undefined;
+      rows.push(left + pad(supRow ?? subRow ?? '', side));
+    }
+    return {rows, width: base.width + side, baseline: baseline - top};
   }
 
   private frac(node: Extract<Node, {t: 'frac'}>): Box {
     const num = this.node(node.num), den = this.node(node.den);
     if (this.inline) {
       if (num.rows.length > 1 || den.rows.length > 1) return fail('a fraction needs more than one row');
-      const wrap = (box: Box, source: Node) => { const row = box.rows[0]!.trim(); return /^[\p{L}\p{N}.]+$/u.test(row) || (source.t === 'group' && source.items.length === 1 && source.items[0]!.t === 'frac') ? row : `(${row})`; };
+      const wrap = (box: Box, source: Node, numerator: boolean) => { const row = box.rows[0]!.trim(); return /^[\p{L}\p{N}.]+$/u.test(row) || (numerator && source.t === 'group' && source.items.length === 1 && source.items[0]!.t === 'frac') ? row : `(${row})`; };
       if (!node.bar) return text(`${num.rows[0]!.trim()} choose ${den.rows[0]!.trim()}`);
-      return text(`${wrap(num, node.num)}/${wrap(den, node.den)}`);
+      return text(`${wrap(num, node.num, true)}/${wrap(den, node.den, false)}`);
     }
     if (!node.bar) return vstack(num, den, Math.floor((num.rows.length + den.rows.length - 1) / 2));
     const width = Math.max(num.width, den.width) + 2;

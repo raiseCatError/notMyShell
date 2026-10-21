@@ -431,16 +431,28 @@ function imageParagraph(source: string, width: number, context: Context): Markdo
  * Display mathematics: drawn when the subset covers it and it fits the width, otherwise the source exactly as written, dimmed,
  * with the reason on a last row. Re-evaluated on every render, so a wider window can draw what a narrow one could not.
  */
-function mathRows(source: string, width: number, context: Context): MarkdownRow[] {
+function mathRows(source: string, width: number, context: Context, raw?: readonly string[]): MarkdownRow[] {
   const result = renderMath(source, {display: true, ascii: context.safe});
   if (result.ok && result.width <= width - 2) return result.rows.map(row => ({ansi: `  ${row}${RESET}`, plain: `  ${row}`.trimEnd(), kind: 'text' as const}));
   const reason = result.ok ? `it needs ${result.width + 2} columns and the window has ${width}` : result.reason;
   const dim = context.fg(UI_COLORS.subtle);
-  const lines = ['$$', ...source.split('\n'), '$$'];
+  const lines = raw ?? ['$$', ...source.split('\n'), '$$'];
   const rows: MarkdownRow[] = [];
   for (const line of lines) for (const piece of wrapPlain(line, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
-  for (const piece of wrapPlain(`(not rendered: ${reason})`, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
+  for (const piece of wrapWords(`(not rendered: ${reason})`, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
   return rows;
+}
+
+/** Greedy word wrap for a sentence; a word wider than the line is cut. */
+function wrapWords(text: string, width: number): string[] {
+  const out: string[] = [];
+  let current = '';
+  for (const word of text.split(' ')) {
+    if (current && displayWidth(`${current} ${word}`) > width) { out.push(current); current = ''; }
+    current = current ? `${current} ${word}` : word;
+  }
+  out.push(current);
+  return out.flatMap(line => displayWidth(line) > width ? wrapPlain(line, width) : [line]);
 }
 
 function wrapPlain(text: string, width: number): string[] {
@@ -477,11 +489,21 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
         break;
       }
       case 'code':
-        if (context.math && block.language === 'math') out.push(...mathRows(block.lines.join('\n'), width, context));
-        else out.push(...codeRows(block, width, context));
+        if (context.math && block.language === 'math') {
+          const source = block.lines.join('\n');
+          const result = renderMath(source, {display: true, ascii: context.safe});
+          if (result.ok && result.width <= width - 2) out.push(...mathRows(source, width, context));
+          else {
+            // The fence stays a code block as written; only the reason is added.
+            out.push(...codeRows(block, width, context));
+            const reason = result.ok ? `it needs ${result.width + 2} columns and the window has ${width}` : result.reason;
+            const dim = context.fg(UI_COLORS.subtle);
+            for (const piece of wrapWords(`(not rendered: ${reason})`, Math.max(1, width - 2))) out.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
+          }
+        } else out.push(...codeRows(block, width, context));
         break;
       case 'math':
-        out.push(...mathRows(block.source, width, context));
+        out.push(...mathRows(block.source, width, context, block.raw));
         break;
       case 'details': {
         const nth = context.detailsSeen.get(block.summary) ?? 0;

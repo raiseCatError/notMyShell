@@ -25,7 +25,7 @@ export type Block = (
   /** `<details>`: a disclosure, collapsed unless `open`; its content is blocks (Markdown between GitHub-style tags is Markdown). */
   | {kind: 'details'; open: boolean; summary: string; blocks: Block[]}
   /** `$$ … $$` display mathematics (only when parsing with the `math` option): the LaTeX between the dollars. */
-  | {kind: 'math'; source: string}
+  | {kind: 'math'; source: string; raw: string[]}
 ) & {
   /** The source lines the block came from (0-based; `to` is exclusive), when `parseBlocks` knows them: the shared source-position map. */
   from?: number;
@@ -141,6 +141,7 @@ function delimiterRow(line: string): Alignment[] | undefined {
 
 /** Whether a line starts a block that interrupts a paragraph (a lazy continuation line must not). */
 function interrupts(line: string, next: string | undefined): boolean {
+  if (mathEnabled && /^ {0,3}(?:\$\$\s*|\$\$(?:(?!\$\$)[^\n])+\$\$\s*)$/u.test(line)) return true;
   if (fenceOf(line) || headingOf(line) || isRule(line) || QUOTE.test(line)) return true;
   const item = ITEM.exec(line);
   // An ordered item interrupts a paragraph only when it starts at 1, and an empty item never does (CommonMark).
@@ -178,9 +179,13 @@ function mathBlockAt(lines: readonly string[], start: number): {source: string; 
   const first = lines[start]!;
   if (indentOf(first) > 3 || !first.trimStart().startsWith('$$')) return undefined;
   const text = first.trim();
-  const single = /^\$\$([\s\S]*?)\$\$$/u.exec(text);
-  if (single) return single[1]!.trim() ? {source: single[1]!.trim(), end: start + 1} : undefined;
-  const parts = [text.slice(2)];
+  // `$$x$$ and $$y$$` is two inline formulas, not one block; so is a first line that closes and goes on.
+  const inner = text.slice(2);
+  if (inner.includes('$$')) {
+    const single = /^\$\$((?:(?!\$\$)[\s\S])+)\$\$$/u.exec(text);
+    return single?.[1]!.trim() ? {source: single[1]!.trim(), end: start + 1} : undefined;
+  }
+  const parts = [inner];
   for (let at = start + 1; at < Math.min(lines.length, start + 200); at += 1) {
     const line = lines[at]!.trim();
     if (line.endsWith('$$') && !line.slice(0, -2).includes('$$')) { parts.push(line.slice(0, -2)); return {source: parts.join('\n').trim(), end: at + 1}; }
@@ -261,7 +266,7 @@ function parseLines(lines: readonly string[], depth: number, html = false, offse
     if (blank(line)) { index++; continue; }
 
     const math = mathEnabled ? mathBlockAt(lines, index) : undefined;
-    if (math) { blocks.push({kind: 'math', source: math.source}); index = math.end; continue; }
+    if (math) { blocks.push({kind: 'math', source: math.source, raw: lines.slice(index, math.end)}); index = math.end; continue; }
 
     const fence = fenceOf(line);
     if (fence) {

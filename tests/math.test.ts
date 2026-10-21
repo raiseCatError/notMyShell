@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {renderMath, MATH_LIMITS} from '../src/markdown/math.js';
 import {parseBlocks} from '../src/markdown/blocks.js';
+import {headingsOf} from '../src/markdown/sourceMap.js';
 import {renderMarkdown} from '../src/markdown/render.js';
 import {displayWidth} from '../src/util/text.js';
 
@@ -163,4 +164,68 @@ test('command names are never looked up on Object.prototype', () => {
     assert.equal(renderMath(`\\begin{${name}} a \\end{${name}}`, {display: true}).ok, false, name);
     assert.equal(renderMath(`\\left${name} x \\right.`, {display: true}).ok, false, name);
   }
+});
+
+// ---- Findings of the independent review ----------------------------------------------------------------------------
+
+test('review: unbraced nesting is refused fast and every intermediate box is bounded', () => {
+  for (const source of ['\\sqrt'.repeat(780) + ' x', '\\frac1'.repeat(390) + '1']) {
+    const started = process.hrtime.bigint();
+    const result = renderMath(source, {display: true});
+    assert.equal(result.ok, false);
+    assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 200);
+  }
+});
+
+test('review: inline fractions and roots are bracketed against their neighbours, scripts and denominators', () => {
+  assert.equal(inline('2\\frac{1}{2}'), '2(1/2)');
+  assert.equal(inline('\\frac{a}{b}\\frac{c}{d}'), '(a/b)(c/d)');
+  assert.equal(inline('\\frac{1}{2}x'), '(1/2)x');
+  assert.equal(inline('x = \\frac{1}{2}'), 'x = 1/2');
+  assert.equal(inline('\\frac{a}{\\frac{b}{c}}'), 'a/(b/c)');
+  assert.equal(inline('\\frac{a}{b}^2'), '(a/b)²');
+  assert.equal(inline('\\sqrt{x}^2'), '(√x)²');
+  assert.equal(inline('\\sqrt{2}3'), '(√2)3');
+});
+
+test('review: two-dimensional scripts keep their columns for wide and astral bases', () => {
+  for (const source of ['\\left(\\frac{\\mathbf{ab}}{c}\\right)^{\\alpha}', '\\frac{中中}{b}^{\\alpha}', '\\{a_{\\mathbf{b}}\\}_{c}', '\\begin{pmatrix}\\mathbf{A}&b\\\\c&d\\\\e&f\\end{pmatrix}^{\\alpha}_{\\beta}']) {
+    const result = renderMath(source, {display: true});
+    assert.equal(result.ok, true, source);
+    if (!result.ok) continue;
+    assert.ok(result.rows.every(row => displayWidth(row) === result.width), `${source}: ${JSON.stringify(result.rows)}`);
+    assert.ok(result.rows.every(row => !/[\ud800-\udfff]/u.test(row.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))), source);
+  }
+  const rows = (renderMath('\\left(\\frac{a}{b}\\right)^{n}', {display: true}) as {rows: string[]}).rows;
+  assert.ok(rows.some(row => row.endsWith('⎟ⁿ')), JSON.stringify(rows));
+});
+
+test('review: \\limits is accepted, functions are spaced from what precedes them, and empty arguments are refused', () => {
+  assert.match((renderMath('\\sum\\limits_{i=1}^{n} i', {display: true}) as {rows: string[]}).rows.join('\n'), /i = 1/u);
+  assert.equal(inline('a\\sin x'), 'a sin x');
+  assert.equal(inline('a \\mod b'), 'a mod b');
+  assert.equal(inline('\\operatorname{sgn}x'), 'sgn x');
+  assert.equal(inline('\\sin -x'), 'sin −x');
+  assert.equal(renderMath('\\sqrt{}', {display: false}).ok, false);
+  assert.equal(renderMath('\\frac{}{}', {display: false}).ok, false);
+  assert.equal(renderMath('\\text{a\u001b[31mb}', {display: false}).ok, false);
+});
+
+test('review: fallback shows the source exactly, $$ pairs on one line are separate inline formulas, $$ interrupts a paragraph', () => {
+  const rows = rowsOf('$$x^{\\foo}$$');
+  assert.equal(rows[0]!.trim(), '$$x^{\\foo}$$');
+  assert.match(rows.join('\n'), /not rendered: /u);
+  const indented = rowsOf('$$\n  a + \\foo\n$$');
+  assert.ok(indented.some(row => row.startsWith('    a + \\foo')), JSON.stringify(indented));
+  const fenced = rowsOf('```math\nx^{\\foo}\n```');
+  assert.ok(fenced.join('\n').includes('x^{\\foo}') && /not rendered/u.test(fenced.join('\n')));
+  assert.ok(!rowsOf('$$x$$ and $$y$$').join('').includes('x$$ and $$y'));
+  const paragraph = rowsOf('Text\n$$\nx^2\n$$');
+  assert.ok(!paragraph.join('\n').includes('$$'), JSON.stringify(paragraph));
+  assert.ok(rowsOf('$$a$$ and text\nthen x$$').join('\n').includes('and text'));
+});
+
+test('review: a code span binds tighter than a formula, and the outline ignores headings inside math', () => {
+  assert.ok(rowsOf('$a `b$` c').join('').includes('`b$`'));
+  assert.deepEqual(headingsOf('$$\n# Not a heading\n$$\n\n# Real'), headingsOf('$$\n# Not a heading\n$$\n\n# Real').filter(heading => heading.text === 'Real'));
 });

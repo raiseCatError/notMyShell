@@ -217,6 +217,14 @@ function tokenize(source: string, options: InlineOptions): Token[] {
       if (open < source.length && !/\s/u.test(source[open]!)) {
         for (let at = open; at < Math.min(source.length, open + 1000); at += 1) {
           if (source[at] === '\\') { at += 1; continue; }
+          if (source[at] === '`') {
+            // A code span binds tighter than a formula: `$a `b$` c` is code, not a formula that swallows the backtick.
+            let ticks = 1;
+            while (source[at + ticks] === '`') ticks++;
+            if (closingRun(ticks, at + ticks) >= 0) break;
+            at += ticks - 1;
+            continue;
+          }
           if (source[at] === '$' && (run === 1 || source[at + 1] === '$')) { close = at; break; }
         }
       }
