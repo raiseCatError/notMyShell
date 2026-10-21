@@ -79,6 +79,7 @@ import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState
 import {createEditor, editorKey, offerDraft, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
 import {openForEdit, saveFile} from '../viewer/fileEdit.js';
 import {DraftKeeper, DraftStore} from '../viewer/draftRecovery.js';
+import {applyReview, beginReview, restartReview, sameDiskVersion} from '../viewer/ReviewPanel.js';
 import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
 import {formatForPath} from '../viewer/document.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
@@ -4504,6 +4505,29 @@ export class TerminalApp {
     } catch { /* an unreadable store is never a reason not to open the file */ }
   }
 
+  /**
+   * Review changes made on disk while editing (#463): load the disk's version now (`apply` false), or — when the review is
+   * finished — read it again and apply the merge only if the file is still exactly the version that was reviewed. Reading is
+   * all this does; the buffer changes only by the merge, as one undoable edit, and saving stays the editor's checked save.
+   */
+  private reviewDisk(editor: EditorState, apply: boolean, active: () => boolean): void {
+    editor.busy = true;
+    void openForEdit(editor.file.path, this.shellCwd).then(result => {
+      editor.busy = false;
+      if (!active() || this.stopped) return;
+      if (!result.ok) editor.note = {text: result.reason, tone: 'error'};
+      else if (!apply) {
+        const started = beginReview(editor, result.file);
+        if (!started.reviewing) editor.note = {text: started.note, tone: 'info'};
+      } else if (editor.review && sameDiskVersion(editor.review, result.file)) {
+        applyReview(editor, result.file, editor.review);
+        editor.note = {text: 'Merged into the editor (one undo step). Review it, then save.', tone: 'success'};
+      } else editor.note = {text: editor.review ? restartReview(editor, result.file) : 'The review is no longer open.', tone: 'error'};
+      this.drafts().note(editor);
+      this.render();
+    });
+  }
+
   private runDraftAction(editor: EditorState, action: Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep'}>): void {
     const keeper = this.drafts();
     if (action.kind === 'draft') keeper.restored(editor, action.target);
@@ -4514,6 +4538,7 @@ export class TerminalApp {
   /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
   private runEditorAction(editor: EditorState, action: EditorAction): void {
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
+    if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.textEditor === editor); return; }
     if (action.kind === 'close') { this.drafts().discard(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
     if (action.kind === 'copy') {
       void this.copyText(action.text, 'Copied').then(note => { if (note && this.textEditor === editor) { editor.note = {text: note, tone: 'success'}; this.render(); } });
@@ -4645,6 +4670,7 @@ export class TerminalApp {
   private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
     const editor = session.editor;
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
+    if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.docSession === session); return; }
     if (action.kind === 'close') { this.closeDocumentSession(); return; }
     if (action.kind === 'copy') {
       void this.copyText(action.text, 'Copied').then(note => { if (note && this.docSession === session) { editor.note = {text: note, tone: 'success'}; session.viewer.note = note; this.render(); } });

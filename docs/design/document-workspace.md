@@ -49,6 +49,17 @@ Limits: code fences are recognised by a line scan (indented code blocks and fenc
 
 **Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
 
+## Reviewing external changes
+
+`src/viewer/threeWayMerge.ts` (pure) and `src/viewer/ReviewPanel.ts` (state, keys, drawing) implement the review of [#463](https://github.com/raiseCatError/notMyShell/issues/463); `fileEdit.ts` still owns every read and write.
+
+- **Model:** `base` = `EditableFile.lines` (the lines on disk when the editor last opened or saved the file — a stable common base), `mine` = the buffer, `theirs` = the file now. `merge3` diffs base→mine and base→theirs with the bounded Myers diff already used by `/compare` (`diffLines`, bound 1,500 edits), turns each into change regions in base coordinates and groups regions that overlap, touch, or insert at the same point. A group changed by one side only is taken as is; a group both changed identically appears once; otherwise it is a conflict. Past the bound or 2,000 hunks the region where mine and theirs differ is one coarse conflict (`aligned: false`; "original" is then not offered).
+- **Decisions:** disk-only hunks default to the disk's version; conflicts have none until chosen. Enter is refused while one is undecided. History of decisions allows `z`.
+- **Applying:** the app re-reads the file with `openForEdit` and applies only if its device, inode, content hash and format are exactly those the review was built from; otherwise the review restarts from the newest version (decisions are not carried over). The merged text replaces the buffer in one `TextBuffer` edit (Ctrl+Z restores what you had), `file` becomes the freshly read disk version (its identity, line endings, BOM and final newline are what a save uses and checks), and the draft keeper sees a dirty buffer, so the recovery draft stays until a save really succeeds. A file deleted meanwhile ends the review; only Save anyway recreates it.
+- **Never:** reading, navigating, previewing and closing write nothing; the review does not change `file.identity`, so a save during or after a closed review still hits the conflict check.
+- **Not provided:** word-level hunks, a merge of three arbitrary files, resolving a hunk by editing it in place (apply, then edit), and moved-line detection. Adjacent changes are conflicts on purpose.
+- **Verified by** `tests/threeWayMerge.test.ts` (rules, boundaries, identical edits, a 200-round property test, bounds, 50,000 lines) and `tests/reviewExternal.test.ts` (real app and files: apply and undo, conflicts, a file changing again, atomic replacement before save with the draft kept, deletion, no writes while navigating, CRLF and Unicode, 20,000 lines, the Markdown workspace, 30–120 columns).
+
 ## Crash recovery
 
 Unsaved text is protected by `src/viewer/draftRecovery.ts` ([#469](https://github.com/raiseCatError/notMyShell/issues/469)); the editor, the workspace and `fileEdit.ts` stay the only owners of the buffer and of the file.
