@@ -191,10 +191,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (key.kind === 'sendToProgram') return editor.file.scratch ? fromEditor(state, editorKey(editor, key, columns, height)) : {kind: 'save'};
 
   if (state.mode === 'edit' || state.mode === 'hybrid') {
-    if (state.mode === 'hybrid') {
-      if (key.kind === 'wheelUp' || key.kind === 'wheelDown') { scrollHybrid(editor, hybridOf(state), key.kind === 'wheelUp' ? -3 : 3, columns, look); return undefined; }
-      if (key.kind === 'pageUp' || key.kind === 'pageDown') { editor.buffer.vertical((key.kind === 'pageUp' ? -1 : 1) * Math.max(1, height - 6)); return undefined; }
-    }
+    if (state.mode === 'hybrid' && hybridScrollKey(state, key, columns, height, look)) return undefined;
     if (key.kind === 'toggleDetails') { setDocumentMode(state, 'preview'); return {kind: 'preview', refresh: false}; }
     // Esc leaves typing for navigation without closing or discarding anything; the unsaved buffer stays as it is.
     if (key.kind === 'escape' && !editor.input && !editor.snippet) { setDocumentMode(state, 'source'); return undefined; }
@@ -243,6 +240,15 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   return undefined;
 }
 
+/** The wheel scrolls the hybrid view without moving the caret; Page keys move the caret by about a screen of source lines. */
+function hybridScrollKey(state: DocumentSession, key: Key, columns: number, height: number, look: ViewerLook): boolean {
+  const hybrid = hybridOf(state);
+  if (key.kind === 'wheelUp' || key.kind === 'wheelDown') { scrollHybrid(state.editor, hybrid, key.kind === 'wheelUp' ? -3 : 3, columns, look); return true; }
+  hybrid.free = false;
+  if (key.kind === 'pageUp' || key.kind === 'pageDown') { state.editor.buffer.vertical((key.kind === 'pageUp' ? -1 : 1) * Math.max(1, height - 6)); return true; }
+  return false;
+}
+
 function hybridOf(state: DocumentSession): HybridState {
   return state.hybrid ??= createHybrid();
 }
@@ -267,6 +273,7 @@ function splitKey(state: DocumentSession, key: Key, columns: number, height: num
   const text = key.kind === 'text' ? key.value : undefined;
   if (key.kind === 'toggleDetails' && !editor.dialog) { split.focus = split.focus === 'source' ? 'preview' : 'source'; return undefined; }
   if (split.focus === 'source') {
+    if (split.hybrid && !editor.dialog && !editor.input && hybridScrollKey(state, key, layout.narrow ? columns : layout.source, height, look)) return undefined;
     if (key.kind === 'escape' && !editor.input && !editor.snippet) { setDocumentMode(state, 'source'); return undefined; }
     return fromEditor(state, editorKey(editor, key, layout.narrow ? columns : layout.source, height));
   }

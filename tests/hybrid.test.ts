@@ -385,3 +385,133 @@ test('app: an external change while editing in hybrid is reviewed and merged, th
     assert.match(screenOf(f), /GAMMA/u);
   } finally { f.dispose(); rmSync(root, {recursive: true, force: true}); }
 });
+
+// ---- Findings of the independent review -------------------------------------------------------------------------
+
+const REVERSE = '\u001b[7m';
+const rawDraw = (state: DocumentSession, columns: number, height: number, look = {}) => renderDocumentSession(state, columns, height, look);
+
+test('review 1: a lone CR inside a line does not shift the source map; blocks and the outline stay on their own lines', async () => {
+  const { root, state } = await open('one\rtwo\n\n# Heading\n\ntext here\n', 'cr.md');
+  try {
+    press(state, F3);
+    const index = state.editor.index ?? undefined;
+    goto(state, 4);
+    const view = body(draw(state));
+    assert.match(view, /Heading/u);
+    assert.doesNotMatch(view, /# Heading/u, 'the heading is a rendered block, not a stray raw line');
+    press(state, '\u001bOP'); press(state, 'h');
+    const headings = state.editor.index!.headings();
+    assert.deepEqual(headings.map(heading => [heading.text, heading.line]), [['Heading', 2]]);
+    void index;
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 2: at a wrap boundary the caret is drawn once and no character is replaced', async () => {
+  const { root, state } = await open('abcdefghijklmnop\n', 'wrap.md');
+  try {
+    press(state, F3);
+    for (const column of [7, 8, 9, 15, 16]) {
+      goto(state, 0, column);
+      const rows = rawDraw(state, 12, 12);
+      const active = rows.map(row => stripAnsi(row)).filter(row => row.includes('▎') || row.includes('|'));
+      assert.ok(!active.join('').includes('…'), `column ${column}: no truncation mark\n${active.join('\n')}`);
+      assert.equal(rows.join('').split(REVERSE).length - 1, 1, `column ${column}: exactly one caret`);
+      assert.equal(active.join('').replace(/[^a-p]/gu, ''), 'abcdefghijklmnop', `column ${column}: every character is shown once`);
+    }
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 3: the wheel scrolls the view and the next draw leaves it there; typing brings the caret back', async () => {
+  const { root, state } = await open(`${LONG}\n`);
+  try {
+    press(state, F3); goto(state, 0);
+    draw(state, 100, 14);
+    for (let step = 0; step < 5; step += 1) documentSessionKey(state, {kind: 'wheelDown'}, 100, 14);
+    draw(state, 100, 14);
+    const scrolled = state.hybrid!.top.line;
+    assert.ok(scrolled > 0, 'the view moved');
+    draw(state, 100, 14);
+    assert.equal(state.hybrid!.top.line, scrolled, 'drawing again does not undo the scroll');
+    press(state, 'x', 100, 14);
+    draw(state, 100, 14);
+    assert.equal(state.hybrid!.top.line, 0, 'a key that edits shows the caret again');
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 3b: in the split with a hybrid text pane the wheel and page keys move the hybrid view, not an invisible editor viewport', async () => {
+  const { root, state } = await open(`${LONG}\n`);
+  try {
+    press(state, F3, 140, 14); press(state, F2, 140, 14);
+    draw(state, 140, 14);
+    documentSessionKey(state, {kind: 'wheelDown'}, 140, 14); documentSessionKey(state, {kind: 'wheelDown'}, 140, 14);
+    draw(state, 140, 14);
+    assert.ok(state.hybrid!.top.line > 0);
+    const before = state.editor.buffer.caret.line;
+    documentSessionKey(state, {kind: 'pageDown'}, 140, 14);
+    assert.ok(state.editor.buffer.caret.line > before);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 4: the render cache is bounded in bytes and keeps only the current width', async () => {
+  const list = Array.from({length: 3000}, (_, index) => `- item ${index} with some words to render`).join('\n');
+  const { root, state } = await open(`# Top\n\n${list}\n`);
+  try {
+    goto(state, 0); press(state, F3);
+    for (let columns = 12; columns <= 200; columns += 4) { draw(state, columns, 24); }
+    assert.ok(state.hybrid!.cache.size <= 8, `${state.hybrid!.cache.size} cached renders after sweeping 48 widths`);
+    assert.ok(state.hybrid!.cacheBytes < 4_000_000, `${state.hybrid!.cacheBytes} bytes cached`);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 5: a huge active block is wrapped once; moving the caret and typing wrap only what changed', async () => {
+  const list = Array.from({length: 5000}, (_, index) => `- item ${index} with some words to wrap`).join('\n');
+  const { root, state } = await open(`${list}\n`);
+  try {
+    goto(state, 2500); press(state, F3);
+    draw(state, 100, 30);
+    const wraps = state.hybrid!.stats.wraps;
+    for (let step = 0; step < 20; step += 1) { press(state, '\u001b[B'); draw(state, 100, 30); }
+    assert.equal(state.hybrid!.stats.wraps, wraps, 'caret moves wrap nothing new');
+    press(state, 'x'); draw(state, 100, 30);
+    assert.ok(state.hybrid!.stats.wraps - wraps <= 2, `typing re-wrapped ${state.hybrid!.stats.wraps - wraps} lines`);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 6: changing the link or colour setting shows in the next draw', async () => {
+  const { root, state } = await open('# Top\n\nSee [the site](https://example.com/page) now.\n\nlast\n');
+  try {
+    goto(state, 4); press(state, F3);
+    assert.ok(!rawDraw(state, 100, 20, {}).join('').includes('\u001b]8;'));
+    assert.ok(rawDraw(state, 100, 20, {hyperlinks: true}).join('').includes('\u001b]8;'), 'links become clickable when the host supports them');
+    assert.ok(!rawDraw(state, 100, 20, {}).join('').includes('\u001b]8;'));
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 7 and 8: the caret is on screen with a one-row body and in terminals 6–11 columns wide', async () => {
+  const list = Array.from({length: 30}, (_, index) => `- item ${index}`).join('\n');
+  const { root, state } = await open(`${list}\n`);
+  try {
+    press(state, F3);
+    for (const height of [4, 5, 6, 7, 8, 9, 12]) for (const columns of [20, 40, 100]) {
+      for (const line of [25, 24, 0, 29, 12, 13, 12]) { goto(state, line, 2); const rows = rawDraw(state, columns, height); assert.ok(rows.join('').includes(REVERSE), `caret visible at ${columns}x${height}, line ${line}`); }
+      goto(state, 25, 2); press(state, '\u001b[A', columns, height);
+      assert.ok(rawDraw(state, columns, height).join('').includes(REVERSE), `after Up at ${columns}x${height}`);
+    }
+    for (const columns of [6, 7, 8, 9, 10, 11]) { goto(state, 3, 6); assert.ok(rawDraw(state, columns, 12).join('').includes(REVERSE), `${columns} columns`); }
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('review 9: reloading from disk while in hybrid keeps the hybrid view', async () => {
+  const f = executionFrameFixture(110, 30);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-hybrid-reload-')));
+  try {
+    const file = join(root, 'doc.md'); writeFileSync(file, '# A\n\ntext\n');
+    await f.app['openDocumentSession'](file, '/edit doc.md', 'edit', false);
+    keysTo(f, '\u001bOR');
+    const session = f.app['docSession']!;
+    f.app['runDocumentAction'](session, {kind: 'reload'});
+    await waitFor(() => f.app['docSession'] !== session && !f.app['docSession']!.editor.busy, 'the reload');
+    assert.equal(f.app['docSession']!.mode, 'hybrid');
+  } finally { f.dispose(); rmSync(root, {recursive: true, force: true}); }
+});

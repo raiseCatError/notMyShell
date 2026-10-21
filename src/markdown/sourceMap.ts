@@ -1,6 +1,6 @@
 import type {Position, TextBuffer} from '../viewer/textBuffer.js';
 import {mapPosition} from '../viewer/snippets.js';
-import {parseBlocks, type Block} from './blocks.js';
+import {parseBlockLines, parseBlocks, type Block} from './blocks.js';
 import type {MarkdownRow} from './render.js';
 
 /**
@@ -150,7 +150,7 @@ export class DocumentIndex {
     if (this.cached?.version === this.versionCounter) return this.cached;
     this.parseCount += 1;
     this.options.onParse?.();
-    const blocks = parseBlocks(this.buffer.text, {html: this.options.html ?? false});
+    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false});
     this.cached = {version: this.versionCounter, blocks, headings: outline(blocks, this.buffer.lines)};
     return this.cached;
   }
