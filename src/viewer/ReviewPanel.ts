@@ -5,7 +5,7 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi, truncateText} from '../util/text.js';
 import {inert} from './document.js';
 import type {EditorAction, EditorState} from './EditorPanel.js';
-import type {EditableFile} from './fileEdit.js';
+import {sameRealFile, type EditableFile} from './fileEdit.js';
 import {chosenLines, hunksOf, merge3, mergedLines, pendingConflicts, setResolution, type Merge, type MergeHunk, type Resolution} from './threeWayMerge.js';
 
 /**
@@ -44,8 +44,8 @@ export function createReview(state: EditorState, theirs: EditableFile): ReviewSt
 export function beginReview(state: EditorState, theirs: EditableFile): {reviewing: boolean; note: string} {
   if (!theirs.identity) return {reviewing: false, note: `${state.file.title} was deleted; Save anyway recreates it.`};
   // The path now leads to a different file (a symlink was retargeted): its lines have nothing to do with the version opened.
-  // (A case-insensitive volume reports the same file under whatever case it was created with.)
-  if (theirs.realPath.toLowerCase() !== state.file.realPath.toLowerCase()) return {reviewing: false, note: `${state.file.title} now leads to a different file (${theirs.realPath}); your text was opened from ${state.file.realPath}. Nothing is merged. Keep editing to save a copy elsewhere, or Reload to read the new file.`};
+  // (A case-insensitive volume reports one file under whatever case it was created with: compared by identity, never by folding names.)
+  if (!sameRealFile(theirs.realPath, state.file.realPath)) return {reviewing: false, note: `${state.file.title} now leads to a different file (${theirs.realPath}); your text was opened from ${state.file.realPath}. Nothing is merged. Keep editing to save a copy elsewhere, or Reload to read the new file.`};
   const review = createReview(state, theirs);
   if (!hunksOf(review.merge).length) {
     applyReview(state, theirs, review);
@@ -67,7 +67,7 @@ export function restartReview(state: EditorState, theirs: EditableFile): string 
 /** Whether `fresh` is exactly the disk version the review was built from. */
 export function sameDiskVersion(review: ReviewState, fresh: EditableFile): boolean {
   const a = review.theirs.identity, b = fresh.identity;
-  return Boolean(a && b && a.dev === b.dev && a.ino === b.ino && a.hash === b.hash && review.theirs.realPath.toLowerCase() === fresh.realPath.toLowerCase()
+  return Boolean(a && b && a.dev === b.dev && a.ino === b.ino && a.hash === b.hash && sameRealFile(review.theirs.realPath, fresh.realPath)
     && review.theirs.lineEnding === fresh.lineEnding && review.theirs.bom === fresh.bom && review.theirs.finalNewline === fresh.finalNewline);
 }
 

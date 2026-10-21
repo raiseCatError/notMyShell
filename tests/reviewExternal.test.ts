@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nmshConfigDirectory} from '../src/configuration/paths.js';
 import {DraftStore} from '../src/viewer/draftRecovery.js';
+import {sameRealFile} from '../src/viewer/fileEdit.js';
 import {decodeKeys} from '../src/terminal/keys.js';
 import {stripAnsi} from '../src/util/text.js';
 import {executionFrameFixture} from './support/executionTimelineFrames.js';
@@ -381,4 +382,12 @@ test('second review: the retargeted-link note names the real target and promises
     assert.ok(note.includes(b), note);
     assert.doesNotMatch(note, /Overwrite would write there/u);
   } finally { f.dispose(); if (root) rmSync(root, {recursive: true, force: true}); }
+});
+
+test('second review (security note): two spellings are one file only when they have the same device and inode, never because the names fold together', () => {
+  const same = {dev: 1, ino: 7}, other = {dev: 1, ino: 8};
+  assert.equal(sameRealFile('/w/New.md', '/w/New.md'), true);
+  assert.equal(sameRealFile('/w/New.md', '/w/new.md', () => same), true, 'a case-insensitive volume: one inode');
+  assert.equal(sameRealFile('/w/File.md', '/w/file.md', path => (path.endsWith('File.md') ? same : other)), false, 'a case-sensitive volume: two files');
+  assert.equal(sameRealFile('/w/New.md', '/w/new.md', () => { throw new Error('ENOENT'); }), false, 'a name that does not exist is not the same file');
 });
