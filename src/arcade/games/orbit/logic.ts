@@ -9,24 +9,21 @@ import type {Rng} from '../../rng.js';
  */
 export const COLORS = 4;
 /**
- * Movement tuning (units are pixel rows). The old model reset vy to 128 under gravity 300: about 27 units per tap
- * against a ring radius of 15, so the ball could enter a ring but never stay in it. Now the ball is a damped float:
- *  - GRAVITY 36 with DRAG 3/s gives a terminal fall of 12 units/s. A ring's clear centre is about 20 units across,
- *    so a fall through it takes roughly 1.5 s, and the view floor (34 below the best height) still ends a run that
- *    stops tapping after about 3 s.
- *  - A tap adds TAP 14 to vy instead of resetting it, after braking any fall to at most BRAKE 8 so a tap always
- *    answers. One tap from rest lifts about 1.6 units. Taps every ~400 ms hold the height (the average rise is
- *    zero there); every 250 ms drifts up about 6 units/s, every 450 ms sinks slowly, so a human tapping 250-450 ms
- *    hovers inside a ring for seconds with small corrections. Taps every ~120 ms cruise upward at about 23 units/s.
- *  - TAP_CAP 26 caps the climb speed and TAP_GAP 80 ms is a cooldown, so mashing cannot stack into a launch.
- * Integration is exact for gravity plus linear drag, so results do not depend on the step size.
+ * Movement tuning (units are pixel rows), the classic Color Switch hop: a tap SETS the ball's upward speed to JUMP
+ * (it never stacks), and gravity pulls it back at a steady GRAVITY. One hop therefore rises JUMP^2 / (2 GRAVITY) = 8 units
+ * (a ring is 30 units across, so a hop is about a quarter of one) and lasts about a second in the air.
+ *  - Tapping slower than once a second lets the ball bob and sink inside a ring; one tap about every 0.7 s climbs gently
+ *    (about 9 units/s), so a ring can be entered, waited in and left on purpose.
+ *  - Tapping every 0.25 s climbs about 26 units/s; a held key (terminals send repeats, never releases) is limited by
+ *    TAP_GAP so it cannot stack either, and simply climbs at the same fast pace.
+ *  - A ring's top arc is 3 units thick; at hop speed the ball crosses the whole band in about 0.2 s, and every window
+ *    shows each colour for longer than that, so the matching colour can always be waited for.
+ *  - Not tapping drops the ball about 34 units below its best height in roughly a second, which ends the run.
+ * Integration is exact for constant gravity, so results do not depend on the step size.
  */
-export const GRAVITY = 36;
-export const DRAG = 3;
-export const TAP = 14;
-export const BRAKE = 8;
-export const TAP_CAP = 26;
-export const TAP_GAP = 0.08;
+export const GRAVITY = 70;
+export const JUMP = 33.5;
+export const TAP_GAP = 0.1;
 export const BALL_R = 1.6;
 export const RING_R = 15;
 export const RING_T = 3;
@@ -69,7 +66,7 @@ export class OrbitState {
     this.started = true;
     if (this.sinceTap < TAP_GAP) return;
     this.sinceTap = 0;
-    this.vy = Math.min(TAP_CAP, Math.max(this.vy, -BRAKE) + TAP);
+    this.vy = JUMP;
   }
 
   /** Obstacles get faster and denser as the climb goes on; every fourth is a double ring or a bar. */
@@ -114,11 +111,9 @@ export class OrbitState {
     this.time += dt;
     if (!this.started) return;
     this.sinceTap += dt;
-    const fall = GRAVITY / DRAG;
-    const decay = Math.exp(-DRAG * dt);
-    this.y += -fall * dt + ((this.vy + fall) * (1 - decay)) / DRAG;
-    this.vy = (this.vy + fall) * decay - fall;
-    this.floor = Math.max(this.floor, this.y - 34);
+    this.y += this.vy * dt - (GRAVITY * dt * dt) / 2;
+    this.vy -= GRAVITY * dt;
+    this.floor = Math.max(this.floor, this.y - 38);
     if (this.y < this.floor) { this.alive = false; this.events.push({kind: 'hit', y: this.y}); return; }
     while (this.nextY < this.y + 300) this.spawn();
     for (let index = 0; index < this.obstacles.length; index += 1) {

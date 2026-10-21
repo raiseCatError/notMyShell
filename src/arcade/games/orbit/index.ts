@@ -200,7 +200,7 @@ export const orbitGame: GameDefinition = {
   kind: 'action', category: 'reflex',
   controls: [{keys: 'Space', action: 'rise'}],
   howToPlay: [
-    'Each press of Space (or Up) nudges the ball upward and gravity pulls it down. Tap about every third of a second to hover, faster to climb. Falling off the bottom ends the climb.',
+    'Each press of Space (or Up) makes the ball hop up a little and gravity pulls it back down. Tap quickly to climb, about once a second to bob in place, and wait inside a ring until the top matches your color. Falling off the bottom ends the climb.',
     'Rings spin and bars slide. Touch only the part in your own color; any other color ends the climb.',
     'A prism above each obstacle switches you to another color. Without color, each color is its own symbol.',
   ],

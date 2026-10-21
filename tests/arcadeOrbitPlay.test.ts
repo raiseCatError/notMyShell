@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {createRng, type Rng} from '../src/arcade/rng.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
-import {BALL_R, COLORS, OrbitState, RING_R, RING_T, TAP_CAP, TAP_GAP, type Obstacle} from '../src/arcade/games/orbit/logic.js';
+import {BALL_R, COLORS, OrbitState, GRAVITY, JUMP, RING_R, RING_T, TAP_GAP, type Obstacle} from '../src/arcade/games/orbit/logic.js';
 import {orbitGame} from '../src/arcade/games/orbit/index.js';
 
 const DT = 10;
 const clear = (obstacle: Extract<Obstacle, {kind: 'ring'}>) => obstacle.r - RING_T / 2 - BALL_R;
 
-/** A bot that can only tap: `gap` ms apart (jittered) when adjusting, about 110-170 ms when it has more than 5 units to climb. */
+/** A bot that can only tap, `gap` ms apart (jittered), like a person who watches the ring and taps when the ball sinks. */
 export function bot(state: OrbitState, rng: Rng, options: {gap: [number, number]}) {
   let last = -1e9;
   let wait = rng.range(options.gap[0], options.gap[1]);
@@ -27,12 +27,12 @@ export function bot(state: OrbitState, rng: Rng, options: {gap: [number, number]
         return state.y < next.y ? bottom : top;
       };
       if (next.kind === 'bar') {
-        target = next.y - 9;
-        if (state.y > next.y - 18 && [0.1, 0.4, 0.8, 1.2].every(lead)) committed = next;
+        target = next.y - 14;   // a hop adds 8 units: wait where its top still clears the block
+        if (state.y > next.y - 18 && [0.1, 0.4, 0.8, 1.1].every(lead)) committed = next;
         if (committed === next) target = next.y + 10;
       } else if (state.y < next.y - next.r - 4) {
-        target = next.y - next.r - 8;
-        if (state.y > next.y - next.r - 14 && [0.1, 0.35, 0.7, 1.0].every(lead)) committed = next;
+        target = next.y - next.r - 13;   // below the arc by more than a hop
+        if (state.y > next.y - next.r - 16 && [0.1, 0.4, 0.8, 1.1].every(lead)) committed = next;
         if (committed === next) target = next.y;
       } else if (state.y < next.y + next.r - 6) {
         // inside the ring: hover at the centre until the top arc matches, then rise
@@ -42,10 +42,9 @@ export function bot(state: OrbitState, rng: Rng, options: {gap: [number, number]
         if (exiting === next) target = next.y + next.r + 8;
       } else target = next.y + next.r + 10;
     }
-    const far = target - state.y > 5;
-    if (now - last < (far ? Math.min(wait, 110 + (wait % 60)) : wait)) return;
-    const want = Math.max(-8, Math.min(26, (target - state.y) * 2.2));
-    if (state.vy < want) { state.tap(); last = now; wait = rng.range(options.gap[0], options.gap[1]); }
+    if (now - last < wait) return;
+    // The classic hop: tap once the ball has sunk below where it wants to be (or is far below it).
+    if (state.y < target - 1 && (state.vy < 10 || target - state.y > 12)) { state.tap(); last = now; wait = rng.range(options.gap[0], options.gap[1]); }
   };
 }
 
@@ -63,35 +62,45 @@ function run(seed: number, kind: 'beginner' | 'steady' | 'mash' | 'idle', stepMs
   return state;
 }
 
-test('a tap is gentle: from rest it lifts about the ring radius at most, and taps never stack past the cap', () => {
+test('a tap is a hop: it sets the speed (no stacking), rises about 8 units (a quarter of a ring), and lands in about a second', () => {
   const s = new OrbitState(createRng(1)); s.obstacles = []; s.prisms = [];
   s.tap();
-  let top = 0;
-  for (let t = 0; t < 2000; t += DT) { s.step(DT); top = Math.max(top, s.y); }
-  assert.ok(top > 1 && top < RING_R * 0.4, `one tap lifts ${top.toFixed(1)} units`);
+  let top = 0, air = 0;
+  for (let t = 0; t < 2000; t += DT) { s.step(DT); top = Math.max(top, s.y); if (s.y > 0) air = t; }
+  assert.ok(top > 6 && top < 11, `one tap rises ${top.toFixed(1)} units`);
+  assert.ok(air > 800 && air < 1200, `airborne ${air} ms`);
+  assert.ok(Math.abs(JUMP * JUMP / (2 * GRAVITY) - top) < 0.5);
   const m = new OrbitState(createRng(1)); m.obstacles = []; m.prisms = [];
   let fastest = 0;
   for (let t = 0; t < 3000; t += DT) { if (Math.floor(t / 20) !== Math.floor((t + DT) / 20)) m.tap(); m.step(DT); fastest = Math.max(fastest, m.vy); }
-  assert.ok(fastest <= TAP_CAP + 1e-9);
+  assert.ok(fastest <= JUMP + 1e-9, 'mashing never exceeds a single hop\'s speed');
   const before = new OrbitState(createRng(1)); before.tap(); const v = before.vy; before.tap();
   assert.equal(before.vy, v, 'taps inside the cooldown are ignored');
-  assert.ok(TAP_GAP < 0.15);
+  assert.ok(TAP_GAP <= 0.12);
+  // Space or Up must always visibly lift the ball.
+  const lift = new OrbitState(createRng(2)); lift.obstacles = []; lift.prisms = []; lift.tap();
+  for (let t = 0; t < 300; t += DT) lift.step(DT);
+  assert.ok(lift.y > 4, `300 ms after a tap the ball is ${lift.y.toFixed(1)} units up`);
 });
 
-test('hovering: ordinary tap intervals keep the ball in the central band of a ring for over 1.2 s', () => {
-  for (const [lo, hi, seed] of [[250, 450, 1], [250, 450, 2], [300, 300, 3], [350, 350, 4], [250, 350, 5]] as const) {
+test('hovering: tapping about once a second, or whenever the ball sinks below the centre, keeps it inside the ring for seconds', () => {
+  const hover = (seed: number, policy: 'timed' | 'sink') => {
     const s = new OrbitState(createRng(seed)); s.prisms = [];
     const ring = {kind: 'ring' as const, y: 40, r: RING_R, speed: 0.9, phase: 0};
     s.obstacles = [ring];
     s.y = 40; s.started = true; s.color = OrbitState.ringColor(ring, 0, -Math.PI / 2);
     const rng = createRng(seed);
-    let next = 0, inBand = 0, longest = 0;
-    for (let t = 0; t < 4000 && s.alive; t += DT) {
-      if (t >= next) { s.tap(); next = t + rng.range(lo, hi); }
+    let next = 0, last = -1e9, inBand = 0, longest = 0;
+    for (let t = 0; t < 8000 && s.alive; t += DT) {
+      if (policy === 'timed' ? t >= next : s.y < ring.y - 1 && t - last >= 250 + rng.range(0, 150)) { s.tap(); last = t; next = t + rng.range(900, 1000); }
       s.step(DT);
       if (Math.abs(s.y - ring.y) < clear(ring) - 1.5) { inBand += DT; longest = Math.max(longest, inBand); } else inBand = 0;
     }
-    assert.ok(longest >= 1200, `${lo}-${hi}ms seed ${seed}: stayed ${longest} ms in the band`);
+    return longest;
+  };
+  for (const seed of [1, 2, 3, 4, 5]) {
+    assert.ok(hover(seed, 'timed') >= 3000, `timed seed ${seed}: ${hover(seed, 'timed')} ms`);
+    assert.ok(hover(seed, 'sink') >= 6000, `sink seed ${seed}: ${hover(seed, 'sink')} ms`);
   }
 });
 

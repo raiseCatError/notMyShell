@@ -5,7 +5,7 @@ import {Canvas} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
-import {COLORS, OrbitState, RING_R, TAP} from '../src/arcade/games/orbit/logic.js';
+import {COLORS, OrbitState, RING_R, JUMP} from '../src/arcade/games/orbit/logic.js';
 import {orbitGame} from '../src/arcade/games/orbit/index.js';
 import {displayWidth} from '../src/util/text.js';
 
@@ -38,7 +38,7 @@ test('collision: crossing a ring through your own color passes, any other color 
     s.color = match ? bottom : (bottom + 1) % COLORS;
     s.started = true;
     s.y = 30 - RING_R - 6;
-    s.vy = TAP;
+    s.vy = JUMP;
     let crossed = false;
     for (let t = 0; t < 4000 && s.alive; t += STEP) { if (s.vy < 15) s.tap(); s.step(STEP); if (s.y > 30 - RING_R + 2) crossed = true; }
     assert.equal(crossed, match, match ? 'through the matching arc' : 'stopped by the wrong color');
