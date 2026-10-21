@@ -125,12 +125,13 @@ powerline-style selected segment, square keycaps) without its sky, Aurora or sta
 
 ## Stage gameplay
 
-- Entering a game hides the library: the game gets the whole viewport except one HUD row (title, score, best, state)
-  and one control row (hidden on ≥ 30 rows if the game draws its own hints, shown on pause).
+- Entering a game hides the library: the game gets the whole viewport except one row at the bottom carrying the game's
+  title and its controls as keycaps (dropped below 10 rows). Games draw their own score and status inside the playfield.
 - Puzzle boards stay square-celled and centered at an integral cell size; a side panel (timer, difficulty, counters)
   sits beside the board when width allows, below it otherwise. Boards never stretch.
-- Esc or `p` opens the shared pause sheet (Resume, Restart, How to play, Effects, Back to Arcade, Exit). Results use the
-  shared results sheet (score count-up, details, record badge, Retry, Back, Exit) after the game's own celebration.
+- Esc or `p` opens the shared pause sheet (Resume, Restart, How to play, Back to Arcade, Exit) over the dimmed playfield;
+  effects follow NMSh's own motion settings (Reduced Motion, Effects Off), so there is no separate Arcade toggle. Results
+  use the shared results sheet (score count-up, details, record badge, Retry, Back, Exit) after the game's own finale.
 
 ## Visual system
 
