@@ -833,7 +833,9 @@ export class ArcadeSession {
 
   /** Under 40 × 12: a plain list and the keys. */
   private drawTiny(canvas: Canvas, look: ArcadeLook): void {
-    canvas.text(0, 0, truncateText(this.query !== undefined ? `/ ${this.query}` : 'Vespyr Arcade', canvas.width), {fg: look.text.strong, bold: true});
+    const marker = this.strip ? undefined : this.compactMarker(look);
+    canvas.text(0, 0, truncateText(this.query !== undefined ? `/ ${this.query}` : 'Vespyr Arcade', Math.max(1, canvas.width - (marker ? displayWidth(marker.text) + 1 : 0))), {fg: look.text.strong, bold: true});
+    if (marker) canvas.text(canvas.width - displayWidth(marker.text), 0, marker.text, {fg: marker.color, bold: true});
     const list = this.gameEntries();
     const height = Math.max(1, canvas.height - 2);
     const start = Math.max(0, Math.min(this.cursor - Math.floor(height / 2), list.length - height));

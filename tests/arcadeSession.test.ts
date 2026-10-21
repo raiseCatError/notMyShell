@@ -234,7 +234,7 @@ test('app: /game <name> opens that game; an unknown name is explained; a running
     f.frame.begin('sleep 5');
     await f.app['runSlash']('/games', {kind: 'arcade'});
     assert.equal(f.app['arcade'], undefined, 'never over a running command');
-    assert.match(f.screen(), /let the running command finish first/u);
+    assert.match(f.screen(), /let the running command finish, or press Ctrl\+T/u);
   } finally { f.frame.dispose(); }
 });
 
