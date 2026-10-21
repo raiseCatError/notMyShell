@@ -3,7 +3,10 @@ import type {TextOverlay} from '../arcade/Canvas.js';
 import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from './EditorPanel.js';
 import {formatForPath, type ViewDocument} from './document.js';
 import type {EditableFile} from './fileEdit.js';
-import {createViewer, renderViewer, viewerKey, type ViewerAction, type ViewerLook, type ViewerState} from './ViewerPanel.js';
+import {displayWidth, stripAnsi, truncateAnsi} from '../util/text.js';
+import {foreground, UI_COLORS} from '../ui/palette.js';
+import {getIconStyle} from '../ui/glyphs.js';
+import {createViewer, renderViewer, showSourceLine, viewerKey, type ViewerAction, type ViewerLook, type ViewerState} from './ViewerPanel.js';
 
 /**
  * The document workspace for Markdown and HTML files: one document, three ways to look at it, switched with a key and never
@@ -20,7 +23,39 @@ import {createViewer, renderViewer, viewerKey, type ViewerAction, type ViewerLoo
  * and line endings kept). In navigation modes `h`, `e`, `r` are commands; while typing they are text, and Ctrl+O is the
  * switch that works there.
  */
-export type DocumentMode = 'source' | 'edit' | 'preview';
+export type DocumentMode = 'source' | 'edit' | 'preview' | 'split';
+
+/**
+ * The split view (#461): the editor, the only editable pane, beside NMSh's own preview of the same buffer. F2 opens and closes
+ * it; Ctrl+O moves between the panes; in the preview pane `x` swaps the sides, `<` `>` change the widths and `l` links or
+ * unlinks the preview's scrolling to the caret. Below SPLIT_MIN_COLUMNS only the focused pane is shown, full width.
+ */
+export interface SplitState {
+  focus: 'source' | 'preview';
+  /** The preview is on the left. */
+  swapped: boolean;
+  /** The preview's share of the width, in percent. */
+  ratio: number;
+  /** The preview follows the caret when it moves to another line. */
+  linked: boolean;
+  /** Bumped by every change to the buffer, so the preview is rebuilt only when the text changed. */
+  version: number;
+  seen: number;
+  caretLine: number;
+  stop(): void;
+}
+
+export const SPLIT_MIN_COLUMNS = 100;
+const RATIO_MIN = 30, RATIO_MAX = 70, RATIO_STEP = 5;
+
+/** The pane widths for a terminal of `columns` (one column is the divider); `narrow` shows one pane only. */
+export function splitLayout(columns: number, split: Pick<SplitState, 'ratio'>): {narrow: boolean; source: number; preview: number} {
+  if (columns < SPLIT_MIN_COLUMNS) return {narrow: true, source: columns, preview: columns};
+  const usable = columns - 1;
+  const ratio = Math.max(RATIO_MIN, Math.min(RATIO_MAX, split.ratio));
+  const preview = Math.max(40, Math.min(usable - 40, Math.round(usable * ratio / 100)));
+  return {narrow: false, source: usable - preview, preview};
+}
 
 /** The browser-backed preview as the workspace sees it (see browser/ for the engine behind it). */
 export interface PreviewView {
@@ -51,6 +86,8 @@ export interface DocumentSession {
   before: DocumentMode;
   /** Scroll positions per read-only mode, so switching back finds the place again. */
   tops: {source: {top: number; sub: number}; preview: {top: number; sub: number}};
+  /** Present only while the mode is 'split'. */
+  split?: SplitState;
   note?: string;
   /** Sized-text blocks of the last render, positioned in the returned panel rows. */
   overlays: TextOverlay[];
@@ -90,6 +127,7 @@ function documentOf(editor: EditorState): ViewDocument {
 
 export function createDocumentSession(file: EditableFile, mode: DocumentMode = 'source'): DocumentSession {
   const editor = createEditor(file);
+  editor.workspace = true;
   const viewer = createViewer(documentOf(editor));
   viewer.rendered = false;
   viewer.numbers = true;
@@ -112,8 +150,19 @@ export function syncDocumentViewer(state: DocumentSession, rendered: boolean): v
 export function setDocumentMode(state: DocumentSession, mode: DocumentMode): void {
   if (mode === state.mode) return;
   const viewer = state.viewer;
-  if (state.mode !== 'edit') state.tops[state.mode] = {top: viewer.top, sub: viewer.sub};
-  if (mode === 'preview') state.before = state.mode;
+  if (state.mode === 'source' || state.mode === 'preview') state.tops[state.mode] = {top: viewer.top, sub: viewer.sub};
+  if (state.mode === 'split') { state.split?.stop(); delete state.split; }
+  if (mode === 'preview') state.before = state.mode === 'split' ? 'edit' : state.mode;
+  if (mode === 'split') {
+    const split: SplitState = {focus: state.mode === 'edit' ? 'source' : 'preview', swapped: false, ratio: 50, linked: true, version: 0, seen: -1, caretLine: -1, stop: () => {}};
+    split.stop = state.editor.buffer.observe(() => { split.version += 1; });
+    state.split = split;
+    syncDocumentViewer(state, true);
+    state.viewer.rendered = true;
+    state.mode = 'split';
+    state.note = undefined;
+    return;
+  }
   if (mode !== 'edit') {
     syncDocumentViewer(state, mode === 'preview');
     viewer.top = state.tops[mode].top;
@@ -131,6 +180,8 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   state.note = undefined;
   // A save or conflict dialog belongs to the editor, whatever mode raised it.
   if (editor.dialog || editor.review || editor.input || editor.busy) return fromEditor(state, editorKey(editor, key, columns, height));
+  if (key.kind === 'splitToggle') { setDocumentMode(state, state.mode === 'split' ? 'edit' : 'split'); return undefined; }
+  if (state.mode === 'split') return splitKey(state, key, columns, height, look);
   if (key.kind === 'sendToProgram') return editor.file.scratch ? fromEditor(state, editorKey(editor, key, columns, height)) : {kind: 'save'};
 
   if (state.mode === 'edit') {
@@ -146,6 +197,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   const searching = Boolean(state.viewer.input) && state.mode === 'source';
   if (!searching) {
     if (text === 'e') { setDocumentMode(state, 'edit'); return undefined; }
+    if (text === 's') { setDocumentMode(state, 'split'); return undefined; }
     if (key.kind === 'toggleDetails' && state.mode === 'preview') { setDocumentMode(state, state.before); return undefined; }
     if (text === 'h' || key.kind === 'toggleDetails') {
       if (state.mode === 'preview') { setDocumentMode(state, 'source'); return undefined; }
@@ -180,6 +232,65 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   return undefined;
 }
 
+function splitLook(state: DocumentSession, look: ViewerLook): ViewerLook {
+  const split = state.split!;
+  const {workspace: _workspace, sized: _sized, ...rest} = look;
+  return {...rest, split: {linked: split.linked, focused: split.focus === 'preview'}};
+}
+
+function splitKey(state: DocumentSession, key: Key, columns: number, height: number, look: ViewerLook): DocumentSessionAction | undefined {
+  const split = state.split!;
+  const editor = state.editor;
+  const layout = splitLayout(columns, split);
+  const text = key.kind === 'text' ? key.value : undefined;
+  if (key.kind === 'toggleDetails' && !editor.dialog) { split.focus = split.focus === 'source' ? 'preview' : 'source'; return undefined; }
+  if (split.focus === 'source') {
+    if (key.kind === 'escape' && !editor.input && !editor.snippet) { setDocumentMode(state, 'source'); return undefined; }
+    return fromEditor(state, editorKey(editor, key, layout.narrow ? columns : layout.source, height));
+  }
+  const viewer = state.viewer;
+  if (!viewer.input) {
+    if (key.kind === 'escape' && !viewer.query) { setDocumentMode(state, 'source'); return undefined; }
+    if (text === 'x') { split.swapped = !split.swapped; return undefined; }
+    if (text === '<' || text === '>') { split.ratio = Math.max(RATIO_MIN, Math.min(RATIO_MAX, split.ratio + (text === '>' ? RATIO_STEP : -RATIO_STEP))); return undefined; }
+    if (text === 'l') { split.linked = !split.linked; return undefined; }
+    if (text === 'e') { split.focus = 'source'; return undefined; }
+    if (text === 's') { setDocumentMode(state, 'edit'); return undefined; }
+  }
+  // Scrolling the preview by hand is the person's choice of place: it is not undone by a caret that has not moved.
+  split.caretLine = editor.buffer.caret.line;
+  const action = viewerKey(viewer, key, layout.narrow ? columns : layout.preview, height, splitLook(state, look));
+  return action?.kind === 'copy' ? {kind: 'copy', text: action.text} : undefined;
+}
+
+function pad(row: string, width: number): string {
+  const cut = truncateAnsi(row, width);
+  return `${cut}${' '.repeat(Math.max(0, width - displayWidth(stripAnsi(cut))))}\u001b[0m`;
+}
+
+function renderSplit(state: DocumentSession, columns: number, height: number, look: ViewerLook): string[] {
+  const split = state.split!;
+  const editor = state.editor;
+  const layout = splitLayout(columns, split);
+  const previewLook = splitLook(state, look);
+  const previewWidth = layout.narrow ? columns : layout.preview;
+  if (split.seen !== split.version) { syncDocumentViewer(state, true); state.viewer.rendered = true; split.seen = split.version; }
+  const line = editor.buffer.caret.line;
+  if (split.linked && line !== split.caretLine) showSourceLine(state.viewer, line, previewWidth, height, previewLook);
+  split.caretLine = line;
+  if (state.note) state.viewer.note = state.note;
+  if (layout.narrow) return split.focus === 'source' ? renderEditor(editor, columns, height) : renderViewer(state.viewer, columns, height, previewLook);
+  const source = renderEditor(editor, layout.source, height);
+  const preview = renderViewer(state.viewer, layout.preview, height, previewLook);
+  const [left, right] = split.swapped ? [preview, source] : [source, preview];
+  const [leftWidth, rightWidth] = split.swapped ? [layout.preview, layout.source] : [layout.source, layout.preview];
+  const safe = getIconStyle() === 'safe';
+  const bar = `${foreground(UI_COLORS.separator)}${safe ? '|' : '│'}\u001b[0m`;
+  const joint = (top: boolean) => `${foreground(UI_COLORS.separator)}${safe ? '+' : top ? '┬' : '┴'}\u001b[0m`;
+  const count = Math.max(left.length, right.length);
+  return Array.from({length: count}, (_, index) => `${pad(left[index] ?? '', leftWidth)}${index === 0 ? joint(true) : index === count - 1 ? joint(false) : bar}${pad(right[index] ?? '', rightWidth)}`);
+}
+
 function fromEditor(state: DocumentSession, action: EditorAction | undefined): DocumentSessionAction | undefined {
   if (!action) return undefined;
   if (action.kind === 'close') return {kind: 'close'};
@@ -198,7 +309,8 @@ export function documentSessionLook(state: DocumentSession, look: ViewerLook = {
 export function renderDocumentSession(state: DocumentSession, columns: number, height: number, look: ViewerLook = {}): string[] {
   state.overlays = [];
   const editor = state.editor;
-  if (state.mode === 'edit' || editor.dialog || editor.review || editor.input) return renderEditor(editor, columns, height);
+  if (state.mode === 'split' && state.split && !(editor.dialog || editor.review || editor.input)) return renderSplit(state, columns, height, look);
+  if (state.mode === 'edit' || state.mode === 'split' || editor.dialog || editor.review || editor.input) return renderEditor(editor, columns, height);
   if (state.mode === 'preview' && state.preview) {
     const view = state.preview.render(columns, height);
     state.overlays = view.overlays ?? [];

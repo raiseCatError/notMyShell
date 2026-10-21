@@ -49,6 +49,15 @@ Limits: code fences are recognised by a line scan (indented code blocks and fenc
 
 **Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
 
+## Split view
+
+`DocumentMode` gains `'split'` (#461). The session keeps the one `EditorState` and one `ViewerState`; the split adds a `SplitState` (focus, swapped, ratio, linked, a buffer version counter fed by `TextBuffer.observe`, the last caret line). The preview pane is the existing native renderer (`renderViewer` with `rendered` true), re-synced from the buffer only when the version changed. Keys: **F2** (the new `splitToggle` key) or `s` from the read-only views enters; **Ctrl+O** switches the focused pane (elsewhere it still opens the preview); a key goes to exactly one pane. The source pane is the editor unchanged (snippets, helpers, recovery, review and Save As all work in it; a dialog or prompt takes the whole panel). The preview pane takes the viewer's navigation, find and heading keys plus `x` swap, `<`/`>` width (30–70%), `l` link/unlink, `e` focus the text, `s` back to editing, Esc to the source view.
+
+- **Linked scrolling:** when the caret moves to another line the preview shows the first row of that line's block (`rowForLine`, the source map). Scrolling the preview by hand is respected until the caret moves again; `l` turns following off.
+- **Layout:** at 100 columns and up the panes share the width minus a one-column divider (preview 30–70%, never under 40 columns); below 100 only the focused pane is drawn full width and Ctrl+O switches — nothing is crushed. Resizing re-lays out from the same state.
+- **Not provided:** the Chromium preview in the split (it owns a page and a served folder per file; the native renderer is what the split shows), pointer input and independent pane focus by mouse, a vertical (stacked) orientation, synchronised scrolling from preview back to the caret, and a per-heading synchronisation beyond block granularity.
+- **Verified by** `tests/documentSplit.test.ts` (layout, both panes of one buffer, edits and undo reaching the preview, linked scrolling, focus and key ownership, swap and resize bounds, narrow collapse and restore, Esc/F2 transitions, dirty and save from the split, preview find and heading prompts, NO_COLOR, hostile and 40,000-line documents, and the real app).
+
 ## Playground
 
 `/playground [md|html|recover]` ([#468](https://github.com/raiseCatError/notMyShell/issues/468), slice 2) opens a **scratch document**: an `EditableFile` with `scratch: {id}`, `path` `Untitled.md` / `Untitled.html` (a display name that gives the format), `realPath` `scratch:<16 hex>` and no disk identity. The `scratch:` identity is what the recovery drafts of #469 are keyed by; it is never a path, and nothing reads or writes it as one.

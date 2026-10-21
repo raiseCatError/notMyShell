@@ -21,6 +21,12 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
 - [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
 
+## Split view (#461)
+- [ ] F2 is delivered by the terminal and by Zed's terminal (otherwise use `s` from the read-only view). The split shows the text and the rendered document side by side; typing updates the preview; the preview follows the caret; `l` unlinks.
+- [ ] Ctrl+O switches panes; letters typed in the preview pane never change the text; `x`, `<`, `>` behave; below 100 columns one pane at a time; widen the window and the split returns.
+- [ ] Esc keeps unsaved text; Ctrl+S saves (or asks for a name in a Playground); resize while typing does not corrupt the screen.
+- [ ] 30, 50, 80, 100 and 120+ columns; NO_COLOR; Safe Glyphs (divider is `|`).
+
 ## Heading navigation (#462)
 - [ ] In a long Markdown file `#` opens the heading prompt (is `#` delivered by your terminal and Zed?); type, Up/Down, Enter jumps in both the source and the rendered view; Backspace returns.
 - [ ] `/view README.md#some-heading` opens at the heading. In `/edit`, F1 then `h` lists headings with indentation; `j` returns after editing above the starting point.

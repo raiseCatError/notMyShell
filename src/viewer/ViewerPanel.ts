@@ -78,6 +78,8 @@ export interface ViewerLook {
   sized?: boolean;
   /** The viewer is the read-only side of a document workspace (Markdown/HTML): its controls name the workspace's keys. */
   workspace?: {mode: 'source' | 'preview'; dirty: boolean; browser: boolean; trusted: boolean};
+  /** The viewer is the preview pane of the split view (#461): its controls name the split's keys. */
+  split?: {linked: boolean; focused: boolean};
 }
 
 export function createViewer(document: ViewDocument): ViewerState {
@@ -398,6 +400,15 @@ function step(state: ViewerState, direction: 1 | -1, width: number, height: numb
   reveal(state, found.unit, width, height, look);
 }
 
+/** Scroll to the first row of the block holding source line `line` (the split view's linked scrolling). */
+export function showSourceLine(state: ViewerState, line: number, columns: number, height: number, look: ViewerLook = {}): void {
+  const width = contentWidth(state, columns);
+  const body = bodyHeight(state, columns, height, look);
+  state.top = state.rendered ? rowForLine(markdownRows(state, width, look), line) : Math.min(line, Math.max(0, state.document.lines.length - 1));
+  state.sub = 0;
+  clampTop(state, width, body, look);
+}
+
 // ---- Keys ---------------------------------------------------------------------------------------------------------
 
 export function viewerKey(state: ViewerState, key: Key, columns: number, height: number, look: ViewerLook = {}): ViewerAction | undefined {
@@ -520,6 +531,7 @@ function headerRows(state: ViewerState, columns: number, height: number, look: V
 function controls(state: ViewerState, columns: number, look: ViewerLook): string[] {
   const width = Math.max(1, columns - 4);
   if (state.input?.kind === 'heading') return renderControlRows([['↑↓', 'choose'], ['Enter', 'go'], ['Esc', 'cancel']], width);
+  if (look.split && !state.input) return renderControlRows([['Ctrl+O', look.split.focused ? 'to the text' : 'here'], ['F2', 'close split'], ['↑↓', 'scroll'], ['/', 'find'], ['#', 'headings'], ['x', 'swap'], ['< >', 'width'], ['l', look.split.linked ? 'unlink' : 'link'], ['Esc', 'source']], width);
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'search' ? 'find' : 'go'], ['Esc', 'cancel']], width);
   if (look.workspace) {
     const preview = look.workspace.mode === 'preview';
