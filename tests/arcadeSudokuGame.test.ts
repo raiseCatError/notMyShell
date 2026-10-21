@@ -166,21 +166,22 @@ test('same seed, same first puzzle; the next puzzle differs', () => {
   assert.notEqual(gridString(a.game.state!.puzzle), first);
 });
 
-test('completion: a solved grid wins with a result, a gentle celebration first, and clears the saved puzzle', () => {
+test('completion: a solved grid wins with a result, plays its light wave as the finale first, and clears the saved puzzle', () => {
   const s = startEasy();
   s.game.state!.elapsedMs = 187_000;
   solveAll(s);
   assert.ok(s.game.state!.solved);
-  assert.equal(s.game.status, 'playing', 'the celebration shows first');
+  assert.equal(s.game.status, 'won');
+  assert.ok(s.game.finale && !s.game.finale.done, 'the board celebrates before the results sheet');
   assert.ok(s.game.celebrating);
   assert.ok(s.game.refreshMs <= 100, 'animation frames are requested');
   s.draw();
   const text = s.canvas.plain().join('\n');
-  assert.match(text, /Solved/u);
+  assert.match(text, /Solved in 3:07/u);
   s.game.animate(500);
-  assert.equal(s.game.status, 'playing');
-  s.game.animate(2000);
-  assert.equal(s.game.status, 'won');
+  assert.equal(s.game.finale!.done, false, 'the wave is still crossing the board');
+  for (let t = 0; t < 2500; t += 50) s.game.animate(50);
+  assert.equal(s.game.finale!.done, true);
   const result = s.game.result!;
   assert.equal(result.scoreText, '3:07');
   assert.equal(result.record, true, 'the first time at a difficulty is a record');
@@ -211,15 +212,19 @@ test('completion: reduced motion and effects off win at once; a slower or hinted
   assert.ok(s.game.result!.details.some(line => /1 hint used/u.test(line)));
 });
 
-test('completion: confetti uses the particle system under normal effects and stays off in reduced motion', () => {
+test('completion: confetti uses the particle system under normal effects and stays off in reduced motion; a key skips the wave', () => {
   const s = startEasy();
   solveAll(s);
   s.draw(); s.game.animate(200); s.draw();
-  const hasHalfBlock = s.canvas.rows({color: 'truecolor', safe: false}).some(row => /[▀▄]/u.test(stripAnsi(row)));
-  assert.ok(hasHalfBlock, 'particles are drawn as half blocks');
+  assert.ok((s.game as any).fx.count > 0, 'confetti particles are live');
+  s.press('x');
+  assert.equal(s.game.finale!.done, true, 'any key skips the finale');
   const calm = startEasy({reduced: true});
   solveAll(calm); calm.draw(); calm.game.animate(200); calm.draw();
-  assert.ok(!calm.canvas.rows({color: 'truecolor', safe: false}).some(row => /[▀▄]/u.test(stripAnsi(row))));
+  assert.equal((calm.game as any).fx.count, 0, 'no confetti under Reduced Motion');
+  assert.ok(calm.game.finale, 'a still highlight still marks the win');
+  for (let t = 0; t < 800; t += 50) calm.game.animate(50);
+  assert.equal(calm.game.finale!.done, true, 'and it ends on its own');
 });
 
 test('abandoning a started puzzle ends the streak; finishing does not', () => {
@@ -312,7 +317,9 @@ test('layout: every canvas from 20x8 to 200x60 draws within bounds, fits its boa
 });
 
 test('layout: bigger canvases get bigger cells, with the HUD beside the board when it fits', () => {
-  assert.equal(layoutFor(200, 60)!.cw, 7);
+  assert.equal(layoutFor(200, 60)!.cw, 9);
+  assert.equal(layoutFor(120, 35)!.cw, 7, 'a side HUD beats wider tiles with a cramped top HUD');
+  assert.equal(layoutFor(120, 35)!.hud, 'side');
   assert.equal(layoutFor(200, 60)!.hud, 'side');
   assert.equal(layoutFor(80, 21)!.cw, 5);
   assert.equal(layoutFor(80, 21)!.ch, 1);
@@ -450,10 +457,11 @@ test('inside the arcade session: Esc pauses and blanks the board, resume continu
       state.moveTo(cell);
       session.key({kind: 'text', value: String(state.solution[cell])});
     }
-    assert.equal(session.screen, 'playing', 'the celebration plays inside the game first');
-    session.frame(1000); session.frame(1000);
+    assert.equal(session.screen, 'finale', 'the board celebrates inside the game first');
+    assert.doesNotMatch(screen(), /Play again/u, 'no results card over the wave');
+    for (let t = 0; t < 3000; t += 100) session.frame(100);
     assert.equal(session.screen, 'over');
-    assert.match(screen(), /New record|Well done/u);
+    assert.match(screen(), /New record|Complete/u);
     assert.match(screen(), /Play again/u);
     assert.match(screen(), /0:0[34]|0:03/u);
   } finally { session.dispose(); rmSync(dir, {recursive: true, force: true}); }

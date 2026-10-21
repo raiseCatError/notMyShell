@@ -11,6 +11,7 @@
 import {execFileSync} from 'node:child_process';
 import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {arcadeFrame, type FrameOptions} from './frame.js';
 import {displayWidth} from '../../src/util/text.js';
 
@@ -64,7 +65,7 @@ function rowCells(row: string): string {
   return out;
 }
 
-function page(rows: string[], columns: number): string {
+export function page(rows: string[], columns: number): string {
   const body = rows.map((row, index) => `<div class="r" style="top:${index * CELL_H}px">${rowCells(row)}</div>`).join('');
   return `<!doctype html><meta charset="utf-8"><style>
 html,body{margin:0;background:${DEFAULT_BG}}
@@ -74,17 +75,21 @@ html,body{margin:0;background:${DEFAULT_BG}}
 </style><div class="s">${body}</div>`;
 }
 
-const [shotsFile, outDir] = process.argv.slice(2);
-if (!shotsFile || !outDir) { console.error('usage: shots.ts <shots.json> <output directory>'); process.exit(2); }
-mkdirSync(outDir, {recursive: true});
-const shots = JSON.parse(readFileSync(shotsFile, 'utf8')) as Shot[];
-for (const shot of shots) {
-  const columns = shot.cols ?? 120;
-  const rows = shot.rows ?? 36;
-  const frame = arcadeFrame({...shot, columns, rows});
-  const html = join(outDir, `${shot.name}.html`);
-  writeFileSync(html, page(frame, columns));
+/** Photograph ANSI rows as `<outDir>/<name>.png` (the page is kept beside it as `<name>.html`). */
+export function photograph(rows: string[], columns: number, outDir: string, name: string): void {
+  mkdirSync(outDir, {recursive: true});
+  const html = join(outDir, `${name}.html`);
+  writeFileSync(html, page(rows, columns));
   execFileSync(CHROME, ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${join(outDir, '.chrome')}`,
-    `--screenshot=${join(outDir, `${shot.name}.png`)}`, `--window-size=${columns * CELL_W},${rows * CELL_H}`, `file://${html}`], {stdio: 'ignore'});
-  console.log(`${shot.name}: ${columns}x${rows}`);
+    `--screenshot=${join(outDir, `${name}.png`)}`, `--window-size=${columns * CELL_W},${rows.length * CELL_H}`, `file://${html}`], {stdio: 'ignore'});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [shotsFile, outDir] = process.argv.slice(2);
+  if (!shotsFile || !outDir) { console.error('usage: shots.ts <shots.json> <output directory>'); process.exit(2); }
+  for (const shot of JSON.parse(readFileSync(shotsFile, 'utf8')) as Shot[]) {
+    const columns = shot.cols ?? 120;
+    photograph(arcadeFrame({...shot, columns, rows: shot.rows ?? 36}), columns, outDir, shot.name);
+    console.log(`${shot.name}: ${columns}x${shot.rows ?? 36}`);
+  }
 }

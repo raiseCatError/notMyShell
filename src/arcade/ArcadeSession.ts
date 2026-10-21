@@ -587,6 +587,8 @@ export class ArcadeSession {
 
   private drawPreview(canvas: Canvas, look: ArcadeLook, palette: ArcadePalette, game: GameDefinition, x: number, y: number, width: number, height: number): void {
     if (width < 8 || height < 3) return;
+    // A dark frame around the preview, so it reads as a screen of its own above the details.
+    canvas.fill(x - 1, y - 1, width + 2, height + 2, ' ', {bg: look.surface.sunken});
     this.preview = this.preview?.width === width && this.preview.height === height ? this.preview : new Canvas(width, height);
     this.preview.clear(palette.deep);
     // Reduced Motion shows one representative still.
@@ -643,9 +645,9 @@ export class ArcadeSession {
     const game = entry.game;
     const description = wrap(game.description, width - 4);
     const room = bottom - top - 1;
-    const previewHeight = Math.max(3, Math.min(Math.round(width * 0.28), room - 4 - Math.min(2, description.length)));
-    this.drawPreview(canvas, look, palette, game, 2, top + 1, width - 4, previewHeight);
-    let y = top + 2 + previewHeight;
+    const previewHeight = Math.max(3, Math.min(Math.round(width * 0.28), room - 6 - Math.min(2, description.length)));
+    this.drawPreview(canvas, look, palette, game, 3, top + 2, width - 6, previewHeight);
+    let y = top + 3 + previewHeight;
     const put = (text: string, style: Style) => { if (y < bottom) { canvas.text(2, y, truncateText(text, width - 4), style); y += 1; } };
     put(`${game.title}${this.hub.favorites.includes(game.id) ? '  ★' : ''}`, {fg: look.text.strong, bold: true});
     put(game.tagline, {fg: look.accent});
