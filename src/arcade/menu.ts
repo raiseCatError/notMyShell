@@ -1,5 +1,5 @@
-import {mixRgb} from '../chroma/chroma.js';
 import type {Canvas} from './Canvas.js';
+import {arcadeLook} from './look.js';
 import type {ArcadePalette} from './palette.js';
 import type {Key} from '../terminal/keys.js';
 import {GLYPHS} from '../ui/glyphs.js';
@@ -37,13 +37,16 @@ export class Menu {
   draw(canvas: Canvas, palette: ArcadePalette, x: number, y: number, width: number): number {
     const inner = Math.max(...this.items.map(item => displayWidth(item.label) + (item.hint ? displayWidth(item.hint) + 2 : 0)), 8) + 4;
     const left = x + Math.max(0, Math.floor((width - inner) / 2));
+    const look = arcadeLook(palette);
     this.items.forEach((item, row) => {
       const selected = row === this.index;
-      const style = selected ? {fg: palette.ink, bg: mixRgb(palette.selection, palette.deep, 0.15), bold: true, reverse: false} : {fg: palette.muted};
+      // Unselected rows keep whatever surface they are drawn on (a card, a board); the selection is the Arcade's band.
+      const under = canvas.cell(left, y + row)?.bg;
+      const style = selected ? {fg: look.text.strong, bg: look.surface.selected, bold: true} : {fg: look.text.normal, bg: under};
       canvas.fill(left, y + row, inner, 1, ' ', style);
-      canvas.text(left + 1, y + row, selected ? GLYPHS.selection : ' ', {...style, fg: palette.accent});
+      canvas.text(left + 1, y + row, selected ? GLYPHS.selection : ' ', {...style, fg: look.focus});
       canvas.text(left + 3, y + row, item.label, style);
-      if (item.hint) canvas.text(left + inner - 1 - displayWidth(item.hint), y + row, item.hint, {...style, fg: selected ? palette.muted : palette.faint, bold: false});
+      if (item.hint) canvas.text(left + inner - 1 - displayWidth(item.hint), y + row, item.hint, {...style, fg: selected ? look.text.normal : look.text.dim, bold: false});
     });
     return this.items.length;
   }

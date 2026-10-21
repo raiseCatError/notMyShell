@@ -27,7 +27,7 @@ export function playerRows(pose: PlayerPose): string[] {
 
 export function playerSprite(pose: PlayerPose, palette: ArcadePalette): Sprite {
   return spriteFromRows(playerRows(pose), {
-    L: palette.cat.body, E: palette.cat.eye, S: palette.cat.shade, B: palette.accent, G: mixRgb(palette.accent, palette.haze, 0.6),
+    L: palette.cat.body, E: palette.cat.eye, S: palette.cat.shade, B: {red: 0x5f, green: 0xe3, blue: 0xff}, G: {red: 0xd8, green: 0xfb, blue: 0xff},
   });
 }
 
@@ -37,7 +37,8 @@ export const plainPlayer = (pose: PlayerPose): readonly string[] => (pose === 'h
 /** A spike, 6 x 4: `A` fill, `B` the lit tip. Its hitbox is the 4 x 3 core (see physics). */
 export const SPIKE_ROWS: readonly string[] = ['..BB..', '.AAAA.', '.AAAA.', 'AAAAAA'];
 
-export function spikeSprite(palette: ArcadePalette): Sprite {
-  const base = mixRgb(palette.bad, palette.ink, 0.15);
-  return spriteFromRows(SPIKE_ROWS, {A: base, B: mixRgb(base, palette.ink, 0.6)});
+/** Hot pink with a white tip in every phase: a hazard color no phase tint ever uses. */
+export function spikeSprite(_palette: ArcadePalette): Sprite {
+  const base = {red: 0xff, green: 0x4f, blue: 0x7e};
+  return spriteFromRows(SPIKE_ROWS, {A: base, B: {red: 0xff, green: 0xf0, blue: 0xf6}});
 }

@@ -9,6 +9,10 @@ import {drawTooSmall, FlightScene, geometry, MIN_COLUMNS, MIN_ROWS, worldHeightF
 import type {CatLook, Legs, TailShape, Wing} from './sprites.js';
 import {FlightWorld} from './world.js';
 
+/** Warm sparkles off Vespyr's paper wings: the trail and the gap-passing burst, distinct from Run's dust. */
+const SPARK_A = {red: 0xff, green: 0xe0, blue: 0x8a};
+const SPARK_B = {red: 0xff, green: 0xb4, blue: 0x8a};
+
 /** What a person's saved Vespyr Flight record holds, read defensively (the file can be old, empty or hand-edited). */
 export interface FlightRecord { best: number; bestPassed: number; attempts: number }
 
@@ -104,14 +108,14 @@ export function createFlightGame(context: GameContext, parts: FlightParts = {}):
       if (decor) {
         trail.shift(-world.speed * DT);
         if (world.steps % 2 === 0) trail.push(geo.catX - 2, screenY(world.y) + (CAT_H / 2) * geo.scale);
-        if (palette && world.steps % 5 === 0) particles.burst({x: geo.catX - 3, y: screenY(world.y) + 2, count: 1, speed: 10, angle: Math.PI, spread: 0.6, life: 480, drag: 0.5, colors: [palette.accent, palette.haze]});
+        if (palette && world.steps % 5 === 0) particles.burst({x: geo.catX - 3, y: screenY(world.y) + 2, count: 1, speed: 10, angle: Math.PI, spread: 0.6, life: 480, drag: 0.5, colors: [SPARK_A, SPARK_B]});
       }
       if (outcome.scored) {
         popMs = POP_MS;
         if (palette) {
-          popups.add('+1', geo.catX + 6, Math.max(1, Math.floor(screenY(world.y) / 2) - 3), palette.accent);
+          popups.add('+1', geo.catX + 6, Math.max(1, Math.floor(screenY(world.y) / 2) - 3), SPARK_A);
           if (world.score % MILESTONE === 0) {
-            particles.burst({x: geo.catX + 4, y: screenY(world.y) + 2, count: 22, speed: 55, spread: Math.PI, life: 700, drag: 1.1, colors: [palette.accent, palette.haze, palette.warn, palette.ok]});
+            particles.burst({x: geo.catX + 4, y: screenY(world.y) + 2, count: 22, speed: 55, spread: Math.PI, life: 700, drag: 1.1, colors: [SPARK_A, SPARK_B, palette.haze, palette.ok]});
             popups.add(`${world.score}!`, geo.catX + 6, Math.max(1, Math.floor(screenY(world.y) / 2) - 5), palette.warn, 900);
           }
         }

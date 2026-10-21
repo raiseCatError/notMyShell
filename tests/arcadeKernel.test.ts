@@ -150,7 +150,7 @@ test('score store: round trip, atomic write, bounded and validated records', () 
     assert.deepEqual(run.get(), {best: 120, runs: 4}, 'a refused write changes nothing');
     assert.throws(() => store.record('Bad Id'), RangeError);
     const big = store.record('big');
-    assert.equal(big.set({list: Array.from({length: 4096}, (_, i) => 'x'.repeat(100) + i)}), false, 'the file stays under its cap');
+    assert.equal(big.set({list: Array.from({length: 4096}, (_, i) => 'x'.repeat(130) + i)}), false, 'the file stays under its cap');
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
@@ -185,9 +185,17 @@ test('score store: a damaged file is set aside and the arcade starts fresh; a ne
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
-test('registry and commands: five games, one parser for /games, /game and /arcade, aliases and unknown names', () => {
-  assert.deepEqual(gameNames(), ['run', 'flight', 'dash', 'sudoku', 'vespyr-doku']);
-  for (const [name, id] of [['run', 'run'], ['Vespyr Run', 'run'], ['dino', 'run'], ['flight', 'flight'], ['vespyr-dash', 'dash'], ['classic-sudoku', 'sudoku'], ['doku', 'vespyr-doku'], ['Vespyr-Doku', 'vespyr-doku']]) {
+test('registry and commands: every game is categorized with a unique id and aliases; one parser for /games, /game and /arcade', () => {
+  const names = gameNames();
+  for (const id of ['run', 'flight', 'dash', 'leap', 'snake', 'pong', 'brickfall', 'tower', 'bullseye', 'orbit', 'sudoku', 'queens']) assert.ok(names.includes(id), id);
+  const every = ARCADE_GAMES.flatMap(game => [game.id, ...game.aliases]);
+  assert.equal(new Set(every).size, every.length, 'no id or alias is shared by two games');
+  for (const game of ARCADE_GAMES) {
+    assert.ok(game.category, `${game.id} has a category`);
+    assert.equal(findGame(game.id), game);
+    for (const alias of game.aliases) assert.equal(findGame(alias), game, alias);
+  }
+  for (const [name, id] of [['run', 'run'], ['Vespyr Run', 'run'], ['dino', 'run'], ['flight', 'flight'], ['vespyr-dash', 'dash'], ['classic-sudoku', 'sudoku'], ['doku', 'queens'], ['Vespyr-Doku', 'queens'], ['vespyr queens', 'queens'], ['tail chase', 'snake'], ['breakout', 'brickfall']]) {
     assert.equal(findGame(name)?.id, id, name);
   }
   assert.equal(findGame('tetris'), undefined);
