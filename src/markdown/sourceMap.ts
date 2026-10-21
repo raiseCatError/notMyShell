@@ -90,12 +90,12 @@ function outline(blocks: readonly Block[], lines: readonly string[]): HeadingEnt
 /** The headings of a Markdown source, in document order. */
 export function headingsOf(source: string, options: {html?: boolean} = {}): HeadingEntry[] {
   const lines = source.replace(/\r\n?/gu, '\n').split('\n');
-  return outline(parseBlocks(source, {html: options.html ?? false}), lines);
+  return outline(parseBlocks(source, {html: options.html ?? false, math: true}), lines);
 }
 
 /** The headings of lines already cut (a buffer's), so a stray CR cannot shift a line number. */
 export function headingsFromLines(lines: readonly string[], options: {html?: boolean} = {}): HeadingEntry[] {
-  return outline(parseBlockLines(lines, {html: options.html ?? false}), lines);
+  return outline(parseBlockLines(lines, {html: options.html ?? false, math: true}), lines);
 }
 
 /** The heading a `#fragment` names (case-insensitive, percent-decoded), if any. */
@@ -155,7 +155,7 @@ export class DocumentIndex {
     if (this.cached?.version === this.versionCounter) return this.cached;
     this.parseCount += 1;
     this.options.onParse?.();
-    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false});
+    const blocks = parseBlockLines(this.buffer.lines, {html: this.options.html ?? false, math: true});
     this.cached = {version: this.versionCounter, blocks, headings: outline(blocks, this.buffer.lines)};
     return this.cached;
   }

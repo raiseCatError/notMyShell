@@ -23,6 +23,7 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 
 ## Details (#462)
 - [ ] A Markdown file with GitHub-style `<details>`: closed shows `▸ Summary`; `z` opens it; `Z`; in the preview, the split's preview pane and the hybrid view; narrow widths; Safe Glyphs (`>`/`v`); a hostile file.
+- [ ] NOT RUN: A Markdown file with `$E=mc^2$`, `$\frac{a}{b}$`, a multi-line `$$ … $$` with `\sum`, `\int` and a matrix, and an unsupported command: inline and display rendering in the viewer, preview, split and hybrid; the unsupported one shows its source and the reason; Safe Glyphs; narrow widths; no glyph drift in Ghostty and Zed.
 ## Problems (#466)
 - [ ] F1 then `e` in a Markdown file with a broken link, a missing image and a bad `#fragment`: the list shows them; Enter selects the exact text; Back returns. `P` in the read-only views and in the split's preview pane.
 - [ ] An HTML file (palette → Problems) and a CSS file (F1); the status row counts; fixing a finding removes it after a moment; undo brings it back.

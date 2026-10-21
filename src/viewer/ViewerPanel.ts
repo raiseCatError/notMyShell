@@ -173,7 +173,7 @@ function markdownRows(state: ViewerState, width: number, look: ViewerLook): Mark
   const version = `${look.images?.version ?? 0}|${look.sized ? 'sized' : 'plain'}|${[...(state.disclosure ?? [])].map(([key, open]) => `${key}=${open}`).join(',')}`;
   if (state.markdown?.width !== width || state.markdown.version !== version) {
     const options = {
-      ...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks),
+      ...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks), math: true,
       ...(look.images ? {images: look.images} : {}),
       ...(look.sized ? {sizedHeadings: {maxRows: 3}} : {}),
       ...(state.disclosure?.size ? {disclosure: {isOpen: (key: string, open: boolean) => state.disclosure!.get(key) ?? open}} : {}),

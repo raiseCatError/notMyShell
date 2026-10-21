@@ -24,6 +24,8 @@ export type Block = (
   | {kind: 'rule'}
   /** `<details>`: a disclosure, collapsed unless `open`; its content is blocks (Markdown between GitHub-style tags is Markdown). */
   | {kind: 'details'; open: boolean; summary: string; blocks: Block[]}
+  /** `$$ … $$` display mathematics (only when parsing with the `math` option): the LaTeX between the dollars. */
+  | {kind: 'math'; source: string; raw: string[]}
 ) & {
   /** The source lines the block came from (0-based; `to` is exclusive), when `parseBlocks` knows them: the shared source-position map. */
   from?: number;
@@ -139,6 +141,7 @@ function delimiterRow(line: string): Alignment[] | undefined {
 
 /** Whether a line starts a block that interrupts a paragraph (a lazy continuation line must not). */
 function interrupts(line: string, next: string | undefined): boolean {
+  if (mathEnabled && /^ {0,3}(?:\$\$\s*|\$\$(?:(?!\$\$)[^\n])+\$\$\s*)$/u.test(line)) return true;
   if (fenceOf(line) || headingOf(line) || isRule(line) || QUOTE.test(line)) return true;
   const item = ITEM.exec(line);
   // An ordered item interrupts a paragraph only when it starts at 1, and an empty item never does (CommonMark).
@@ -146,13 +149,14 @@ function interrupts(line: string, next: string | undefined): boolean {
   return Boolean(line.includes('|') && next !== undefined && delimiterRow(next) && splitRow(line).length === delimiterRow(next)!.length);
 }
 
-export function parseBlocks(source: string, options: {html?: boolean} = {}): Block[] {
+export function parseBlocks(source: string, options: {html?: boolean; math?: boolean} = {}): Block[] {
   return parseBlockLines(source.replace(/\r\n?/gu, '\n').split('\n'), options);
 }
 
 /** The same, for lines already cut (a buffer's): a stray CR inside a line stays in it and cannot shift the line numbers after it. */
-export function parseBlockLines(lines: readonly string[], options: {html?: boolean} = {}): Block[] {
+export function parseBlockLines(lines: readonly string[], options: {html?: boolean; math?: boolean} = {}): Block[] {
   detailsBudget = DETAILS_SCAN_LINES;
+  mathEnabled = Boolean(options.math);
   return parseLines(lines.length > MAX_LINES ? lines.slice(0, MAX_LINES) : lines, 0, Boolean(options.html), 0);
 }
 
@@ -170,10 +174,32 @@ function htmlBlockKind(line: string): 1 | 2 | 6 | 7 | undefined {
   return KNOWN.has(name) && text.length <= 4096 && /^<[^<>]*>\s*$/u.test(text) ? 7 : undefined;
 }
 
+/** `$$ x $$` on one line, or `$$` … `$$` over several (at most 200 lines, closed): the LaTeX inside and the line after the block. */
+function mathBlockAt(lines: readonly string[], start: number): {source: string; end: number} | undefined {
+  const first = lines[start]!;
+  if (indentOf(first) > 3 || !first.trimStart().startsWith('$$')) return undefined;
+  const text = first.trim();
+  // `$$x$$ and $$y$$` is two inline formulas, not one block; so is a first line that closes and goes on.
+  const inner = text.slice(2);
+  if (inner.includes('$$')) {
+    const single = /^\$\$((?:(?!\$\$)[\s\S])+)\$\$$/u.exec(text);
+    return single?.[1]!.trim() ? {source: single[1]!.trim(), end: start + 1} : undefined;
+  }
+  const parts = [inner];
+  for (let at = start + 1; at < Math.min(lines.length, start + 200); at += 1) {
+    const line = lines[at]!.trim();
+    if (line.endsWith('$$') && !line.slice(0, -2).includes('$$')) { parts.push(line.slice(0, -2)); return {source: parts.join('\n').trim(), end: at + 1}; }
+    if (line.includes('$$')) return undefined;
+    parts.push(lines[at]!);
+  }
+  return undefined;
+}
+
 const OPENS = /<details\b/giu, CLOSES = /<\/details\s*>/giu;
 /** Lines the whole parse may look through to find closing `</details>` tags: one budget for all openers, so many unclosed ones cost a bounded amount in total. */
 const DETAILS_SCAN_LINES = 100_000;
 let detailsBudget = DETAILS_SCAN_LINES;
+let mathEnabled = false;
 const count = (pattern: RegExp, text: string) => (text.match(pattern) ?? []).length;
 
 /**
@@ -238,6 +264,9 @@ function parseLines(lines: readonly string[], depth: number, html = false, offse
     startedAt = index;
     const line = lines[index]!;
     if (blank(line)) { index++; continue; }
+
+    const math = mathEnabled ? mathBlockAt(lines, index) : undefined;
+    if (math) { blocks.push({kind: 'math', source: math.source, raw: lines.slice(index, math.end)}); index = math.end; continue; }
 
     const fence = fenceOf(line);
     if (fence) {
