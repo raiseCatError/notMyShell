@@ -1,6 +1,6 @@
 ---
 title: "Context modules and packs"
-description: "Canonical context modules and packs from the v0.22.0 published source."
+description: "Canonical context modules and packs from the v0.23.0 published source."
 group: Technical reference
 order: 103
 source: "docs/architecture/context-modules.md"

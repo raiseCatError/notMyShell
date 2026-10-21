@@ -1,6 +1,6 @@
 ---
 title: "Contributing to NMSh"
-description: "Canonical contributing to nmsh from the v0.22.0 published source."
+description: "Canonical contributing to nmsh from the v0.23.0 published source."
 group: Technical reference
 order: 114
 source: "CONTRIBUTING.md"
@@ -26,7 +26,7 @@ Before starting work, check:
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pieces fit together; start here before changing a subsystem
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.22.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0)** — current stable release, merged through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444) (see [ROADMAP.md](ROADMAP.md))
+- **[v0.23.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.23.0)** — current stable release (v0.22.0 is the previous one), merged through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444) (see [ROADMAP.md](ROADMAP.md))
 - **[CHANGELOG.md](CHANGELOG.md)** — the authoritative record of notable changes; see [Changelog](#changelog) below
 - **GitHub Issues** — [raiseCatError/notMyShell issues](https://github.com/raiseCatError/notMyShell/issues) — public bug reports, proposals and development status
 
