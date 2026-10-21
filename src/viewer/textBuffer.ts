@@ -156,6 +156,18 @@ export class TextBuffer {
     return true;
   }
 
+  /**
+   * One undoable edit made by an editing helper: [from, to) becomes `text`, then the caret (and the selection's other
+   * end) go where the helper says. Undo restores the text and the caret and selection from before.
+   */
+  edit(from: Position, to: Position, text: string, after: {caret: Position; anchor?: Position}): void {
+    this.replaceRange(from, to, text, 'other');
+    this.caret = after.caret;
+    this.anchor = after.anchor && !same(after.anchor, after.caret) ? after.anchor : undefined;
+    const done = this.undoStack.at(-1);
+    if (done) { done.caretAfter = this.caret; }
+  }
+
   /** Replace the whole text as one undoable edit (a recovered draft); the caret goes to the start. */
   replaceAll(lines: readonly string[]): void {
     const last = this.lines.length - 1;
