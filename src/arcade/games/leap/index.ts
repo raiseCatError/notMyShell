@@ -9,7 +9,7 @@ import {arcadeLook} from '../../look.js';
 import type {ArcadePalette} from '../../palette.js';
 import {along, gradient, hash, rgb, stars} from '../../scenery.js';
 import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
-import {LeapState, PLATFORM_W, WIDTH, type Platform} from './logic.js';
+import {FALL_MIN, LeapState, PLATFORM_W, WIDTH, type Platform} from './logic.js';
 
 /**
  * Vespyr Leap: bounce ever upward from platform to platform. The sky climbs from a peach dusk through the night into
@@ -78,8 +78,9 @@ class VespyrLeap implements GameInstance {
     if (this.done) return;
     const state = this.state;
     const visible = this.size.rows * 2 - 3;
-    // The camera keeps the best height 45% of the view above the bottom edge: dropping past that edge ends the climb.
-    state.fallLimit = visible * 0.45 + 2;
+    // The camera keeps the best height 45% of the view above the bottom edge; on a short view a fall may carry the cat below it
+    // (marked by an arrow at the edge) for as far as a platform it could still land on can lie.
+    state.fallLimit = Math.max(FALL_MIN, visible * 0.45 + 2);
     state.catHalf = (this.context.color !== 'none' && !this.context.safeGlyphs ? CAT_SPRITE_W / 2 : 0.5) / this.scale();
     state.step(dtMs);
     this.camera = Math.max(this.camera, state.best - visible * 0.45);
@@ -160,9 +161,17 @@ class VespyrLeap implements GameInstance {
     if (shown) buffer.sprite(shown.sprite, shown.x, Math.round(top - sprite.height));
     this.particles.draw(buffer, stops[1]);
     canvas.blit(buffer);
+    this.dipMarker(canvas, catX, top - sprite.height, '▼');
     this.popups.draw(canvas, stops[1]);
     topRow(canvas, look, 'Vespyr Leap', `${state.height.toLocaleString('en-US')} m  best ${Math.max(this.startBest, state.height).toLocaleString('en-US')}`, stops[0]);
     if (!state.started) canvas.center(Math.floor(canvas.height / 3), '← → to steer · Space to start', {fg: rgb(0x2a1d52), bold: true});
+  }
+
+  /** An arrow at the bottom edge, over the cat's column, while a long fall has carried the whole cat below the view. */
+  private dipMarker(canvas: Canvas, catX: number, headY: number, glyph: string): void {
+    if (headY < canvas.height * 2 - 2) return;
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.round(catX)));
+    canvas.put(x, canvas.height - 2, glyph, {fg: rgb(0xfff4d6), bold: true});
   }
 
   private drawPlatform(buffer: PixelBuffer, platform: Platform, scale: number, left: number): void {
@@ -188,7 +197,11 @@ class VespyrLeap implements GameInstance {
       canvas.text(Math.round(left + state.platformX(platform) * scale), row, (platform.spring ? '^' : glyph) + glyph.repeat(Math.max(1, Math.round(PLATFORM_W * scale) - 1)));
     }
     const x = Math.round(left + state.x * scale);
-    if (x >= left && x < left + Math.round(WIDTH * scale)) canvas.put(x, Math.floor(this.screenY(state.y) / 2) - 1, '@', {bold: true});
+    if (x >= left && x < left + Math.round(WIDTH * scale)) {
+      const row = Math.floor(this.screenY(state.y) / 2) - 1;
+      if (row < canvas.height - 1) canvas.put(x, row, '@', {bold: true});
+      else canvas.put(x, canvas.height - 2, 'v', {bold: true});
+    }
   }
 
   resize(size: {columns: number; rows: number}): void { this.size = size; }

@@ -272,6 +272,43 @@ test('flips: quick tilt presses in the air build enough spin for a flip within a
   assert.ok(s.score >= 25);
 });
 
+/**
+ * A human driver on the real jumps: gas renewed every 100 ms, and in the air (after a 150 ms reaction) one nose-down tap every
+ * 1000/hz ms until a flip is counted, then taps that stop the spin and level the rover. Returns the run once the flip lands.
+ */
+function tappingDriver(seed: number, hz: number, tap: boolean, maxSeconds = 60) {
+  const s = new RoverState(seed);
+  let airMs = 0, lastTap = -1e9, flippedAt = -1;
+  for (let frame = 0; frame < 60 * maxSeconds && !s.over; frame += 1) {
+    const ms = frame * STEP;
+    if (frame % 6 === 0) s.drive(1);
+    airMs = s.grounded ? 0 : airMs + STEP;
+    if (tap && airMs >= 150 && ms - lastTap >= 1000 / hz) {
+      lastTap = ms;
+      const a = wrapAngle(s.angle);
+      if (s.flips === 0) s.tilt(1); else if (s.omega > 1 || a > 0.3) s.tilt(-1); else if (a < -0.3) s.tilt(1);
+    }
+    s.step(STEP);
+    if (s.flips >= 1 && flippedAt < 0) flippedAt = frame;
+    if (flippedAt >= 0 && frame - flippedAt > 60 * 4) break;
+  }
+  return {s, flipped: flippedAt >= 0};
+}
+
+test('flips: a driver tapping 6 to 8 times a second in the air flips off the real jumps and lives; with no taps the same runs never flip', () => {
+  for (const hz of [6, 7, 8]) {
+    let flipped = 0, alive = 0;
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const run = tappingDriver(seed, hz, true);
+      if (run.flipped) { flipped += 1; if (!run.s.over) alive += 1; }
+    }
+    assert.ok(flipped >= 10, `${hz} taps/s: only ${flipped} of 20 seeds flipped`);
+    assert.ok(alive >= flipped - 1, `${hz} taps/s: ${flipped} flipped but only ${alive} survived the landing`);
+  }
+  // The same seeds with the gas alone: the flips are the driver's doing, not the terrain's.
+  for (let seed = 1; seed <= 20; seed += 1) assert.equal(tappingDriver(seed, 7, false, 25).s.flips, 0, `seed ${seed} flipped without any tilt`);
+});
+
 test('drive: the gas speeds up the rover, the brake slows it, tilt turns it in the air', () => {
   const s = new RoverState(1);
   for (let i = 0; i < 90; i += 1) { s.drive(1); s.step(STEP); }
@@ -434,4 +471,26 @@ test('render: every size draws inside its bounds in color, without color, with s
   }
   const preview = new Canvas(30, 6);
   roverGame.preview(preview, 3, arcadePalette());
+});
+
+test('render: a narrow screen never shows a clipped "Fuel" in the title row, and the crash-window banner keeps its meter', () => {
+  const game = roverGame.create(context(memory(), {size: {columns: 28, rows: 12}}));
+  game.key({kind: 'right'});
+  const state = (game as unknown as {state: RoverState}).state;
+  for (let i = 0; i < 20; i += 1) game.step(STEP);
+  const canvas = new Canvas(28, 12);
+  game.render(canvas, 0, arcadePalette());
+  assert.ok(!canvas.plain()[0]!.includes('…') && !/Fuel/.test(canvas.plain()[0]!), canvas.plain()[0]);
+  // Upside down on the ground: the banner shows the danger meter even when "Roll back" does not fit.
+  state.angle = Math.PI; state.omega = 0; state.vx = 0;
+  for (let i = 0; i < 30 && state.danger < 0.2; i += 1) game.step(STEP);
+  assert.ok(state.danger > 0, 'the crash window started');
+  game.render(canvas, 0, arcadePalette());
+  assert.ok(canvas.plain().some(line => /DOWN! [#-]{5}/.test(line)), canvas.plain().join('\n'));
+  const wide = new Canvas(100, 34);
+  const big = roverGame.create(context(memory()));
+  big.key({kind: 'right'});
+  for (let i = 0; i < 20; i += 1) big.step(STEP);
+  big.render(wide, 0, arcadePalette());
+  assert.match(wide.plain()[0]!, /Fuel \d+%/);
 });

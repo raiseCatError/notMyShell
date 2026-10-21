@@ -223,7 +223,7 @@ class KittenParade implements GameInstance {
       const y = Math.max(1, Math.floor(canvas.height / 4));
       canvas.center(y, 'Kitten Parade', {fg: look.text.strong, bold: true});
       canvas.center(y + 1, canvas.width < 40 ? 'Space to start' : '← → pick a gate · Space to start', {fg: look.accent, bold: true});
-      if (canvas.height >= 14) canvas.center(y + 2, canvas.width < 44 ? '+ x good  ! rivals' : '+n ×n grow · −n ÷n SAW shrink · !n rivals fight', {fg: look.text.normal});
+      if (canvas.height >= 14) canvas.center(y + 2, this.ascii(canvas.width < 44 ? '+ x good  ! rivals' : '+n ×n grow · −n ÷n SAW shrink · !n rivals fight'), {fg: look.text.normal});
     }
   }
 
@@ -245,6 +245,9 @@ class KittenParade implements GameInstance {
       canvas.center(mid + 1, ` LEVEL ${state.level} CLEAR `, style(look.gold));
     }
   }
+
+  /** Safe Glyphs draws any character outside its ASCII table as '?': division and the true minus sign stay readable. */
+  private ascii(text: string): string { return this.context.safeGlyphs ? text.replace(/÷/gu, '/').replace(/−/gu, '-') : text; }
 
   private rowBox(row: Row, g: Geometry): {top: number; bottom: number} {
     const bottom = g.playerY - (row.z - this.state.z) * g.ppm;
@@ -420,7 +423,7 @@ class KittenParade implements GameInstance {
         if (cell.kind === 'enemy' && fighting && (cell.boss || lane === row.fought)) shown = {...cell, n: battle!.enemy};
         if (cell.kind === 'enemy' && row.applied && fighting && !cell.boss && lane !== row.fought) return;
         if (cell.kind === 'enemy' && cell.boss && lane !== 1) return;
-        const bare = shown.kind === 'enemy' && shown.boss && g.lane >= 8 ? `BOSS ${compact(shown.n)}` : cellText(shown);
+        const bare = this.ascii(shown.kind === 'enemy' && shown.boss && g.lane >= 8 ? `BOSS ${compact(shown.n)}` : cellText(shown));
         const text = !art ? `[${bare}]` : bare;
         const room = g.lane - 1;
         const label = text.length <= room ? text : bare.slice(0, Math.max(1, room));
@@ -434,7 +437,8 @@ class KittenParade implements GameInstance {
   private drawCrowd(buffer: PixelBuffer, g: Geometry, palette: ArcadePalette): void {
     const state = this.state;
     const px = clamp(g.left + g.lane * (this.visualLane + 0.5), 4, g.w - 4);
-    const cols = Math.max(1, Math.floor((g.lane * 1.5) / 3));
+    // A full crowd stays inside its lane (a 3-wide sprite per column, one pixel of road to spare each side).
+    const cols = Math.max(1, Math.min(Math.floor((g.lane * 1.5) / 3), Math.floor((g.lane - 2) / 3)));
     const space = Math.max(1, Math.floor((g.h - (g.playerY - 6)) / 3));
     const cap = Math.min(MAX_DRAWN, cols * space);
     const happy = state.won || state.interlude > 0;

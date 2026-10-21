@@ -18,6 +18,12 @@ export const CAT_W = 7;
 export const JUMP_HEIGHT = (JUMP * JUMP) / (2 * GRAVITY);
 /** The largest vertical gap between solid platforms, as a share of the jump height. */
 export const REACH = 0.78;
+/**
+ * The shallowest a fall below the best height may end the climb. After an apex the highest platform still below it can lie
+ * (the generator allows a gap of REACH of a jump) up to JUMP_HEIGHT * REACH under the apex, so a limit tied only to a short
+ * screen would end climbs the player could not have saved. The cat may dip below the view for the rest of that distance.
+ */
+export const FALL_MIN = Math.ceil(JUMP_HEIGHT * REACH) + 2;
 
 export type PlatformKind = 'solid' | 'moving' | 'crumble';
 export interface Platform { id: number; x: number; y: number; kind: PlatformKind; spring: boolean; broken: boolean; phase: number; speed: number; fall: number }

@@ -299,3 +299,62 @@ test('selected source is lifted and valid destinations are marked; no-color unit
   const rows = c2.plain({color: 'none', safe: true}).join('\n');
   assert.ok(/[#%=+ox*]{3}/.test(rows));
 });
+
+// ---- review fixes ------------------------------------------------------------------------------------------------
+
+/** The true fewest pours by breadth-first search (small decks only). */
+function fewestPours(start: readonly (readonly number[])[], cap: number): number {
+  const key = (jars: readonly (readonly number[])[]) => jars.map(jar => jar.join('.')).sort().join('|');
+  if (isWon(start, cap)) return 0;
+  let frontier: Array<readonly (readonly number[])[]> = [start];
+  const seen = new Set([key(start)]);
+  for (let depth = 1; depth < 40 && frontier.length; depth += 1) {
+    const next: Array<readonly (readonly number[])[]> = [];
+    for (const jars of frontier) for (let from = 0; from < jars.length; from += 1) for (let to = 0; to < jars.length; to += 1) {
+      const moved = applyPour(jars, cap, from, to);
+      if (!moved || seen.has(key(moved))) continue;
+      seen.add(key(moved));
+      if (isWon(moved, cap)) return depth;
+      next.push(moved);
+    }
+    frontier = next;
+  }
+  return -1;
+}
+
+test('target: "proven" means minimal. Decks where the old search missed a solution one pour shorter, and 300 random small decks, against breadth-first search', () => {
+  // Each of these was reported "proven" at one pour more than the true minimum before the search accepted a win exactly one shorter.
+  const missed: Array<[number[][], number]> = [
+    [[[0, 2, 1], [1, 1, 0], [2, 0, 2], [], []], 3], [[[0, 1, 0], [1, 2, 2], [1, 3, 2], [0, 3, 3], [], []], 3], [[[2, 3], [3, 1], [0, 1], [0, 2], [], []], 2],
+    [[[2, 1, 0], [0, 2, 1], [1, 2, 0], [], []], 3], [[[0, 2, 0], [3, 1, 3], [3, 2, 1], [1, 0, 2], []], 3],
+  ];
+  for (const [deck, cap] of missed) {
+    const target = bestTarget(deck, cap)!;
+    assert.equal(target.pours, fewestPours(deck, cap), JSON.stringify(deck));
+    assert.ok(target.proven);
+  }
+  const rng = createRng(11);
+  let proven = 0;
+  for (let index = 0; index < 300; index += 1) {
+    const colors = rng.int(2, 4), cap = rng.int(2, 3);
+    const units = rng.shuffle(Array.from({length: colors * cap}, (_, unit) => Math.floor(unit / cap)));
+    const jars: number[][] = Array.from({length: colors}, (_, jar) => units.slice(jar * cap, (jar + 1) * cap));
+    for (let extra = rng.int(1, 2); extra > 0; extra -= 1) jars.push([]);
+    const target = bestTarget(jars, cap);
+    if (!target) continue;
+    const optimal = fewestPours(jars, cap);
+    assert.ok(target.pours >= optimal, `never below the true minimum: ${JSON.stringify(jars)}`);
+    if (target.proven) { proven += 1; assert.equal(target.pours, optimal, `proven but not minimal: ${JSON.stringify(jars)}`); }
+  }
+  assert.ok(proven > 200, 'small decks are normally settled');
+});
+
+test('target: the search budget is short enough not to stall the screen it is computed on, even on hard decks', () => {
+  for (let seed = 1; seed <= 6; seed += 1) {
+    const puzzle = generateJars('hard', createRng(seed));
+    const began = performance.now();
+    const target = bestTarget(puzzle.jars, puzzle.cap)!;
+    assert.ok(performance.now() - began < 1200, `seed ${seed}`);
+    assert.ok(target.pours <= puzzle.solution);
+  }
+});

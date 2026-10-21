@@ -165,6 +165,8 @@ class TreatMatch implements GameInstance {
       else { this.cursor = target; this.selected = this.selected === target ? undefined : target; }
       return 'handled';
     }
+    // h asks for a hint; it is taken before the movement keys, which would otherwise read it as vim's "left".
+    if (key.kind === 'text' && key.value.toLowerCase() === 'h') { this.hintCells = this.board.hint(); return 'handled'; }
     const move = direction(key);
     if (move) {
       this.started = true;
@@ -184,13 +186,14 @@ class TreatMatch implements GameInstance {
       else this.selected = this.cursor;
       return 'handled';
     }
-    if (key.kind === 'text' && key.value.toLowerCase() === 'h') { this.hintCells = this.board.hint(); return 'handled'; }
     if (key.kind === 'escape' && this.selected !== undefined) { this.selected = undefined; return 'handled'; }
     return 'ignored';
   }
 
   private trySwap(a: number, b: number): void {
+    const shuffles = this.board.shuffles;
     const steps = this.board.swap(a, b);
+    if (steps && this.board.shuffles > shuffles) this.say('No swaps were left: the board was reshuffled');
     if (!steps) {
       // No match: the tiles slide over and back, and the note says why; the popup stays inside the playfield.
       this.say(this.board.adjacent(a, b) ? 'No match: that swap does not line up three' : 'Swap with a neighbour');
@@ -339,11 +342,13 @@ class TreatMatch implements GameInstance {
         const here = home === this.cursor, picked = home === this.selected, hinted = hint.has(home);
         const mark = tile.mark === STRIPE_ROW ? (glyphs ? '═' : '=') : tile.mark === STRIPE_COL ? (glyphs ? '║' : '|') : tile.mark === BOMB ? (glyphs ? '✱' : '*') : '';
         const symbol = glyphs ? KIND_SHAPES[tile.kind]! : KIND_LETTERS[tile.kind]!;
+        // A tile still above the board (a new one dropping in) must not draw over the title or progress rows.
+        if (row < layout.y) continue;
         const rowMid = row + Math.floor((layout.cellH - 1) / 2);
         void cell;
         if (!color) {
           const left = picked ? '<' : here ? '[' : hinted ? '*' : ' ', right = picked ? '>' : here ? ']' : hinted ? '*' : ' ';
-          const text = layout.cellW >= 4 ? `${left}${symbol}${right}${mark || ' '}`.trimEnd() : `${symbol}${mark || ''}`;
+          const text = layout.cellW >= 4 ? `${left}${symbol}${right}${mark || ' '}`.trimEnd() : `${symbol}${hinted && !here && !picked ? '*' : mark || ''}`;
           canvas.text(layout.x + Math.round(tile.x * layout.cellW) + Math.floor((layout.cellW - text.length) / 2), rowMid, text, {bold: here || picked || !!mark, reverse: layout.cellW < 4 && (here || picked), underline: layout.cellW < 4 && picked});
           continue;
         }

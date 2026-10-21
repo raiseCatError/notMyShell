@@ -19,7 +19,11 @@ export interface BoardLayout {
   stepX: number; stepY: number;
 }
 
-export interface LayoutOptions { aspect?: number; gap?: number; frame?: number; maxCellH?: number; minCellH?: number; hex?: boolean; interlock?: boolean }
+export interface LayoutOptions {
+  aspect?: number; gap?: number; frame?: number; maxCellH?: number; minCellH?: number; hex?: boolean; interlock?: boolean;
+  /** Hex rows of two-row cells nest by half a row (a half-block pixel row), so odd rows start mid-row. Needs half-block drawing. */
+  halfRows?: boolean;
+}
 
 /** The largest square-looking cell that fits, or undefined when even the smallest does not. */
 export function squareLayout(area: BoardArea, across: number, down: number, options: LayoutOptions = {}): BoardLayout | undefined {
@@ -34,10 +38,10 @@ export function squareLayout(area: BoardArea, across: number, down: number, opti
     // Gaps scale with the cell: one terminal column per `aspect` rows of gap keeps the gap square too.
     const gapX = gap * aspect, gapY = gap;
     // Interlocking hex rows nest into each other: each row starts `hexOverlap` rows before the previous one ends.
-    const overlap = options.hex && options.interlock ? hexOverlap(cellH) : 0;
+    const overlap = options.hex && options.interlock ? hexOverlap(cellH, options.halfRows) : 0;
     const stepX = cellW + gapX, stepY = cellH + gapY - overlap;
     const width = Math.ceil((across + hexShift) * stepX - gapX);
-    const height = (down - 1) * stepY + cellH;
+    const height = Math.ceil((down - 1) * stepY + cellH);
     if (width <= freeW && height <= freeH) {
       return {
         cellW, cellH, gap, across, down, stepX, stepY, width, height,
@@ -49,25 +53,32 @@ export function squareLayout(area: BoardArea, across: number, down: number, opti
   return undefined;
 }
 
-/** Rows by which neighbouring hex rows overlap when they interlock: none for cells under three rows (drawn as staggered tiles). */
-export const hexOverlap = (cellH: number): number => (cellH >= 3 ? Math.max(1, Math.round(cellH / 4)) : 0);
+/**
+ * Rows by which neighbouring hex rows overlap when they interlock: none for cells under three rows (drawn as staggered
+ * tiles), except two-row cells that may nest by half a row (`halfRows`, one half-block pixel row).
+ */
+export const hexOverlap = (cellH: number, halfRows = false): number => (cellH >= 3 ? Math.max(1, Math.round(cellH / 4)) : cellH === 2 && halfRows ? 0.5 : 0);
 
 /**
  * The hex cell under a terminal position: with interlocking rows (stepY under cellH) the one whose center is nearest in
- * physical distance, otherwise the cell whose slot holds it. Undefined outside the board.
+ * physical distance (a column and a half-block pixel row are the same size), otherwise the cell whose slot holds it.
+ * Undefined outside the board.
  */
 export function hexCellAt(layout: BoardLayout, px: number, py: number): {cx: number; cy: number} | undefined {
   if (layout.stepY >= layout.cellH) return cellAt(layout, px, py, true);
+  const pixels = 2 * layout.cellH, stepPx = 2 * layout.stepY;
+  // The clicked terminal cell, as the middle of its two pixel rows.
+  const X = px + 0.5 - layout.x, Y = 2 * (py - layout.y) + 1;
   let best: {cx: number; cy: number} | undefined;
   let bestDistance = Infinity;
-  const approx = Math.floor((py - layout.y) / layout.stepY);
+  const approx = Math.floor(Y / stepPx);
   for (let cy = approx - 1; cy <= approx + 1; cy += 1) {
-    if (cy < 0 || cy >= layout.down || py < layout.y + cy * layout.stepY || py >= layout.y + cy * layout.stepY + layout.cellH) continue;
+    const top = cy * stepPx;
+    if (cy < 0 || cy >= layout.down || Y < top || Y >= top + pixels) continue;
     const shift = cy % 2 ? Math.floor(layout.stepX / 2) : 0;
-    const cx = Math.floor((px - layout.x - shift) / layout.stepX);
-    if (cx < 0 || cx >= layout.across) continue;
-    const dx = px + 0.5 - (layout.x + shift + cx * layout.stepX + layout.cellW / 2);
-    const dy = (py + 0.5 - (layout.y + cy * layout.stepY + layout.cellH / 2)) * CELL_ASPECT;
+    const cx = Math.floor((X - shift) / layout.stepX);
+    if (cx < 0 || cx >= layout.across || X - shift - cx * layout.stepX >= layout.cellW) continue;
+    const dx = X - (shift + cx * layout.stepX + layout.cellW / 2), dy = Y - (top + pixels / 2);
     const distance = dx * dx + dy * dy;
     if (distance < bestDistance) { bestDistance = distance; best = {cx, cy}; }
   }
@@ -76,8 +87,11 @@ export function hexCellAt(layout: BoardLayout, px: number, py: number): {cx: num
 
 /** Terminal position of a cell's top-left corner. Odd rows shift half a cell right on hex boards. */
 export function cellOrigin(layout: BoardLayout, cx: number, cy: number, hex = false): {x: number; y: number} {
-  return {x: layout.x + cx * layout.stepX + (hex && cy % 2 ? Math.floor(layout.stepX / 2) : 0), y: layout.y + cy * layout.stepY};
+  return {x: layout.x + cx * layout.stepX + (hex && cy % 2 ? Math.floor(layout.stepX / 2) : 0), y: layout.y + Math.floor(cy * layout.stepY)};
 }
+
+/** Whether a hex row starts on the lower half of its terminal row (rows that nest by half a row): 1 when it does, else 0. */
+export const hexHalf = (layout: BoardLayout, cy: number): 0 | 1 => (Math.round(2 * cy * layout.stepY) % 2 ? 1 : 0);
 
 /** The board cell under a terminal position, or undefined (outside the board or in a gap). */
 export function cellAt(layout: BoardLayout, px: number, py: number, hex = false): {cx: number; cy: number} | undefined {

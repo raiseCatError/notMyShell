@@ -53,9 +53,9 @@ export const FUEL_PICKUP = 50;
 export const THROTTLE_MS = 550;
 export const BRAKE_MS = 400;
 /** One tilt press is a torque pulse of this length; chained presses add up to the cap. */
-export const TILT_MS = 130;
-export const TILT_MAX_MS = 390;
-export const TILT_AIR = 320;
+export const TILT_MS = 150;
+export const TILT_MAX_MS = 450;
+export const TILT_AIR = 400;
 export const TILT_GROUND = 520;
 /** Head or roof on the ground, or stuck upside down, for this long ends the run; righting the rover heals it. */
 export const CRASH_MS = 800;

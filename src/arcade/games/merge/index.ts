@@ -78,7 +78,7 @@ class Merge2048 implements GameInstance {
         this.popMs = this.context.motion.reduced ? 0 : POP_MS;
         const gained = this.board.score - before;
         const layout = this.layout();
-        if (gained && layout) this.popups.add(`+${gained}`, layout.x + 2 * layout.stepX, layout.well.y - 1, rgb(0xffe08a), 600);
+        if (gained && layout) this.popups.add(`+${gained}`, layout.x + 2 * layout.stepX, Math.max(1, layout.well.y - 1), rgb(0xffe08a), 600);
         if (this.board.reached && !this.celebrated) {
           this.celebrated = true;
           confetti(this.particles, this.size.columns, this.size.rows * 2, [TILE[2048]!, TILE[128]!, TILE[32]!, TILE[512]!], this.context.motion);
@@ -125,7 +125,8 @@ class Merge2048 implements GameInstance {
     const color = this.context.color !== 'none';
     canvas.clear(color ? look.surface.base : undefined);
     const board = this.board;
-    topRow(canvas, look, 'Merge 2048', `Score ${board.score.toLocaleString('en-US')}  Best ${Math.max(this.startBest, board.score).toLocaleString('en-US')}  Undo ${board.undosLeft}`);
+    const title = () => topRow(canvas, look, 'Merge 2048', `Score ${board.score.toLocaleString('en-US')}  Best ${Math.max(this.startBest, board.score).toLocaleString('en-US')}  Undo ${board.undosLeft}`);
+    title();
     const layout = this.layout();
     if (!layout) { canvas.center(Math.floor(canvas.height / 2), 'Make the window a little larger', {fg: look.warn}); return; }
     const n = board.size;
@@ -158,6 +159,8 @@ class Merge2048 implements GameInstance {
       canvas.blit(this.pixels);
     }
     this.popups.draw(canvas, look.surface.base);
+    // A popup rising from a board that touches the title row goes under the title, never over it.
+    title();
     const hintRow = layout.well.y + layout.well.h;
     if (!this.started && hintRow < canvas.height) canvas.center(hintRow, 'Arrows or WASD slide every tile · u undoes (three per game)', {fg: look.text.dim});
   }

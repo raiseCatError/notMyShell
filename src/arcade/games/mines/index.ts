@@ -11,7 +11,7 @@ import {Menu} from '../../menu.js';
 import type {ArcadePalette} from '../../palette.js';
 import {createRng} from '../../rng.js';
 import type {ControlHint, Finale, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
-import {cellAt, cellOrigin, hexCellAt, squareLayout, type BoardLayout} from '../../engine/boardLayout.js';
+import {cellAt, cellOrigin, hexCellAt, hexHalf, squareLayout, type BoardLayout} from '../../engine/boardLayout.js';
 import {paintHex, paintTile} from '../../engine/tilePaint.js';
 import {CLASSIC_PRESETS, FLAG, HEX_PRESETS, HIDDEN, hexStep, MineBoard, OPEN, PRESETS, type HexDirection, type Preset} from './logic.js';
 
@@ -207,13 +207,20 @@ class Minefield implements GameInstance {
   /** The largest physically square cells that fit, with the side panel when that costs no cell size. */
   private layout(): (BoardLayout & {side: boolean}) | undefined {
     const board = this.board!;
-    const options = {hex: board.hex, interlock: board.hex, maxCellH: 6};
+    // Two-row hexagons nest by half a row, which only half-block drawing can show (color and glyphs on).
+    const options = {hex: board.hex, interlock: board.hex && this.halfBlocks, halfRows: board.hex && this.halfBlocks, maxCellH: 6};
     const area = {columns: this.size.columns, rows: this.size.rows, top: 1, bottom: 0};
     const full = squareLayout(area, board.width, board.height, options);
     if (!full) return undefined;
     const beside = squareLayout({...area, right: Minefield.SIDE}, board.width, board.height, options);
     return beside && beside.cellH === full.cellH ? {...beside, side: true} : {...full, side: false};
   }
+
+  /** Whether the board may use half blocks (color, and not Safe Glyphs). */
+  private get halfBlocks(): boolean { return this.context.color !== 'none' && !this.context.safeGlyphs; }
+
+  /** Whether hex cells are drawn as hexagons (nested, half-block pixels): from two rows up and only with color and glyphs; otherwise they are staggered tiles. */
+  private trueHex(layout: BoardLayout): boolean { return !!this.board?.hex && this.halfBlocks && layout.cellH >= 2; }
 
   private cellAt(column: number, row: number): number | undefined {
     const board = this.board;
@@ -241,9 +248,12 @@ class Minefield implements GameInstance {
     topRow(canvas, look, `Minefield · ${PRESETS[this.preset].label}`, `Mines ${board.mineCount - board.flags}  ${formatClock(this.elapsed)}`);
     const layout = this.layout();
     if (!layout) { canvas.center(Math.floor(canvas.height / 2), truncateText('Make the window larger for this field', canvas.width), {fg: look.warn}); return; }
+    // The hexagons need room (and color with glyphs); the title says when the field is drawn as staggered tiles instead.
+    if (board.hex && !this.trueHex(layout)) topRow(canvas, look, `Minefield · ${PRESETS[this.preset].label} · staggered tiles`, `Mines ${board.mineCount - board.flags}  ${formatClock(this.elapsed)}`);
     const numbers: Rgb[] = [look.hue.sky, look.hue.mint, look.hue.rose, look.hue.lilac, look.hue.coral, look.hue.teal, look.hue.butter, look.hue.peach];
     const safe = this.context.safeGlyphs;
     const edges = color && !safe;
+    const hexes = this.trueHex(layout);
     for (let cell = 0; cell < board.size; cell += 1) {
       const {x, y} = cellOrigin(layout, board.x(cell), board.y(cell), board.hex);
       const cursor = cell === this.cursor && !board.over;
@@ -263,7 +273,7 @@ class Minefield implements GameInstance {
         else if (n) { text = String(n); fg = numbers[n - 1]; bold = true; }
       } else {
         // Hex cells need three shades so no two neighbours match; the squares alternate two.
-        const shade = board.hex && layout.cellH >= 3 ? ((board.x(cell) - (board.y(cell) - (board.y(cell) & 1)) / 2 - board.y(cell)) % 3 + 3) % 3 : (board.x(cell) + board.y(cell)) % 2;
+        const shade = board.hex ? ((board.x(cell) - (board.y(cell) - (board.y(cell) & 1)) / 2 - board.y(cell)) % 3 + 3) % 3 : (board.x(cell) + board.y(cell)) % 2;
         bg = shade === 0 ? look.surface.raised2 : shade === 1 ? look.surface.raised : mixRgb(look.surface.raised, look.accent, 0.14);
         // Without color a hidden square is still a mark, so it differs from an opened empty one.
         if (!color) { text = safe ? '.' : '·'; fg = undefined; }
@@ -278,7 +288,7 @@ class Minefield implements GameInstance {
       if (cursor) bg = look.accent;
       if (cursor && fg && state !== OPEN) fg = look.text.onAccent;
       const paint = {fill: color ? bg : undefined, plate: color ? look.surface.base : undefined, edges, reverse: !color && cursor};
-      const box = board.hex && layout.cellH >= 3 ? paintHex(canvas, x, y, layout.cellW, layout.cellH, paint) : paintTile(canvas, x, y, layout.cellW, layout.cellH, paint);
+      const box = hexes ? paintHex(canvas, x, y, layout.cellW, layout.cellH, paint, hexHalf(layout, board.y(cell))) : paintTile(canvas, x, y, layout.cellW, layout.cellH, paint);
       canvas.put(box.digitX, box.digitRow, text, {bg: color ? bg : undefined, fg, bold, reverse: !color && cursor});
     }
     if (layout.side) this.drawSide(canvas, look, board, layout.x + layout.width + 3, layout.y);
@@ -341,7 +351,7 @@ export const minesGame: GameDefinition = {
   howToPlay: [
     'A number tells how many of the eight squares around it (six on a hex field) hide a mine. Flag the mines (f) and open everything else (Space or a click).',
     'Opening an empty square opens its whole region. On a number whose flags are all placed, c (or Space) opens the rest around it.',
-    'Hex fields (4-6 in the menu) are made of hexagons with six neighbours: ←→ move along a row, ↑↓ zigzag, q e z c step diagonally, x chords.',
+    'Hex fields (4-6 in the menu) are made of hexagons with six neighbours: ←→ move along a row, ↑↓ zigzag, q e z c step diagonally, x chords. In a small window, or without color, hexagons are drawn as staggered tiles (the title says so); the rules are the same.',
   ],
   summary: record => {
     const saved = readMines(record);

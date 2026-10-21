@@ -1,8 +1,10 @@
 # Vespyr Arcade
 
 `/games`, `/game` and `/arcade` open one full-screen arcade, all offline and local: **Vespyr Run**, **Vespyr Flight**,
-**Vespyr Dash**, **Classic Sudoku** and **Vespyr Queens** (formerly Vespyr Doku). `/game run|flight|dash|sudoku|queens`
-(or any alias, see `src/arcade/registry.ts`) opens a game directly. There is one command implementation and no
+**Vespyr Dash**, **Classic Sudoku** and **Vespyr Queens** (formerly Vespyr Doku) in v0.22.0; the unreleased v0.23.0 work
+extends it to 33 games (the full list with ids, aliases and controls is in
+[arcade-expansion-status.md](../development/arcade-expansion-status.md)). `/game <id or alias>` (for example
+`/game run|flight|dash|sudoku|queens|leap|pinball`; aliases are in `src/arcade/registry.ts`) opens a game directly. There is one command implementation and no
 per-game global command: a new game is one directory under `src/arcade/games/` and one line in the registry. The
 program growing it to 33 games, its hub, Stage, visual system and acceptance matrix are in
 [arcade-expansion.md](arcade-expansion.md).

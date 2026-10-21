@@ -120,10 +120,10 @@ export interface Target { /** Pours of the best solution known. */ pours: number
 /**
  * The best solution this bounded search can find, labelled honestly: `proven` only when an A* search with an admissible
  * bound (see `pourLowerBound`) finished, or the lower bound equals the length. A* explores at most `limit` boards in each
- * of two phases, and stops after `timeMs` each (exact, then weighted to find something shorter than the first solution); beyond that the result is a
+ * of two phases, and stops after `timeMs` (120 ms by default) each (exact, then weighted to find something shorter than the first solution); beyond that the result is a
  * good, not necessarily minimal, solution.
  */
-export function bestTarget(start: Jars, cap: number, limit = 30_000, timeMs = 250): Target | undefined {
+export function bestTarget(start: Jars, cap: number, limit = 30_000, timeMs = 120): Target | undefined {
   const first = solveJars(start, cap);
   if (!first) return undefined;
   let best = first;
@@ -142,7 +142,8 @@ export function bestTarget(start: Jars, cap: number, limit = 30_000, timeMs = 25
       const top = heap[0]!, last = heap.pop()!;
       if (heap.length) { heap[0] = last; down(); }
       const node = nodes[top.index]!;
-      if (node.g + 1 >= best.length) continue;
+      // A node is only worth expanding or accepting while it can still beat `best` (a win at g < best.length is an improvement).
+      if (node.g >= best.length) continue;
       if (isWon(node.jars, cap)) {
         const path: Pour[] = [];
         for (let at = top.index; at > 0; at = nodes[at]!.parent) path.push(nodes[at]!.pour!);

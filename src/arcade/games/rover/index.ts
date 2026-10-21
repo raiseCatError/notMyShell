@@ -200,7 +200,9 @@ class Rover implements GameInstance {
     this.drawCamY = this.camYFor(ry, view);
     if (color) this.drawScene(canvas, palette, look, view, camX, rx, ry, ra);
     else this.drawText(canvas, look, view, camX, rx, ry);
-    topRow(canvas, look, 'Vespyr Rover', `${unitText}  Fuel ${fuel}%`);
+    // A narrow screen keeps the distance (the fuel bar below already shows the tank) rather than a clipped "Fuel …".
+    const full = `${unitText}  Fuel ${fuel}%`;
+    topRow(canvas, look, 'Vespyr Rover', canvas.width - 'Vespyr Rover'.length - 4 >= full.length ? full : unitText);
     this.drawFuel(canvas, look, fuel, color);
     this.popups.draw(canvas, look.surface.base);
     const middle = Math.floor(canvas.height / 3);
@@ -208,7 +210,9 @@ class Rover implements GameInstance {
     else if (!this.done && state.danger > 0) {
       const blink = this.context.motion.reduced || Math.floor(this.clock / 150) % 2 === 0;
       const left = Math.max(0, Math.ceil((1 - state.danger) * 5));
-      canvas.center(Math.max(2, middle - 1), `${state.upsideDown ? 'UPSIDE DOWN' : 'ROOF DOWN'}! Roll back  ${'#'.repeat(left)}${'-'.repeat(5 - left)}`.slice(0, canvas.width - 2), {fg: look.bad, bold: blink});
+      const meter = `${'#'.repeat(left)}${'-'.repeat(5 - left)}`, what = `${state.upsideDown ? 'UPSIDE DOWN' : 'ROOF DOWN'}!`;
+      const text = `${what} Roll back  ${meter}`;
+      canvas.center(Math.max(2, middle - 1), (text.length <= canvas.width - 2 ? text : `${what} ${meter}`).slice(0, canvas.width - 2), {fg: look.bad, bold: blink});
     } else if (this.bannerMs > 0 && !this.done) canvas.center(Math.max(2, middle - 1), this.banner, {fg: look.gold, bold: true});
     if (this.done) {
       const record = this.result?.record;

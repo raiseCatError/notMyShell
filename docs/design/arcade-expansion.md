@@ -2,6 +2,9 @@
 
 Status: program specification, started 2026-10-21 on top of the published v0.22.0 (`95da2c8c`). It extends
 [arcade.md](arcade.md), which stays the reference for the game contract, and it does not change the v0.22.0 release.
+All 33 games are implemented and registered on `feature/arcade-batch3` (unreleased, planned as v0.23.0) with automated
+evidence; physical Ghostty/Zed QA has not been run, so the Physical column of the acceptance matrix is still open. See
+[the status ledger](../development/arcade-expansion-status.md) for per-game evidence and known limits.
 
 The goal is one offline arcade of **33 complete, polished games** inside NMSh: a full-viewport *Horizon* hub, full-viewport
 *Stage* gameplay, one shared engine and one visual language. It is delivered in reviewed batches; the program is not

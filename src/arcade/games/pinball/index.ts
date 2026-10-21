@@ -198,12 +198,14 @@ class Pinball implements GameInstance {
       const tableWidth = Math.round(TABLE_W * layout.scale);
       const room = layout.panel ? Math.max(tableWidth + 6, 32) : canvas.width;
       const left = layout.panel ? Math.max(0, Math.min(layout.ox + Math.floor((tableWidth - room) / 2), layout.ox + tableWidth + 2 - room)) : 0;
-      canvas.center(y, truncateText(text, Math.max(1, room - 1)), style, left, layout.panel ? room : canvas.width);
+      // On a backing strip, so the words stay readable over the table's walls and bumpers.
+      const shown = truncateText(text, Math.max(1, room - 1));
+      canvas.center(y, color ? ` ${shown} ` : shown, color ? {...style, bg: look.surface.sunken} : style, left, layout.panel ? room : canvas.width);
     };
     if (!this.started) {
       say(mid, 'Vespyr Pinball', {fg: look.text.strong, bold: true});
-      say(mid + 1, 'Space pulls the plunger, Space again launches', {fg: look.accent, bold: true});
-      say(mid + 2, safe ? 'Tap Left / Right to flip (one tap, one stroke)' : 'Tap ← → to flip (one tap, one stroke)', {fg: look.text.normal, bold: false});
+      say(mid + 1, 'Space: plunger, again to launch', {fg: look.accent, bold: true});
+      say(mid + 2, safe ? 'Tap Left / Right to flip' : 'Tap ← → to flip', {fg: look.text.normal, bold: false});
     } else if (this.bannerMs > 0 && !this.done) say(mid, this.banner, {fg: look.gold, bold: true});
     else if (state.phase === 'lane' && !this.done) say(mid, 'Press Space for the plunger', {fg: look.text.strong, bold: true});
     if (this.done) {

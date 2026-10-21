@@ -333,3 +333,63 @@ test('the finale: three stars earn a longer celebration than none, it can be ski
   assert.equal(typeof (record.raw() as {best: number}).best, 'number');
   assert.equal(typeof (record.raw() as {bestChain: number}).bestChain, 'number');
 });
+
+// ---- review fixes ------------------------------------------------------------------------------------------------
+
+type Hinted = Probe & {hintCells: [number, number] | undefined; cursor: number; note: string; noteLeft: number};
+
+test('h asks for a hint (it is not read as vim-left): the two cells of a legal swap are remembered and drawn, and the next move clears them', () => {
+  const game = make() as Hinted;
+  game.cursor = 20;
+  game.key({kind: 'text', value: 'h'});
+  assert.equal(game.cursor, 20, 'the cursor did not move left');
+  assert.deepEqual(game.hintCells, game.board.hint());
+  assert.ok(game.board.swapWorks(game.hintCells![0], game.hintCells![1]));
+  const before = new Canvas(100, 34); const withHint = new Canvas(100, 34);
+  const quiet = make();
+  quiet.render(before, 0, palette);
+  game.render(withHint, 0, palette);
+  assert.notDeepEqual(withHint.rows(), before.rows(), 'the hint ring changes the picture');
+  game.key({kind: 'right'});
+  assert.equal(game.hintCells, undefined);
+  game.key({kind: 'text', value: 'H'});
+  assert.ok(game.hintCells, 'upper case works too');
+  // The hint is reachable in the plain, small look as well, where it is the "*" marker.
+  const plain = make({size: {columns: 40, rows: 16}, color: 'none', safeGlyphs: true}) as Hinted;
+  plain.key({kind: 'text', value: 'h'});
+  const lines = new Canvas(40, 16); plain.render(lines, 0, palette);
+  assert.match(lines.plain({color: 'none', safe: true}).join('\n'), /\*/u);
+});
+
+test('tiles dropping in from above the board never draw over the title or progress rows, in any size and look', () => {
+  for (const [columns, rows] of [[100, 34], [60, 24], [40, 16], [28, 12]] as const) for (const plain of [false, true]) {
+    const game = make({size: {columns, rows}, ...(plain ? {color: 'none' as const, safeGlyphs: true} : {})});
+    const layout = game.layout()!;
+    swapHint(game);
+    for (let step = 0; step < 60; step += 1) {
+      game.animate(25);
+      const canvas = new Canvas(columns, rows);
+      game.render(canvas, 0, palette);
+      const lines = canvas.plain({color: plain ? 'none' : 'truecolor', safe: plain});
+      // Above the board only the title and progress rows exist; the moves counter and score bar are all digits, bars and stars.
+      for (let row = 2; row < layout.y; row += 1) assert.equal(lines[row]!.trim(), '', `row ${row} above the board at ${columns}x${rows} plain=${plain}`);
+      // Narrow windows have no "Moves" label: the progress row is only the bar, the count and the star bar.
+      if (columns < 34) assert.match(lines[1]!, /^[\x20#\-0-9o*█░★☆]*$/u, `no tile glyphs on the progress row at ${columns}x${rows}: ${lines[1]}`);
+    }
+  }
+});
+
+test('a swap that leaves no legal swap reshuffles the board and says so', () => {
+  const game = make() as Hinted;
+  const board = game.board;
+  // Force the end state: after the swap below, make hasMove report false so the board is reshuffled.
+  const [a, b] = board.hint()!;
+  const original = board.hasMove.bind(board);
+  let calls = 0;
+  board.hasMove = () => (calls++ === 0 ? false : original());
+  game.cursor = a; game.key({kind: 'text', value: ' '}); game.key({kind: b === a + 1 ? 'right' : 'down'});
+  assert.equal(board.shuffles, 1);
+  assert.match(game.note, /reshuffled/u);
+  assert.ok(game.noteLeft > 0);
+  assert.ok(original(), 'the reshuffled board has a legal swap');
+});

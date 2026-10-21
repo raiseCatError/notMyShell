@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Canvas} from '../src/arcade/Canvas.js';
+import {Canvas, PixelBuffer} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import {createRng} from '../src/arcade/rng.js';
 import {paradeGame} from '../src/arcade/games/parade/index.js';
@@ -259,4 +259,46 @@ test('render: mid-battle, a boss fight, the victory screen and the defeat animat
   checkRenders(paradeGame, drive(state => Boolean(state.battle?.boss) && state.battle!.crowd < state.battle!.crowd0, optimal));
   checkRenders(paradeGame, drive(state => state.won, optimal, 500));
   checkRenders(paradeGame, drive(state => !state.alive, greedyWrong, 300));
+});
+
+test('Safe Glyphs: no gate, label or intro line shows the "?" stand-in (division and the minus sign are drawn in ASCII)', () => {
+  for (const [columns, rows] of [[100, 34], [60, 24], [28, 12]] as const) {
+    const game = paradeGame.create(context(memory(), {size: {columns, rows}, color: 'none', safeGlyphs: true})) as never as {key(k: unknown): unknown; step(d: number): void; animate(d: number): void; render(c: Canvas, a: number, p: ReturnType<typeof arcadePalette>): void; state: ParadeState};
+    const seen = new Set<string>();
+    const look = () => { const canvas = new Canvas(columns, rows); game.render(canvas, 0, arcadePalette()); for (const line of canvas.plain({color: 'none', safe: true})) assert.ok(!line.includes('?'), `${columns}x${rows}: "${line}"`); return canvas.plain({color: 'none', safe: true}).join('\n'); };
+    look();
+    game.key({kind: 'text', value: ' '});
+    for (let t = 0; t < 40_000 && !game.state.over; t += STEP) {
+      const row = game.state.nextRow();
+      if (row && !game.state.battle) { const want = bestLane(game.state.count, row); while (game.state.lane !== want && game.state.moveLane(game.state.lane < want ? 1 : -1)) { /* press */ } }
+      game.step(STEP); game.animate(STEP);
+      if (Math.round(t) % 400 < STEP) seen.add(look());
+    }
+    // A division gate was on screen at some point and drew as "/".
+    const all = [...seen].join('\n');
+    assert.ok(/\[\/\d+\]/u.test(all) || columns < 40, `${columns}x${rows}: a ÷ gate shows as [/n]`);
+  }
+});
+
+test('crowd size: a full crowd is drawn inside its own lane, at every width, so the lane you are in is clear', () => {
+  const rects: Array<{x: number; w: number; h: number}> = [];
+  const original = PixelBuffer.prototype.rect;
+  PixelBuffer.prototype.rect = function (x, y, w, h, color) { if (w === 3 && h === 2) rects.push({x, w, h}); return original.call(this, x, y, w, h, color); };
+  try {
+    for (const columns of [28, 40, 60, 100, 160]) {
+      const rows = Math.max(12, Math.round(columns * 0.34));
+      for (const lane of [0, 1, 2]) {
+        const game = paradeGame.create(context(memory(), {size: {columns, rows}})) as never as {key(k: unknown): unknown; step(d: number): void; animate(d: number): void; render(c: Canvas, a: number, p: ReturnType<typeof arcadePalette>): void; state: ParadeState};
+        game.key({kind: 'text', value: ' '});
+        game.state.lane = lane; game.state.count = 500; game.state.rows = [];
+        for (let i = 0; i < 60; i += 1) { game.step(STEP); game.animate(STEP); }
+        rects.length = 0;
+        game.render(new Canvas(columns, rows), 0, arcadePalette());
+        const laneW = Math.min(30, Math.max(5, Math.floor(columns * 0.24))), left = Math.floor(columns / 2 - laneW * 1.5);
+        const kittens = rects.filter(r => r.x >= left - 4 && r.x < left + laneW * 3 + 4);
+        assert.ok(kittens.length > 0, `${columns}: crowd drawn`);
+        for (const r of kittens) assert.ok(r.x >= left + laneW * lane && r.x + r.w <= left + laneW * (lane + 1), `${columns} lane ${lane}: kitten at x ${r.x}..${r.x + r.w} outside ${left + laneW * lane}..${left + laneW * (lane + 1)}`);
+      }
+    }
+  } finally { PixelBuffer.prototype.rect = original; }
 });

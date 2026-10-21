@@ -54,10 +54,72 @@ export function hexRows(cellW: number, cellH: number): HexRow[] | undefined {
   return rows;
 }
 
-/** Paint a hexagon in a slot. Returns the box of its full-width middle for the digit. */
-export function paintHex(canvas: Canvas, x: number, y: number, cellW: number, cellH: number, paint: TilePaint): TileBox {
-  const rows = hexRows(cellW, cellH)!;
+/**
+ * A hexagon as half-block pixels: `2 * cellH` pixel rows, each `cellW` columns at most (a column is as wide as a pixel row
+ * is tall, so pixels are square). The first and last `overlap` pixel rows narrow towards the points, and the narrowing of
+ * a row and of its mirror in the next hex row (shifted half a cell) sum to the cell width, so rows nest with no gap and no
+ * shared pixel. Widths are even so the shape is centered on the cell. Undefined for one-row cells.
+ */
+export function hexPixelWidths(cellW: number, cellH: number): number[] | undefined {
+  if (cellH < 2) return undefined;
+  const pixels = cellH * 2;
+  const overlap = cellH === 2 ? 1 : 2 * hexOverlap(cellH);
+  const top: number[] = [];
+  for (let k = 0; k < overlap; k += 1) {
+    const mirror = overlap - 1 - k;
+    // The first half of the slope is rounded to an even width, the second is whatever completes the pair.
+    top.push(k <= mirror ? Math.max(2, Math.min(cellW - 2, 2 * Math.round(cellW * (k + 1) / (overlap + 1) / 2))) : -1);
+  }
+  for (let k = 0; k < overlap; k += 1) if (top[k]! < 0) top[k] = cellW - top[overlap - 1 - k]!;
+  const widths: number[] = [];
+  for (let row = 0; row < pixels; row += 1) {
+    const edge = Math.min(row, pixels - 1 - row);
+    widths.push(edge < overlap ? top[edge]! : cellW);
+  }
+  return widths;
+}
+
+/** Where a hexagon's digit goes: the terminal row (from the cell's top row) whose two pixel rows both belong to it, nearest the middle. */
+export function hexDigitRow(cellH: number, half: 0 | 1): number {
+  const pixels = cellH * 2;
+  let best = Math.ceil(half / 2), bestOff = Infinity;
+  for (let row = Math.ceil(half / 2); 2 * row + 1 <= half + pixels - 1; row += 1) {
+    const off = Math.abs(2 * row + 1 - (half + pixels) / 2);
+    if (off < bestOff) { bestOff = off; best = row; }
+  }
+  return best;
+}
+
+/** One half-block pixel of the canvas: the cell keeps its other half, whatever it showed. */
+function setHalf(canvas: Canvas, column: number, pixelRow: number, fill: Rgb, plate: Rgb): void {
+  const row = pixelRow >> 1;
+  const cell = canvas.cell(column, row);
+  if (!cell) return;
+  const base = cell.bg ?? plate;
+  let upper = base, lower = base;
+  if (cell.ch === '▀') { upper = cell.fg ?? base; lower = base; } else if (cell.ch === '▄') { upper = base; lower = cell.fg ?? base; }
+  if (pixelRow & 1) lower = fill; else upper = fill;
+  const same = upper.red === lower.red && upper.green === lower.green && upper.blue === lower.blue;
+  if (same) canvas.put(column, row, ' ', {bg: upper}); else canvas.put(column, row, '▀', {fg: upper, bg: lower});
+}
+
+/**
+ * Paint a hexagon in a slot. With colors and half blocks (`edges`) it is drawn pixel by pixel into whatever the canvas
+ * holds, so neighbouring hexagons nest; `half` is 1 when the slot starts on the lower pixel row of its terminal row
+ * (two-row hexagons nesting by half a row). Without them it is row-filled, narrowed at the points. Returns the middle for the digit.
+ */
+export function paintHex(canvas: Canvas, x: number, y: number, cellW: number, cellH: number, paint: TilePaint, half: 0 | 1 = 0): TileBox {
   const {fill, plate} = paint;
+  const widths = hexPixelWidths(cellW, cellH);
+  if (paint.edges && fill && plate && widths) {
+    widths.forEach((width, row) => {
+      const left = x + Math.floor((cellW - width) / 2);
+      for (let column = left; column < left + width; column += 1) setHalf(canvas, column, 2 * y + half + row, fill, plate);
+    });
+    return {ix: x, iw: cellW, digitRow: y + hexDigitRow(cellH, half), digitX: x + Math.floor((cellW - 1) / 2)};
+  }
+  const rows = hexRows(cellW, cellH);
+  if (!rows) return paintTile(canvas, x, y, cellW, cellH, paint);
   rows.forEach((row, dy) => {
     const width = row.r - row.l + 1;
     canvas.fill(x + row.l, y + dy, width, 1, ' ', {bg: fill, ...(paint.reverse ? {reverse: true} : {})});

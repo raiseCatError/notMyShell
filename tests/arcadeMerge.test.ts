@@ -84,3 +84,16 @@ test('game: seeded play is deterministic, ends with a saved result, and every si
     for (const line of canvas.plain()) assert.ok(displayWidth(line) <= columns);
   }
 });
+
+test('the score popup is never placed on the title row, even when the board is as tall as the window allows', () => {
+  const game = mergeGame.create(context(memory(), {size: {columns: 40, rows: 10}})) as never as {board: {tiles: Array<{id: number; value: number; cell: number; from: number; merged: boolean; fresh: boolean}>}; key(k: unknown): unknown; animate(d: number): void; render(c: Canvas, a: number, p: unknown): void; layout(): {well: {y: number}} | undefined};
+  assert.equal(game.layout()!.well.y, 1, 'a board that fills the rows below the title row');
+  game.board.tiles = [{id: 90, value: 2, cell: 0, from: 0, merged: false, fresh: false}, {id: 91, value: 2, cell: 1, from: 1, merged: false, fresh: false}];
+  game.key({kind: 'left'});
+  for (let step = 0; step < 10; step += 1) {
+    game.animate(40);
+    const canvas = new Canvas(40, 10);
+    game.render(canvas, 0, arcadePalette());
+    assert.doesNotMatch(canvas.plain()[0]!, /\+4/u, `step ${step}`);
+  }
+});

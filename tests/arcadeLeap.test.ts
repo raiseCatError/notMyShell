@@ -5,7 +5,7 @@ import {Canvas, PixelBuffer} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
-import {JUMP, JUMP_HEIGHT, LeapState, PLATFORM_W, REACH, SPRING, WIDTH} from '../src/arcade/games/leap/logic.js';
+import {FALL_MIN, JUMP, JUMP_HEIGHT, LeapState, PLATFORM_W, REACH, SPRING, WIDTH} from '../src/arcade/games/leap/logic.js';
 import {leapGame} from '../src/arcade/games/leap/index.js';
 import {displayWidth} from '../src/util/text.js';
 
@@ -137,4 +137,44 @@ test('wrap: the cat is wholly beyond the edge before it re-enters from the other
   state.x = 2; state.y = 52; state.vy = -40;
   for (let i = 0; i < 6; i += 1) state.step(STEP);
   assert.ok(state.vy > JUMP * 0.9, 'bounced on the platform at the left edge');
+});
+
+test('fall limit: on a short view the cat may still fall to the highest platform under its apex (as deep as a full gap allows)', () => {
+  const plat = (id: number, x: number, y: number) => ({id, x, y, kind: 'solid' as const, spring: false, broken: false, phase: 0, speed: 1, fall: 0});
+  for (const rows of [12, 16, 24, 34, 50]) {
+    const game = leapGame.create(context(memory(), {size: {columns: Math.round(rows * 2.9), rows}})) as never as LeapGame;
+    game.key({kind: 'text', value: ' '});
+    const state = game.state;
+    // Worst case the generator allows: the apex (4 + a jump) lies just under the next platform, so the one it can land on is
+    // as far below the apex as a full gap leaves it.
+    const apex = state.y + JUMP_HEIGHT;
+    const target = plat(2, 33, apex - JUMP_HEIGHT * REACH + 0.5);
+    state.platforms = [plat(1, 33, 0), target, plat(3, 0, target.y + JUMP_HEIGHT * REACH)];
+    state.x = target.x + 7;
+    let landed = false;
+    for (let frame = 0; frame < 60 * 6 && state.alive && !landed; frame += 1) { game.step(STEP); landed = state.bounces > 0; }
+    assert.ok(state.alive && landed, `${rows} rows: the climb ended before the cat reached a platform ${(apex - target.y).toFixed(1)} under its apex (fall limit ${state.fallLimit.toFixed(1)})`);
+  }
+  assert.ok(FALL_MIN >= JUMP_HEIGHT * REACH);
+});
+
+test('fall limit: a cat carried below the view is marked by an arrow at the bottom edge, in every mode', () => {
+  for (const mode of ['color', 'text'] as const) {
+    const game = leapGame.create(context(memory(), {size: {columns: 60, rows: 12}, ...(mode === 'text' ? {color: 'none' as const, safeGlyphs: true} : {})})) as never as LeapGame;
+    game.key({kind: 'text', value: ' '});
+    const state = game.state;
+    state.platforms = [];
+    game.step(STEP);
+    state.best = state.y = 60; state.vy = 0; state.x = 30;
+    game.step(STEP);
+    state.y = 60 - 30; // 30 under the best height on a 24 pixel view: wholly below the bottom edge
+    const canvas = new Canvas(60, 12);
+    game.render(canvas, 0, arcadePalette());
+    const lines = canvas.plain({color: 'none', safe: true});
+    assert.ok(lines[10]!.includes('v'), `${mode}: "${lines[10]}"`);
+    state.y = 60; // back at the apex: no arrow
+    const clear = new Canvas(60, 12);
+    game.render(clear, 0, arcadePalette());
+    assert.ok(!clear.plain({color: 'none', safe: true})[10]!.includes('v'));
+  }
 });

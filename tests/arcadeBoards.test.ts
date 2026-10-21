@@ -5,8 +5,8 @@ import {Canvas} from '../src/arcade/Canvas.js';
 import {arcadePalette} from '../src/arcade/palette.js';
 import type {GameContext, GameRecordHandle} from '../src/arcade/types.js';
 import type {GameRecord} from '../src/arcade/scores.js';
-import {CELL_ASPECT, cellOrigin, physicalRatio, type BoardLayout} from '../src/arcade/engine/boardLayout.js';
-import {hexRows} from '../src/arcade/engine/tilePaint.js';
+import {CELL_ASPECT, cellOrigin, hexHalf, physicalRatio, type BoardLayout} from '../src/arcade/engine/boardLayout.js';
+import {hexDigitRow, hexRows} from '../src/arcade/engine/tilePaint.js';
 import {HEX_DIRECTIONS, HEX_PRESETS, CLASSIC_PRESETS, FLAG, HIDDEN, MineBoard, OPEN, PRESETS, hexNeighbours, hexStep} from '../src/arcade/games/mines/logic.js';
 import {minesGame, readMines} from '../src/arcade/games/mines/index.js';
 import {mergeGame} from '../src/arcade/games/merge/index.js';
@@ -357,5 +357,47 @@ test('hex hit testing: staggered rows shift half a cell, round trip over the who
     assert.equal(physicalRatio(layout.cellW, layout.cellH), 1);
     const even = cellOrigin(layout, 0, 0, true), odd = cellOrigin(layout, 0, 1, true);
     assert.equal(odd.x - even.x, Math.floor(layout.stepX / 2));
+  }
+});
+
+// ---- Minefield: hexagons or, when they cannot be drawn, labelled staggered tiles -----------------------------------
+
+test('hex minefield: hexagons from two rows up with color and glyphs; any other case is staggered tiles and the title says so', () => {
+  const title = (key: string, size: {columns: number; rows: number}, options: Partial<GameContext> = {}) => {
+    const game = start(key, size, options);
+    game.key({kind: 'text', value: ' '});
+    const canvas = new Canvas(size.columns, size.rows);
+    game.render(canvas, 0, arcadePalette());
+    return {line: canvas.plain({color: options.color ?? 'truecolor', safe: options.safeGlyphs ?? false})[0]!, layout: game.layout()!};
+  };
+  // Large at a plain 80x24 fits as real hexagons (two rows tall, nesting by half a row); at 100x34 too.
+  const wide = title('6', {columns: 80, rows: 23});
+  assert.equal(wide.layout.cellH, 2);
+  assert.equal(wide.layout.stepY, 1.5);
+  assert.doesNotMatch(wide.line, /staggered/u);
+  assert.doesNotMatch(title('6', {columns: 100, rows: 33}).line, /staggered/u);
+  // Too narrow for two-row hexagons: staggered one-row tiles, said in the title.
+  const narrow = title('6', {columns: 60, rows: 23});
+  assert.equal(narrow.layout.cellH, 1);
+  assert.match(narrow.line, /Hex Large · staggered tiles/u);
+  // Without color, or in Safe Glyphs, there are no half blocks to draw hexagons with.
+  assert.match(title('4', {columns: 100, rows: 33}, {color: 'none'}).line, /Hex Small .*staggered tiles/u);
+  assert.match(title('4', {columns: 100, rows: 33}, {safeGlyphs: true}).line, /Hex Small .*staggered tiles/u);
+  assert.equal(title('4', {columns: 100, rows: 33}, {color: 'none'}).layout.stepY, title('4', {columns: 100, rows: 33}, {color: 'none'}).layout.cellH, 'staggered tiles do not nest');
+  // The classic fields are never labelled.
+  for (const key of ['1', '2', '3']) assert.doesNotMatch(title(key, {columns: 60, rows: 23}).line, /staggered/u);
+});
+
+test('hex minefield: a click on a hexagon (digit cell, or the cell above or below it inside the hexagon) opens that hexagon, every cell, at 80x24 and 100x34', () => {
+  for (const key of ['5', '6']) for (const [columns, rows] of [[80, 24], [100, 34], [60, 24]] as const) {
+    const probe = start(key, {columns, rows: rows - 1});
+    const layout = probe.layout()!;
+    for (let cell = 0; cell < probe.board.size; cell += 1) {
+      const game = start(key, {columns, rows: rows - 1});
+      const {x, y} = cellOrigin(layout, cell % game.board.width, Math.floor(cell / game.board.width), true);
+      const row = y + (layout.cellH >= 2 && layout.stepY < layout.cellH ? hexDigitRow(layout.cellH, hexHalf(layout, Math.floor(cell / game.board.width))) : Math.floor(layout.cellH / 2));
+      game.key({kind: 'mouseClick', x: x + Math.floor((layout.cellW - 1) / 2) + 1, y: row + 1});
+      assert.equal(game.cursor, cell, `${key} ${columns}x${rows} cell ${cell}`);
+    }
   }
 });

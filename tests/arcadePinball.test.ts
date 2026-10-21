@@ -521,3 +521,16 @@ test('render: every size draws inside its bounds in color, without color, with s
   }
   pinballGame.preview(new Canvas(30, 6), 5, arcadePalette());
 });
+
+test('render: the ready instructions fit beside the table without being cut off, at every width that shows them', () => {
+  for (const [columns, rows] of [[100, 34], [80, 24], [60, 24], [40, 16]] as const) {
+    for (const safe of [false, true]) {
+      const game = pinballGame.create(context(memory(), {size: {columns, rows}, ...(safe ? {color: 'none' as const, safeGlyphs: true} : {})}));
+      const canvas = new Canvas(columns, rows);
+      game.render(canvas, 0, arcadePalette());
+      const text = canvas.plain({color: 'none', safe}).join('\n');
+      assert.ok(text.includes('Space: plunger, again to launch') && /to flip/.test(text), `${columns}x${rows} safe ${safe}: an instruction line is cut off:\n${text}`);
+      game.dispose();
+    }
+  }
+});
