@@ -68,7 +68,7 @@ test('F01: an HTML document renders its structure: headings, paragraphs, nested 
     <blockquote><p>Quoted</p></blockquote>
     <hr>
     <ul><li><input type="checkbox" checked disabled> done</li><li><input type="checkbox" disabled> open</li></ul>
-    <details><summary>More</summary><p>Hidden text</p></details>
+    <details open><summary>More</summary><p>Hidden text</p></details>
   </body></html>`);
   const text = plain(rows);
   assert.ok(rows.some(row => row.kind === 'heading' && row.plain === 'Guide & notes'));
@@ -81,7 +81,7 @@ test('F01: an HTML document renders its structure: headings, paragraphs, nested 
   assert.ok(rows.some(row => row.kind === 'quote' && /Quoted/u.test(row.plain)));
   assert.ok(rows.some(row => row.kind === 'rule'));
   assert.match(text, /☑ done\n☐ open/u);
-  assert.match(text, /More\n*Hidden text/u);
+  assert.match(text, /More\n+\s*Hidden text/u, "an open <details> shows its content under the summary (a closed one shows only the summary: tests/details.test.ts)");
   assert.doesNotMatch(text, /color:red|<title>|\bT\b\n/u, 'head and styles are not content');
 });
 

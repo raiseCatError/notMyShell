@@ -59,6 +59,8 @@ export interface MarkdownRow {
   block?: RowBlock;
   /** Set on image rows: the image's index in the document. */
   image?: number;
+  /** Set on the summary row of a `<details>`: the key the viewer toggles it by (summary text and which one of that text). */
+  details?: string;
   /** The source line (0-based) of the block this row belongs to: the shared source-position map (blank gap rows have none). */
   line?: number;
 }
@@ -80,6 +82,8 @@ export interface MarkdownOptions {
   maxImageRows?: number;
   /** Headings may be sized blocks (only a viewer that places them passes this): the most rows a heading may take. */
   sizedHeadings?: {maxRows: number};
+  /** Which `<details>` are open: the viewer's choices over each block's own `open`. Without it a block's own state shows. */
+  disclosure?: {isOpen(key: string, defaultOpen: boolean): boolean};
 }
 
 const RESET = '\u001b[0m';
@@ -101,6 +105,8 @@ interface Context {
   images?: ImageProvider;
   maxImageRows: number;
   sizedHeadings?: {maxRows: number};
+  disclosure?: {isOpen(key: string, defaultOpen: boolean): boolean};
+  detailsSeen: Map<string, number>;
   blockIds: {next: number};
 }
 
@@ -267,7 +273,7 @@ function tokenSgr(kind: CodeTokenKind, context: Context): string {
 export function codeTokenStyle(kind: CodeTokenKind, options: {syntax?: SyntaxSgr; level?: ColorLevel} = {}): string {
   const level = options.level ?? colorLevel();
   return tokenSgr(kind, {level, safe: false, hyperlinks: false, ...(options.syntax ? {syntax: options.syntax} : {}),
-    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false, maxImageRows: 1, blockIds: {next: 1}});
+    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false, maxImageRows: 1, detailsSeen: new Map(), blockIds: {next: 1}});
 }
 
 function codeRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context): MarkdownRow[] {
@@ -437,6 +443,22 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
       case 'code':
         out.push(...codeRows(block, width, context));
         break;
+      case 'details': {
+        const nth = context.detailsSeen.get(block.summary) ?? 0;
+        context.detailsSeen.set(block.summary, nth + 1);
+        const key = `${block.summary}#${nth}`;
+        const open = context.disclosure ? context.disclosure.isOpen(key, block.open) : block.open;
+        const marker = glyph(context, open ? '▾' : '▸', open ? 'v' : '>');
+        const accent = context.fg(UI_COLORS.accent);
+        inlineRows(block.summary, Math.max(1, width - 2), context, `${BOLD}${accent}`).forEach((row, index) => out.push({
+          ansi: index === 0 ? `${accent}${marker}${RESET} ${row.ansi}` : `  ${row.ansi}`, plain: `${index === 0 ? `${marker} ` : '  '}${row.plain}`.trimEnd(), kind: 'text', ...(index === 0 ? {details: key} : {})}));
+        if (open && block.blocks.length) {
+          for (const row of renderBlocks(block.blocks, Math.max(1, width - 2), context, depth + 1)) {
+            out.push({...row, ansi: row.ansi ? `  ${row.ansi}` : '', plain: row.plain ? `  ${row.plain}` : ''});
+          }
+        }
+        break;
+      }
       case 'rule': {
         const line = glyph(context, '─', '-').repeat(Math.max(1, Math.min(width, 48)));
         out.push({ansi: `${context.fg(UI_COLORS.separator)}${line}${RESET}`, plain: line, kind: 'rule'});
@@ -504,6 +526,8 @@ function renderSource(source: string, columns: number, options: MarkdownOptions,
     ...(options.images ? {images: options.images} : {}),
     maxImageRows: Math.max(1, options.maxImageRows ?? 16),
     ...(options.sizedHeadings ? {sizedHeadings: options.sizedHeadings} : {}),
+    ...(options.disclosure ? {disclosure: options.disclosure} : {}),
+    detailsSeen: new Map(),
     blockIds: {next: 1},
   };
   // The renderer never trusts its caller to have scrubbed: terminal controls and bidi formatting go, tabs become spaces.

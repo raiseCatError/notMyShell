@@ -252,7 +252,7 @@ class Run {
 function codeLines(blocks: readonly Block[], into: Set<number>): void {
   for (const block of blocks) {
     if (block.kind === 'code' && block.from !== undefined && block.to !== undefined) for (let line = block.from; line < block.to; line += 1) into.add(line);
-    else if (block.kind === 'quote') codeLines(block.blocks, into);
+    else if (block.kind === 'quote' || block.kind === 'details') codeLines(block.blocks, into);
     else if (block.kind === 'list') for (const item of block.items) codeLines(item.blocks, into);
   }
 }

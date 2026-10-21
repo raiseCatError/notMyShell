@@ -21,6 +21,8 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
 - [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
 
+## Details (#462)
+- [ ] A Markdown file with GitHub-style `<details>`: closed shows `▸ Summary`; `z` opens it; `Z`; in the preview, the split's preview pane and the hybrid view; narrow widths; Safe Glyphs (`>`/`v`); a hostile file.
 ## Problems (#466)
 - [ ] F1 then `e` in a Markdown file with a broken link, a missing image and a bad `#fragment`: the list shows them; Enter selects the exact text; Back returns. `P` in the read-only views and in the split's preview pane.
 - [ ] An HTML file (palette → Problems) and a CSS file (F1); the status row counts; fixing a finding removes it after a moment; undo brings it back.

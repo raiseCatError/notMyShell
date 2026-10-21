@@ -180,6 +180,11 @@ function blockOf(element: Element): Block[] {
     case 'blockquote': return [{kind: 'quote', blocks: blocksOf(element.children)}];
     case 'ul': case 'ol': case 'menu': case 'dir': return [list(element)];
     case 'table': return table(element);
+    case 'details': {
+      const summary = element.children.find((node): node is Element => typeof node !== 'string' && node.name === 'summary');
+      const text = summary ? clean(inlineText(summary.children)) : '';
+      return [{kind: 'details', open: 'open' in element.attributes, summary: text || 'Details', blocks: blocksOf(element.children.filter(node => node !== summary))}];
+    }
     case 'summary': case 'dt': case 'caption': case 'legend': {
       const text = clean(inlineText(element.children));
       return text ? [{kind: 'paragraph', text: `<b>${text}</b>`}] : [];
