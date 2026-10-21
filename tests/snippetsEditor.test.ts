@@ -127,7 +127,7 @@ test('other files have no palette and no hint; undo ends a session; a selection 
   try {
     press(text.editor, F1);
     assert.equal(text.editor.dialog, undefined);
-    assert.doesNotMatch(screen(text.editor), /F1/u);
+    assert.doesNotMatch(screen(text.editor), /F1 (?:Markdown|Snippets)/u, 'no hint (the title can hold any characters of the random folder name)');
   } finally { rmSync(text.root, {recursive: true, force: true}); }
   const {root, editor} = await open('p.html', 'make me a heading\n');
   try {
