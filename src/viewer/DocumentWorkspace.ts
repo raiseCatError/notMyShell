@@ -6,6 +6,7 @@ import type {EditableFile} from './fileEdit.js';
 import {displayWidth, stripAnsi, truncateAnsi} from '../util/text.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {getIconStyle} from '../ui/glyphs.js';
+import {createHybrid, renderHybrid, scrollHybrid, type HybridState} from './HybridView.js';
 import {createViewer, renderViewer, showSourceLine, viewerKey, type ViewerAction, type ViewerLook, type ViewerState} from './ViewerPanel.js';
 
 /**
@@ -23,7 +24,7 @@ import {createViewer, renderViewer, showSourceLine, viewerKey, type ViewerAction
  * and line endings kept). In navigation modes `h`, `e`, `r` are commands; while typing they are text, and Ctrl+O is the
  * switch that works there.
  */
-export type DocumentMode = 'source' | 'edit' | 'preview' | 'split';
+export type DocumentMode = 'source' | 'edit' | 'preview' | 'split' | 'hybrid';
 
 /**
  * The split view (#461): the editor, the only editable pane, beside NMSh's own preview of the same buffer. F2 opens and closes
@@ -34,6 +35,8 @@ export interface SplitState {
   focus: 'source' | 'preview';
   /** The preview is on the left. */
   swapped: boolean;
+  /** The text pane shows the hybrid view (rendered except for the active block) instead of the plain source editor. */
+  hybrid: boolean;
   /** The preview's share of the width, in percent. */
   ratio: number;
   /** The preview follows the caret when it moves to another line. */
@@ -88,6 +91,8 @@ export interface DocumentSession {
   tops: {source: {top: number; sub: number}; preview: {top: number; sub: number}};
   /** Present only while the mode is 'split'. */
   split?: SplitState;
+  /** The hybrid view's viewport and render cache (#460), created the first time it is shown. */
+  hybrid?: HybridState;
   note?: string;
   /** Sized-text blocks of the last render, positioned in the returned panel rows. */
   overlays: TextOverlay[];
@@ -154,7 +159,7 @@ export function setDocumentMode(state: DocumentSession, mode: DocumentMode): voi
   if (state.mode === 'split') { state.split?.stop(); delete state.split; }
   if (mode === 'preview') state.before = state.mode === 'split' ? 'edit' : state.mode;
   if (mode === 'split') {
-    const split: SplitState = {focus: state.mode === 'edit' ? 'source' : 'preview', swapped: false, ratio: 50, linked: true, version: 0, seen: -1, caretLine: -1, stop: () => {}};
+    const split: SplitState = {focus: state.mode === 'edit' || state.mode === 'hybrid' ? 'source' : 'preview', swapped: false, hybrid: state.mode === 'hybrid', ratio: 50, linked: true, version: 0, seen: -1, caretLine: -1, stop: () => {}};
     split.stop = state.editor.buffer.observe(() => { split.version += 1; });
     state.split = split;
     syncDocumentViewer(state, true);
@@ -163,7 +168,7 @@ export function setDocumentMode(state: DocumentSession, mode: DocumentMode): voi
     state.note = undefined;
     return;
   }
-  if (mode !== 'edit') {
+  if (mode !== 'edit' && mode !== 'hybrid') {
     syncDocumentViewer(state, mode === 'preview');
     viewer.top = state.tops[mode].top;
     viewer.sub = state.tops[mode].sub;
@@ -180,11 +185,16 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   state.note = undefined;
   // A save or conflict dialog belongs to the editor, whatever mode raised it.
   if (editor.dialog || editor.review || editor.input || editor.busy) return fromEditor(state, editorKey(editor, key, columns, height));
-  if (key.kind === 'splitToggle') { setDocumentMode(state, state.mode === 'split' ? 'edit' : 'split'); return undefined; }
+  if (key.kind === 'splitToggle') { setDocumentMode(state, state.mode === 'split' ? (state.split?.hybrid ? 'hybrid' : 'edit') : 'split'); return undefined; }
+  if (key.kind === 'hybridToggle') { toggleHybrid(state); return undefined; }
   if (state.mode === 'split') return splitKey(state, key, columns, height, look);
   if (key.kind === 'sendToProgram') return editor.file.scratch ? fromEditor(state, editorKey(editor, key, columns, height)) : {kind: 'save'};
 
-  if (state.mode === 'edit') {
+  if (state.mode === 'edit' || state.mode === 'hybrid') {
+    if (state.mode === 'hybrid') {
+      if (key.kind === 'wheelUp' || key.kind === 'wheelDown') { scrollHybrid(editor, hybridOf(state), key.kind === 'wheelUp' ? -3 : 3, columns, look); return undefined; }
+      if (key.kind === 'pageUp' || key.kind === 'pageDown') { editor.buffer.vertical((key.kind === 'pageUp' ? -1 : 1) * Math.max(1, height - 6)); return undefined; }
+    }
     if (key.kind === 'toggleDetails') { setDocumentMode(state, 'preview'); return {kind: 'preview', refresh: false}; }
     // Esc leaves typing for navigation without closing or discarding anything; the unsaved buffer stays as it is.
     if (key.kind === 'escape' && !editor.input && !editor.snippet) { setDocumentMode(state, 'source'); return undefined; }
@@ -198,6 +208,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (!searching) {
     if (text === 'e') { setDocumentMode(state, 'edit'); return undefined; }
     if (text === 's') { setDocumentMode(state, 'split'); return undefined; }
+    if (text === 'H') { toggleHybrid(state); return undefined; }
     if (key.kind === 'toggleDetails' && state.mode === 'preview') { setDocumentMode(state, state.before); return undefined; }
     if (text === 'h' || key.kind === 'toggleDetails') {
       if (state.mode === 'preview') { setDocumentMode(state, 'source'); return undefined; }
@@ -230,6 +241,17 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (action.kind === 'open') return {kind: 'open', path: action.path};
   if (action.kind === 'image') return {kind: 'image', index: action.index};
   return undefined;
+}
+
+function hybridOf(state: DocumentSession): HybridState {
+  return state.hybrid ??= createHybrid();
+}
+
+/** F3: the plain source editor and the hybrid view are two presentations of one buffer. */
+function toggleHybrid(state: DocumentSession): void {
+  if (formatForPath(state.editor.file.path).format !== 'markdown') { state.note = 'The hybrid view is for Markdown files.'; return; }
+  if (state.mode === 'split' && state.split) { state.split.hybrid = !state.split.hybrid; return; }
+  setDocumentMode(state, state.mode === 'hybrid' ? 'edit' : 'hybrid');
 }
 
 function splitLook(state: DocumentSession, look: ViewerLook): ViewerLook {
@@ -279,8 +301,9 @@ function renderSplit(state: DocumentSession, columns: number, height: number, lo
   if (split.linked && line !== split.caretLine) showSourceLine(state.viewer, line, previewWidth, height, previewLook);
   split.caretLine = line;
   if (state.note) state.viewer.note = state.note;
-  if (layout.narrow) return split.focus === 'source' ? renderEditor(editor, columns, height) : renderViewer(state.viewer, columns, height, previewLook);
-  const source = renderEditor(editor, layout.source, height);
+  const sourcePane = (width: number) => split.hybrid ? renderHybrid(editor, hybridOf(state), width, height, look) : renderEditor(editor, width, height);
+  if (layout.narrow) return split.focus === 'source' ? sourcePane(columns) : renderViewer(state.viewer, columns, height, previewLook);
+  const source = sourcePane(layout.source);
   const preview = renderViewer(state.viewer, layout.preview, height, previewLook);
   const [left, right] = split.swapped ? [preview, source] : [source, preview];
   const [leftWidth, rightWidth] = split.swapped ? [layout.preview, layout.source] : [layout.source, layout.preview];
@@ -310,7 +333,8 @@ export function renderDocumentSession(state: DocumentSession, columns: number, h
   state.overlays = [];
   const editor = state.editor;
   if (state.mode === 'split' && state.split && !(editor.dialog || editor.review || editor.input)) return renderSplit(state, columns, height, look);
-  if (state.mode === 'edit' || state.mode === 'split' || editor.dialog || editor.review || editor.input) return renderEditor(editor, columns, height);
+  if (state.mode === 'hybrid' && !(editor.dialog || editor.review || editor.input)) return renderHybrid(editor, hybridOf(state), columns, height, look);
+  if (state.mode === 'edit' || state.mode === 'hybrid' || state.mode === 'split' || editor.dialog || editor.review || editor.input) return renderEditor(editor, columns, height);
   if (state.mode === 'preview' && state.preview) {
     const view = state.preview.render(columns, height);
     state.overlays = view.overlays ?? [];
