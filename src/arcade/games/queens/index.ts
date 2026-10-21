@@ -1,8 +1,10 @@
 import {mixRgb} from '../../../chroma/chroma.js';
 import {PixelBuffer, type Canvas} from '../../Canvas.js';
 import {ParticleSystem} from '../../effects.js';
+import {confetti, Reveal} from '../../fx/cells.js';
+import {arcadeLook, distinctColors} from '../../look.js';
 import {Menu, type MenuItem} from '../../menu.js';
-import {regionColors, type ArcadePalette} from '../../palette.js';
+import type {ArcadePalette} from '../../palette.js';
 import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
 import type {Key} from '../../../terminal/keys.js';
 import {typeset} from '../../../ui/typography.js';
@@ -10,7 +12,7 @@ import {truncateText} from '../../../util/text.js';
 import {QueensBoard, formatTime, newBoard, readCurrent, readStats, writeStats} from './board.js';
 import {SIZES, makePuzzle} from './puzzle.js';
 import {regionLetter} from './rules.js';
-import {renderBoard, SETTLE_MS} from './render.js';
+import {renderBoard, SETTLE_MS, VANISH_MS} from './render.js';
 import {nextHint, type Hint} from './solver.js';
 import {CAT, DIFFICULTIES, type Difficulty} from './types.js';
 
@@ -41,6 +43,9 @@ class QueensGame implements GameInstance {
   private idleMs = 0;
   private size: {columns: number; rows: number};
   private settle = new Float32Array(0);
+  private vanish = new Float32Array(0);
+  /** The winning hop wave across the cats: the game's finale, before the shared results sheet. */
+  private wave: Reveal | undefined;
   private settling = 0;
   private readonly particles: ParticleSystem;
   private disposed = false;
@@ -57,9 +62,10 @@ class QueensGame implements GameInstance {
   }
 
   get status(): GameStatus { return this.screen === 'menu' ? 'ready' : this.screen === 'won' ? 'won' : 'playing'; }
+  get finale(): Reveal | undefined { return this.screen === 'won' ? this.wave : undefined; }
   /** A repaint every second for the clock; faster while something is settling, blinking or waking from pause. */
   get refreshMs(): number {
-    if (this.paused || this.settling > 0) return 50;
+    if (this.paused || this.settling > 0 || (this.wave && !this.wave.done) || this.particles.count > 0 || this.vanish.some(left => left > 0)) return 50;
     if (this.screen === 'play' && !this.context.motion.reduced) return 250;
     return 1000;
   }
@@ -82,6 +88,8 @@ class QueensGame implements GameInstance {
     this.screen = 'play';
     this.cursor = Math.floor(board.size / 2) * board.size + Math.floor(board.size / 2);
     this.settle = new Float32Array(board.size * board.size).fill(-1);
+    this.vanish = new Float32Array(board.size * board.size);
+    this.wave = undefined;
     this.settling = 0;
     this.hint = undefined;
     this.message = '';
@@ -99,6 +107,8 @@ class QueensGame implements GameInstance {
     if (this.paused) { this.paused = false; return; }
     this.idleMs += dtMs;
     this.particles.update(dtMs);
+    this.wave?.update(dtMs);
+    for (let cell = 0; cell < this.vanish.length; cell += 1) if (this.vanish[cell]! > 0) this.vanish[cell] = Math.max(0, this.vanish[cell]! - dtMs);
     if (this.settling > 0) {
       this.settling = 0;
       for (let cell = 0; cell < this.settle.length; cell += 1) {
@@ -120,6 +130,7 @@ class QueensGame implements GameInstance {
   key(key: Key): GameKeyResult {
     if (this.screen === 'menu') return this.menuKey(key);
     const board = this.board;
+    if (this.screen === 'won' && this.wave && !this.wave.done) { this.wave.skip(); return 'handled'; }
     if (this.screen !== 'play' || !board) return 'ignored';
     this.paused = false;
     const size = board.size;
@@ -132,7 +143,12 @@ class QueensGame implements GameInstance {
     else if (key.kind === 'down' || value === 'j') this.cursor = Math.min(size - 1, row + 1) * size + column;
     else if (key.kind === 'left' || value === 'h') this.cursor = row * size + Math.max(0, column - 1);
     else if (key.kind === 'right' || value === 'l') this.cursor = row * size + Math.min(size - 1, column + 1);
-    else if (key.kind === 'enter' || value === ' ') { this.message = ''; this.change(board.toggleCat(this.cursor), [this.cursor]); }
+    else if (key.kind === 'enter' || value === ' ') {
+      this.message = '';
+      const had = board.marks[this.cursor] === CAT;
+      this.change(board.toggleCat(this.cursor), [this.cursor]);
+      if (had && board.marks[this.cursor] !== CAT && !this.context.motion.reduced) this.vanish[this.cursor] = VANISH_MS;
+    }
     else if (value === 'x') { this.message = ''; this.change(board.toggleExclude(this.cursor), []); }
     else if (value === 'u') { this.message = board.canUndo ? '' : 'Nothing to undo.'; this.change(board.undo(), []); }
     else if (key.kind === 'redo' || value === 'y') { this.message = board.canRedo ? '' : 'Nothing to redo.'; this.change(board.redo(), []); }
@@ -225,12 +241,13 @@ class QueensGame implements GameInstance {
     this.celebrate();
   }
 
+  /** Every cat hops in turn, top row first, its region brightening as it lands; then soft confetti in the region hues. */
   private celebrate(): void {
-    const motion = this.context.motion;
-    if (motion.reduced || motion.effects === 'off') return;
-    const colors = regionColors(this.board!.size, {red: 12, green: 10, blue: 22});
-    this.particles.burst({x: this.size.columns / 2, y: this.size.rows, count: 36, speed: 46, life: 900, gravity: 24, drag: 0.6, colors});
-    this.particles.update(280);
+    const board = this.board!;
+    const cats = [...Array(board.size).keys()].map(row => row * board.size + board.puzzle.solution[row]!);
+    this.wave = new Reveal(cats.map(cell => [cell]), this.context.motion, {stagger: 120, within: 0, rise: 180, hold: 120, fall: 360});
+    const look = arcadeLook();
+    confetti(this.particles, this.size.columns, this.size.rows * 2, distinctColors(board.size, look), this.context.motion);
   }
 
   private persistCurrent(): void {
@@ -248,7 +265,7 @@ class QueensGame implements GameInstance {
     const plain = this.context.color === 'none' || this.context.safeGlyphs;
     renderBoard(canvas, palette, {
       board: this.board, cursor: this.cursor, hint: this.hint, idleMs: this.idleMs, settle: this.settle, reduced: this.context.motion.reduced,
-      plain, safe: this.context.safeGlyphs, paused: this.paused, won: this.screen === 'won', message: this.message,
+      plain, safe: this.context.safeGlyphs, paused: this.paused, won: this.screen === 'won', message: this.message, wave: this.wave, vanish: this.vanish,
     });
     if (this.particles.count > 0) {
       const layer = new PixelBuffer(canvas.width, canvas.height * 2);
@@ -295,21 +312,37 @@ class QueensGame implements GameInstance {
   }
 }
 
-/** A mini board for the hub: the demo puzzle's regions, with cats arriving one by one. */
+/** A mini board for the hub: the demo puzzle's regions as solid shapes, with cats arriving one by one on their badges. */
 function drawPreview(canvas: Canvas, frame: number, palette: ArcadePalette): void {
   demo ??= makePuzzle(7, 'easy');
+  const look = arcadeLook(palette);
+  canvas.clear(look.surface.base);
   const size = demo.size;
-  const colors = regionColors(size, palette.deep, palette);
-  const cw = canvas.width >= size * 4 ? 4 : 3;
-  const left = Math.max(0, Math.floor((canvas.width - size * cw) / 2));
-  const placed = Math.floor(frame / 6) % (size + 3);
-  for (let row = 0; row < Math.min(size, canvas.height); row += 1) {
+  const hues = distinctColors(size, look);
+  const cw = canvas.width >= size * 6 + 2 ? 5 : 3;
+  const ch = canvas.height >= size * 2 + 1 ? 2 : 1;
+  const width = size * (cw + 1) + 1;
+  const height = size * ch + (ch === 2 ? size + 1 : 0);
+  const left = Math.max(0, Math.floor((canvas.width - width) / 2));
+  const top = Math.max(0, Math.floor((canvas.height - height) / 2));
+  const placed = Math.floor(frame / 6) % (size + 4);
+  canvas.fill(left, top, width, height, ' ', {bg: look.surface.sunken});
+  const pitchY = ch === 2 ? ch + 1 : ch;
+  for (let row = 0; row < size; row += 1) {
     for (let column = 0; column < size; column += 1) {
       const cell = row * size + column;
-      const bg = colors[demo.regions[cell]!]!;
-      const cat = demo.solution[row] === column && row < placed;
-      canvas.fill(left + column * cw, row, cw, 1, ' ', {bg, fg: palette.deep});
-      canvas.text(left + column * cw + (cw === 4 ? 1 : 0), row, cat ? '^.^' : regionLetter(demo.regions[cell]!), {fg: cat ? mixRgb(palette.cat.body, palette.haze, 0.2) : mixRgb(palette.deep, bg, 0.3), bg: cat ? mixRgb(bg, palette.deep, 0.5) : bg, bold: cat});
+      const region = demo.regions[cell]!;
+      const bg = mixRgb(hues[region]!, look.surface.base, 0.16);
+      const x = left + 1 + column * (cw + 1);
+      const y = top + (ch === 2 ? 1 : 0) + row * pitchY;
+      canvas.fill(x, y, cw, ch, ' ', {bg});
+      if (column > 0 && demo.regions[cell - 1] === region) canvas.fill(x - 1, y, 1, ch, ' ', {bg: mixRgb(bg, look.surface.base, 0.3)});
+      if (ch === 2 && row > 0 && demo.regions[cell - size] === region) canvas.fill(x, y - 1, cw, 1, ' ', {bg: mixRgb(bg, look.surface.base, 0.3)});
+      if (demo.regions.indexOf(region) === cell) canvas.text(x, y, regionLetter(region), {fg: mixRgb(bg, look.surface.sunken, 0.62), bg});
+      if (demo.solution[row] === column && row < placed) {
+        canvas.fill(x, y + ch - 1, cw, 1, ' ', {bg: look.surface.sunken});
+        canvas.text(x + Math.floor((cw - 3) / 2), y + ch - 1, '^.^', {fg: palette.cat.body, bg: look.surface.sunken, bold: true});
+      }
     }
   }
 }

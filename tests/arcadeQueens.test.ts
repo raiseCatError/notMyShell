@@ -467,3 +467,48 @@ test('dispose releases the board and is safe to repeat', () => {
   (h.game as GameInstance).dispose();
   h.game.animate(100);
 });
+
+// ---- the redesigned board (color) ------------------------------------------------------------------------------
+
+test('color board: each region is labelled once, not in every cell; region hues are clearly different', async () => {
+  const {arcadeLook, deltaE, distinctColors} = await import('../src/arcade/look.js');
+  const h = play({color: 'truecolor'});
+  const screen = h.plain(false, 'truecolor').join('\n');
+  for (let region = 0; region < h.size; region += 1) {
+    const letter = String.fromCharCode(65 + region);
+    const count = (screen.match(new RegExp(`(?<![A-Za-z])${letter}(?![a-z])`, 'gu')) ?? []).length;
+    assert.ok(count <= 2, `region ${letter} labelled at most once on the board (found ${count})`);
+  }
+  const hues = distinctColors(h.size, arcadeLook());
+  for (let a = 0; a < hues.length; a += 1) for (let b = a + 1; b < hues.length; b += 1) assert.ok(deltaE(hues[a]!, hues[b]!) >= 6, `regions ${a} and ${b}`);
+  assert.doesNotMatch(screen, /[╲╳╱]/u, 'no box-drawing X: exclusions are a pixel mark');
+});
+
+test('color board: the win plays a hop wave across every cat as the finale; any key skips it; Reduced Motion holds still', () => {
+  const h = play();
+  h.board.puzzle.solution.forEach((column, row) => h.cat(row * h.board.size + column));
+  assert.equal(h.game.status, 'won');
+  assert.ok(h.game.finale && !h.game.finale.done, 'the cats celebrate first');
+  h.game.animate(200);
+  assert.ok(h.game.refreshMs <= 60, 'frames while it plays');
+  h.press('x');
+  assert.equal(h.game.finale!.done, true);
+  const calm = play({reduced: true});
+  calm.board.puzzle.solution.forEach((column, row) => calm.cat(row * calm.board.size + column));
+  assert.ok(calm.game.finale, 'a still highlight marks the win');
+  for (let t = 0; t < 1000; t += 100) calm.game.animate(100);
+  assert.equal(calm.game.finale!.done, true);
+});
+
+test('color board: taking a cat away fades its cell briefly; nothing fades under Reduced Motion', () => {
+  const h = play();
+  const cell = h.at();
+  h.press(' ');
+  h.press(' ');
+  assert.ok((h.game as any).vanish[cell] > 0);
+  h.game.animate(400);
+  assert.equal((h.game as any).vanish[cell], 0);
+  const calm = play({reduced: true});
+  calm.press(' '); calm.press(' ');
+  assert.equal((calm.game as any).vanish[calm.at()], 0);
+});
