@@ -8,6 +8,7 @@ import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {formatForPath, inert} from './document.js';
+import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from './markdownTable.js';
 import {continueList, insertLink, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
 import {displayColumn, TAB_WIDTH, TextBuffer, type Position} from './textBuffer.js';
@@ -25,6 +26,8 @@ const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
   kind: 'unsaved' | 'conflict' | 'recover' | 'markdown';
+  /** The Markdown menu opened with the caret in a table: the table actions come first. */
+  table?: boolean;
   /** A recovered draft this dialog offers (#469), the file's lines when it was offered, and what Compare found. */
   offer?: DraftOffer;
   disk?: string[];
@@ -69,6 +72,11 @@ export function offerDraft(state: EditorState, offer: DraftOffer): void {
 }
 
 /** The Markdown actions menu (F1 in a Markdown file): each is a source-preserving helper and one undo step. */
+const TABLE_ACTIONS = [
+  {id: 'Action.RowAdd', label: 'Row+', key: 'r'}, {id: 'Action.RowDelete', label: 'Row−', key: 'd'},
+  {id: 'Action.ColumnAdd', label: 'Col+', key: 'o'}, {id: 'Action.ColumnDelete', label: 'Col−', key: 'x'}, {id: 'Action.Align', label: 'Align', key: 'a'},
+] as const;
+
 const MARKDOWN_ACTIONS = [
   {id: 'Action.Task', label: 'Task', key: 't'}, {id: 'Action.Renumber', label: 'Renumber', key: 'n'},
   {id: 'Action.Link', label: 'Link', key: 'l'}, {id: 'Action.Image', label: 'Image', key: 'p'},
@@ -81,6 +89,11 @@ export const isMarkdownFile = (state: EditorState) => formatForPath(state.file.p
 function runMarkdownAction(state: EditorState, id: string): EditResult {
   const buffer = state.buffer;
   switch (id) {
+    case 'Action.RowAdd': return insertRow(buffer);
+    case 'Action.RowDelete': return deleteRow(buffer);
+    case 'Action.ColumnAdd': return insertColumn(buffer);
+    case 'Action.ColumnDelete': return deleteColumn(buffer);
+    case 'Action.Align': return alignColumn(buffer);
     case 'Action.Task': return toggleTask(buffer);
     case 'Action.Renumber': return renumberList(buffer);
     case 'Action.Link': return insertLink(buffer, false);
@@ -91,7 +104,7 @@ function runMarkdownAction(state: EditorState, id: string): EditResult {
 
 function dialogControls(dialog: EditorDialog): ActionControl[] {
   const focused = (index: number, destructive = false) => dialog.focus === index ? (destructive ? 'destructiveFocused' : 'focused') : destructive ? 'destructive' : 'default';
-  if (dialog.kind === 'markdown') return MARKDOWN_ACTIONS.map((action, index) => ({id: action.id, label: action.label, state: focused(index), key: action.key, essential: true}));
+  if (dialog.kind === 'markdown') return [...(dialog.table ? TABLE_ACTIONS : []), ...MARKDOWN_ACTIONS].map((action, index) => ({id: action.id, label: action.label, state: focused(index), key: action.key, essential: true}));
   if (dialog.kind === 'recover') return [
     {id: 'Action.Restore', label: 'Restore draft', state: focused(0), key: 'r', essential: true},
     {id: 'Action.Compare', label: 'Compare with file', state: focused(1), key: 'c', essential: true},
@@ -225,9 +238,21 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
     case 'paste': buffer.insert(key.value); break;
     case 'enter': if (isMarkdownFile(state) && continueList(buffer)) break; buffer.insert('\n'); break;
     case 'newline': buffer.insert('\n'); break;
-    case 'complete': if (isMarkdownFile(state) && shiftListItems(buffer, false)) break; buffer.insert('\t'); break;
-    case 'focusPrevious': if (isMarkdownFile(state) && shiftListItems(buffer, true)) break; return undefined;
-    case 'palette': if (!isMarkdownFile(state)) return undefined; state.dialog = {kind: 'markdown', focus: 0}; return undefined;
+    case 'complete': {
+      if (isMarkdownFile(state) && shiftListItems(buffer, false)) break;
+      const moved = isMarkdownFile(state) ? tableTab(buffer, false) : {handled: false};
+      if (moved.handled) { if (moved.note) state.note = {text: moved.note, tone: 'info'}; break; }
+      buffer.insert('\t'); break;
+    }
+    case 'focusPrevious': {
+      if (!isMarkdownFile(state)) return undefined;
+      if (shiftListItems(buffer, true)) break;
+      const moved = tableTab(buffer, true);
+      if (!moved.handled) return undefined;
+      if (moved.note) state.note = {text: moved.note, tone: 'info'};
+      break;
+    }
+    case 'palette': if (!isMarkdownFile(state)) return undefined; state.dialog = {kind: 'markdown', focus: 0, ...(findTable(buffer.lines, buffer.caret.line) ? {table: true} : {})}; return undefined;
     case 'backspace': buffer.backspace(); break;
     case 'delete': buffer.delete(); break;
     case 'deleteWord': buffer.deleteWord(); break;
@@ -332,7 +357,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'markdown' ? 'Markdown · t task · n renumber · l link · p image · b bold · i italic · c code · s strike' : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
@@ -365,9 +390,10 @@ export function renderEditor(state: EditorState, columns: number, height: number
   const caret = state.buffer.caret;
   const position = `Ln ${caret.line + 1}, Col ${displayColumn(state.buffer.lines[caret.line]!, caret.column) + 1}`;
   const selected = state.buffer.selection ? ` · ${state.buffer.selectedText().length.toLocaleString('en-US')} selected` : '';
+  const table = isMarkdownFile(state) ? tableStatus(state.buffer.lines, caret) : undefined;
   const status = state.input
     ? `${foreground(UI_COLORS.accent)}Find: ${RESET}${truncateText(inert(state.input.value), Math.max(1, columns - 12))}${foreground(UI_COLORS.accent)}▏${RESET}`
-    : `${subtle}${truncateText(`${position}${selected}${state.busy ? ' · saving…' : ''}`, Math.max(1, columns - 4))}${RESET}${state.note ? `  ${state.note.tone === 'error' ? foreground(UI_COLORS.failure) : state.note.tone === 'success' ? foreground(UI_COLORS.success) : subtle}${truncateText(inert(state.note.text), Math.max(1, columns - 8 - displayWidth(position + selected)))}${RESET}` : ''}`;
+    : `${subtle}${truncateText(`${position}${selected}${table ? ` · ${table}` : ''}${state.busy ? ' · saving…' : ''}`, Math.max(1, columns - 4))}${RESET}${state.note ? `  ${state.note.tone === 'error' ? foreground(UI_COLORS.failure) : state.note.tone === 'success' ? foreground(UI_COLORS.success) : subtle}${truncateText(inert(state.note.text), Math.max(1, columns - 8 - displayWidth(position + selected)))}${RESET}` : ''}`;
   out.push(`  ${status}`, ...footerRows(state, columns).map(row => `  ${row}`));
   const rule = framePanel([], columns)[0]!;
   if (height <= 1) return [rule].slice(0, Math.max(0, height));

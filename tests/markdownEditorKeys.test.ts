@@ -84,3 +84,36 @@ test('CRLF files: helpers edit lines and the saved bytes keep CRLF', async () =>
     assert.equal(encodeLines(editor.file, editor.buffer.lines).toString(), '- a\r\n- \r\n- b\r\n');
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+test('tables: Tab walks the cells, Tab outside a table is a tab, F1 offers the table actions and the status names the cell', async () => {
+  const {root, editor} = await editorOn('t.md', 'intro\n\n| a | b |\n|---|---|\n| 1 | 2 |\n');
+  try {
+    editor.buffer.caret = {line: 0, column: 5};
+    press(editor, '\t');
+    assert.equal(editor.buffer.lines[0], 'intro\t', 'outside a table Tab is still a tab');
+    editor.buffer.undo();
+    editor.buffer.caret = {line: 2, column: 3};
+    press(editor, '\t');
+    assert.equal(editor.buffer.selectedText(), 'b');
+    assert.match(screen(editor), /Table · header · column 2 of 2/u);
+    press(editor, '\t');
+    assert.deepEqual([editor.buffer.caret.line, editor.buffer.selectedText()], [4, '1']);
+    press(editor, '\u001b[Z');
+    assert.equal(editor.buffer.selectedText(), 'b');
+    press(editor, '\u001bOP');
+    assert.match(screen(editor), /r row\+ · d row− · o col\+/u);
+    press(editor, 'r');
+    assert.equal(editor.dialog, undefined);
+    assert.equal(editor.buffer.lines.length, 6);
+    press(editor, '\u001a');
+    assert.equal(editor.buffer.lines.length, 5, 'one undo removes the row');
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('the plain editor menu has no table actions outside a table', async () => {
+  const {root, editor} = await editorOn('t.md', 'text\n');
+  try {
+    press(editor, '\u001bOP');
+    assert.doesNotMatch(screen(editor), /row\+/u);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});

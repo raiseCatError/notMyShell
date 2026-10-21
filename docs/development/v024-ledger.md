@@ -29,7 +29,7 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 1. **#469 crash recovery** — branch `feature/v024-draft-recovery`. Done: `src/viewer/draftRecovery.ts`, editor `recover` dialog, app wiring, tests (`draftRecovery*.test.ts`), design section, changelog. Status of acceptance: restore/compare/discard/keep, byte/format preserved through the normal save, SIGKILL, symlinked store, liveness, bounds — automated. Not done: physical Ghostty/Zed pass (NOT RUN), encryption (decided against, see design), concurrent-window race beyond the per-pid files.
 
-2. **#463 slice 1: list/task/link/wrap helpers** — branch `feature/v024-markdown-helpers`, stacked on PR #489 (needs `TextBuffer.replaceAll`'s neighbour `edit` and the editor dialog mechanism). Done: `markdownEdit.ts`, Enter / Tab / Shift+Tab / F1 menu, tests, design table, changelog. #463 remaining: **slice 2** interactive GFM tables (cell navigation, row/column edit, alignment), **slice 3** hunk-by-hunk review of changes made on disk while editing — persistence and conflict safety, research first; #469's Compare is a one-line summary, not a merge.
+2. **#463 slice 1: list/task/link/wrap helpers** — branch `feature/v024-markdown-helpers`, stacked on PR #489 (needs `TextBuffer.replaceAll`'s neighbour `edit` and the editor dialog mechanism). Done: `markdownEdit.ts`, Enter / Tab / Shift+Tab / F1 menu, tests, design table, changelog. #463 remaining: **slice 2** (done, branch `feature/v024-markdown-tables`, stacked on slice 1): interactive GFM tables, **slice 3** hunk-by-hunk review of changes made on disk while editing — persistence and conflict safety, research first; #469's Compare is a one-line summary, not a merge.
 
 ## Environment notes
 
