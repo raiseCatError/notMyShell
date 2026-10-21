@@ -415,6 +415,9 @@ import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
+/** The Arcade's rise-in and recede: First Prompt's handoff idea, without its Aurora. */
+const ARCADE_HANDOFF_MS = 320;
+interface ArcadeHandoff { direction: 'in' | 'out'; started: number; under: string[]; arcade?: string[] }
 const HISTORY_SEARCH = '/history ';
 const DIRECTORY_SEARCH = '/dirs ';
 const PRIMARY = lazyForeground(UI_COLORS.primary);
@@ -1609,7 +1612,7 @@ export class TerminalApp {
     this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
-    if (this.arcade) { const size = this.dimensions(); this.arcade.session.resize(size.columns, Math.max(8, size.rows - 4)); }
+    if (this.arcade) { const size = this.terminalDimensions(); this.arcade.handoff = undefined; this.arcade.session.resize(size.columns, size.rows); }
     this.lastPtyRows = 0;
     this.lastPtyColumns = 0;
     if (this.passthrough) {
@@ -1684,7 +1687,8 @@ export class TerminalApp {
       return;
     }
     // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
-    const routed = this.routeWorkspacePointer(key);
+    // The Arcade covers the whole terminal, so every pointer event is its own.
+    const routed = this.arcade ? key : this.routeWorkspacePointer(key);
     if (!routed) return;
     key = routed;
     if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
@@ -1783,9 +1787,11 @@ export class TerminalApp {
       return;
     }
     if (this.arcade) {
-      const session = this.arcade.session;
-      if (key.kind !== 'paste' && key.kind !== 'mouseMove' && key.kind !== 'mouseClick' && key.kind !== 'mouseDrag' && key.kind !== 'mouseRelease' && key.kind !== 'wheelUp' && key.kind !== 'wheelDown') {
-        if (session.key(key) === 'close') this.closeArcade();
+      const arcade = this.arcade;
+      // Any key finishes the handoff at once; the key is then the Arcade's like any other.
+      if (arcade.handoff && key.kind !== 'mouseMove') arcade.handoff = undefined;
+      if (key.kind !== 'mouseMove' && key.kind !== 'mouseDrag' && key.kind !== 'mouseRelease') {
+        if (arcade.session.key(key) === 'close') this.closeArcade();
         else this.syncArcadeClock();
       }
       this.render();
@@ -4109,18 +4115,55 @@ export class TerminalApp {
       return;
     }
     this.closeArcade(false);
-    const {columns, rows} = this.dimensions();
-    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows: Math.max(8, rows - 4)}, game);
-    this.arcade = {session, interval: 0, floor: 40, last: performance.now()};
+    // The Arcade is a full-viewport application: it draws over the whole terminal (no banner, Status Strip, sidebar,
+    // transcript or composer), like the screensaver, and the PTY keeps its size. See docs/design/arcade-expansion.md.
+    const {columns, rows} = this.terminalDimensions();
+    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows}, game);
+    this.arcadeClosing = undefined;
+    const handoff = this.arcadeHandoff('in');
+    this.arcade = {session, interval: 0, floor: 40, last: performance.now(), handoff, under: handoff?.under};
     this.syncArcadeClock();
+  }
+
+  /** The rise-in or recede between NMSh and the Arcade; none under Reduced Motion, Effects Off or without color. */
+  private arcadeHandoff(direction: 'in' | 'out', arcadeRows?: string[]): ArcadeHandoff | undefined {
+    if (!this.decorativeMotionAllowed() || this.promptConfiguration.presentation.effectsOff || colorLevel() === 'none') return undefined;
+    const under = this.renderer.snapshot();
+    if (!under.length) return undefined;
+    return {direction, started: performance.now(), under, ...(arcadeRows ? {arcade: arcadeRows} : {})};
+  }
+
+  /** The Arcade's frame over the whole terminal, with the caret hidden; during a handoff, slid over NMSh's last frame. */
+  private paintArcade(): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    const {columns, rows} = this.terminalDimensions();
+    const frame = arcade.session.render();
+    let shown = frame.rows;
+    const handoff = arcade.handoff;
+    if (handoff) {
+      const t = Math.min(1, (performance.now() - handoff.started) / ARCADE_HANDOFF_MS);
+      const eased = 1 - (1 - t) ** 3;
+      const visible = Math.round(rows * (handoff.direction === 'in' ? eased : 1 - eased));
+      const top = rows - visible;
+      shown = Array.from({length: rows}, (_, row) => (row < top ? handoff.under[row] ?? '' : (handoff.arcade ?? frame.rows)[row - top] ?? ''));
+      if (t >= 1) arcade.handoff = undefined;
+    }
+    // Sized text only once the Arcade is fully in place, and only blocks that fit on screen.
+    this.renderer.setTextBlocks(arcade.handoff ? [] : frame.overlays
+      .filter(block => block.y >= 0 && block.y + block.rows <= rows)
+      .map(block => ({row: block.y, column: block.x, columns: block.columns, rows: block.rows, sequence: block.sequence})));
+    try { this.renderer.render({rows: shown, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
+    catch (error) { this.onTerminate(); throw error; }
+    if (handoff && !arcade.handoff) this.syncArcadeClock();
   }
 
   /** Subscribe to the shared clock exactly while the session wants frames, at the rate it asks for. */
   private syncArcadeClock(): void {
     const arcade = this.arcade;
     if (!arcade) return;
-    const wanted = arcade.session.interval;
-    const floor = arcade.session.floor;
+    const wanted = arcade.handoff ? 16 : arcade.session.interval;
+    const floor = arcade.handoff ? 16 : arcade.session.floor;
     if (arcade.interval === wanted && arcade.floor === floor) return;
     arcade.stop?.();
     arcade.stop = undefined;
@@ -4146,8 +4189,30 @@ export class TerminalApp {
     if (!arcade) return;
     arcade.stop?.();
     this.arcade = undefined;
+    // The last Arcade frame recedes over NMSh's frame as it was when the Arcade opened; the real frame follows at once.
+    const last = restore && arcade.handoff?.direction !== 'in' ? this.renderer.snapshot() : undefined;
     arcade.session.dispose();
-    if (restore) { this.returnFromPanel(); this.render(); }
+    this.renderer.setTextBlocks([]);
+    if (!restore) return;
+    this.returnFromPanel();
+    const under = arcade.under;
+    if (last && under?.length && this.decorativeMotionAllowed() && !this.promptConfiguration.presentation.effectsOff && colorLevel() !== 'none') {
+      this.arcadeClosing = {direction: 'out', started: performance.now(), under, arcade: last};
+      const stop = presentationClock.subscribe(() => {
+        const closing = this.arcadeClosing;
+        if (!closing || this.arcade || this.stopped) { stop(); this.arcadeClosing = undefined; return; }
+        const t = Math.min(1, (performance.now() - closing.started) / ARCADE_HANDOFF_MS);
+        if (t >= 1) { stop(); this.arcadeClosing = undefined; this.renderer.invalidate(); this.render(); return; }
+        const {columns, rows} = this.terminalDimensions();
+        const visible = Math.round(rows * (1 - (1 - (1 - t) ** 3)));
+        const top = rows - visible;
+        try { this.renderer.render({rows: Array.from({length: rows}, (_, row) => (row < top ? closing.under[row] ?? '' : closing.arcade![row - top] ?? '')), columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
+        catch { stop(); this.arcadeClosing = undefined; }
+      }, 16, 16);
+      return;
+    }
+    this.renderer.invalidate();
+    this.render();
   }
 
   /**
@@ -10084,7 +10149,9 @@ export class TerminalApp {
   /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
   private pasteSteps?: {items: string[]; next: number; running: boolean};
   /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
-  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number};
+  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number; handoff?: ArcadeHandoff | undefined; under?: string[]};
+  /** The Arcade receding after it closed: presentation only, ended by any render of the real frame. */
+  private arcadeClosing?: ArcadeHandoff;
   private arcadeStore?: ArcadeStore;
   /** Sized-text blocks the active panel asked for this frame, relative to its rows (placed by render). */
   private panelBlocks: TextOverlay[] = [];
@@ -11524,6 +11591,9 @@ export class TerminalApp {
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
     if (this.idle) { this.paintIdle(); return; }
+    // A real frame ends the Arcade's recede at once.
+    this.arcadeClosing = undefined;
+    if (this.arcade) { this.paintArcade(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
     this.syncPanelAnimation();

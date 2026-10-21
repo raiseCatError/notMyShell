@@ -67,6 +67,15 @@ export interface GameContext {
   record: GameRecordHandle;
   /** The arcade's clock in milliseconds; tests drive it by hand. */
   now(): number;
+  /** Today's local date (`YYYY-MM-DD`) for daily challenges; fixed for the whole run. */
+  today: string;
+}
+
+/** A finishing sequence a game plays after it ends (a solved board lighting up), before the shared results sheet. */
+export interface Finale {
+  readonly done: boolean;
+  /** Jump to the end state; any key does this. */
+  skip(): void;
 }
 
 export type GameStatus = 'ready' | 'playing' | 'paused' | 'over' | 'won';
@@ -104,6 +113,12 @@ export interface GameInstance {
   pause(): void;
   /** Control hints for the footer in the current state. */
   hints(): readonly ControlHint[];
+  /** Set while the game's own ending plays; the session shows the results sheet once it is done or skipped. */
+  readonly finale?: Finale | undefined;
+  /**
+   * A typing game: every printable key, including `p`, belongs to the game while it plays, and only Esc pauses.
+   */
+  readonly typing?: boolean;
   /** Save whatever persists (a puzzle in progress). Called when the person leaves. */
   persist(): void;
   dispose(): void;

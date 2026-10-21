@@ -172,7 +172,7 @@ test('layout: every row fits, at any size from tiny to wide, and a resize reache
     f.key('enter');
     f.log.length = 0;
     f.session.resize(60, 14);
-    assert.deepEqual(f.log, ['resize:60x11']);
+    assert.deepEqual(f.log, ['resize:60x13'], 'the Stage keeps one row for the controls');
   } finally { f.done(); }
 });
 
@@ -192,7 +192,12 @@ function appFixture() {
   const app = frame.app;
   app['shellId'] = 'zsh';
   const key = (value: Key) => app['handleKey'](value);
-  return {frame, app, key, screen: () => frame.capture().frame.rows.map(row => stripAnsi(row)).join('\n')};
+  // The Arcade paints the whole viewport itself, outside the ordinary presentation frame: read what reached the renderer.
+  let painted: string[] = [];
+  const write = app['renderer'].render.bind(app['renderer']);
+  app['renderer'].render = (value: {rows: string[]}) => { painted = value.rows; write(value as never); };
+  const screen = () => { app['render'](); return painted.map(row => stripAnsi(row)).join('\n'); };
+  return {frame, app, key, screen, painted: () => painted};
 }
 
 test('app: /games opens the hub at the prompt, the arcade owns keys, Esc restores the composer exactly, nothing reaches the shell', async () => {

@@ -78,7 +78,18 @@ const HUES: Readonly<Record<HueName, readonly [number, number, number]>> = {
   mint: [155, 0.12, 0.84], teal: [195, 0.1, 0.74], sky: [240, 0.11, 0.8], lilac: [300, 0.11, 0.78],
 };
 
+let cached: {key: string; look: ArcadeLook} | undefined;
+
+/** The look for `palette` (by default the active theme's). Computed once per theme accent, then reused every frame. */
 export function arcadeLook(palette: ArcadePalette = arcadePalette()): ArcadeLook {
+  const key = `${palette.accent.red},${palette.accent.green},${palette.accent.blue}`;
+  if (cached?.key === key) return {...cached.look, palette};
+  const look = buildLook(palette);
+  cached = {key, look};
+  return look;
+}
+
+function buildLook(palette: ArcadePalette): ArcadeLook {
   // The Arcade's own violet: lavender pulled a quarter of the way to the theme accent, so every theme keeps the Vespyr feel.
   const accent = mixRgb(LAVENDER, palette.accent, 0.25);
   const hue = toOklch(mixRgb(accent, GRAPHITE, 0.5)).h;
