@@ -136,7 +136,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (state.mode === 'edit') {
     if (key.kind === 'toggleDetails') { setDocumentMode(state, 'preview'); return {kind: 'preview', refresh: false}; }
     // Esc leaves typing for navigation without closing or discarding anything; the unsaved buffer stays as it is.
-    if (key.kind === 'escape' && !editor.input) { setDocumentMode(state, 'source'); return undefined; }
+    if (key.kind === 'escape' && !editor.input && !editor.snippet) { setDocumentMode(state, 'source'); return undefined; }
     return fromEditor(state, editorKey(editor, key, columns, height));
   }
 

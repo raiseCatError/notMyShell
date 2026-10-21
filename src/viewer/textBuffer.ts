@@ -77,6 +77,13 @@ export class TextBuffer {
     this.lines = lines.length ? [...lines] : [''];
   }
 
+  private readonly observers = new Set<(from: Position, to: Position, end: Position) => void>();
+  /** Told after every change to the text (typing, helpers, undo, redo): [from, to) in the old text became text ending at `end`. Returns how to stop listening. */
+  observe(listener: (from: Position, to: Position, end: Position) => void): () => void {
+    this.observers.add(listener);
+    return () => { this.observers.delete(listener); };
+  }
+
   get text(): string { return this.lines.join('\n'); }
   get dirty(): boolean { return this.undoStack.at(-1) !== this.savedTop; }
   get canUndo(): boolean { return this.undoStack.length > 0; }
@@ -94,7 +101,7 @@ export class TextBuffer {
     return selection ? this.slice(selection.start, selection.end) : '';
   }
 
-  private slice(from: Position, to: Position): string {
+  slice(from: Position, to: Position): string {
     if (from.line === to.line) return this.lines[from.line]!.slice(from.column, to.column);
     return [this.lines[from.line]!.slice(from.column), ...this.lines.slice(from.line + 1, to.line), this.lines[to.line]!.slice(0, to.column)].join('\n');
   }
@@ -112,6 +119,7 @@ export class TextBuffer {
     const anchorBefore = this.anchor;
     this.lines.splice(from.line, to.line - from.line + 1, ...parts);
     this.caret = caretAfter;
+    for (const listener of this.observers) listener(from, to, caretAfter);
     this.anchor = undefined;
     this.preferred = undefined;
     if (!record) return;

@@ -39,7 +39,7 @@ test('Markdown actions menu: letters run the action, Esc leaves it, the task tog
   try {
     press(editor, '\u001bOP');
     assert.equal(editor.dialog?.kind, 'markdown');
-    assert.match(screen(editor), /Task.*Renumber.*Link/su);
+    assert.match(screen(editor), /t task · n renumber/u);
     press(editor, '\u001b');
     assert.equal(editor.dialog, undefined);
     assert.equal(editor.buffer.dirty, false, 'closing the menu changes nothing');

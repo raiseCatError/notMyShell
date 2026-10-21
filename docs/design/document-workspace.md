@@ -49,6 +49,17 @@ Limits: code fences are recognised by a line scan (indented code blocks and fenc
 
 **Verified by** `tests/markdownEdit.test.ts` (each helper: empty and multi-line selections, nested and mixed lists, quotes, fences, Unicode, very long lines, one undo step, restored drafts) and `tests/markdownEditorKeys.test.ts` (keys, menu at 30–120 columns, non-Markdown files unchanged, CRLF saved as CRLF). Physical Ghostty/Zed: NOT RUN.
 
+## Snippets
+
+`src/viewer/snippets.ts`, `EditorPalette.ts` and the palette/snippet-mode parts of `EditorPanel.ts` ([#468](https://github.com/raiseCatError/notMyShell/issues/468), slice 1).
+
+- **Templates** are fixed strings in the catalog (`SNIPPETS`): Markdown (headings, table, task list, fenced code, quote, details, rule, footnote action, Mermaid and math blocks **as source**) and HTML (document skeleton, section, article, header, nav, main, footer, aside, div, paragraph, link, image, lists, table, style). The syntax is a small subset of TextMate's: `${n:default}`, `$n`, `$0`, `$SEL` / `${SEL:default}`, escapes `\$ \\ \}`. Nested placeholders, choices, variables and transforms are not supported and stay literal; a repeated number is inserted twice and is one stop; templates are cut at 8 KiB and 50 stops. There is no user-defined or downloaded snippet source.
+- **Insert:** `insertSnippet` replaces the selection (available as `$SEL`, whose own line breaks are never re-indented) with the expanded text in one `TextBuffer.edit`; later lines take the caret line's indentation; a block template starts on its own line when text precedes the caret and ends on its own when text follows (links, images and inline math insert exactly at the caret).
+- **Session:** while placeholders are live, `TextBuffer.observe` (a change listener fed by every edit, undo and redo) keeps their positions right as you type. Tab / Shift+Tab visit them; after the last, the caret goes to `$0` and the session ends; Esc ends it; moving the caret out of the inserted text, undo and redo end it. Outside a session Tab is exactly what it was (list, table or tab). In the document workspace Esc ends the session before it would leave edit mode.
+- **Palette:** F1 in an HTML file, or `/` in the Markdown menu. Entries are the format's snippets, then the editor's own actions (task, renumber, link, image, wraps, footnote, and the table actions when the caret is in a table), found by typing; Up/Down choose; Enter runs; Esc goes back. No second command system.
+- **Not provided here:** mirrored placeholders, a rendered Mermaid or math preview (#462), user snippet files, a snippet picker for the composer. Playground and Save As are the next slice of #468; the split preview belongs to #461.
+- **Verified by** `tests/snippets.test.ts` (parser, malformed input, bounds, insertion, indentation, Unicode, navigation, typing and undo inside placeholders, footnotes, catalog and search) and `tests/snippetsEditor.test.ts` (palette keys for HTML and Markdown, Esc and Tab ownership, workspace Esc, CRLF, 30–120 columns).
+
 ## Reviewing external changes
 
 `src/viewer/threeWayMerge.ts` (pure) and `src/viewer/ReviewPanel.ts` (state, keys, drawing) implement the review of [#463](https://github.com/raiseCatError/notMyShell/issues/463); `fileEdit.ts` still owns every read and write.
