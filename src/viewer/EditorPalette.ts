@@ -24,6 +24,7 @@ const MARKDOWN_ACTIONS: ReadonlyArray<[action: string, title: string, descriptio
   ['Action.Strike', 'Strikethrough', 'Wrap or unwrap the selection in ~~', 'strike strikethrough wrap'],
   ['Action.Footnote', 'Footnote', 'A numbered reference here and its definition at the end', 'footnote reference note'],
   ['Action.FootnoteRenumber', 'Renumber footnotes', 'Number the footnotes 1, 2, 3… in the order they are referenced', 'footnote footnotes renumber number order'],
+  ['Action.Problems', 'Problems…', 'Check links, images, anchors and footnotes (offline) and jump to each finding', 'problems diagnostics lint check broken links images errors warnings'],
   ['Action.Headings', 'Go to heading…', 'Search the document\'s headings and jump to one', 'heading outline navigate jump toc contents'],
   ['Action.Back', 'Back to previous position', 'Return to where you were before the last jump', 'back return previous jump'],
 ];
@@ -35,9 +36,12 @@ const TABLE_ACTIONS: ReadonlyArray<[string, string, string, string]> = [
   ['Action.Align', 'Table: align column', 'Cycle none, left, centre, right', 'table align alignment'],
 ];
 
+const PROBLEMS_ENTRY: PaletteEntry[] = [{id: 'Action.Problems', title: 'Problems…', description: 'Check links, images, ids and markup (offline) and jump to each finding', run: {kind: 'action', action: 'Action.Problems'}}];
+const words0 = (query: string) => { const words = query.toLowerCase().split(/\s+/u).filter(Boolean); return words.length ? words : undefined; };
+
 export function paletteEntries(format: PaletteFormat, query: string, inTable = false): PaletteEntry[] {
   const snippets: PaletteEntry[] = searchSnippets(query, format).map(snippet => ({id: snippet.id, title: snippet.title, description: snippet.description, run: {kind: 'snippet', snippet}}));
-  if (format !== 'markdown') return snippets;
+  if (format !== 'markdown') return [...snippets, ...(words0(query) ? PROBLEMS_ENTRY.filter(entry => words0(query)!.every(word => `${entry.title} ${entry.description}`.toLowerCase().includes(word))) : PROBLEMS_ENTRY)];
   const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
   const actions: PaletteEntry[] = [...(inTable ? TABLE_ACTIONS : []), ...MARKDOWN_ACTIONS]
     .filter(([, title, description, keywords]) => words.every(word => `${title} ${description} ${keywords}`.toLowerCase().includes(word)))

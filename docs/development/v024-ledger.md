@@ -44,6 +44,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 8. **#460: hybrid Markdown editing** — branch `feature/v024-hybrid` (from `dev` after #489–#496 merged). Done: hybrid mode, items from the source map, active-block raw editing, anchored viewport, split text-pane toggle, tests, independent review (see its section). **#460 remaining:** images in place, visual-line movement, pointer input, tables as a grid, HTML. **#461** still lacks pointer input, preview→caret sync, vertical orientation and the Chromium preview; **#463** footnote renumbering; **#466**, **#462** (details/Mermaid/math), **#464/#465/#467** not started.
 9. **#463: footnote renumbering** — branch `feature/v024-footnotes`, from `dev`. Done (tests in `footnotes.test.ts`). **#463 acceptance:** every implemented item is covered by automated tests; the only open requirement is the physical Ghostty/Zed pass (NOT RUN), so the issue stays open.
 
+10. **#466: offline static diagnostics** — branch `feature/v024-diagnostics`, from `dev`. Done: engine, runner, Problems surface in all modes, tests, independent review (see its section in the design doc). **#466 remaining:** the optional browser console for trusted previews (separate gated slice, nothing started), a gutter marker, further languages. **#462 next:** `<details>` disclosure, then Mermaid and math (separate slices).
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).
