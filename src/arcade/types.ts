@@ -15,6 +15,14 @@ import type {GameRecordHandle} from './scores.js';
  */
 export type GameKind = 'action' | 'puzzle';
 
+/** Hub groups, in hub order. A game belongs to exactly one. */
+export const GAME_CATEGORIES = ['runners', 'arcade', 'reflex', 'physics', 'falling', 'logic', 'words'] as const;
+export type GameCategory = typeof GAME_CATEGORIES[number];
+export const CATEGORY_TITLES: Readonly<Record<GameCategory, string>> = {
+  runners: 'Runners and platformers', arcade: 'Arcade classics', reflex: 'Reflex and timing', physics: 'Physics',
+  falling: 'Falling and merging', logic: 'Logic and board puzzles', words: 'Words and typing',
+};
+
 export interface ControlHint { keys: string; action: string }
 
 export interface GameDefinition {
@@ -26,7 +34,12 @@ export interface GameDefinition {
   tagline: string;
   description: string;
   kind: GameKind;
+  category: GameCategory;
   controls: readonly ControlHint[];
+  /** A few short sentences for the pause sheet's How to play. */
+  howToPlay?: readonly string[];
+  /** Today's daily challenge for this game, when it has one: whether it is still open or already done. */
+  daily?(record: Readonly<Record<string, unknown>>, today: string): 'open' | 'done';
   /** What the hub shows next to this game's best result, from its saved record: `Best 1,240 m`. */
   summary(record: Readonly<Record<string, unknown>>): string;
   /** A small looping preview for the hub, drawn into `canvas` at `frame` (a counter at about 10 per second). */
@@ -54,6 +67,15 @@ export interface GameContext {
   record: GameRecordHandle;
   /** The arcade's clock in milliseconds; tests drive it by hand. */
   now(): number;
+  /** Today's local date (`YYYY-MM-DD`) for daily challenges; fixed for the whole run. */
+  today: string;
+}
+
+/** A finishing sequence a game plays after it ends (a solved board lighting up), before the shared results sheet. */
+export interface Finale {
+  readonly done: boolean;
+  /** Jump to the end state; any key does this. */
+  skip(): void;
 }
 
 export type GameStatus = 'ready' | 'playing' | 'paused' | 'over' | 'won';
@@ -91,6 +113,12 @@ export interface GameInstance {
   pause(): void;
   /** Control hints for the footer in the current state. */
   hints(): readonly ControlHint[];
+  /** Set while the game's own ending plays; the session shows the results sheet once it is done or skipped. */
+  readonly finale?: Finale | undefined;
+  /**
+   * A typing game: every printable key, including `p`, belongs to the game while it plays, and only Esc pauses.
+   */
+  readonly typing?: boolean;
   /** Save whatever persists (a puzzle in progress). Called when the person leaves. */
   persist(): void;
   dispose(): void;

@@ -9,9 +9,18 @@ import {join} from 'node:path';
  * `XDG_CONFIG_HOME` therefore has its own file: personal scores never mix with test sessions.
  */
 export const ARCADE_FILE = 'arcade.json';
-export const ARCADE_VERSION = 1;
-export const MAX_FILE_BYTES = 256 * 1024;
-export const MAX_GAMES = 16;
+/**
+ * Version 2 (the 33-game arcade) raised the game limit from 16 to 64 and added the hub record. v0.22 reads a version 1
+ * file by keeping its first 16 games, so a file with more must not look like version 1: an older NMSh sees version 2 as
+ * newer and shows it read-only instead of rewriting it without the rest.
+ */
+export const ARCADE_VERSION = 2;
+export const MAX_FILE_BYTES = 512 * 1024;
+export const MAX_GAMES = 64;
+const MAX_FAVORITES = 64;
+const MAX_RECENT = 8;
+/** Games whose id changed: the old record is read as the new one (Vespyr Doku became Vespyr Queens). */
+export const RENAMED_GAMES: Readonly<Record<string, string>> = {'vespyr-doku': 'queens'};
 const MAX_KEYS = 64;
 const MAX_DEPTH = 5;
 const MAX_STRING = 8192;
@@ -55,6 +64,27 @@ export function cleanRecord(value: unknown): GameRecord | undefined {
   return clean !== null && typeof clean === 'object' && !Array.isArray(clean) ? clean : undefined;
 }
 
+/** The hub's own state: the game to select on open, favorites, recently played (newest first), per-game options. */
+export interface HubState {
+  selected?: string;
+  favorites: string[];
+  recent: string[];
+  settings: GameRecord;
+}
+
+const emptyHub = (): HubState => ({favorites: [], recent: [], settings: {}});
+const gameIds = (value: unknown, limit: number): string[] => Array.isArray(value)
+  ? [...new Set(value.filter((id): id is string => typeof id === 'string' && GAME_ID.test(id) && !FORBIDDEN.has(id)))].slice(0, limit) : [];
+
+/** A cleaned hub state; anything malformed falls back to its empty value, never to an error. */
+export function cleanHub(value: unknown): HubState {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return emptyHub();
+  const raw = value as Record<string, unknown>;
+  const hub: HubState = {favorites: gameIds(raw.favorites, MAX_FAVORITES), recent: gameIds(raw.recent, MAX_RECENT), settings: cleanRecord(raw.settings) ?? {}};
+  if (typeof raw.selected === 'string' && GAME_ID.test(raw.selected)) hub.selected = raw.selected;
+  return hub;
+}
+
 /** What a game sees of its own record: read a copy, write back a whole record or a patch. */
 export interface GameRecordHandle {
   get(): GameRecord;
@@ -76,6 +106,9 @@ export class ArcadeStore {
   private loaded = false;
   private notice: string | undefined;
   private readOnly = false;
+  private hubState: HubState = emptyHub();
+  /** The text of a version 1 file as it was read, copied aside once before the first version 2 write. */
+  private v1Text: string | undefined;
   private readonly path: string;
   private readonly now: () => number;
 
@@ -91,6 +124,8 @@ export class ArcadeStore {
   load(): void {
     this.loaded = true;
     this.games = new Map();
+    this.hubState = emptyHub();
+    this.v1Text = undefined;
     if (!existsSync(this.path)) return;
     let text: string;
     try {
@@ -107,7 +142,7 @@ export class ArcadeStore {
       this.notice = 'Arcade data was saved by a newer NMSh; scores are shown but not changed.';
       return;
     }
-    if (version !== ARCADE_VERSION) return this.setAside('its version is unknown');
+    if (version !== ARCADE_VERSION && version !== 1) return this.setAside('its version is unknown');
     const games = (parsed as {games?: unknown}).games;
     if (typeof games !== 'object' || games === null || Array.isArray(games)) return this.setAside('it had no games');
     for (const [id, value] of Object.entries(games as Record<string, unknown>).slice(0, MAX_GAMES)) {
@@ -115,6 +150,13 @@ export class ArcadeStore {
       const clean = cleanRecord(value);
       if (clean) this.games.set(id, clean);
     }
+    // A renamed game's record moves to its new id, unless the new id already has one (then both are kept).
+    for (const [from, to] of Object.entries(RENAMED_GAMES)) {
+      const old = this.games.get(from);
+      if (old && !this.games.has(to)) { this.games.delete(from); this.games.set(to, old); }
+    }
+    if (version === 1) this.v1Text = text;
+    else this.hubState = cleanHub((parsed as {hub?: unknown}).hub);
   }
 
   private setAside(why: string): void {
@@ -123,9 +165,10 @@ export class ArcadeStore {
   }
 
   /** The record handle for a game; loads the file on first use. */
-  record(gameId: string): GameRecordHandle {
-    if (!GAME_ID.test(gameId) || FORBIDDEN.has(gameId)) throw new RangeError('invalid game id');
+  record(requested: string): GameRecordHandle {
+    if (!GAME_ID.test(requested) || FORBIDDEN.has(requested)) throw new RangeError('invalid game id');
     if (!this.loaded) this.load();
+    const gameId = RENAMED_GAMES[requested] ?? requested;
     return {
       get: () => structuredClone(this.games.get(gameId) ?? {}),
       set: record => this.write(gameId, record),
@@ -149,8 +192,25 @@ export class ArcadeStore {
     return true;
   }
 
-  private serialize(games: Map<string, GameRecord>): {version: number; games: Record<string, GameRecord>} {
-    return {version: ARCADE_VERSION, games: Object.fromEntries(games)};
+  /** The hub's state (a copy). */
+  hub(): HubState {
+    if (!this.loaded) this.load();
+    return structuredClone(this.hubState);
+  }
+
+  /** Replace the hub's state; malformed parts are cleaned, invalid settings keep the previous ones. */
+  setHub(state: HubState): boolean {
+    if (!this.loaded) this.load();
+    if (this.readOnly) return false;
+    const next = cleanHub(state);
+    if (!cleanRecord(state.settings)) next.settings = this.hubState.settings;
+    this.hubState = next;
+    this.dirty = true;
+    return true;
+  }
+
+  private serialize(games: Map<string, GameRecord>): {version: number; games: Record<string, GameRecord>; hub: HubState} {
+    return {version: ARCADE_VERSION, games: Object.fromEntries(games), hub: this.hubState};
   }
 
   /** Write pending changes: temp file, then rename, owner-only. Failure leaves the old file and keeps the data in memory. */
@@ -158,6 +218,10 @@ export class ArcadeStore {
     if (!this.dirty || this.readOnly) return true;
     try {
       mkdirSync(this.options.directory, {recursive: true, mode: 0o700});
+      // The first version 2 write keeps the version 1 file it replaces, once, so a downgrade can be undone by hand.
+      const backup = `${this.path}.v1-backup`;
+      if (this.v1Text !== undefined && !existsSync(backup)) writeFileSync(backup, this.v1Text, {mode: 0o600});
+      this.v1Text = undefined;
       const temp = `${this.path}.${process.pid}.tmp`;
       writeFileSync(temp, JSON.stringify(this.serialize(this.games)), {mode: 0o600});
       renameSync(temp, this.path);

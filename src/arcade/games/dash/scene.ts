@@ -5,6 +5,7 @@ import {Canvas, PixelBuffer} from '../../Canvas.js';
 import {clamp, lerp, smoothstep} from '../../easing.js';
 import type {ParticleSystem, Popups, Trail} from '../../effects.js';
 import type {ArcadePalette} from '../../palette.js';
+import {gradient, hash as sceneHash, rgb, ridge, stars} from '../../scenery.js';
 import {SPEED_MAX, SPEED_START, SPIKE_H, SPIKE_W, type Piece} from './physics.js';
 import {plainPlayer, playerSprite, spikeSprite, type PlayerPose} from './sprites.js';
 import {PHASE_PX, type DashWorld} from './world.js';
@@ -46,16 +47,20 @@ export interface SceneView {
   phase: 'ready' | 'playing' | 'over';
 }
 
-const hash = (value: number): number => {
-  let h = Math.imul(value ^ 0x9e3779b9, 0x85ebca6b);
-  h ^= h >>> 13;
-  h = Math.imul(h, 0xc2b2ae35);
-  return (h ^ (h >>> 16)) >>> 0;
-};
+const hash = sceneHash;
 
-/** The accent of each color phase, all palette roles; a new one every `PHASE_METERS`. */
-export function phaseTones(palette: ArcadePalette): readonly Rgb[] {
-  return [palette.accent, palette.ok, palette.warn, palette.accentSoft, palette.bad];
+/**
+ * Vespyr Dash's world: a dark neon stage that changes color every phase. A striped sun sits on the horizon and pulses
+ * with the beat, geometric ridges and pillars scroll behind, and the floor is a scrolling neon grid. Spikes are always
+ * hot pink with a white tip, a color no phase uses, so a hazard never blends into the scenery.
+ */
+const NEON: readonly Rgb[] = [rgb(0xb18cff), rgb(0x5fe3ff), rgb(0xb5ff6e), rgb(0xffb15f), rgb(0xff7ad9)];
+const NIGHT_TOP = rgb(0x07051a);
+const NIGHT_LOW = rgb(0x170f3a);
+
+/** The neon of each color phase; a new one every `PHASE_METERS`. */
+export function phaseTones(_palette: ArcadePalette): readonly Rgb[] {
+  return NEON;
 }
 
 /** The tint at `distance`: the current phase's tone, blended in from the previous one over `BLEND_PX`. */
@@ -88,17 +93,22 @@ export class DashScene {
       const amount = Math.min(1, extra + view.flash * 0.7);
       return amount > 0 ? mixRgb(color, palette.haze, amount) : color;
     };
-    const skyTop = mixRgb(palette.deep, tint, 0.16);
-    const skyBottom = mixRgb(palette.dusk, tint, 0.34);
-    const ground = mixRgb(skyTop, palette.deep, 0.55);
-    const surface = mixRgb(tint, palette.ink, 0.3);
-    const blockBody = mixRgb(skyBottom, palette.ink, 0.3);
-    const blockTop = mixRgb(tint, palette.ink, 0.65);
+    const skyTop = view.decor ? NIGHT_TOP : mixRgb(palette.deep, tint, 0.16);
+    const skyBottom = view.decor ? mixRgb(NIGHT_LOW, tint, 0.22) : mixRgb(palette.dusk, tint, 0.34);
+    const ground = view.decor ? rgb(0x0b0820) : mixRgb(skyTop, palette.deep, 0.55);
+    const surface = view.decor ? tint : mixRgb(tint, palette.ink, 0.3);
+    const blockBody = view.decor ? mixRgb(rgb(0x120c2e), tint, 0.12) : mixRgb(skyBottom, palette.ink, 0.3);
+    const blockTop = view.decor ? mixRgb(tint, rgb(0xffffff), 0.35) : mixRgb(tint, palette.ink, 0.65);
 
-    // Sky gradient, then the ground band's cells.
-    canvas.clear(lift(skyBottom));
-    for (let row = 0; row < geo.skyRows; row += 1) canvas.fill(0, row, canvas.width, 1, ' ', {bg: lift(mixRgb(skyTop, skyBottom, (row + 0.5) / geo.skyRows), beat)});
-    canvas.fill(0, geo.skyRows, canvas.width, canvas.height - geo.skyRows, ' ', {bg: ground});
+    // Sky gradient (in pixels when decorated), then the ground band's cells.
+    canvas.clear(view.decor ? undefined : lift(skyBottom));
+    if (view.decor) {
+      gradient(buffer, [lift(skyTop), lift(mixRgb(NIGHT_LOW, tint, 0.08), beat), lift(skyBottom, beat)], 0, geo.groundY);
+      buffer.rect(0, geo.groundY, geo.width, geo.height - geo.groundY, ground);
+    } else {
+      for (let row = 0; row < geo.skyRows; row += 1) canvas.fill(0, row, canvas.width, 1, ' ', {bg: lift(mixRgb(skyTop, skyBottom, (row + 0.5) / geo.skyRows), beat)});
+      canvas.fill(0, geo.skyRows, canvas.width, canvas.height - geo.skyRows, ' ', {bg: ground});
+    }
 
     const screenX = (worldX: number): number => Math.round(worldX - camera);
     this.gaps.fill(0);
@@ -123,7 +133,7 @@ export class DashScene {
     const sprite = playerSprite(view.pose, palette);
     const footY = geo.groundY - Math.round(feet);
     if (view.decor) {
-      view.trail.draw(buffer, mixRgb(palette.accent, palette.haze, 0.35), mixRgb(palette.accent, skyBottom, 0.85));
+      view.trail.draw(buffer, mixRgb(tint, rgb(0xffffff), 0.35), mixRgb(tint, skyBottom, 0.85));
       view.particles.draw(buffer, skyBottom);
     }
     const spike = spikeSprite(palette);
@@ -141,30 +151,35 @@ export class DashScene {
     this.hud(canvas, view, geo, beat > 0 || (view.phase === 'playing' && !view.reduced && (distance / 48) % 1 < 0.3));
   }
 
-  /** Stars, two parallax layers of sharp geometry and, at speed, a few streaks. Everything is a tint of the sky. */
+  /** Stars, a striped sun on the horizon, a geometric ridge, neon pillars and, at speed, streaks. */
   private backdrop(view: SceneView, geo: Geometry, distance: number, sky: {top: Rgb; bottom: Rgb}, tint: Rgb, beat: number): void {
     const {palette} = view;
     const buffer = this.buffer;
     const calm = view.reduced;
-    const stars = Math.floor((geo.width * geo.groundY) / 260);
-    for (let index = 0; index < stars; index += 1) {
-      const x = hash(index * 2) % geo.width;
-      const y = hash(index * 2 + 1) % Math.max(1, geo.groundY - 14);
-      buffer.set(x, y, mixRgb(sky.top, palette.ink, 0.28 + (index % 3) * 0.08));
-    }
-    const far = mixRgb(sky.bottom, palette.deep, 0.5);
-    const near = mixRgb(sky.bottom, palette.deep, 0.68);
     const drift = calm ? 0 : 1;
+    stars(buffer, 13, Math.floor(geo.groundY * 0.6), rgb(0xffffff), sky.top, {density: 150, strength: 0.8});
+    // The sun: a disc sitting on the horizon, cut by dark stripes that thicken toward the bottom; it swells on the beat.
+    const radius = Math.max(6, Math.round(geo.groundY * 0.32));
+    const cx = Math.round(geo.width * 0.66);
+    const cy = geo.groundY - 4;
+    const top = mixRgb(rgb(0xffe39a), tint, 0.25);
+    const bottom = mixRgb(rgb(0xff6fae), tint, 0.3);
+    for (let y = cy - radius; y <= cy; y += 1) {
+      const t = (y - (cy - radius)) / radius;
+      const stripe = t > 0.45 && Math.floor((y - (cy - radius)) * (1 + t)) % 5 < Math.round(t * 2.4);
+      if (stripe) continue;
+      const half = Math.sqrt(Math.max(0, radius * radius - (cy - y) * (cy - y))) * 1.4;
+      for (let x = Math.round(cx - half); x <= Math.round(cx + half); x += 1) buffer.set(x, y, mixRgb(mixRgb(top, bottom, t), rgb(0xffffff), beat * 1.6));
+    }
+    ridge(buffer, {base: geo.groundY, height: Math.round(geo.groundY * 0.12), amplitude: Math.max(2, geo.groundY * 0.08), scale: 9, scroll: distance * 0.12 * drift, seed: 4, step: 4,
+      color: mixRgb(rgb(0x120a2c), tint, 0.08), rim: mixRgb(tint, sky.bottom, 0.25 - beat)});
     for (let x = 0; x < geo.width; x += 1) {
-      const u = x + distance * 0.12 * drift;
-      const cell = Math.floor(u / 36);
-      const peak = 5 + (hash(cell) % 6);
-      const rise = 1 - Math.abs(((u - cell * 36) / 36) * 2 - 1);
-      const height = Math.round(peak * rise);
-      if (height > 0) buffer.rect(x, geo.groundY - height, 1, height, mixRgb(far, tint, beat * 2));
       const v = x + distance * 0.32 * drift;
       const pillar = Math.floor(v / 15);
-      if (hash(pillar + 977) % 3 === 0 && v - pillar * 15 < 2) buffer.rect(x, geo.groundY - 3 - (hash(pillar) % 9), 1, 3 + (hash(pillar) % 9), mixRgb(near, tint, beat * 3));
+      if (hash(pillar + 977) % 3 !== 0 || v - pillar * 15 >= 2) continue;
+      const height = 4 + (hash(pillar) % 10);
+      buffer.rect(x, geo.groundY - height, 1, height, mixRgb(rgb(0x0e0826), tint, 0.18));
+      buffer.set(x, geo.groundY - height, mixRgb(tint, rgb(0xffffff), 0.3 + beat * 2));
     }
     const fraction = clamp((view.world.speed - SPEED_START) / (SPEED_MAX - SPEED_START), 0, 1);
     const streaks = calm ? 0 : Math.floor(fraction * 7);
@@ -173,8 +188,9 @@ export class DashScene {
       const span = geo.width + length;
       const x = ((((hash(index * 5) % span) - distance * (1.6 + (index % 3) * 0.4)) % span) + span) % span - length;
       const y = 2 + (hash(index * 11 + 3) % Math.max(2, geo.groundY - 12));
-      for (let step = 0; step < length; step += 1) buffer.set(x + step, y, mixRgb(sky.bottom, palette.haze, 0.1 + 0.35 * (step / length)));
+      for (let step = 0; step < length; step += 1) buffer.set(x + step, y, mixRgb(sky.bottom, tint, 0.15 + 0.5 * (step / length)));
     }
+    void palette;
   }
 
   private groundBand(canvas: Canvas, buffer: PixelBuffer, view: SceneView, geo: Geometry, ground: Rgb, surface: Rgb, camera: number): void {
@@ -184,7 +200,8 @@ export class DashScene {
     const scroll = Math.floor(camera);
     for (let x = 0; x < geo.width; x += 1) {
       if (this.gaps[x]) {
-        canvas.fill(x, geo.skyRows, 1, canvas.height - geo.skyRows, ' ', {bg: void_});
+        if (view.decor) for (let y = geo.groundY; y < geo.height; y += 1) buffer.set(x, y, rgb(0x030210));
+        else canvas.fill(x, geo.skyRows, 1, canvas.height - geo.skyRows, ' ', {bg: void_});
         continue;
       }
       let color = surface;
@@ -193,6 +210,12 @@ export class DashScene {
         if (near > 0) color = mixRgb(surface, palette.haze, near * view.hot.amount * 0.9);
       }
       buffer.set(x, geo.groundY, color);
+      if (view.decor) {
+        // A neon grid: a glowing edge, then lines every 8 pixels that scroll with the floor.
+        const line = (x + scroll) % 8 === 0;
+        for (let y = geo.groundY + 1; y < geo.height; y += 1) buffer.set(x, y, line || y === geo.groundY + 3 ? mixRgb(surface, ground, 0.55) : ground);
+        continue;
+      }
       buffer.set(x, geo.groundY + 1, mixRgb(surface, ground, 0.55));
       const n = hash(x + scroll) % 9;
       if (texture < canvas.height) canvas.put(x, texture, n === 0 ? '▒' : '░', {fg: palette.faint, bg: ground});

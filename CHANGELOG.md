@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Planned as v0.23.0. Not released, not dated.
+
+### Added
+
+- **The Vespyr Arcade grows to 33 games** ([#481](https://github.com/raiseCatError/notMyShell/issues/481); trackers [#474](https://github.com/raiseCatError/notMyShell/issues/474)-[#480](https://github.com/raiseCatError/notMyShell/issues/480)). This is the unreleased v0.23.0 work: nothing here is released, and it has no date. `/game <name>` opens any game by id or alias (102 names, all unique):
+  - **Runners:** Vespyr Run, Flight, Dash, **Vespyr Leap** (bounce from platform to platform; sliding and crumbling platforms, springs), **Alley Sprint** (three lanes), **Kitten Parade** (grow a crowd through five levels with battles and bosses) and **Vespyr Rover** (a physics hill-climb with fuel, tilt and flips).
+  - **Arcade and reflex:** **Tail Chase** (Snake with three modes), **Purr Pong**, **Brickfall**, **Maze Prowler**, **Cat Tower**, **Vespyr Bullseye**, **Color Orbit** and **Glass Rush**.
+  - **Physics and falling:** **Vespyr Pinball** (drop targets, spinner, ramp), **Catapult Cats**, **Yarn Drop**, **Sandfall** and **Merge 2048**, **Treat Match**.
+  - **Logic:** Classic Sudoku, Vespyr Queens, **Minefield** (classic and **Hex Minefield**), **Tile Slide**, **Box Escape**, **Ice Paws**, **Moonjars**, **Yarn Lines**, **Circuit** and **Cat Fleet** (Battleship).
+  - **Words and typing:** **Purrword** (a five-letter word in six, daily and practice) and **Driftkeys** (type drifting phrases; the keys never reach the shell).
+  Every game is offline, deterministic where it has a seed, and keeps its own local records. The per-game list with controls is in [the status ledger](docs/development/arcade-expansion-status.md).
+- **Boards that are square on screen.** Sudoku, Merge 2048, Minefield, Ice Paws, Yarn Lines, Moonjars and Treat Match size their cells from the terminal's cell aspect (assumed 2:1), with mouse hit-testing on the same layout.
+- **Hex Minefield**: Minefield on a six-neighbour hexagonal board with its own best times. It is drawn as nesting hexagons where they fit (Large at 80x24); where they cannot be drawn the title says "staggered tiles", and NO_COLOR and Safe Glyphs always use staggered tiles. Classic stays the default.
+
+### Changed
+
+- **Vespyr Arcade is a full-screen application** ([design](docs/design/arcade-expansion.md), [#474](https://github.com/raiseCatError/notMyShell/issues/474)). `/games` now takes the whole terminal: no banner, Status Strip, sidebar, transcript or composer around it, the shell's size unchanged, and the ordinary screen back exactly on exit. It rises in and recedes (none under Reduced Motion, Effects Off or without color). The hub is a library grouped by category with Favorites (`f`), Recently played, search (`/`), Tab between groups, the mouse wheel and clicks, and a live preview of the highlighted game; it remembers the game you played last. Narrow terminals show one game at a time. A game fills the screen with one row of controls; Esc opens a pause sheet with How to play, and finishing plays the game's own celebration before a results card that counts the score up.
+- **Vespyr Doku is now Vespyr Queens** (`/game queens`; `vespyr-doku` and `doku` still work). Scores and a puzzle in progress move with it. The arcade's data file becomes version 2 (up to 64 games); the first write keeps the old file as `arcade.json.v1-backup`, and an older NMSh shows a version 2 file read-only instead of rewriting it.
+- **Classic Sudoku redesign**: boxes on raised plates separated by dark channels, cells as tiles that never merge, givens and your digits in different colors and weights, distinct highlights for the cursor, its row, column and box, matching digits and clashes, positional notes, a remaining-digit counter, a light sweeping along each finished row, column and box, and a wave across the solved board.
+- **Vespyr Queens redesign**: regions as solid shapes in clearly different colors with dark channels between them, the region letter once per region instead of in every cell, cats on dark badges, a pixel exclusion mark, finished regions checked, and a hop wave across the cats when solved.
+- **Vespyr Run, Flight and Dash have their own worlds**: a dusk meadow with a setting sun and rising moon, a moonlit city of libraries with lit windows, and a neon stage with a striped sun that pulses on the beat. Obstacles use colors that never match Vespyr, and Dash's spikes keep one hazard color in every phase.
+
+### Fixed
+
+- **Arcade fixes found in review** (unreleased work only; nothing in v0.22.0 changes): Moonjars' "proven" target was one pour too long for 21 of 400 decks and its startup search could stall; Treat Match's hint key was dead, tiles drew over the progress row at small sizes and a reshuffle was silent; Merge 2048's +N popup covered the title row; Pinball's ready text was unreadable; Rover's tilt response was too weak for a 6-8 taps/s driver to flip off real jumps and its HUD clipped at 28 columns; Kitten Parade's gates drew `?` in Safe Glyphs and a full crowd overflowed its lane; Vespyr Leap's fall limit tied to screen height made deaths unavoidable on short terminals (8% of late bounces at 34 rows, 64% at 12).
+
+### How the Arcade work was verified
+
+- **Automated, on the branch tip before commit:** 559 arcade tests (558 pass, 1 todo), `tsc` clean, the fast suite 68/68, and a smoke render of all 33 games at 100x34, at 40x16 with Reduced Motion and at 28x12 with NO_COLOR and Safe Glyphs. `tests/arcadeAll.test.ts` checks every game for metadata, garbage records, resize, dispose, pause, key ownership, previews, v0.22 save migration and that games use no network, child process, filesystem or timers.
+- **Performance** (Node v26.12.0, Apple M2 with 8 GiB, machine busy with other jobs, so upper bounds): about 0.6-6 ms per frame for the hub and the games measured at 100x34 and 160x50 against a 33 ms tick, flat heap over 300 simulated seconds, and no leaked timers after 200 open/dispose cycles. Moonjars is the slowest (about 7-8 ms mean at 100x34, a few frames over 33 ms). No arcade performance thresholds exist in the repository.
+- **Not performed:** physical play in Ghostty or Zed. Most games have been looked at only as deterministic captures and some not at all. Known limits (Pinball scale and bot cradling, Rover backflips, Kitten Parade difficulty, Moonjars hard decks, truncated top rows at 28 columns and more) are listed in [the status ledger](docs/development/arcade-expansion-status.md).
+
 ## [0.22.0] - 2026-10-21
 
 **Native viewing and editing, Semantic Output, `/track` and input you can trust.** NMSh still runs your real zsh, Bash or Fish in one persistent session. This release reads files and completed output without leaving it (`/view`), makes a quick edit to a small text file (`/edit`) or opens it in your own editor, puts a test run's or a build's counts and failures in one row above its raw output (Semantic Output), and keeps one live, refreshed result of a command in the transcript (`/track`). Typing while a command runs now goes where it belongs on evidence only: a password is never shown, queued or run as a command because NMSh could not yet tell who reads it, and a slow prompt hook no longer eats the next command. Up and Down step through history one command at a time with the position shown, Ask can suggest a command from your local model (never run for you), and there are Bun, Nix shell and container modules, `/modules explain` and five more theme families.

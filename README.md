@@ -61,7 +61,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 - **Curated tools** — `/tools` finds, explains and (on request) installs a short list of shell tools; `/providers` picks the picker, history, navigation and suggestion providers; `/tmux` and `/dotfiles` import settings safely.
 - **Shell frameworks, handled carefully** — Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit and Antidote are detected; shell config is treated as code, never as harmless data.
 - **Documents, images and a real browser (v0.22)** — `/view` opens Markdown and HTML as one workspace with a source, an editor and a rendered preview of the same buffer; images are drawn in Ghostty and Kitty and as character art everywhere else; `/browser` shows a real Chromium page when you have Chrome installed (nothing is downloaded). Larger headings appear in terminals that prove they can scale text.
-- **Vespyr Arcade (v0.22)** — `/games` (`/game`, `/arcade`): three endless Vespyr games, Classic Sudoku and Vespyr Doku, with local scores and no accounts.
+- **Vespyr Arcade** — `/games` (`/game`, `/arcade`): a full-screen offline arcade of 33 games (runners and platformers, arcade classics, reflex, physics, falling and merging, logic and board puzzles, words and typing), with local scores and no accounts. Vespyr Queens was formerly Vespyr Doku (scores carry over). The 33-game set is unreleased v0.23.0 work; v0.22.0 ships five ([#481](https://github.com/raiseCatError/notMyShell/issues/481)).
 - **Keep Awake** — `/zoomies` (also `/caffeinate`, `/awake`) keeps the machine or display awake through the OS's own mechanism and shows that it is on, quietly.
 - **Personality, optional** — Chroma color treatments, motion, screensavers and Vespyr, the NMSh cat. All of it respects Reduced Motion, Safe glyphs and `NO_COLOR`.
 
@@ -174,7 +174,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
 | Files and output (v0.22) | `/view` (files, images and completed output; Markdown and HTML open as source, editor and preview of one buffer), `/edit`, `/browser` (a real browser, optional), `/track` (one live result of a command), `/copy --semantic` |
-| Games (v0.22) | `/games` (`/game`, `/arcade`; `/game run`, `flight`, `dash`, `sudoku`, `vespyr-doku`) |
+| Games | `/games` (`/game`, `/arcade`; 33 games, e.g. `/game run`, `leap`, `pinball`, `rover`, `sudoku`, `queens`, `mines`, `merge`, `wordle`; unreleased beyond v0.22.0's five) |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |

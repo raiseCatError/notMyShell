@@ -171,7 +171,7 @@ test('renderer: nothing is written while a program owns the screen, and a block 
 import {executionFrameFixture} from './support/executionTimelineFrames.js';
 import {stripAnsi} from '../src/util/text.js';
 
-test('app: with verified scaling the arcade hub title is placed as a sized block inside the panel, and plain text otherwise', async () => {
+test('app: the Arcade hub title is ordinary text; Arcade sized blocks are placed at their own viewport cells, never mid-handoff', async () => {
   const frame = executionFrameFixture(110, 34);
   const app = frame.app;
   const placed: TextBlock[][] = [];
@@ -182,18 +182,17 @@ test('app: with verified scaling the arcade hub title is placed as a sized block
     app['typographyKey'] = '';
     process.env.TERM_PROGRAM = process.env.TERM_PROGRAM === 'ghostty' ? 'kitty' : process.env.TERM_PROGRAM;
     await app['runSlash']('/games', {kind: 'arcade'});
-    frame.capture();
-    const withBlock = placed.at(-1)!;
-    const title = withBlock.find(block => block.sequence.includes('Vespyr Arcade'));
-    assert.ok(title, 'the hub title is a sized block');
-    assert.match(title!.sequence, /\u001b\]66;s=2;Vespyr Arcade\u001b\\/u, 'the panel has no room for 3x here, so 2x');
-    const rows = frame.capture().frame.rows.map(row => stripAnsi(row));
-    for (let row = title!.row; row < title!.row + title!.rows; row += 1) {
-      assert.equal(rows[row]!.slice(title!.column, title!.column + title!.columns).trim(), '', 'the cells under the block are blank, so the terminal draws it on clean cells');
-    }
-    app['promptConfiguration'].textSizing = 'off';
-    frame.capture();
-    assert.deepEqual(placed.at(-1), [], 'turning Text sizing off removes the block and draws the title as ordinary text');
-    assert.match(frame.capture().frame.rows.map(row => stripAnsi(row)).join('\n'), /Vespyr Arcade/u);
+    app['arcade'].handoff = undefined;
+    app['render']();
+    assert.deepEqual(placed.at(-1), [], 'no decorative sized title in the hub');
+    // A sized block the Arcade asks for (the results score) lands exactly where the Arcade put it: the Arcade owns the viewport.
+    const session = app['arcade'].session;
+    const render = session.render.bind(session);
+    session.render = () => ({...render(), overlays: [{x: 12, y: 7, columns: 8, rows: 2, sequence: 'SCORE'}]});
+    app['render']();
+    assert.deepEqual(placed.at(-1), [{row: 7, column: 12, columns: 8, rows: 2, sequence: 'SCORE'}]);
+    app['arcade'].handoff = {direction: 'in', started: performance.now(), under: []};
+    app['render']();
+    assert.deepEqual(placed.at(-1), [], 'nothing sized while the Arcade is still sliding in');
   } finally { frame.dispose(); reset(); }
 });

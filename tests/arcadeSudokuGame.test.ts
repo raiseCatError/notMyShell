@@ -166,21 +166,22 @@ test('same seed, same first puzzle; the next puzzle differs', () => {
   assert.notEqual(gridString(a.game.state!.puzzle), first);
 });
 
-test('completion: a solved grid wins with a result, a gentle celebration first, and clears the saved puzzle', () => {
+test('completion: a solved grid wins with a result, plays its light wave as the finale first, and clears the saved puzzle', () => {
   const s = startEasy();
   s.game.state!.elapsedMs = 187_000;
   solveAll(s);
   assert.ok(s.game.state!.solved);
-  assert.equal(s.game.status, 'playing', 'the celebration shows first');
+  assert.equal(s.game.status, 'won');
+  assert.ok(s.game.finale && !s.game.finale.done, 'the board celebrates before the results sheet');
   assert.ok(s.game.celebrating);
   assert.ok(s.game.refreshMs <= 100, 'animation frames are requested');
   s.draw();
   const text = s.canvas.plain().join('\n');
-  assert.match(text, /Solved/u);
+  assert.match(text, /Solved in 3:07/u);
   s.game.animate(500);
-  assert.equal(s.game.status, 'playing');
-  s.game.animate(2000);
-  assert.equal(s.game.status, 'won');
+  assert.equal(s.game.finale!.done, false, 'the wave is still crossing the board');
+  for (let t = 0; t < 2500; t += 50) s.game.animate(50);
+  assert.equal(s.game.finale!.done, true);
   const result = s.game.result!;
   assert.equal(result.scoreText, '3:07');
   assert.equal(result.record, true, 'the first time at a difficulty is a record');
@@ -211,15 +212,19 @@ test('completion: reduced motion and effects off win at once; a slower or hinted
   assert.ok(s.game.result!.details.some(line => /1 hint used/u.test(line)));
 });
 
-test('completion: confetti uses the particle system under normal effects and stays off in reduced motion', () => {
+test('completion: confetti uses the particle system under normal effects and stays off in reduced motion; a key skips the wave', () => {
   const s = startEasy();
   solveAll(s);
   s.draw(); s.game.animate(200); s.draw();
-  const hasHalfBlock = s.canvas.rows({color: 'truecolor', safe: false}).some(row => /[▀▄]/u.test(stripAnsi(row)));
-  assert.ok(hasHalfBlock, 'particles are drawn as half blocks');
+  assert.ok((s.game as any).fx.count > 0, 'confetti particles are live');
+  s.press('x');
+  assert.equal(s.game.finale!.done, true, 'any key skips the finale');
   const calm = startEasy({reduced: true});
   solveAll(calm); calm.draw(); calm.game.animate(200); calm.draw();
-  assert.ok(!calm.canvas.rows({color: 'truecolor', safe: false}).some(row => /[▀▄]/u.test(stripAnsi(row))));
+  assert.equal((calm.game as any).fx.count, 0, 'no confetti under Reduced Motion');
+  assert.ok(calm.game.finale, 'a still highlight still marks the win');
+  for (let t = 0; t < 800; t += 50) calm.game.animate(50);
+  assert.equal(calm.game.finale!.done, true, 'and it ends on its own');
 });
 
 test('abandoning a started puzzle ends the streak; finishing does not', () => {
@@ -311,12 +316,16 @@ test('layout: every canvas from 20x8 to 200x60 draws within bounds, fits its boa
   assert.equal(`${MIN_COLUMNS}x${MIN_ROWS}`, '20x13');
 });
 
-test('layout: bigger canvases get bigger cells, with the HUD beside the board when it fits', () => {
-  assert.equal(layoutFor(200, 60)!.cw, 7);
+test('layout: bigger canvases get bigger square cells, with the HUD beside the board when it fits', () => {
+  assert.equal(layoutFor(200, 60)!.ch, 5);
+  assert.equal(layoutFor(200, 60)!.cw, 10);
+  assert.equal(layoutFor(120, 35)!.cw, 6);
+  assert.equal(layoutFor(120, 35)!.hud, 'side');
   assert.equal(layoutFor(200, 60)!.hud, 'side');
-  assert.equal(layoutFor(80, 21)!.cw, 5);
-  assert.equal(layoutFor(80, 21)!.ch, 1);
-  assert.equal(layoutFor(40, 15)!.cw, 3);
+  assert.equal(layoutFor(80, 24)!.cw, 4);
+  assert.equal(layoutFor(60, 24)!.cw, 4);
+  assert.equal(layoutFor(60, 24)!.hud, 'top');
+  assert.equal(layoutFor(40, 15)!.cw, 2);
   assert.equal(layoutFor(20, 13)!.cw, 2);
   assert.equal(layoutFor(20, 13)!.hud, 'top');
   assert.equal(layoutFor(19, 40), undefined);
@@ -336,7 +345,7 @@ test('hud: difficulty, timer, hints, notes mode and remaining digits are on scre
   }
   const wide = startEasy();
   const text = wide.draw().plain().join('\n');
-  assert.match(text, /Left/u);
+  assert.match(text, /Still to place|Left/u);
 });
 
 test('no color: clues, entries, the cursor and conflicts differ by weight, brackets and glyphs', () => {
@@ -351,7 +360,7 @@ test('no color: clues, entries, the cursor and conflicts differ by weight, brack
   state.moveTo(other); s.press(String(state.solution[other]));
   state.moveTo(target); s.press(String(rowClue));
   const rows = s.draw().rows({color: 'none', safe: false});
-  const cellText = (cell: number) => rows[layout.y + layout.ys[rowOf(cell)]!]!;
+  const cellText = (cell: number) => rows[layout.y + layout.ys[rowOf(cell)]! + Math.floor(layout.ch / 2)]!;
   assert.match(cellText(target), /!/u, 'a conflict carries a glyph');
   assert.match(cellText(target), /\[/u, 'the cursor carries brackets');
   assert.match(cellText(target), /\u001b\[7m/u, 'and reverse video');
@@ -372,13 +381,13 @@ test('no color: entries are not bold while clues are', () => {
   state.moveTo(clueCell);
   const rows = s.draw().rows({color: 'none', safe: false});
   const find = (c: number) => {
-    const line = rows[layout.y + layout.ys[Math.floor(c / 9)]!]!;
+    const line = rows[layout.y + layout.ys[Math.floor(c / 9)]! + Math.floor(layout.ch / 2)]!;
     const digit = String(state.grid[c]);
     const index = line.indexOf(digit, 0);
     return {line, index};
   };
   assert.ok(find(clueCell).line.includes('\u001b[1m'));
-  const entryLine = rows[layout.y + layout.ys[Math.floor(cell / 9)]!]!;
+  const entryLine = rows[layout.y + layout.ys[Math.floor(cell / 9)]! + Math.floor(layout.ch / 2)]!;
   assert.ok(entryLine.includes(String(state.solution[cell])));
 });
 
@@ -450,10 +459,11 @@ test('inside the arcade session: Esc pauses and blanks the board, resume continu
       state.moveTo(cell);
       session.key({kind: 'text', value: String(state.solution[cell])});
     }
-    assert.equal(session.screen, 'playing', 'the celebration plays inside the game first');
-    session.frame(1000); session.frame(1000);
+    assert.equal(session.screen, 'finale', 'the board celebrates inside the game first');
+    assert.doesNotMatch(screen(), /Play again/u, 'no results card over the wave');
+    for (let t = 0; t < 3000; t += 100) session.frame(100);
     assert.equal(session.screen, 'over');
-    assert.match(screen(), /New record|Well done/u);
+    assert.match(screen(), /New record|Complete/u);
     assert.match(screen(), /Play again/u);
     assert.match(screen(), /0:0[34]|0:03/u);
   } finally { session.dispose(); rmSync(dir, {recursive: true, force: true}); }

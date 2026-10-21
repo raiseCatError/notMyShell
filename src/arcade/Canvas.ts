@@ -321,7 +321,8 @@ const BRAILLE = 256;
 /** Replace common Unicode glyphs with an ASCII stand-in for Safe Glyphs. */
 export function safeGlyph(ch: string): string {
   const map: Record<string, string> = {'─': '-', '│': '|', '┌': '+', '┐': '+', '└': '+', '┘': '+', '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+', '═': '=', '║': '|', '╔': '+', '╗': '+', '╚': '+', '╝': '+',
-    '█': '#', '▓': '#', '▒': ':', '░': '.', '▀': '"', '▄': ',', '●': 'o', '○': 'o', '·': '.', '•': '*', '★': '*', '✦': '*', '✧': '*', '♥': '<3', '▲': '^', '▼': 'v', '◀': '<', '▶': '>', '→': '>', '←': '<', '↑': '^', '↓': 'v', '…': '.', '✔': '+', '✘': 'x', '×': 'x', '▪': '#', '■': '#', '□': 'o', '◆': '*', '◇': 'o'};
+    '█': '#', '▓': '#', '▒': ':', '░': '.', '▀': '"', '▄': ',', '●': 'o', '○': 'o', '·': '.', '•': '*', '★': '*', '✦': '*', '✧': '*', '♥': '<3', '▲': '^', '▼': 'v', '◀': '<', '▶': '>', '→': '>', '←': '<', '↑': '^', '↓': 'v', '…': '.', '✔': '+', '✘': 'x', '×': 'x', '▪': '#', '■': '#', '□': 'o', '◆': '*', '◇': 'o',
+    '▌': '|', '▐': '|', '▔': '-', '▁': '_', '✓': '+', '‹': '<', '›': '>', '⏎': '>', '◷': 'o', '♦': '*', '⎵': '_', '⌫': '<', '╭': '+', '╮': '+', '╰': '+', '╯': '+'};
   return (map[ch] ?? '?').slice(0, 1);
 }
 
@@ -344,6 +345,11 @@ export class PixelBuffer {
     this.data[py * this.width + px] = color;
   }
   clear(): void { this.data.fill(undefined); }
+  /** Make this buffer a copy of `source` (same size): how a cached backdrop starts each frame. */
+  copyFrom(source: PixelBuffer): void {
+    if (source.width !== this.width || source.height !== this.height) throw new RangeError('buffer sizes differ');
+    for (let index = 0; index < this.data.length; index += 1) this.data[index] = source.data[index];
+  }
   rect(x: number, y: number, width: number, height: number, color: Rgb): void {
     for (let row = 0; row < height; row += 1) for (let column = 0; column < width; column += 1) this.set(x + column, y + row, color);
   }
@@ -388,6 +394,23 @@ export interface Sprite {
   width: number;
   height: number;
   pixels: Array<Rgb | undefined>;
+}
+
+/**
+ * The sprite with a one-pixel `color` outline around its silhouette (four-neighbour), one pixel larger on every side: how
+ * Vespyr stays readable over a sky close to his own lavender.
+ */
+export function outlineSprite(sprite: Sprite, color: Rgb): Sprite {
+  const width = sprite.width + 2;
+  const height = sprite.height + 2;
+  const at = (x: number, y: number): Rgb | undefined => (x < 0 || y < 0 || x >= sprite.width || y >= sprite.height ? undefined : sprite.pixels[y * sprite.width + x]);
+  const pixels: Array<Rgb | undefined> = [];
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const own = at(x - 1, y - 1);
+    if (own) { pixels.push(own); continue; }
+    pixels.push(at(x - 2, y - 1) || at(x, y - 1) || at(x - 1, y - 2) || at(x - 1, y) ? color : undefined);
+  }
+  return {width, height, pixels};
 }
 
 /** Author a sprite as rows of characters; `palette` maps a character to a color, any other character is transparent. */

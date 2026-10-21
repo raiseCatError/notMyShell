@@ -4,7 +4,8 @@ import {typeset} from '../../../ui/typography.js';
 import {PixelBuffer, type Canvas} from '../../Canvas.js';
 import {clamp} from '../../easing.js';
 import type {ParticleSystem, Popups, Trail} from '../../effects.js';
-import {skyAt, type ArcadePalette} from '../../palette.js';
+import type {ArcadePalette} from '../../palette.js';
+import {along, disc, gradient, hash as sceneHash, rgb, skyline, stars} from '../../scenery.js';
 import {OB_W} from './physics.js';
 import type {Obstacle, ObstacleStyle} from './course.js';
 import {catSprite, HB_X, HB_Y, type CatLook} from './sprites.js';
@@ -70,12 +71,23 @@ export interface SceneView {
   phase: 'ready' | 'playing' | 'over';
 }
 
-const hash = (value: number): number => {
-  let h = Math.imul(value ^ 0x9e3779b9, 0x85ebca6b);
-  h ^= h >>> 13;
-  h = Math.imul(h, 0xc2b2ae35);
-  return (h ^ (h >>> 16)) >>> 0;
-};
+const hash = sceneHash;
+
+/**
+ * Vespyr Flight's world: a moonlit city of libraries. A navy night with a large moon drifts slowly toward a violet
+ * dawn and back; two skylines with warm lit windows scroll beneath; the towers Vespyr flies between are stacked books,
+ * glass chimneys and crates. Everything here is cooler and higher than Vespyr Run's meadow, so the two never look alike.
+ */
+const NIGHT = [rgb(0x0b1030), rgb(0x1a2160), rgb(0x34378a), rgb(0x5b4ea3)];
+const DAWN = [rgb(0x262a6a), rgb(0x5a58b0), rgb(0xa889d6), rgb(0xf6b4b4)];
+const WINDOW = rgb(0xffd98a);
+const BOOKS = [rgb(0xff8fb3), rgb(0x8fc4ff), rgb(0xffe08a), rgb(0x9fe0b8), rgb(0xffb48a), rgb(0xc9b2ff)];
+
+export function flightSky(phase: number): {stops: Rgb[]; night: number} {
+  const wrapped = ((phase % 1) + 1) % 1;
+  const dawn = (1 - Math.cos(wrapped * Math.PI * 2)) / 2;
+  return {stops: NIGHT.map((color, index) => mixRgb(color, DAWN[index]!, dawn * 0.85)), night: 1 - dawn};
+}
 
 /** The palette with every color drawn toward dusk: the frozen scene after a crash. */
 export function toned(palette: ArcadePalette, amount: number): ArcadePalette {
@@ -92,26 +104,35 @@ interface Tones { edge: Rgb; light: Rgb; books: Rgb[]; wood: Rgb; woodDark: Rgb;
 
 export class FlightScene {
   private buffer = new PixelBuffer(0, 0);
+  /** How far the frozen scene has faded after a crash (the obstacles fade with it). */
+  private fade = 0;
 
   draw(canvas: Canvas, view: SceneView): void {
     const geo = geometry(canvas.width, canvas.height, view.world.height);
     if (this.buffer.width !== geo.width || this.buffer.height !== geo.height) this.buffer = new PixelBuffer(geo.width, geo.height);
     const palette = toned(view.palette, view.fade);
+    this.fade = view.fade;
     const {world} = view;
     const buffer = this.buffer;
     buffer.clear();
     const x = world.prevX + (world.x - world.prevX) * view.alpha;
     const y = world.prevY + (world.y - world.prevY) * view.alpha;
-    const sky = skyAt(palette, 0.08 + x / DAY_PX);
+    const {stops: clear, night} = flightSky(x / DAY_PX);
+    const stops = view.fade > 0 ? clear.map(color => mixRgb(color, palette.dusk, view.fade * 0.55)) : clear;
+    const sky = {top: stops[0]!, bottom: stops[stops.length - 1]!, stars: night};
     const lift = (color: Rgb): Rgb => (view.flash > 0 ? mixRgb(color, palette.haze, view.flash * 0.7) : color);
-    const ground = mixRgb(palette.dusk, palette.deep, 0.45);
+    const ground = view.decor ? rgb(0x1c1b42) : mixRgb(palette.dusk, palette.deep, 0.45);
     const groundRow = geo.groundY / 2;
 
-    canvas.clear(lift(sky.bottom));
-    for (let row = 0; row < groundRow; row += 1) canvas.fill(0, row, canvas.width, 1, ' ', {bg: lift(mixRgb(sky.top, sky.bottom, (row + 0.5) / groundRow))});
-    canvas.fill(0, groundRow, canvas.width, canvas.height - groundRow, ' ', {bg: ground});
-
-    if (view.decor) this.backdrop(view, geo, x, sky, palette);
+    canvas.clear(view.decor ? undefined : lift(sky.bottom));
+    if (view.decor) {
+      gradient(buffer, stops.map(lift), 0, geo.groundY);
+      buffer.rect(0, geo.groundY, geo.width, geo.height - geo.groundY, ground);
+      this.backdrop(view, geo, x, sky, stops, palette);
+    } else {
+      for (let row = 0; row < groundRow; row += 1) canvas.fill(0, row, canvas.width, 1, ' ', {bg: lift(mixRgb(sky.top, sky.bottom, (row + 0.5) / groundRow))});
+      canvas.fill(0, groundRow, canvas.width, canvas.height - groundRow, ' ', {bg: ground});
+    }
     this.ceiling(view, geo, x, sky, palette);
     this.ground(canvas, buffer, view, geo, x, ground, palette);
 
@@ -125,7 +146,7 @@ export class FlightScene {
       this.obstacle(buffer, obstacle, left, geo.top, sy(obstacle.gapTop), sy(obstacle.gapBottom), geo.groundY, tones, view.decor);
     }
 
-    if (view.decor) { view.trail.draw(buffer, palette.accent, sky.bottom); view.particles.draw(buffer, sky.bottom); }
+    if (view.decor) { view.trail.draw(buffer, rgb(0xffe08a), mixRgb(rgb(0xffb48a), sky.bottom, 0.6)); view.particles.draw(buffer, sky.bottom); }
     const sprite = catSprite(view.look, palette);
     buffer.sprite(sprite, geo.catX - HB_X, sy(y) - HB_Y, true);
     if (!view.decor) view.particles.draw(buffer);
@@ -136,11 +157,13 @@ export class FlightScene {
   }
 
   private tones(palette: ArcadePalette, sky: {top: Rgb; bottom: Rgb}): Tones {
+    // Fixed, readable hazard colors (dimmed with the scene after a crash), never Vespyr's lavender.
+    const dim = (color: Rgb): Rgb => mixRgb(color, palette.dusk, this.fade * 0.55);
     return {
-      edge: mixRgb(palette.deep, palette.accent, 0.25), light: mixRgb(palette.haze, palette.ink, 0.5),
-      books: [palette.accent, palette.accentSoft, mixRgb(palette.accent, palette.haze, 0.45), palette.muted],
-      wood: mixRgb(palette.accent, palette.dusk, 0.55), woodDark: mixRgb(palette.accent, palette.deep, 0.7),
-      glass: mixRgb(sky.bottom, palette.haze, 0.3), glassLight: mixRgb(sky.bottom, palette.haze, 0.8), ink: palette.ink,
+      edge: rgb(0x14153a), light: dim(rgb(0xf7efdc)),
+      books: BOOKS.map(dim),
+      wood: dim(rgb(0xc98f5e)), woodDark: dim(rgb(0x6e4630)),
+      glass: dim(mixRgb(rgb(0x6fd1d6), sky.bottom, 0.35)), glassLight: dim(rgb(0xd8fbff)), ink: palette.ink,
     };
   }
 
@@ -158,62 +181,56 @@ export class FlightScene {
     }
   }
 
-  /** Stars at night, two layers of clouds, distant hills and a nearer line of rooftops, each scrolling at its own fraction. */
-  private backdrop(view: SceneView, geo: Geometry, x: number, sky: {top: Rgb; bottom: Rgb; stars: number}, palette: ArcadePalette): void {
+  /** Stars and a large moon, wisps of cloud, and two skylines with lit windows, each scrolling at its own fraction. */
+  private backdrop(view: SceneView, geo: Geometry, x: number, sky: {top: Rgb; bottom: Rgb; stars: number}, stops: readonly Rgb[], palette: ArcadePalette): void {
     const buffer = this.buffer;
     const still = view.reduced;
     const span = geo.width + 40;
-    if (sky.stars > 0.05) {
-      const count = Math.floor((geo.width * geo.groundY) / 120);
-      const twinkle = still ? 0 : Math.floor(view.visualMs / 450);
-      for (let index = 0; index < count; index += 1) {
-        const dim = (index + twinkle) % 7 === 0 ? 0.35 : 1;
-        buffer.set(hash(index * 2) % geo.width, geo.top + (hash(index * 2 + 1) % Math.max(1, geo.groundY - geo.top - 8)), mixRgb(sky.top, palette.ink, clamp(sky.stars * 0.75 * dim, 0, 1)));
-      }
-    }
+    stars(buffer, 5, geo.groundY - 10, rgb(0xf4f1ff), sky.top, {time: still ? 0 : view.visualMs, strength: sky.stars, scroll: x * 0.02, density: 70});
+    const moonY = geo.top + (geo.groundY - geo.top) * 0.28;
+    disc(buffer, geo.width * 0.72, moonY, Math.max(4, Math.round(geo.height * 0.08)), rgb(0xfaf6ff), along(stops, moonY / geo.groundY), 7);
     const drift = still ? 0 : view.visualMs * 0.004;
-    for (const layer of [{count: 4, factor: 0.07, mix: 0.3, seed: 0, w: 12}, {count: 4, factor: 0.18, mix: 0.5, seed: 50, w: 8}]) {
-      const cloud = mixRgb(sky.bottom, palette.haze, layer.mix);
+    for (const layer of [{count: 4, factor: 0.05, light: 0.18, seed: 0, w: 16}, {count: 3, factor: 0.14, light: 0.3, seed: 50, w: 10}]) {
       for (let index = 0; index < layer.count; index += 1) {
         const cx = Math.round(((((hash(index + layer.seed) % span) - x * layer.factor - drift * (layer.factor * 6)) % span) + span) % span - 20);
         const cy = geo.top + 3 + (hash(index + layer.seed + 40) % Math.max(2, Math.floor((geo.groundY - geo.top) / 2)));
-        buffer.ellipse(cx, cy, layer.w, 3, cloud);
-        buffer.ellipse(cx + 2, cy - 1, Math.round(layer.w / 2), 3, cloud);
+        const behind = along(stops, cy / geo.groundY);
+        buffer.ellipse(cx, cy, layer.w, 2, mixRgb(behind, rgb(0xe9e4ff), layer.light));
+        buffer.ellipse(cx + 3, cy - 1, Math.round(layer.w / 2), 2, mixRgb(behind, rgb(0xe9e4ff), layer.light + 0.08));
       }
     }
-    const far = mixRgb(sky.bottom, palette.dusk, 0.5);
-    const near = mixRgb(sky.bottom, palette.deep, 0.55);
-    for (let column = 0; column < geo.width; column += 1) {
-      const u = column + x * 0.1;
-      const hill = Math.max(1, Math.round(5 + 3 * Math.sin(u * 0.07) + 2 * Math.sin(u * 0.19 + 1.3)));
-      buffer.rect(column, geo.groundY - hill, 1, hill, far);
-      const v = column + x * 0.28;
-      const block = Math.floor(v / 9);
-      const roof = 2 + (hash(block) % 5);
-      const inside = v - block * 9;
-      if (inside < 7) buffer.rect(column, geo.groundY - roof, 1, roof, near);
-      if (inside === 3 && hash(block + 99) % 3 === 0) buffer.rect(column, geo.groundY - roof - 2, 1, 2, near);
-    }
+    skyline(buffer, {base: geo.groundY, scroll: x * 0.09, seed: 7, color: mixRgb(sky.bottom, rgb(0x1d2257), 0.7), window: mixRgb(WINDOW, sky.bottom, 0.45), low: 8, high: Math.max(10, Math.round((geo.groundY - geo.top) * 0.42)), lit: 0.28});
+    skyline(buffer, {base: geo.groundY, scroll: x * 0.26, seed: 19, color: rgb(0x12133a), window: WINDOW, low: 4, high: Math.max(6, Math.round((geo.groundY - geo.top) * 0.24)), lit: 0.18});
+    void palette;
   }
 
   /** The cloud bank across the top (it carries the score) and a bright line on the ceiling the cat cannot pass. */
   private ceiling(view: SceneView, geo: Geometry, x: number, sky: {top: Rgb; bottom: Rgb}, palette: ArcadePalette): void {
     const buffer = this.buffer;
     if (view.decor) {
-      const bank = mixRgb(sky.top, palette.haze, 0.22);
+      const bank = mixRgb(sky.top, rgb(0x4a4596), 0.55);
       buffer.rect(0, 0, geo.width, geo.top, bank);
       // A scalloped lower edge, scrolling slowly with the world.
       for (let column = 0; column < geo.width; column += 1) {
-        if (Math.sin((column + x * 0.2) * 0.45) > 0.2) buffer.set(column, geo.top, mixRgb(bank, palette.haze, 0.2));
+        if (Math.sin((column + x * 0.2) * 0.45) > 0.2) buffer.set(column, geo.top, mixRgb(bank, rgb(0xb7aef0), 0.3));
       }
     }
-    buffer.rect(0, geo.top - 1, geo.width, 1, view.decor ? mixRgb(palette.accent, palette.haze, 0.2) : palette.ink);
+    buffer.rect(0, geo.top - 1, geo.width, 1, view.decor ? rgb(0x9a8fe0) : palette.ink);
   }
 
   private ground(canvas: Canvas, buffer: PixelBuffer, view: SceneView, geo: Geometry, x: number, ground: Rgb, palette: ArcadePalette): void {
+    const scroll = Math.floor(x);
+    if (view.decor) {
+      // A lamplit cobbled street: a bright curb, then stones whose joints scroll with the world.
+      buffer.rect(0, geo.groundY, geo.width, 1, rgb(0x9a8fe0));
+      for (let column = 0; column < geo.width; column += 1) for (let py = geo.groundY + 1; py < geo.height; py += 1) {
+        const joint = (column + scroll + (py % 2) * 3) % 6 === 0 || py === geo.groundY + 3;
+        buffer.set(column, py, joint ? rgb(0x14133a) : (hash((column + scroll) >> 2) % 3 === 0 ? rgb(0x2a2860) : ground));
+      }
+      return;
+    }
     buffer.rect(0, geo.groundY, geo.width, 1, palette.accent);
     buffer.rect(0, geo.groundY + 1, geo.width, 1, mixRgb(palette.accent, ground, 0.55));
-    const scroll = Math.floor(x);
     const texture = geo.groundY / 2 + 1;
     for (let column = 0; column < geo.width; column += 1) {
       const n = hash(column + scroll) % 9;

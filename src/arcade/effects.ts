@@ -1,7 +1,7 @@
 import type {Rgb} from '../chroma/escape.js';
 import {mixRgb} from '../chroma/chroma.js';
 import type {Canvas, PixelBuffer} from './Canvas.js';
-import {clamp, easeOutCubic} from './easing.js';
+import {clamp, easeOutCubic, smoothstep} from './easing.js';
 import type {Rng} from './rng.js';
 
 /**
@@ -75,7 +75,8 @@ export class ParticleSystem {
   draw(buffer: PixelBuffer, fadeTo?: Rgb, offsetX = 0, offsetY = 0): void {
     for (const particle of this.pool) {
       const age = 1 - particle.life / particle.maxLife;
-      buffer.set(particle.x + offsetX, particle.y + offsetY, fadeTo ? mixRgb(particle.color, fadeTo, easeOutCubic(age) * 0.85) : particle.color);
+      // Full color for the first half of its life, then a fade into the scene, so a burst reads as color, not dust.
+      buffer.set(particle.x + offsetX, particle.y + offsetY, fadeTo ? mixRgb(particle.color, fadeTo, smoothstep((age - 0.5) / 0.5) * 0.85) : particle.color);
     }
   }
 

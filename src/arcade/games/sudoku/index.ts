@@ -1,6 +1,9 @@
+import {mixRgb} from '../../../chroma/chroma.js';
 import type {Key} from '../../../terminal/keys.js';
 import {PixelBuffer, type Canvas} from '../../Canvas.js';
 import {ParticleSystem} from '../../effects.js';
+import {confetti, Reveal} from '../../fx/cells.js';
+import {arcadeLook} from '../../look.js';
 import {Menu} from '../../menu.js';
 import type {ArcadePalette} from '../../palette.js';
 import type {ControlHint, GameContext, GameDefinition, GameInstance, GameKeyResult, GameResult, GameStatus} from '../../types.js';
@@ -8,11 +11,11 @@ import {DIFFICULTIES, DIFFICULTY_LABEL, generatePuzzle, type Difficulty} from '.
 import {readRecord, formatTime, recordWin, summarize, writeRecord, type Stats} from './record.js';
 import type {Saved} from './state.js';
 import {SudokuState} from './state.js';
-import {completeUnits, drawMenu, drawPlay, POP_MS, type BoardView} from './view.js';
+import {cellAtPoint, layoutFor} from './layout.js';
+import {completeUnits, drawMenu, drawPlay, POP_MS, waveGroups, type BoardView} from './view.js';
 
 /** Longest single clock step the timer accepts, so a suspended laptop does not bank hours of "play". */
 const MAX_TICK_MS = 2000;
-const CELEBRATE_MS = 1800;
 const GLOW_MS = 1400;
 const MESSAGE_MS = 5000;
 
@@ -24,7 +27,7 @@ export interface SudokuInstance extends GameInstance {
   newPuzzle(difficulty: Difficulty): void;
   /** Back to the clues of the current puzzle: entries, notes, hints and the clock reset. */
   restartPuzzle(): void;
-  /** Whether the person is looking at the completion celebration. */
+  /** Whether the solved board's light wave is still playing. */
   readonly celebrating: boolean;
 }
 
@@ -36,7 +39,8 @@ class Sudoku implements SudokuInstance {
   readonly stepsPerSecond = 0;
   private finished = false;
   private paused = false;
-  private celebrateMs = -1;
+  /** The solved board's light wave: the game's finale, played before the shared results sheet. */
+  private wave: Reveal | undefined;
   private confirmRestart = false;
   private message = '';
   private messageTone: BoardView['messageTone'] = 'info';
@@ -62,9 +66,10 @@ class Sudoku implements SudokuInstance {
 
   get status(): GameStatus {
     if (this.screen === 'menu') return 'ready';
-    return this.finished && this.celebrateMs < 0 ? 'won' : 'playing';
+    return this.finished ? 'won' : 'playing';
   }
-  get celebrating(): boolean { return this.celebrateMs >= 0; }
+  get finale(): Reveal | undefined { return this.finished ? this.wave : undefined; }
+  get celebrating(): boolean { return Boolean(this.wave && !this.wave.done); }
   get refreshMs(): number {
     if (this.celebrating || this.paused || this.fx.count > 0 || this.pop.some(left => left > 0) || this.glow.some(left => left > 0)) return 80;
     return this.screen === 'play' ? 1000 : 0;
@@ -102,7 +107,7 @@ class Sudoku implements SudokuInstance {
     this.finished = false;
     this.result = undefined;
     this.paused = false;
-    this.celebrateMs = -1;
+    this.wave = undefined;
     this.confirmRestart = false;
     this.message = '';
     this.pop.fill(0);
@@ -138,7 +143,7 @@ class Sudoku implements SudokuInstance {
     for (let unit = 0; unit < 27; unit += 1) if (this.glow[unit]! > 0) this.glow[unit] = Math.max(0, this.glow[unit]! - dt / GLOW_MS);
     if (this.messageMs > 0) { this.messageMs -= dt; if (this.messageMs <= 0) this.message = ''; }
     this.fx.update(dt);
-    if (this.celebrateMs >= 0) { this.celebrateMs += dt; if (this.celebrateMs >= CELEBRATE_MS) this.celebrateMs = -1; }
+    this.wave?.update(dt);
   }
 
   pause(): void {
@@ -154,7 +159,7 @@ class Sudoku implements SudokuInstance {
     if (this.screen === 'menu') return this.menuKey(key);
     const state = this.state!;
     if (this.finished) {
-      if (this.celebrating && (key.kind === 'enter' || key.kind === 'text')) { this.celebrateMs = -1; return 'handled'; }
+      if (this.celebrating && (key.kind === 'enter' || key.kind === 'text')) { this.wave!.skip(); return 'handled'; }
       return 'ignored';
     }
     if ((key.kind !== 'text' || key.value.toLowerCase() !== 'r') && this.confirmRestart) { this.confirmRestart = false; this.message = ''; this.messageMs = 0; }
@@ -163,6 +168,12 @@ class Sudoku implements SudokuInstance {
       case 'down': state.move(1, 0); return 'handled';
       case 'left': state.move(0, -1); return 'handled';
       case 'right': state.move(0, 1); return 'handled';
+      case 'mouseClick': {
+        const layout = layoutFor(this.size.columns, this.size.rows);
+        const at = layout && typeof key.x === 'number' && typeof key.y === 'number' ? cellAtPoint(layout, key.x - 1, key.y - 1) : undefined;
+        if (at !== undefined) state.moveTo(at);
+        return 'handled';
+      }
       case 'backspace': case 'delete': return this.after(state.erase(), false);
       case 'redo': return this.after(state.redo(), false);
       case 'text': return this.textKey(key.value);
@@ -254,23 +265,20 @@ class Sudoku implements SudokuInstance {
       score: seconds, scoreText: formatTime(seconds), record: outcome.record,
       details: [DIFFICULTY_LABEL[state.difficulty], state.hints ? `${state.hints} hint${state.hints === 1 ? '' : 's'} used` : 'No hints', ...(best ? [`Best ${formatTime(best)}`] : []), `Streak ${this.stats.streak}`],
     };
-    const calm = this.context.motion.reduced || this.context.motion.effects === 'off';
-    if (calm) return;
-    this.celebrateMs = 0;
-    this.burstPending = true;
+    // Every cell lights in a diagonal wave from the top-left; Reduced Motion holds one calm, still highlight instead.
+    this.wave = new Reveal(waveGroups(), this.context.motion, {stagger: 55, within: 0, rise: 140, hold: 260, fall: 520});
+    this.burstPending = !this.context.motion.reduced && this.context.motion.effects !== 'off';
   }
 
   // ---- drawing ------------------------------------------------------------------------------------------------
 
   private burstPending = false;
 
-  /** Three quiet fountains of the theme's colors, started on the first frame of the celebration. */
+  /** Soft confetti in the Arcade's hues, started on the first frame of the finale. */
   private burst(palette: ArcadePalette): void {
     this.burstPending = false;
-    const colors = [palette.accent, palette.haze, palette.ok, palette.cat.body];
-    for (const share of [0.28, 0.5, 0.72]) {
-      this.fx.burst({x: this.pixels.width * share, y: this.pixels.height * 0.7, count: 14, speed: Math.max(14, this.pixels.height * 0.9), angle: -Math.PI / 2, spread: 0.7, life: 1500, gravity: Math.max(20, this.pixels.height * 0.8), drag: 0.4, colors});
-    }
+    const look = arcadeLook(palette);
+    confetti(this.fx, this.pixels.width, this.pixels.height, [look.ok, look.accent, look.hue.sky, look.hue.butter, look.hue.rose], this.context.motion);
   }
 
   render(canvas: Canvas, _alpha: number, palette: ArcadePalette): void {
@@ -280,14 +288,14 @@ class Sudoku implements SudokuInstance {
       drawMenu(canvas, palette, this.menu, {...view, note: this.current ? 'A puzzle is waiting' : 'Numbers, calmly'});
       return;
     }
-    const heading = this.celebrating && this.result ? {heading: 'Solved', detail: `${this.result.scoreText} · ${this.result.details[0] ?? ''}`} : undefined;
     drawPlay(canvas, palette, {
-      state: this.state, hidden: this.paused, ...view, pop: this.pop, glow: this.glow, message: this.confirmRestart || this.messageMs > 0 ? this.message : '', messageTone: this.messageTone, celebration: heading,
+      state: this.state, hidden: this.paused, ...view, pop: this.pop, glow: this.glow, message: this.confirmRestart || this.messageMs > 0 ? this.message : '', messageTone: this.messageTone,
+      wave: this.wave, solved: this.finished && this.result ? `Solved in ${this.result.scoreText}` : undefined,
     });
     if (this.fx.count > 0) {
       if (this.pixels.width !== canvas.width || this.pixels.height !== canvas.height * 2) this.pixels = new PixelBuffer(canvas.width, canvas.height * 2);
       this.pixels.clear();
-      this.fx.draw(this.pixels, palette.deep);
+      this.fx.draw(this.pixels, arcadeLook(palette).surface.base);
       canvas.blit(this.pixels);
     }
   }
@@ -299,7 +307,7 @@ class Sudoku implements SudokuInstance {
 
   hints(): readonly ControlHint[] {
     if (this.screen === 'menu') return [{keys: '↑↓', action: 'choose'}, {keys: 'Enter', action: 'start'}, {keys: '1-4', action: 'new'}, {keys: 'Esc', action: 'back'}];
-    if (this.celebrating) return [{keys: 'Enter', action: 'continue'}];
+    if (this.celebrating) return [{keys: 'any key', action: 'skip'}];
     return [
       {keys: '←↑↓→/hjkl', action: 'move'}, {keys: '1-9', action: 'digit'}, {keys: '0', action: 'erase'}, {keys: 'n', action: this.state?.notesMode ? 'notes off' : 'notes'},
       {keys: 'u', action: 'undo'}, {keys: 'y', action: 'redo'}, {keys: 't', action: 'hint'}, {keys: 'r', action: 'restart'}, {keys: 'm', action: 'menu'}, {keys: 'Esc', action: 'pause'},
@@ -320,26 +328,41 @@ class Sudoku implements SudokuInstance {
   }
 }
 
-/** The hub preview: one box filling in, quietly. */
+/** The hub preview: a box of tiles filling in, the cursor moving on, and the box lighting up once it is complete. */
 function preview(canvas: Canvas, frame: number, palette: ArcadePalette): void {
+  const look = arcadeLook(palette);
+  canvas.clear(look.surface.base);
   const digits = '534672198';
-  const shown = Math.min(9, Math.floor((frame % 24) / 2));
-  const width = 11;
-  const left = Math.floor((canvas.width - width) / 2);
-  const top = Math.floor((canvas.height - 3) / 2);
+  const clues = new Set([0, 4, 8]);
+  const cycle = frame % 40;
+  const shown = Math.min(9, Math.floor(cycle / 3));
+  const complete = shown >= 9;
+  const tileW = canvas.width >= 40 ? 7 : 5;
+  const boxW = tileW * 3 + 4;
+  const boxH = 9;
+  const left = Math.floor((canvas.width - boxW) / 2);
+  const top = Math.max(0, Math.floor((canvas.height - boxH) / 2));
+  canvas.fill(left - 1, top - 1, boxW + 2, boxH + 2, ' ', {bg: look.surface.sunken});
+  canvas.fill(left, top, boxW, boxH, ' ', {bg: look.surface.base});
   for (let index = 0; index < 9; index += 1) {
-    const x = left + (index % 3) * 4;
-    const y = top + Math.floor(index / 3);
-    const revealed = index < shown;
-    const cursor = index === shown && shown < 9;
-    canvas.text(x, y, cursor ? '[ ]' : ` ${revealed ? digits[index]! : '·'} `, {fg: revealed ? (index % 2 ? palette.accent : palette.ink) : palette.faint, bold: revealed || cursor});
+    const x = left + 1 + (index % 3) * (tileW + 1);
+    const y = top + Math.floor(index / 3) * 3;
+    const filled = clues.has(index) || index < shown;
+    const cursor = !complete && index === shown;
+    const glow = complete ? Math.max(0, 1 - Math.abs(cycle - 30 - index * 0.6) / 4) : 0;
+    let fill = cursor ? look.accent : look.surface.raised;
+    if (glow > 0) fill = mixRgb(fill, look.ok, 0.5 * glow);
+    canvas.hline(x, y, tileW, '▄', {fg: fill, bg: look.surface.base});
+    canvas.fill(x, y + 1, tileW, 1, ' ', {bg: fill});
+    canvas.hline(x, y + 2, tileW, '▀', {fg: fill, bg: look.surface.base});
+    if (filled) canvas.put(x + Math.floor(tileW / 2), y + 1, digits[index]!, {bg: fill, fg: cursor ? look.text.onAccent : clues.has(index) ? look.text.strong : look.hue.sky, bold: clues.has(index)});
   }
 }
 
 export const sudokuGame: GameDefinition = {
   id: 'sudoku', aliases: ['classic-sudoku'], title: 'Classic Sudoku', tagline: 'Numbers, calmly',
   description: 'The classic 9x9 puzzle in four difficulties, with pencil notes, hints, undo and unlimited fresh puzzles. Your puzzle in progress is saved.',
-  kind: 'puzzle',
+  kind: 'puzzle', category: 'logic',
   controls: [{keys: '←↑↓→', action: 'move'}, {keys: '1-9', action: 'digit'}, {keys: 'n', action: 'notes'}, {keys: 'u', action: 'undo'}, {keys: 't', action: 'hint'}],
   summary: record => summarize(record),
   preview,
