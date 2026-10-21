@@ -1,6 +1,6 @@
 ---
 title: "Terminal workflow design"
-description: "Canonical terminal workflow design from the v0.20.0 published source."
+description: "Canonical terminal workflow design from the v0.22.0 published source."
 group: Technical reference
 order: 116
 source: "docs/design/terminal-workflow.md"

@@ -1,6 +1,6 @@
 ---
 title: "Privacy and local data"
-description: "Canonical privacy and local data from the v0.20.0 published source."
+description: "Canonical privacy and local data from the v0.22.0 published source."
 group: Technical reference
 order: 109
 source: "docs/privacy.md"

@@ -1,6 +1,6 @@
 ---
 title: "Optional tools and providers"
-description: "Canonical optional tools and providers from the v0.20.0 published source."
+description: "Canonical optional tools and providers from the v0.22.0 published source."
 group: Technical reference
 order: 105
 source: "docs/architecture/optional-tools.md"

@@ -1,6 +1,6 @@
 ---
 title: "Runtime architecture"
-description: "Canonical runtime architecture from the v0.20.0 published source."
+description: "Canonical runtime architecture from the v0.22.0 published source."
 group: Technical reference
 order: 100
 source: "ARCHITECTURE.md"
@@ -300,6 +300,8 @@ Results are typed answers, proposals, choices, unsupported requests, or refusals
 Optional **local understanding** can help interpret requests when enabled. Auto uses a model when deterministic interpretation is unclear or ambiguous; Always prefers model assistance while still using deterministic action builders. A separate local model service manages runtime work. Model assistance chooses from a bounded capability inventory and produces validated structured interpretations. NMSh then resolves those interpretations against known facts and its deterministic policies; a failed model leaves the deterministic result available.
 
 Model text is not directly executed as a shell command or filesystem operation. Configuration, mutation, and installation require confirmation of the exact action in Ask; destructive suggestions are Copy/Insert only. Copying or inserting a suggested command does not execute it. File plans and supported configuration still use their normal path, hash, and ownership checks.
+
+**Command suggestions** are optional and Off by default. When the person turns them on (Settings → Ask → Command suggestions → Local model), a request Ask's own resolver cannot place (never one it refused) may get one shell command from the local model. The model receives only the request text, the shell and the OS family; its answer is validated strictly (one plain line, no control or escape sequences), labelled by NMSh's own command classifier rather than the model, and offered for Copy or Insert only. Inserting places it in the composer unsent; only the person's Enter runs it.
 
 ## 20. Configuration and persistence
 
