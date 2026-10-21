@@ -15,6 +15,12 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] In a table: Tab / Shift+Tab walk cells; F1 offers row, column and alignment actions; the status line names the cell. Tab in ordinary text still inserts a tab.
 - [ ] At 30, 50, 80 and 120 columns the menu and the footer fit; with NO_COLOR=1 and Safe Glyphs they stay legible.
 
+## Snippets (#468)
+- [ ] In an `.html` file F1 opens the palette; type `section`, Enter; Tab / Shift+Tab walk the placeholders; Esc ends them; Tab outside is a tab. In a `.md` file F1 then `/`.
+- [ ] Select text and insert a wrapping snippet (section, code block): the text is wrapped, its line breaks untouched. Ctrl+Z removes the whole insertion.
+- [ ] Mermaid and math entries say they are source text; nothing in the preview claims to render them.
+- [ ] The palette rows and footer fit 30, 50, 80 and 120 columns; NO_COLOR and Safe Glyphs stay legible.
+
 ## Reviewing external changes (#463)
 - [ ] Edit a file, change it from another terminal (`printf`, an editor save, `git checkout`, an atomic `mv`), press Ctrl+S: Review changes appears. Disk-only hunks default to the file's version; a shared line is a conflict.
 - [ ] Choose per hunk, preview with `r`, undo a choice with `z`, apply with Enter, undo the whole merge with Ctrl+Z, save, and check the file with `cat -A` (line endings kept).

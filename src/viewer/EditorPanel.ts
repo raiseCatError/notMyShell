@@ -10,6 +10,8 @@ import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {formatForPath, inert} from './document.js';
 import {alignColumn, deleteColumn, deleteRow, findTable, insertColumn, insertRow, tableStatus, tableTab} from './markdownTable.js';
 import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
+import {paletteEntries, type PaletteEntry, type PaletteFormat} from './EditorPalette.js';
+import {advanceSnippet, insertFootnote, insertSnippet, insideSnippet, type SnippetSession} from './snippets.js';
 import {continueList, insertLink, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
 import type {EditableFile, SaveConflict} from './fileEdit.js';
 import {displayColumn, TAB_WIDTH, TextBuffer, type Position} from './textBuffer.js';
@@ -26,7 +28,9 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown';
+  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets';
+  /** The snippet palette's search text. */
+  query?: string;
   /** The Markdown menu opened with the caret in a table: the table actions come first. */
   table?: boolean;
   /** A recovered draft this dialog offers (#469), the file's lines when it was offered, and what Compare found. */
@@ -50,6 +54,8 @@ export interface EditorState {
   dialog?: EditorDialog;
   /** Hunk-by-hunk review of changes made on disk while editing (#463); while it is open it owns the keys and the panel. */
   review?: ReviewState;
+  /** Placeholders of an inserted snippet; while it lives Tab and Shift+Tab visit them and Esc ends it (#468). */
+  snippet?: SnippetSession;
   note?: {text: string; tone: 'info' | 'error' | 'success'};
   /** A save or reload is in progress; keys wait. */
   busy?: boolean;
@@ -88,9 +94,53 @@ const MARKDOWN_ACTIONS = [
   {id: 'Action.Link', label: 'Link', key: 'l'}, {id: 'Action.Image', label: 'Image', key: 'p'},
   {id: 'Action.Bold', label: 'Bold', key: 'b'}, {id: 'Action.Italic', label: 'Italic', key: 'i'},
   {id: 'Action.Code', label: 'Code', key: 'c'}, {id: 'Action.Strike', label: 'Strike', key: 's'},
+  {id: 'Action.Search', label: 'Snippets…', key: '/'},
 ] as const;
 
 export const isMarkdownFile = (state: EditorState) => formatForPath(state.file.path).format === 'markdown';
+
+function endSnippet(state: EditorState): void {
+  state.snippet?.dispose();
+  state.snippet = undefined;
+}
+
+/** The format whose snippets the palette offers for this file: Markdown or HTML. */
+function paletteFormat(state: EditorState): PaletteFormat | undefined {
+  const format = formatForPath(state.file.path).format;
+  return format === 'markdown' || format === 'html' ? format : undefined;
+}
+
+function openPalette(state: EditorState): void {
+  state.dialog = {kind: 'snippets', focus: 0, query: ''};
+}
+
+function paletteList(state: EditorState, dialog: EditorDialog): PaletteEntry[] {
+  return paletteEntries(paletteFormat(state) ?? 'markdown', dialog.query ?? '', findTable(state.buffer.lines, state.buffer.caret.line) !== undefined);
+}
+
+function runPaletteEntry(state: EditorState, entry: PaletteEntry): void {
+  endSnippet(state);
+  if (entry.run.kind === 'snippet') { state.snippet = insertSnippet(state.buffer, entry.run.snippet); return; }
+  if (entry.run.action === 'Action.Footnote') { state.snippet = insertFootnote(state.buffer); return; }
+  const result = runMarkdownAction(state, entry.run.action);
+  if (result.note) state.note = {text: result.note, tone: 'info'};
+}
+
+function paletteKey(state: EditorState, dialog: EditorDialog, key: Key): void {
+  const entries = paletteList(state, dialog);
+  if (key.kind === 'escape' || key.kind === 'interrupt') { state.dialog = undefined; return; }
+  if (key.kind === 'up' || key.kind === 'focusPrevious' || key.kind === 'suggestPrevious') { dialog.focus = Math.max(0, dialog.focus - 1); return; }
+  if (key.kind === 'down' || key.kind === 'complete' || key.kind === 'suggestNext') { dialog.focus = Math.min(Math.max(0, entries.length - 1), dialog.focus + 1); return; }
+  if (key.kind === 'enter') {
+    const entry = entries[dialog.focus];
+    if (!entry) return;
+    state.dialog = undefined;
+    runPaletteEntry(state, entry);
+    return;
+  }
+  const next = editText(dialog.query ?? '', key);
+  if (next !== undefined) { dialog.query = next.slice(0, 80); dialog.focus = 0; }
+}
 
 function runMarkdownAction(state: EditorState, id: string): EditResult {
   const buffer = state.buffer;
@@ -149,6 +199,7 @@ function recoverChoice(state: EditorState, dialog: EditorDialog, offer: DraftOff
 }
 
 function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAction | undefined {
+  if (dialog.kind === 'snippets') { paletteKey(state, dialog, key); return undefined; }
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
   if (key.kind === 'left' || key.kind === 'focusPrevious') { dialog.focus = (dialog.focus + controls.length - 1) % controls.length; return undefined; }
@@ -160,6 +211,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
   if (dialog.kind === 'markdown') {
     state.dialog = undefined;
     if (chosen === 'Action.Keep') return undefined;
+    if (chosen === 'Action.Search') { openPalette(state); return undefined; }
     const result = runMarkdownAction(state, chosen);
     if (result.note) state.note = {text: result.note, tone: 'info'};
     return undefined;
@@ -222,6 +274,22 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
   }
   state.note = undefined;
   const rows = textRows(state, columns, height);
+  // While a snippet's placeholders are live they own Tab, Shift+Tab and Esc; any other key is the editor's, and ends the
+  // session when it leaves the inserted text (or undoes it).
+  if (state.snippet) {
+    const session = state.snippet;
+    if (key.kind === 'complete' || key.kind === 'focusPrevious') {
+      if (advanceSnippet(buffer, session, key.kind === 'complete' ? 1 : -1) === 'finished') state.snippet = undefined;
+      reveal(state, columns, height);
+      return undefined;
+    }
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      endSnippet(state);
+      state.note = {text: 'Snippet placeholders ended; your text is unchanged.', tone: 'info'};
+      return undefined;
+    }
+    if (key.kind === 'suspend' || key.kind === 'redo') endSnippet(state);
+  }
   switch (key.kind) {
     case 'escape':
       if (buffer.dirty) { state.dialog = {kind: 'unsaved', focus: 0}; return undefined; }
@@ -261,7 +329,10 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
       if (moved.note) state.note = {text: moved.note, tone: 'info'};
       break;
     }
-    case 'palette': if (!isMarkdownFile(state)) return undefined; state.dialog = {kind: 'markdown', focus: 0, ...(findTable(buffer.lines, buffer.caret.line) ? {table: true} : {})}; return undefined;
+    case 'palette':
+      if (isMarkdownFile(state)) state.dialog = {kind: 'markdown', focus: 0, ...(findTable(buffer.lines, buffer.caret.line) ? {table: true} : {})};
+      else if (paletteFormat(state)) openPalette(state);
+      return undefined;
     case 'backspace': buffer.backspace(); break;
     case 'delete': buffer.delete(); break;
     case 'deleteWord': buffer.deleteWord(); break;
@@ -294,6 +365,7 @@ export function editorKey(state: EditorState, key: Key, columns: number, height:
     case 'wheelDown': state.top = Math.max(0, Math.min(buffer.lines.length - rows, state.top + WHEEL_ROWS)); return undefined;
     default: return undefined;
   }
+  if (state.snippet && !insideSnippet(buffer, state.snippet)) endSnippet(state);
   reveal(state, columns, height);
   return undefined;
 }
@@ -364,9 +436,23 @@ function recoverMessage(state: EditorState, dialog: EditorDialog): string {
 
 function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
+  if (state.dialog?.kind === 'snippets') {
+    const dialog = state.dialog;
+    const entries = paletteList(state, dialog);
+    const accent = foreground(UI_COLORS.accent), subtle = foreground(UI_COLORS.subtle);
+    const size = 6;
+    const start = Math.max(0, Math.min(dialog.focus - Math.floor(size / 2), entries.length - size));
+    const shown = entries.slice(start, start + size).map((entry, offset) => {
+      const focused = start + offset === dialog.focus;
+      return `${focused ? `${accent}▸ ` : '  '}${truncateText(entry.title, Math.max(4, Math.floor(width * 0.45)))}${RESET}${subtle} — ${truncateText(entry.description, Math.max(4, width))}${RESET}`;
+    });
+    if (!entries.length) shown.push(`${subtle}  No match for “${truncateText(inert(dialog.query ?? ''), 30)}”.${RESET}`);
+    const header = `${foreground(UI_COLORS.warning)}Insert${RESET}${subtle} · ${entries.length} match${entries.length === 1 ? '' : 'es'} · ${RESET}${truncateText(inert(dialog.query ?? ''), Math.max(1, width - 24))}${accent}▏${RESET}`;
+    return [header, ...shown.map(row => truncateAnsi(row, width)), ...renderControlRows([['↑↓', 'choose'], ['Enter', 'insert'], ['Esc', 'back']], width)];
+  }
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
@@ -376,7 +462,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.input) return renderControlRows([['Enter', 'find'], ['Esc', 'cancel']], width);
   return renderControlRows([['Ctrl+S', 'save'], ['Esc', 'close'], ['Ctrl+Z', 'undo'], ['Ctrl+Y', 'redo'], ['Ctrl+F', 'find'], ['Ctrl+C', 'copy'], ['Ctrl+X', 'cut'],
-    ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : [])], width);
+    ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : paletteFormat(state) ? [['F1', 'Snippets']] as Array<[string, string]> : [])], width);
 }
 
 export function renderEditor(state: EditorState, columns: number, height: number): string[] {

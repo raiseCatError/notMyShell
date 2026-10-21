@@ -33,6 +33,8 @@ The paused issues #460–#469 are the milestone (the maintainer superseded the e
 
 3. **#463 slice 3: hunk-by-hunk external-change review** — branch `feature/v024-external-review`, stacked on slice 2. Done: `threeWayMerge.ts`, `ReviewPanel.ts`, wiring, tests, design section, changelog, `docs/testing/v024-editor-physical-qa.md`. Also fixed in the stack: #490 now carries the fence-state performance fix; #491 refuses a clipped table paragraph instead of editing part of a table. **#463 remaining:** physical QA only (NOT RUN); footnote renumbering was proposed in the issue and is not built.
 
+4. **#468 slice 1: snippets** — branch `feature/v024-snippets` (worktree `v024-snip`), stacked on slice 3 (#492). Done: snippet engine, searchable palette, snippet mode, HTML and Markdown catalogs, footnote action, tests, docs. **#468 remaining:** the unsaved Playground (scratch document identity for recovery, Save As, dirty-close) — next slice; Split preview is **deferred to #461** (Playground must use whatever modes the workspace has: source, edit, preview).
+
 ## Environment notes
 
 Scratch and test runs: `t7run`; focused tests via `/Volumes/T7Tmp/ai-dev/runtests.mjs` (see the testing-gotchas memory). `npm ci` was needed in a fresh worktree (the main checkout's `node_modules` is stale).
