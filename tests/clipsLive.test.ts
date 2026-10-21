@@ -39,6 +39,9 @@ test('live: an explicit clipboard read can be kept as a clip, reviewed again and
     await frontend.waitFor(/Review commands/u, mark);
     assert.equal(existsSync(execution), false, 'batch review never dispatches');
     frontend.pty.write('q');
+    await frontend.waitFor(/queue all/u, mark);
+    assert.equal(existsSync(execution), false, 'choosing Queue all dispatches nothing');
+    frontend.pty.write('\r');
     await until(() => existsSync(execution), 15_000, 'explicitly approved queued command');
     await frontend.waitFor(/CLIP-DONE[\s\S]*from queue/u, mark);
   } finally { await sandbox.dispose(); }

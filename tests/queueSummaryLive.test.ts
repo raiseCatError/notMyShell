@@ -43,8 +43,8 @@ test('live: a settled chain is reviewed and saved as a typed summary the journal
     // One chain: a foreground command, then two queued ones; the last fails and its text carries a made-up token.
     frontend.pty.write('sleep 3\r');
     await frontend.waitFor(/Running sleep 3/u, mark);
-    frontend.pty.write(`printf 'OUT-%s\\n' FIRST\r`);
-    frontend.pty.write(`sh -c 'exit 4' --token=abc123\r`);
+    frontend.pty.write(`printf 'OUT-%s\\n' FIRST\u0011`);
+    frontend.pty.write(`sh -c 'exit 4' --token=abc123\u0011`);
     await frontend.waitFor(/Queue · 3 commands/u, mark);
     await frontend.waitFor(/OUT-FIRST[\s\S]*from queue/u, mark, 30_000);
     await frontend.waitFor(/Queue finished · 3 commands/u, mark, 30_000);

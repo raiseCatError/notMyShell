@@ -4,17 +4,17 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); physical QA partial ([record](docs/testing/v020-physical-qa.md)) |
-| **Not released separately** | v0.19.0 — Terminal workflow candidate; never tagged or published, its work first ships in v0.20.0 |
-| **Previous release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
+| **Current release** | [v0.22.0 — Native viewing, images, a real browser and Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) — released 2026-10-21 through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); includes the never-published v0.21.0 candidate; physical QA partial and its remainder waived by the maintainer ([record](docs/testing/v022-physical-qa.md), [ledger](docs/development/v022-ledger.md)) |
+| **Not released separately** | v0.21.0 — release candidate ([#429](https://github.com/raiseCatError/notMyShell/pull/429)); never tagged or published, its work first ships in v0.22.0 |
+| **Previous release** | [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — released 2026-10-18 through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); includes the v0.19.0 candidate, never published separately (physical QA partial, [record](docs/testing/v020-physical-qa.md)) |
+| **Earlier release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
-| **Next implementation candidates (not yet committed)** | [v0.21 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.21) — viewer/text editing, Semantic Output, `/track`, native modules, bundled themes and selected defects. The maintainer will choose final scope after implementation and verification. |
 | **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Public planning** | [Open issues](https://github.com/raiseCatError/notMyShell/issues); the owner-only project board is not a public status source |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.20.0.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release is 0.22.0.
 
 ## Native modules and Context Engine — released foundation, ongoing expansion
 
@@ -157,6 +157,20 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Maintainer exercised real CLI/TUI use; deterministic suite extended; ongoing regression tracking |
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
+
+## Released — v0.22.0 Native viewing, images, a real browser, Vespyr Arcade, Semantic Output, `/track` and input ownership
+
+Includes the unpublished v0.21.0 candidate. v0.21 was planned in [#410](https://github.com/raiseCatError/notMyShell/issues/410) and merged into `dev` as #411–#428:
+`/view` ([#397](https://github.com/raiseCatError/notMyShell/issues/397)) and `/edit` ([#402](https://github.com/raiseCatError/notMyShell/issues/402)), Semantic Output first phase
+([#386](https://github.com/raiseCatError/notMyShell/issues/386)), `/track` ([#393](https://github.com/raiseCatError/notMyShell/issues/393)), Bun, Nix shell and container modules
+([#364](https://github.com/raiseCatError/notMyShell/issues/364)), `/modules explain` and `timings` ([#365](https://github.com/raiseCatError/notMyShell/issues/365)), five theme families
+([#401](https://github.com/raiseCatError/notMyShell/issues/401)) and the #388/#408 fixes. v0.22 ([#431](https://github.com/raiseCatError/notMyShell/issues/431)) adds input ownership under load and
+around passwords and prompt hooks (#426, #436; PRs #433, #437, #442), history browsing and its position (#389; #438, #441),
+`o` from `/view` and a chosen terminal editor (#366; #434, #439) and Ask command suggestions from a local model
+(#432 first part; #440), integrated on `release/v0.22.0` in that order. It also ships the multiline paste modes, the graphics service and image viewing, OSC 66 headings, the Markdown/HTML workspace, `/browser` and Vespyr Arcade
+(see the [ledger](docs/development/v022-ledger.md)). Released 2026-10-21 through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); the
+physical QA that was not run is listed in the [QA record](docs/testing/v022-physical-qa.md). See the [changelog](CHANGELOG.md) for compatibility, upgrade
+notes and known limitations.
 
 ## Released — v0.20.0 Terminal workflow, first-run setup, background tasks & native modules
 

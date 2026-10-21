@@ -89,7 +89,8 @@ for (const shell of ['zsh', 'bash'] as const) {
       frontend.pty.write('hunter2');
       await pause(300);
       frontend.pty.write('\r');
-      await frontend.waitFor(/len=7/u, mark);
+      // The prompt is back before the next command: one typed while this one still ran would wait for approval (#426).
+      await frontend.waitFor(/len=7[\s\S]*Completed/u, mark);
       assert.doesNotMatch(drawn(frontend, typed), /hunter2|•{3}/u, 'the secret is never drawn, not even as dots');
 
       // A single key: answered without Enter, and no stray Enter reaches the shell afterwards.

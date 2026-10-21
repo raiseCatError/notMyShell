@@ -1,4 +1,5 @@
 import {linuxBattery, parseMeminfo, parsePmset, parseVmStat, type SystemStats} from './systemStats.js';
+import type {FitReport} from '../prompt/fitReport.js';
 import type {StatusStripSettings, StripZone} from '../prompt/configuration.js';
 import type {ContextFacts} from '../context/facts.js';
 import {safeContextText} from '../context/facts.js';
@@ -97,6 +98,8 @@ interface Entry {
   tone: 'secondary' | 'failure' | 'accent';
   /** Keep Awake narrows only after everything else has gone (it outranks every other item). */
   last?: boolean;
+  /** The routed module this entry shows, for the fit report. */
+  id?: string;
 }
 
 /** Hostile module text loses whole control sequences, then is bounded like every other display string. */
@@ -105,7 +108,7 @@ const clean = (text: string) => safeContextText(stripTerminalControls(text), 120
 function entries(settings: StatusStripSettings, stats: SystemStats, now: Date | undefined, awake: StripAwake | undefined, modules: readonly StripModuleItem[]): Entry[] {
   // Routed modules outlast the strip's own items; among them, higher module priority stays longest.
   const routed: Entry[] = modules.map(module => ({zone: module.zone ?? 'right', forms: [...new Set([clean(module.text), ...(module.compact ?? []).map(clean)])].filter(Boolean),
-    form: 0, rank: -1 - module.priority / 1000, tone: module.failure ? 'failure' as const : 'secondary' as const})).filter(entry => entry.forms.length);
+    form: 0, rank: -1 - module.priority / 1000, tone: module.failure ? 'failure' as const : 'secondary' as const, ...(module.id ? {id: module.id} : {})})).filter(entry => entry.forms.length);
   const native: Entry[] = stripItems(settings, stats, now).map(item => {
     const icon = item.icon ? semanticIcon(item.icon) : '';
     return {zone: settings.nativeZone, forms: item.compact ? [item.text, item.compact] : [item.text], form: 0, ...(icon ? {icon} : {}), rank: item.priority, tone: 'secondary' as const};
@@ -191,10 +194,17 @@ function fit(all: Entry[], settings: StatusStripSettings, columns: number): Entr
  * room and otherwise pushed between its neighbours.
  */
 export function renderStatusStrip(settings: StatusStripSettings, stats: SystemStats & {now?: number}, columns: number, now?: Date, awake?: StripAwake,
-  modules: readonly StripModuleItem[] = []): string {
-  if (!settings.enabled || columns < STRIP_MIN_COLUMNS) return '';
+  modules: readonly StripModuleItem[] = [], report?: FitReport): string {
+  if (!settings.enabled) return '';
+  if (columns < STRIP_MIN_COLUMNS) { for (const module of modules) if (module.id) report?.dropped.add(module.id); return ''; }
   const time = now ?? (stats.now !== undefined ? new Date(stats.now) : undefined);
-  const list = fit(entries(settings, stats, time, awake, modules), settings, columns);
+  const candidates = entries(settings, stats, time, awake, modules);
+  const list = fit(candidates, settings, columns);
+  if (report) for (const entry of candidates) {
+    if (!entry.id) continue;
+    const kept = list.find(item => item.id === entry.id);
+    if (!kept) report.dropped.add(entry.id); else if (kept.form > 0) report.compacted.add(entry.id);
+  }
   if (!list.length) return '';
   const group = (zone: StripZone) => list.filter(entry => entry.zone === zone);
   const [left, center, right] = ZONES.map(zone => ({zone, painted: paintZone(zone, group(zone), settings), width: zoneWidth(zone, group(zone), settings)}));

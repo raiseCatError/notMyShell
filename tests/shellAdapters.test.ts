@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {once} from 'node:events';
-import {chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {connect, type Socket} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -19,6 +20,7 @@ import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {createShellPanel, shellPanelKey} from '../src/shell/ShellPanel.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
+import {markFishCompletionsGenerated} from '../scripts/test-shell-home.mjs';
 
 const available = (id: ShellId) => Boolean(shellAdapter(id).resolveExecutable(process.env));
 const scratch = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -89,8 +91,9 @@ interface Lifecycle { markers: ShellMarker[]; execs: Array<[string, number | und
 async function startShell(id: ShellId): Promise<Lifecycle> {
   const home = scratch(`nmsh-adapter-${id}-`);
   mkdirSync(join(home, 'work'));
+  markFishCompletionsGenerated(home);
   const shell = new ShellSession(home, 100, 30, home, {...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share'),
-    LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8'}, id);
+    XDG_CACHE_HOME: join(home, '.cache'), LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8'}, id);
   const state: Lifecycle = {markers: [], execs: [], output: '', shell, home};
   shell.on('prompt', marker => state.markers.push(marker));
   shell.on('exec', (command, allowed) => state.execs.push([command, allowed]));
@@ -150,6 +153,19 @@ async function stopShell(state: Lifecycle): Promise<void> {
   await exited;
   rmSync(state.home, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
 }
+
+test('fish: a test home marked as generated starts no detached man-page completion generator (#403)', {skip: !available('fish') && 'fish is not installed', timeout: 60_000}, async () => {
+  const state = await startShell('fish');
+  try {
+    // Fish starts the generator during interactive startup, before its first prompt, and it runs for seconds.
+    await run(state, 'true');
+    const generators = (spawnSync('ps', ['-axo', 'command='], {encoding: 'utf8'}).stdout ?? '').split('\n')
+      .filter(line => line.includes('--manpath') && line.includes(state.home));
+    assert.deepEqual(generators, [], 'nothing outlives the shell and writes into its home');
+    assert.deepEqual(readdirSync(join(state.home, '.cache', 'fish', 'generated_completions')), []);
+    assert.deepEqual(readdirSync(join(state.home, '.local', 'share', 'fish', 'generated_completions')), []);
+  } finally { await stopShell(state); }
+});
 
 test('fish: a leading space is private, and Fish completion feeds structured candidates', {skip: !available('fish') && 'fish is not installed', timeout: 60_000}, async () => {
   const state = await startShell('fish');
@@ -224,6 +240,7 @@ test('hot swap in the service: zsh → fish → bash → zsh keeps session ident
     const runtimeDir = scratch('nmsh-swap-'); chmodSync(runtimeDir, 0o700);
     const home = scratch('nmsh-swaph-');
     mkdirSync(join(home, 'project'));
+    markFishCompletionsGenerated(home, {dataHome: join(home, '.d')});
     const service = new SessionService({runtimeDir, startupIdleMs: 60_000});
     await service.start();
     const keeper = new Peer(service.socketPath);

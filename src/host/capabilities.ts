@@ -5,6 +5,17 @@ export interface TerminalCapabilities {
   appearanceIntegration: boolean;
   hostConfiguration: boolean;
   graphicsProtocol: 'none' | 'kitty' | 'iterm2' | 'sixel';
+  /** DA1 listed Sixel (attribute 4). Evidence from the terminal's own reply; independent of `graphicsProtocol`. */
+  sixel?: boolean;
+  /**
+   * Kitty's text sizing protocol (OSC 66), detected independently of graphics by the cursor-position method of the
+   * specification: `width` when an explicit-width space advanced the cursor two cells, `scale` when a doubled-scale space advanced
+   * it two more. Absent when the probe did not run or got no answers.
+   */
+  textSizing?: {scale: boolean; width: boolean};
+  /** The terminal's own report of one cell's size and of its text area in pixels (xterm window operations 16 and 14). */
+  cellPixels?: {width: number; height: number};
+  windowPixels?: {width: number; height: number};
   mouseReporting: boolean;
   mouseMovement: boolean;
   clickSupport: boolean;

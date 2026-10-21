@@ -54,9 +54,51 @@ export type SerializedLine = SerializedCell[];
  */
 export const MAX_CONTROL_SEQUENCE = 8192;
 
+/** The screen height assumed until the owner reports the PTY's rows (a terminal's classic default). */
+const DEFAULT_SCREEN_ROWS = 24;
+
+/**
+ * The live region (#388). A program may redraw its own recent rows in place, as on a terminal: cursor up/down
+ * (`CSI A/B/E/F`, `ESC M/D/E`), save/restore (`ESC 7/8`, `CSI s/u`) and erasing (`CSI J` 0/1, `CSI K` 0/1/2) act on
+ * the row the cursor is on. The cursor never moves above the fence (the line after the newest one NMSh wrote: a
+ * command header, a notice, an earlier command) nor more than a screen height above the newest line, because a
+ * terminal cannot address its scrollback either. So a multi-row progress display updates its rows instead of adding
+ * a copy of them per frame, and nothing outside the running program's own rows can be changed.
+ *
+ * Rows are the terminal's rows. Stored lines are logical (a long line is one line), but once the owner reports the
+ * PTY's width a line wider than it occupies several rows, as on the screen: moving up three rows from below a
+ * two-row line lands on that line's first row, not on the line above it, so a program that counts the rows it drew
+ * redraws exactly them (moving by lines, it erased its own earlier output at narrow widths). Carriage return,
+ * backspace, `CSI G/C/D` and `CSI K` act on the row the cursor is on within its line. A resize re-wraps stored lines
+ * at the new width, as a reflowing terminal does.
+ *
+ * Deliberately not emulated: absolute row positioning (`CSI H/f/d` rows) is not mapped, because an inline program
+ * cannot know where its rows are (cursor position reports are not answered); the cursor stays where it is. Scroll
+ * regions (`CSI r`) are not emulated either, except that text a program draws below the region it set (a reserved
+ * status line, such as an installer's progress row) is not stored: it would otherwise be written into the log rows.
+ * The stored lines are what a terminal would show at the end; intermediate frames are not kept.
+ */
 export class AnsiOutputParser {
   readonly lines: StyledLine[] = [];
   private current: StyledLine = [];
+  /** The cursor's row: an index into `lines`, or `lines.length` for the current (newest) line. */
+  private row = 0;
+  /** The lowest row the program may address (see the live region). */
+  private fence = 0;
+  private screenRows = DEFAULT_SCREEN_ROWS;
+  /** The PTY's columns, once reported: rows wrap at this width. Unknown (Infinity), each line is one row. */
+  private screenColumns = Number.POSITIVE_INFINITY;
+  /** The bottom row of a scroll region the program set above the last row, if any (1-based). */
+  private regionBottom?: number;
+  /** The cursor was moved below that region (a status row): what is drawn there is not stored. */
+  private statusRow = false;
+  /**
+   * The column at which the last character filled its row exactly: the terminal keeps the cursor on that row (a
+   * pending wrap) until the next character. Any move to another column ends it.
+   */
+  private pendingWrap?: number;
+  /** DECSC / SCOSC saved cursor (row, column, and for ESC 7 the style). */
+  private saved?: {row: number; column: number; style?: string};
   private column = 0;
   private style = '';
   private pending = '';
@@ -85,6 +127,141 @@ export class AnsiOutputParser {
   }
 
   constructor(private readonly onClear?: () => void) {}
+
+  /** The PTY's rows: how far above the newest line a program's cursor can reach. */
+  setScreenRows(rows: number): void {
+    this.screenRows = Math.max(1, Math.min(1000, Math.floor(rows) || DEFAULT_SCREEN_ROWS));
+  }
+
+  /** The PTY's columns: the width at which a long line occupies more than one row. */
+  setScreenColumns(columns: number): void {
+    this.screenColumns = Number.isFinite(columns) && columns >= 1 ? Math.min(10_000, Math.floor(columns)) : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Program output from here on may redraw only rows from `index` (clamped to the stored lines); NMSh-written rows
+   * and earlier commands stay out of reach. Used when a running command is resumed from a journal.
+   */
+  fenceAt(index: number): void {
+    this.fence = Math.max(0, Math.min(index, this.lines.length));
+    this.row = this.lines.length;
+    this.saved = undefined;
+  }
+
+  /** The line the cursor is on. */
+  private get target(): StyledLine {
+    return this.row < this.lines.length ? this.lines[this.row]! : this.current;
+  }
+
+  /** The highest line the cursor may move to: the fence, or the line on the row a screen height above the newest. */
+  private get topRow(): number {
+    if (!this.wraps) return Math.max(this.fence, this.lines.length - (this.screenRows - 1));
+    let row = this.lines.length;
+    let used = this.rowsOf(row);
+    while (row > this.fence && used < this.screenRows) { row -= 1; used += this.rowsOf(row); }
+    return row;
+  }
+
+  private get wraps(): boolean { return Number.isFinite(this.screenColumns); }
+
+  private lineAt(row: number): StyledLine { return row < this.lines.length ? this.lines[row]! : this.current; }
+
+  /** The rows a line occupies at the PTY's width (the cursor's line also counts the cursor). */
+  private rowsOf(row: number): number {
+    const length = row === this.row ? Math.max(this.lineAt(row).length, this.column) : this.lineAt(row).length;
+    return Math.max(1, Math.ceil(length / this.screenColumns));
+  }
+
+  /**
+   * The row of its line the cursor is on. A row exactly filled leaves the cursor on it (the terminal's pending
+   * wrap) until the next character.
+   */
+  private get subRow(): number {
+    if (!this.wraps) return 0;
+    const columns = this.screenColumns;
+    return this.column > 0 && this.column === this.pendingWrap ? this.column / columns - 1 : Math.floor(this.column / columns);
+  }
+
+  /** Where the cursor's row starts, as a column of its line. */
+  private get rowStart(): number { return this.wraps ? this.subRow * this.screenColumns : 0; }
+
+  /** The cursor's column on its row (the last column while a wrap is pending). */
+  private get screenColumn(): number {
+    return this.wraps ? Math.min(this.column - this.rowStart, this.screenColumns - 1) : this.column;
+  }
+
+  private moveRow(delta: number): void {
+    this.row = Math.max(this.topRow, Math.min(this.lines.length, this.row + delta));
+  }
+
+  /** Cursor up (negative) or down by terminal rows, keeping its column on the row (or going to the row's start). */
+  private moveRows(delta: number, toRowStart = false): void {
+    if (!this.wraps) {
+      this.moveRow(delta);
+      if (toRowStart) this.column = 0;
+      return;
+    }
+    const columns = this.screenColumns;
+    const x = toRowStart ? 0 : this.screenColumn;
+    let row = this.row;
+    let sub = this.subRow;
+    if (delta < 0) {
+      // No higher than a screen above the newest row: count the rows from the cursor down to it.
+      let below = this.rowsOf(row) - 1 - sub;
+      for (let next = row + 1; next <= this.lines.length && below < this.screenRows; next += 1) below += this.rowsOf(next);
+      let steps = Math.min(-delta, Math.max(0, this.screenRows - 1 - below));
+      while (steps > 0) {
+        if (sub > 0) sub -= 1;
+        else if (row > this.fence) { row -= 1; sub = this.rowsOf(row) - 1; }
+        else break;
+        steps -= 1;
+      }
+    } else {
+      let steps = delta;
+      while (steps > 0) {
+        if (sub < this.rowsOf(row) - 1) sub += 1;
+        else if (row < this.lines.length) { row += 1; sub = 0; }
+        else break;
+        steps -= 1;
+      }
+    }
+    this.row = row;
+    this.column = sub * columns + x;
+  }
+
+  /** Line feed: down a row (the next row of a wrapped line, or the next line), or a new line at the bottom. */
+  private lineFeed(carriageReturn: boolean): void {
+    this.statusRow = false;
+    const x = this.screenColumn;
+    if (this.wraps && this.subRow < this.rowsOf(this.row) - 1) {
+      this.column = (this.subRow + 1) * this.screenColumns + (carriageReturn ? 0 : x);
+      return;
+    }
+    if (this.row < this.lines.length) this.row += 1;
+    else {
+      this.lines.push(this.current);
+      this.current = [];
+      this.row = this.lines.length;
+    }
+    this.column = carriageReturn ? 0 : x;
+  }
+
+  /**
+   * Shorten a line to `length`, but never past the start of the cursor's row: that row stays (blank) on the screen,
+   * so it stays in the row count.
+   */
+  private truncate(line: StyledLine, length: number): void {
+    line.splice(length);
+    const start = this.rowStart;
+    if (start > 0 && line.length <= start) { line.length = start + 1; line[start] = undefined; }
+  }
+
+  /** NMSh wrote a line: the cursor returns below it and nothing at or above it can be redrawn. */
+  private settle(): void {
+    this.row = this.lines.length;
+    this.fence = this.lines.length;
+    this.saved = undefined;
+  }
 
   write(chunk: string): void {
     const input = this.pending + chunk;
@@ -128,28 +305,26 @@ export class AnsiOutputParser {
         continue;
       }
       if (character === '\n') {
-        this.lines.push(this.current);
-        this.current = [];
-        this.column = 0;
+        this.lineFeed(true);
         this.ending = true;
         index += 1;
         continue;
       }
       if (character === '\r') {
-        this.column = 0;
+        this.column = this.rowStart;
         index += 1;
         continue;
       }
       if (character === '\b') {
-        this.column = Math.max(0, this.column - 1);
+        this.column = Math.max(this.rowStart, this.column - 1);
         index += 1;
         continue;
       }
       if (character === '\t') {
-        const spaces = 8 - (this.column % 8);
+        const spaces = 8 - (this.screenColumn % 8);
         for (let count = 0; count < spaces; count += 1) {
           this.put(' ', 1);
-          const cell = this.current[this.column - 1]!;
+          const cell = this.target[this.column - 1]!;
           cell.tab = true;
           if (count === 0) cell.tabSpan = spaces;
         }
@@ -179,14 +354,19 @@ export class AnsiOutputParser {
 
   addLine(text: string, style = ''): void {
     this.ensureLineBoundary();
+    // NMSh's own line is never a program's status row.
+    this.statusRow = false;
     this.hyperlink = undefined;
     this.style = style;
     this.write(text);
+    // Text with its own line breaks or row movement still ends on the newest line.
+    this.row = this.lines.length;
     this.lines.push(this.current);
     this.current = [];
     this.column = 0;
     this.style = '';
     this.hyperlink = undefined;
+    this.settle();
   }
 
   ensureLineBoundary(): void {
@@ -195,6 +375,7 @@ export class AnsiOutputParser {
       this.current = [];
       this.column = 0;
     }
+    this.settle();
   }
 
   replaceLine(index: number, text: string): void {
@@ -205,6 +386,12 @@ export class AnsiOutputParser {
     const oldPending = this.pending;
     const oldHyperlink = this.hyperlink;
     const oldDiscarding = this.discarding;
+    const oldRow = this.row;
+    const oldFence = this.fence;
+    const oldSaved = this.saved;
+    const oldStatusRow = this.statusRow;
+    const oldLength = this.lines.length;
+    this.statusRow = false;
 
     this.current = [];
     this.column = 0;
@@ -212,13 +399,15 @@ export class AnsiOutputParser {
     this.pending = '';
     this.discarding = false;
     this.hyperlink = undefined;
-    
+    // Replacement text is one line of NMSh's own: it is written as the newest line and cannot reach other rows.
+    this.row = this.lines.length;
+    this.fence = this.lines.length;
+    this.saved = undefined;
+
     this.write(text);
-    if (this.pending.length > 0) {
-      // Flush any remaining characters if write left pending state (e.g. incomplete escape)
-      // For simple replacement lines, this shouldn't happen unless malformed, but just in case.
-    }
-    this.lines[index] = this.current;
+    // A line break in replacement text would add lines; only the first one replaces the stored line.
+    const replaced = this.lines.length > oldLength ? this.lines.splice(oldLength)[0]! : this.current;
+    this.lines[index] = replaced;
 
     this.current = oldCurrent;
     this.column = oldColumn;
@@ -226,6 +415,10 @@ export class AnsiOutputParser {
     this.pending = oldPending;
     this.hyperlink = oldHyperlink;
     this.discarding = oldDiscarding;
+    this.row = oldRow;
+    this.fence = oldFence;
+    this.saved = oldSaved;
+    this.statusRow = oldStatusRow;
   }
 
   completedCount(): number {
@@ -284,12 +477,17 @@ export class AnsiOutputParser {
       const restored: StyledLine = line.map(cell => cell === null ? null : 'empty' in cell ? undefined : {...cell});
       this.lines.push(restored);
     }
+    // A restored transcript is history; a resumed command reopens its own rows with fenceAt.
+    this.settle();
   }
 
   trim(maxLines: number): number {
     if (this.lines.length <= maxLines) return 0;
     const removed = this.lines.length - maxLines;
     this.lines.splice(0, removed);
+    this.row = Math.max(0, this.row - removed);
+    this.fence = Math.max(0, this.fence - removed);
+    if (this.saved) this.saved = {...this.saved, row: Math.max(0, this.saved.row - removed)};
     return removed;
   }
 
@@ -305,7 +503,7 @@ export class AnsiOutputParser {
       }
       const params = match[1] ?? '';
       const final = match[3] ?? '';
-      this.applyCsi(params, final);
+      this.applyCsi(params, final, match[2] ?? '');
       return {complete: true, next: start + match[0].length};
     }
     if (kind === ']') {
@@ -338,7 +536,21 @@ export class AnsiOutputParser {
       if (start + 1 + intermediates >= input.length || intermediates >= MAX_CONTROL_SEQUENCE - 1) return {complete: false, next: start};
       return {complete: true, next: start + 1 + intermediates};
     }
+    // Two-byte escapes that move within the live region; others (keypad modes, RIS…) are dropped as before.
+    if (kind === '7') this.saved = {row: this.row, column: this.column, style: this.style};
+    else if (kind === '8') this.restoreCursor(true);
+    else if (kind === 'M') this.moveRows(-1);
+    else if (kind === 'D') { this.lineFeed(false); this.ending = true; }
+    else if (kind === 'E') { this.lineFeed(true); this.ending = true; }
     return {complete: true, next: Math.min(input.length, start + 2)};
+  }
+
+  private restoreCursor(withStyle: boolean): void {
+    this.statusRow = false;
+    if (!this.saved) return;
+    this.row = Math.max(this.topRow, Math.min(this.lines.length, this.saved.row));
+    this.column = this.saved.column;
+    if (withStyle && this.saved.style !== undefined) this.style = this.saved.style;
   }
 
   /**
@@ -368,28 +580,58 @@ export class AnsiOutputParser {
     if (kept.length > 0) this.style += `\u001B[${kept.join(';')}m`;
   }
 
-  private applyCsi(params: string, final: string): void {
+  private applyCsi(params: string, final: string, intermediates = ''): void {
     this.touch();
     const values = params.replace(/^\?/u, '').split(';').map(value => Number(value || '0'));
     const amount = values[0] || 1;
+    // Row movement, save/restore and partial erases: plain forms only (a private marker or intermediate is another request).
+    const plain = !intermediates && !/^[<=>?]/u.test(params);
     if (final === 'm') {
       // A private marker makes it another request (`CSI > 4 ; 2 m` is xterm's modifyOtherKeys), not SGR.
       if (/^[<=>?]/u.test(params)) return;
       this.applySgr(params);
     } else if (final === 'K') {
-      if ((values[0] ?? 0) === 2) this.current = [];
-      else this.current.splice(this.column);
+      if (this.statusRow) return;
+      const line = this.target;
+      const mode = values[0] ?? 0;
+      // The cursor's row only: a long line's other rows are other rows on the screen.
+      const start = this.rowStart;
+      const end = this.wraps ? start + this.screenColumns : Number.POSITIVE_INFINITY;
+      const from = mode === 0 ? this.column : start;
+      const to = mode === 1 ? Math.min(this.column + 1, end) : end;
+      if (to >= line.length && mode !== 1) this.truncate(line, from);
+      else for (let position = from; position < to && position < line.length; position += 1) line[position] = undefined;
+      this.touch(line);
+    } else if (plain && (final === 'A' || final === 'B' || final === 'E' || final === 'F')) {
+      this.moveRows(final === 'A' || final === 'F' ? -amount : amount, final === 'E' || final === 'F');
+    } else if (plain && final === 'r') {
+      // A scroll region ending above the last row reserves the rows below it (see statusRow); the region is not emulated.
+      const bottom = values[1] ?? 0;
+      this.regionBottom = bottom > 0 && bottom < this.screenRows ? bottom : undefined;
+      if (this.regionBottom === undefined) this.statusRow = false;
+    } else if (plain && (final === 'H' || final === 'f' || final === 'd')) {
+      // Absolute rows are not mapped (see the class comment); only a move below the program's scroll region matters.
+      this.statusRow = this.regionBottom !== undefined && (values[0] || 1) > this.regionBottom;
+    } else if (plain && params === '' && final === 's') {
+      this.saved = {row: this.row, column: this.column};
+    } else if (plain && params === '' && final === 'u') {
+      this.restoreCursor(false);
+    } else if (plain && final === 'J' && (values[0] ?? 0) <= 1) {
+      this.eraseDisplay(values[0] ?? 0);
     } else if (final === 'G') {
-      this.column = Math.max(0, amount - 1);
+      this.column = this.rowStart + (this.wraps ? Math.min(amount - 1, this.screenColumns - 1) : amount - 1);
     } else if (final === 'C') {
-      this.column += amount;
+      this.column = this.wraps ? this.rowStart + Math.min(this.screenColumns - 1, this.screenColumn + amount) : this.column + amount;
     } else if (final === 'D') {
-      this.column = Math.max(0, this.column - amount);
+      this.column = this.rowStart + Math.max(0, this.screenColumn - amount);
     } else if (final === 'J') {
       if (amount === 2 || amount === 3) {
         this.lines.length = 0;
         this.current = [];
         this.column = 0;
+        this.row = 0;
+        this.fence = 0;
+        this.saved = undefined;
         this.onClear?.();
       }
     }
@@ -397,21 +639,47 @@ export class AnsiOutputParser {
 
   private put(text: string, width: number): void {
     this.ending = false;
-    for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
-    this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
+    if (this.statusRow) return;
+    const line = this.target;
+    for (let position = 0; position < width; position += 1) line[this.column + position] = undefined;
+    line[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
     this.touch();
-    for (let position = 1; position < width; position += 1) this.current[this.column + position] = null;
+    for (let position = 1; position < width; position += 1) line[this.column + position] = null;
     this.column += width;
+    this.pendingWrap = this.wraps && this.column % this.screenColumns === 0 ? this.column : undefined;
   }
 
-  private touch(): void { revisions.set(this.current, lineRevision(this.current) + 1); }
+  private touch(line: StyledLine = this.target): void { revisions.set(line, lineRevision(line) + 1); }
 
   private findPreviousCell(): StyledCell | undefined {
-    for (let index = Math.min(this.column - 1, this.current.length - 1); index >= 0; index -= 1) {
-      const cell = this.current[index];
+    const line = this.target;
+    for (let index = Math.min(this.column - 1, line.length - 1); index >= 0; index -= 1) {
+      const cell = line[index];
       if (cell) return cell;
     }
     return undefined;
+  }
+
+  /** Erase in display within the live region: 0 below the cursor, 1 above it. */
+  private eraseDisplay(mode: number): void {
+    if (this.statusRow) return;
+    const line = this.target;
+    if (mode === 0) {
+      this.truncate(line, this.column);
+      if (this.row < this.lines.length) {
+        // The cursor's row becomes the newest line; the program's rows below it are gone, as on the screen.
+        this.current = line;
+        this.lines.length = this.row;
+      } else this.touch(line);
+      this.touch(this.current);
+      return;
+    }
+    for (let row = this.topRow; row < this.row; row += 1) {
+      this.lines[row]!.length = 0;
+      this.touch(this.lines[row]!);
+    }
+    for (let position = 0; position <= this.column && position < line.length; position += 1) line[position] = undefined;
+    this.touch(line);
   }
 }
 

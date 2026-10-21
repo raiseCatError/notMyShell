@@ -27,7 +27,8 @@ export function variantOptions(family: ThemeFamilyId): VariantOption[] {
 /** The variant a family opens on: the documented default for each family. */
 const DEFAULT_VARIANT: Record<ThemeFamilyId, NativePaletteId> = {
   nmsh: 'lavender', catppuccin: 'catppuccinMocha', dracula: 'dracula', tokyonight: 'tokyonightNight', gruvbox: 'gruvboxDark',
-  rosepine: 'rosePine', nord: 'nord', solarized: 'solarizedDark', onedark: 'oneDark', custom: 'custom',
+  rosepine: 'rosePine', nord: 'nord', solarized: 'solarizedDark', onedark: 'oneDark',
+  ayu: 'ayuMirage', kanagawa: 'kanagawaWave', everforest: 'everforestDark', flexoki: 'flexokiDark', nightowl: 'nightOwl', custom: 'custom',
 };
 
 const UI_DEFAULT_HEX = (): Record<UiThemeRole, string> => {

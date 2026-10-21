@@ -5,6 +5,7 @@ import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {PICKER_PROVIDERS} from '../pickers/Picker.js';
 import {NAVIGATION_PROVIDERS} from '../shell/DirectoryService.js';
+import {TERMINAL_EDITORS} from '../host/terminalEditors.js';
 import type {ProviderDescriptor, ProviderStatus} from './providers.js';
 
 /**
@@ -13,7 +14,7 @@ import type {ProviderDescriptor, ProviderStatus} from './providers.js';
  * Settings and Setup Cat all read and write through these accessors, so
  * there is no second provider state. Detection results stay runtime-only.
  */
-export type SwitchableFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation';
+export type SwitchableFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor';
 
 export interface ProviderFamilyDefinition {
   family: SwitchableFamily;
@@ -24,7 +25,7 @@ export interface ProviderFamilyDefinition {
   get: (config: PromptConfiguration) => string;
   set: (config: PromptConfiguration, id: string) => PromptConfiguration;
   /** The existing domain panel for deeper configuration, when there is one. */
-  settingsDestination?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation';
+  settingsDestination?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor';
 }
 
 export const PROVIDER_FAMILIES: readonly ProviderFamilyDefinition[] = [
@@ -40,6 +41,9 @@ export const PROVIDER_FAMILIES: readonly ProviderFamilyDefinition[] = [
     set: (config, id) => ({...config, picker: id as PromptConfiguration['picker']}), settingsDestination: 'picker'},
   {family: 'navigation', title: 'Directory navigation', providers: NAVIGATION_PROVIDERS, fallback: 'native', get: config => config.navigation,
     set: (config, id) => ({...config, navigation: id as PromptConfiguration['navigation']}), settingsDestination: 'navigation'},
+  // Used by /open and `o` in /view only when VISUAL and EDITOR are unset (#366).
+  {family: 'editor', title: 'Terminal editor', providers: TERMINAL_EDITORS, fallback: 'environment', get: config => config.terminalEditor,
+    set: (config, id) => ({...config, terminalEditor: id as PromptConfiguration['terminalEditor']}), settingsDestination: 'editor'},
 ];
 
 export function providerFamily(family: string): ProviderFamilyDefinition | undefined {

@@ -79,12 +79,16 @@ interface LiveTask {
   /** The live guard owns signalling from inside its group; no numeric group id is retained. */
   group?: TaskGroup;
   leaderExited?: boolean;
+  /** Since when the leader's exit waits for the guard's verdict on the rest of the group (performance.now()). */
+  verdictSince?: number;
   pending?: ReturnType<typeof setTimeout>;
   /** Observes the command leader separately from the guard's eventual exit. */
   watch?: ReturnType<typeof setInterval>;
 }
 
 const ORDER: readonly StopLevel[] = ['interrupt', 'terminate', 'kill'];
+/** How long a finished leader waits for the guard's verdict when it cannot get one (its `ps` keeps failing). */
+const VERDICT_MS = 3000;
 
 export class BackgroundTaskSupervisor {
   private readonly tasks = new Map<string, LiveTask>();
@@ -124,11 +128,20 @@ export class BackgroundTaskSupervisor {
     this.tasks.set(id, task);
     pty.onData(data => { task.output.append(data); this.changed(task); });
     const observeLeader = () => {
-      if (task.leaderExited) return;
-      const exit = task.group?.leaderExit();
-      if (exit) {
+      if (!task.leaderExited) {
+        const exit = task.group?.leaderExit();
+        if (!exit) return;
+        task.leaderExited = true;
+        this.exited(task, exit.exitCode, exit.signal);
+      }
+      // The command has exited. The guard decides how it ended: it exits when nothing else of the group runs (onExit
+      // below), or says that something does. Only if it cannot tell in time is something reported as left.
+      if (task.verdictSince === undefined) { clearInterval(task.watch); task.watch = undefined; return; }
+      if (task.group?.leftBehind() || performance.now() - task.verdictSince > VERDICT_MS) {
+        task.verdictSince = undefined;
         clearInterval(task.watch); task.watch = undefined;
-        task.leaderExited = true; this.exited(task, exit.exitCode, exit.signal);
+        if (task.record.stopRequested) { task.record.leftovers = true; this.changed(task, true); }
+        else this.finish(task);
       }
     };
     task.watch = setInterval(observeLeader, 25);
@@ -140,7 +153,7 @@ export class BackgroundTaskSupervisor {
       clearInterval(task.watch);
       task.watch = undefined;
       if (!task.leaderExited) this.exited(task, exitCode, signal);
-      else if (task.record.state === 'stopping') this.finish(task);
+      else if (task.record.state === 'stopping' || task.verdictSince !== undefined) { task.verdictSince = undefined; this.finish(task); }
       else { task.record.leftovers = false; this.changed(task, true); }
     });
     this.changed(task, true);
@@ -236,6 +249,8 @@ export class BackgroundTaskSupervisor {
       this.changed(task, true);
       return;
     }
+    // Whether anything else of the group still runs is not known yet: wait for the guard's verdict, never guess.
+    if (task.group?.alive === true) { task.verdictSince = performance.now(); return; }
     this.finish(task);
   }
 

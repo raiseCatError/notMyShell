@@ -46,6 +46,13 @@ export function parseCompletionFacts(line: string): CompletionFacts | undefined 
   return {zshCompletions: zc === '1', fzfTab: ft === '1', completionSystem: cs === '1'};
 }
 
+/** How many times a lookup superseded by newer shell knowledge is asked again before it settles as unknown. */
+const REASKS = 3;
+/** How long the helper may take to source the user's configuration before it is given up on. */
+const STARTUP_MS = 20_000;
+/** How long one lookup may take once the helper reads requests. */
+const LOOKUP_MS = 1500;
+
 export class SemanticService {
   private child: ReturnType<typeof spawn>;
   private pending = new Map<number, (result: CommandType) => void>();
@@ -65,8 +72,10 @@ export class SemanticService {
     this.shellNamesComplete = text.split('\n').includes('complete');
     this.cache.clear();
     for (const [name, type] of this.shellNames) this.cache.set(name, type);
-    for (const resolve of this.pending.values()) resolve('unknown');
+    // Lookups in flight were asked against the old knowledge; each one asks again against this one (see lookup).
+    const superseded = [...this.pending.values()];
     this.pending.clear();
+    for (const resolve of superseded) resolve('unknown');
     for (const resolve of this.rawPending.values()) resolve('');
     this.rawPending.clear();
   }
@@ -130,7 +139,12 @@ PS1=""
 
     this.child.stdin!.on('error', () => { /* ignore EPIPE */ });
 
+    // Lookups are timed from when the helper reads them: sourcing a slow configuration (nvm, a large framework) took
+    // longer than one lookup's limit, and the first lookup's timeout then ended the helper for the whole session.
+    this.startupTimer = setTimeout(() => { if (!this.ready) this.kill(); }, STARTUP_MS);
+    this.startupTimer.unref?.();
     this.child.stdin!.write(`
+builtin printf 'ready\\n'
 while builtin read -r id mode cmd; do
   if [[ $mode == source ]]; then
     nmsh_kind=$(builtin whence -w -- "$cmd" 2>/dev/null)
@@ -178,6 +192,7 @@ done\n`);
       this.buffer = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
+        if (line === 'ready') { this.markReady(); continue; }
         const space = line.indexOf(' ');
         if (space === -1) continue;
         const idStr = line.substring(0, space);
@@ -205,8 +220,32 @@ done\n`);
   }
 
   private isDead = false;
+  private ready = false;
+  private startupTimer?: NodeJS.Timeout;
+  /** Time limits of lookups sent before the helper was ready, started once it is. */
+  private readonly whenReady: Array<() => void> = [];
+
+  private markReady(): void {
+    if (this.ready) return;
+    this.ready = true;
+    clearTimeout(this.startupTimer);
+    for (const arm of this.whenReady.splice(0)) arm();
+  }
+
+  private armWhenReady(arm: () => void): void {
+    if (this.ready) arm(); else this.whenReady.push(arm);
+  }
 
   async classifyCommand(cmd: string): Promise<CommandType> {
+    return this.lookup(cmd, 0);
+  }
+
+  /**
+   * A lookup that newer shell knowledge superseded while it was in flight never caches its answer (it may be stale),
+   * and is asked again against the new knowledge, at most REASKS times. Without that, a stored command classified
+   * just as the next prompt arrived (a fast queue) would keep the unclassified color for good (#408).
+   */
+  private async lookup(cmd: string, reasked: number): Promise<CommandType> {
     if (!cmd || cmd.trim().length === 0) return 'unknown';
     // Only classify the first word if it has spaces
     cmd = cmd.split(' ')[0];
@@ -220,17 +259,21 @@ done\n`);
     const id = this.nextId++;
     const generation = this.generation;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        this.kill();
-        resolve('unknown');
-      }, 1500);
+      let timer: NodeJS.Timeout | undefined;
       this.pending.set(id, (res) => {
         clearTimeout(timer);
-        if (generation !== this.generation) { resolve('unknown'); return; }
+        if (generation !== this.generation) { resolve(reasked < REASKS ? this.lookup(cmd, reasked + 1) : 'unknown'); return; }
         if (this.cache.size >= 8192) this.cache.delete(this.cache.keys().next().value!);
         this.cache.set(cmd, res);
         resolve(res);
+      });
+      this.armWhenReady(() => {
+        if (!this.pending.has(id)) return;
+        timer = setTimeout(() => {
+          this.pending.delete(id);
+          this.kill();
+          resolve('unknown');
+        }, LOOKUP_MS);
       });
       // Safety: cmd should not contain newlines or null bytes
       const safeCmd = cmd.replace(/[\r\n\0]/g, '');
@@ -250,9 +293,13 @@ done\n`);
     if (this.isDead || !this.child.stdin?.writable || this.rawPending.size >= 32) return Promise.resolve(undefined);
     const id = this.nextId++;
     return new Promise(resolve => {
-      const timer = setTimeout(() => { this.rawPending.delete(id); resolve(undefined); }, 1500);
-      timer.unref?.();
+      let timer: NodeJS.Timeout | undefined;
       this.rawPending.set(id, line => { clearTimeout(timer); resolve(line || undefined); });
+      this.armWhenReady(() => {
+        if (!this.rawPending.has(id)) return;
+        timer = setTimeout(() => { this.rawPending.delete(id); resolve(undefined); }, LOOKUP_MS);
+        timer.unref?.();
+      });
       try { this.child.stdin!.write(`${id} ${mode} ${word.replace(/[\r\n\0\s]/gu, '')}\n`); }
       catch { clearTimeout(timer); this.rawPending.delete(id); resolve(undefined); }
     });
@@ -279,6 +326,8 @@ done\n`);
 
   kill() {
     this.isDead = true;
+    clearTimeout(this.startupTimer);
+    this.whenReady.length = 0;
     try {
       this.child.stdin?.end();
     } catch (e) { /* ignore */ }

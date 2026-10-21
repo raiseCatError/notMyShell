@@ -310,7 +310,7 @@ export class SessionService {
             if (!session || !features.has('input-look')) { send({type: 'error', code: 'state', message: 'no session input to look at'}); break; }
             const {id} = message;
             // Any input-state the look produces is sent first (synchronously, as the watch emits it).
-            void session.shell.inputWatch.lookNow().then(() => { if (owned === session) send({type: 'input-looked', id}); });
+            void session.shell.inputWatch.lookNow().then(result => { if (owned === session) send({type: 'input-looked', id, result}); });
             break;
           }
           case 'input':
@@ -496,6 +496,8 @@ export class SessionService {
     });
     shell.on('startup', output => session.controller?.({type: 'startup', output}));
     shell.on('inputState', state => this.onInputState(session, state));
+    // Typing the finished command never read is the owner's to hold for approval, attached window or not (#426).
+    shell.on('unread', (text, program) => { session.queue.holdUnread(text, program); });
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.

@@ -83,17 +83,20 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
           await type(frontend, read.keys);
           if (read.enter) frontend.pty.write('\r');
           await frontend.waitFor(read.answered, mark, 10_000);
-          // The command completes and the composer is back: an ordinary command runs at once, not queued.
+          // The answered command completes (its record is journaled after the screen, later on a slower host; Fish's
+          // reader has the terminal, so its output is not journaled) and the shell is back at its prompt. Until then
+          // the program's output can be on screen while the command still runs, and an Enter then queues, as designed.
+          const journaled = async () => (await records(sandbox)).filter(entry => entry.command === read.command);
+          if (shell !== 'fish') await until(async () => (await journaled()).length > before, 15_000, `${what}: journaled`);
+          await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15_000, `${what}: the shell is back at its prompt`);
+          // An ordinary command then runs. Once it has, nothing typed for the program ran as a command or is left queued.
           const tag = `BACK-${reactionMs}-${read.name.length}`;
-          await frontend.run(`echo ${tag}`, new RegExp(tag, 'u'), {completion: false});
+          await frontend.run(`echo ${tag}`, new RegExp(tag, 'u'));
           const all = await records(sandbox);
           assert.equal(all.some(record => record.command.trim() === read.keys), false, `${what}: the answer never ran as a command`);
           assert.equal(await queued(sandbox), 0, `${what}: nothing was queued`);
           if (read.secret) assert.equal(strip(frontend.output.slice(mark)).includes(SECRET), false, `${what}: the hidden answer is never drawn`);
-          // Exactly once, from the journal (Fish's reader has the terminal, so its output is not journaled). The journal is
-          // written after the screen (later on a slower host): wait for this run's own record first.
-          const journaled = async () => (await records(sandbox)).filter(entry => entry.command === read.command);
-          if (shell !== 'fish') await until(async () => (await journaled()).length > before, 15_000, `${what}: journaled`);
+          // Exactly once, from the journal.
           const record = (await journaled()).at(-1);
           if (shell !== 'fish' && read.keys === 'hello') assert.equal(record?.output.match(/ANSWER=hello/gu)?.length, 1, `${what}: answered exactly once`);
           await pause(400);
@@ -103,7 +106,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
   });
 }
 
-test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during sleep or a loop still queues', {skip: supported ? false : 'unsupported platform', timeout: 180_000}, async () => {
+test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during sleep or a loop holds the line for approval, never run by itself', {skip: supported ? false : 'unsupported platform', timeout: 180_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     // Ctrl+Q composes a queue entry; the reader never sees it. Enter then answers the reader.
@@ -121,16 +124,23 @@ test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during
     assert.equal(all.filter(record => record.command === 'echo AFTER-READ').length, 1, 'the queued command ran once, after');
     assert.equal(all.some(record => record.output.includes('got=echo')), false, 'the queued text never reached the reader');
 
-    // Nothing is waiting for input: Enter queues, whether typed at once or later, and each entry runs once, after.
+    // Nothing visibly waits for input, but NMSh cannot know that nothing will read (#426): Enter holds the line for
+    // approval, whether typed at once or later. It never runs by itself; approved at the prompt, it runs once.
     for (const [command, entry] of [['sleep 3', 'echo QUEUED-SLEEP'], ['for i in 1 2 3; do sleep 1; done', 'echo QUEUED-LOOP']] as const) {
       mark = frontend.mark;
       frontend.pty.write(`${command}\r`);
       await pause(entry.endsWith('LOOP') ? 1300 : 0);
       await type(frontend, entry);
       frontend.pty.write('\r');
-      await until(async () => await queued(sandbox) === 1, 5000, `${entry} to be queued`);
-      await frontend.waitFor(new RegExp(`${entry.slice(5)}`, 'u'), mark, 15_000);
-      await until(async () => (await records(sandbox)).filter(record => record.command === entry).length === 1, 15_000, `${entry} to run once`);
+      await until(async () => await queued(sandbox) === 1, 5000, `${entry} to be held`);
+      await until(async () => (await records(sandbox)).some(record => record.command === command), 15_000, `${command} to complete`);
+      await pause(1500);
+      assert.equal((await records(sandbox)).filter(record => record.command === entry).length, 0, `${entry} did not run by itself`);
+      const review = frontend.mark;
+      frontend.pty.write('\r');
+      await frontend.waitFor(/Approve and run this command\?/u, review);
+      frontend.pty.write('\r');
+      await until(async () => (await records(sandbox)).filter(record => record.command === entry).length === 1, 15_000, `${entry} to run once, approved`);
     }
   } finally { await sandbox.dispose(); }
 });
@@ -147,7 +157,18 @@ test('live zsh: a command typed right after a read returns, or right after Ctrl+
     await type(frontend, `echo X >> ${marker}`, 20);
     frontend.pty.write('\r');
     await frontend.waitFor(/got:y/u, mark, 10_000);
-    await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`), 15_000, 'the typed command to run');
+    // Entered before the shell's prompt was back, the line was typed while the command ran, so it is held for approval
+    // (#426); entered after, it runs. Either way it runs exactly once, never by itself while unverified.
+    await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`) || /typed while read ran/u.test(strip(frontend.output.slice(mark))),
+      15_000, 'the typed command to run, or to be held');
+    if (!(await records(sandbox)).some(record => record.command === `echo X >> ${marker}`)) {
+      await until(async () => (await records(sandbox)).some(record => record.command.startsWith('read -k 1')), 15_000, 'the read to complete');
+      const review = frontend.mark;
+      frontend.pty.write('\r');
+      await frontend.waitFor(/Approve and run this command\?/u, review);
+      frontend.pty.write('\r');
+      await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`), 15_000, 'the approved command to run');
+    }
     mark = frontend.mark;
     frontend.pty.write('read -r reply\r');
     await pause(600);
@@ -176,5 +197,23 @@ test('live zsh: a command typed right after Ctrl+C on a waiting question is kept
     await until(() => existsSync(marker), 15_000, 'the command typed after Ctrl+C to run');
     assert.equal(spawnSync('cat', [marker], {encoding: 'utf8'}).stdout, 'KEPT\n');
     assert.doesNotMatch(strip(frontend.output.slice(mark)), /reply was discarded/u, 'it was never taken for a reply');
+  } finally { await sandbox.dispose(); }
+});
+
+test('live zsh: a program that survives Ctrl+C and asks gets the line typed right after it as its answer; it never runs as a command', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const {sandbox, frontend} = await start('zsh');
+  try {
+    const mark = frontend.mark;
+    const command = `bash -c 'trap "" INT; read -r -p "Still-$((1+1))? " a; echo "QA-GOT=$a"'`;
+    frontend.pty.write(`${command}\r`);
+    await frontend.waitFor(/Still-2\? /u, mark);
+    await pause(1200);
+    frontend.pty.write('\u0003');
+    await type(frontend, 'yes', 20);
+    frontend.pty.write('\r');
+    await frontend.waitFor(/QA-GOT=yes/u, mark, 15_000);
+    await until(async () => (await records(sandbox)).some(record => record.command === command), 15_000, 'the program to finish');
+    await pause(1500);
+    assert.equal((await records(sandbox)).some(record => record.command === 'yes'), false, 'never run as a command');
   } finally { await sandbox.dispose(); }
 });

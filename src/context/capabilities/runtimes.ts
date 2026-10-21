@@ -366,6 +366,20 @@ export const zigRuntime = simpleRuntime('runtime.zig', 'Zig toolchain', 'zig', [
 export const denoRuntime = simpleRuntime('runtime.deno', 'Deno runtime', 'deno', ['.dvmrc', 'deno.json / deno.jsonc presence', '.tool-versions', 'mise.toml'],
   {requested: '2.1.0', requestedFrom: '.dvmrc', active: '2.1.4', manager: 'Homebrew'}, async context => versionFile(context, ['.dvmrc']), ['deno.json', 'deno.jsonc', 'deno.lock']);
 
+export const bunRuntime = simpleRuntime('runtime.bun', 'Bun runtime', 'bun', ['.bun-version', 'package.json (packageManager "bun@…", engines.bun)', '.tool-versions', 'mise.toml'],
+  {requested: '1.1.30', requestedFrom: 'package.json', active: '1.1.34', manager: 'Homebrew'}, async context => {
+    const file = await versionFile(context, ['.bun-version']);
+    if (file) return file;
+    const manifest = await findNearest(context, ['package.json']);
+    const pkg = manifest ? parseJsonData(await readMetadataText(manifest.path, LARGE_METADATA_BYTES)) : undefined;
+    if (!record(pkg)) return undefined;
+    // Corepack's pin names the package manager and its exact version; engines.bun is a range.
+    const pinned = /^bun@(\d[\w.+-]{0,31})$/u.exec(text(pkg.packageManager, 64) ?? '')?.[1];
+    if (pinned) return {version: pinned, from: 'package.json packageManager'};
+    const range = record(pkg.engines) ? text(pkg.engines.bun, 64) : undefined;
+    return range ? {version: range, from: 'package.json engines'} : undefined;
+  }, ['bun.lockb', 'bun.lock', 'bunfig.toml']);
+
 /** A release version as an SDK's own version file states it (Dart's `version`, Flutter's `version`): one bounded line, nothing else. */
 const RELEASE = /^v?(\d+\.\d+(?:\.\d+)?(?:[-+][\w.]{1,32})?)$/u;
 async function releaseFile(path: string): Promise<string | undefined> {
@@ -436,5 +450,5 @@ export const flutterRuntime = runtimeCapability('runtime.flutter', 'Flutter SDK'
   return value ? {value, evidence: [requested?.from, active.active ? 'flutter on PATH' : undefined].filter(Boolean).join(', ') || 'flutter'} : undefined;
 });
 
-export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime, dotnetRuntime, swiftRuntime, zigRuntime, denoRuntime,
+export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime, dotnetRuntime, swiftRuntime, zigRuntime, denoRuntime, bunRuntime,
   elixirRuntime, dartRuntime, flutterRuntime] as CapabilityDefinition<unknown>[];

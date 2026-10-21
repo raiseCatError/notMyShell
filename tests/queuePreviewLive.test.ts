@@ -36,7 +36,8 @@ async function pausedQueue(frontend: Frontend, entries: string[]) {
   const mark = frontend.mark;
   frontend.pty.write("sleep 2; false\r");
   await frontend.waitFor(/Running sleep 2|[A-Z][a-z]+…/u, mark);
-  for (const entry of entries) frontend.pty.write(`${entry}\r`);
+  // Ctrl+Q queues to run after (#426: a plain Enter would hold each for approval).
+  for (const entry of entries) frontend.pty.write(`${entry}\u0011`);
   // One plain entry stays the one-line row; more show as the list.
   await frontend.waitFor(new RegExp(`Queue · ${entries.length + 1} commands`, 'u'), mark);
   await frontend.waitFor(/Queue paused: sleep 2; false failed \(exit 1\)\./u, mark, 20_000);
@@ -50,7 +51,7 @@ test('live: the running queue shows what runs next and in what order; the pause 
     const mark = frontend.mark;
     frontend.pty.write('sleep 3\r');
     await frontend.waitFor(/Running sleep 3|[A-Z][a-z]+…/u, mark);
-    for (const entry of ['echo Q1', 'echo Q2', 'echo Q3', 'echo Q4']) frontend.pty.write(`${entry}\r`);
+    for (const entry of ['echo Q1', 'echo Q2', 'echo Q3', 'echo Q4']) frontend.pty.write(`${entry}\u0011`);
     // A redraw writes only the rows that changed: each row is checked on its own.
     for (const row of [/Queue · 5 commands/u, /› echo Q1 +Next/u, /echo Q2 +Queued/u, /\+2 more/u]) await frontend.waitFor(row, mark);
     for (const entry of ['echo Q1', 'echo Q2', 'echo Q3', 'echo Q4']) await until(async () => await runs(sandbox, entry) === 1, 15_000, `${entry} once`);
@@ -58,7 +59,7 @@ test('live: the running queue shows what runs next and in what order; the pause 
     const stop = frontend.mark;
     frontend.pty.write('sleep 20\r');
     await frontend.waitFor(/Running sleep 20|[A-Z][a-z]+…/u, stop);
-    frontend.pty.write('echo LATER\r');
+    frontend.pty.write('echo LATER\u0011');
     await frontend.waitFor(/Queue · 2 commands/u, stop);
     frontend.pty.write('\u0003');
     await frontend.waitFor(/Queue paused · 1 waiting|Queue paused · 1 pending/u, stop, 20_000);
@@ -109,7 +110,7 @@ test('live: an entry that asks first is approved in place after its review; a ty
     let mark = frontend.mark;
     frontend.pty.write('sleep 4\r');
     await frontend.waitFor(/Running sleep 4|[A-Z][a-z]+…/u, mark);
-    frontend.pty.write(`touch ${approved}\r`);
+    frontend.pty.write(`touch ${approved}\u0011`);
     await frontend.waitFor(/Queue · 2 commands/u, mark);
     frontend.pty.write('/queue\r');
     await frontend.waitFor(/Command queue[\s\S]*touch/u, mark);

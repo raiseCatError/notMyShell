@@ -7,6 +7,7 @@ import {taskUpdateFrom, tasksFrom, type TaskOp} from '../backgroundTasks/protoco
 import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
+import {lookResultFrom, type LookResult} from './inputState.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {AttachedSession, SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
 
@@ -143,6 +144,21 @@ export function serviceBuildNotice(serviceBuild: string | undefined, own: {versi
     + 'so fixes to how shells start are not in it yet. The service restarts by itself once every NMSh window and live session has ended.';
 }
 
+/**
+ * A session service without this release's look result (an older NMSh's, e.g. v0.20.0's) cannot say what a look saw,
+ * and its shells lack this release's prompt-hook marker and the end-of-command hold of unread typing (#426, #436).
+ * This window fails closed instead (see TerminalApp): typing while a command runs with no question is held, not shown,
+ * until the person sends (Ctrl+S), shows (Tab) or discards (Esc) it, and a line entered then waits for approval. Said
+ * once per window, with what remains and when it ends; undefined for a service that has the protections.
+ */
+export function serviceInputNotice(features: ReadonlySet<string>): string | undefined {
+  if (features.has('input-look-result')) return undefined;
+  return 'This session\'s service is from an older NMSh, which cannot tell this window who reads what you type while a command runs. '
+    + 'So typing then is held, not shown, until you choose (Ctrl+S sends it, Tab shows it, Esc discards it), and a line entered then waits for your approval. '
+    + 'Typing a program receives but never reads can still reach the shell there. '
+    + 'The service restarts by itself once every NMSh window and live session has ended; new sessions then get every protection.';
+}
+
 export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '
   + 'Its live sessions keep running; once they end, the next nmsh launch starts the current service.';
 
@@ -219,7 +235,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   features: ReadonlySet<ServiceFeature> = new Set();
   serviceBuild?: string;
   private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
-  private looks = new Map<number, (looked: boolean) => void>();
+  private looks = new Map<number, (result: LookResult | undefined) => void>();
   private nextLook = 1;
 
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
@@ -249,7 +265,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
       ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
     else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
-    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(true); this.looks.delete(message.id); }
+    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(lookResultFrom(message.result)); this.looks.delete(message.id); }
     else if (message.type === 'queue-state') {
       const state = queueStateFrom(message.state);
       if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
@@ -270,7 +286,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.exited = true;
     this.pendingSwitch?.reject(new Error('The session ended.'));
     this.pendingSwitch = undefined;
-    for (const done of this.looks.values()) done(false);
+    for (const done of this.looks.values()) done(undefined);
     this.looks.clear();
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
@@ -284,9 +300,9 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   write(data: string): void { this.send({type: 'input', data}); }
   queue(change: QueueOp): void { if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !this.features.has('queue-timeline')) return; if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
   task(change: TaskOp): void { if (this.features.has('background-tasks')) this.send({type: 'task', change: JSON.stringify(change)}); }
-  lookInput(): Promise<boolean> {
+  lookInput(): Promise<LookResult | undefined> {
     // Never send a message the service did not advertise.
-    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(false);
+    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(undefined);
     const id = this.nextLook++;
     return new Promise(resolve => { this.looks.set(id, resolve); this.send({type: 'input-look', id}); });
   }

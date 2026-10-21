@@ -53,6 +53,11 @@ export class TaskGroup {
     return undefined;
   }
 
+  /** The guard found members of the group still running after the command's leader exited. */
+  leftBehind(): boolean {
+    try { return readFileSync(join(this.directory, 'left'), 'utf8') === '1'; } catch { return false; }
+  }
+
   close(): void {
     this.alive = false;
     rmSync(this.directory, {recursive: true, force: true});

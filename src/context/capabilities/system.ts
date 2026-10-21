@@ -3,6 +3,7 @@ import {defineCapability, PREVIEW_NOW, type CapabilityDefinition} from '../capab
 import {parseXmlData, readMetadataText, record} from '../services.js';
 import {runExternal} from '../../providers/providers.js';
 import {linuxBattery, parseMeminfo, parsePmset, parseVmStat} from '../../status/systemStats.js';
+import {access} from 'node:fs/promises';
 
 /**
  * Machine and session facts. Readers are OS metadata files and fixed system
@@ -189,4 +190,25 @@ export const uptime = defineCapability<UptimeFact>({
   async resolve() { return {value: {seconds: Math.floor(osUptime())}, evidence: 'system uptime'}; },
 });
 
-export const SYSTEM_CAPABILITIES = [operatingSystem, sessionUser, sessionJobs, sessionDuration, clock, memory, battery, cpu, uptime] as CapabilityDefinition<unknown>[];
+export interface ContainerFact {kind: 'Codespaces' | 'Dev Container' | 'Podman' | 'Docker'}
+
+async function present(path: string): Promise<boolean> {
+  try { await access(path); return true; } catch { return false; }
+}
+
+export const container = defineCapability<ContainerFact>({
+  id: 'system.container', title: 'Container',
+  reads: ['/run/.containerenv and /.dockerenv presence (never their content)', 'CODESPACES and REMOTE_CONTAINERS set by dev container hosts'],
+  scope: 'machine', family: 'system', cost: 'bounded-async', trust: 'session', sensitivity: 'public', persistence: 'snapshot-safe',
+  fields: ['kind'], env: ['CODESPACES', 'REMOTE_CONTAINERS'], ttlMs: 3_600_000, timeoutMs: 500, invalidateOn: [],
+  preview: {kind: 'Docker'},
+  async resolve(context) {
+    if (context.env.values.CODESPACES === 'true') return {value: {kind: 'Codespaces'}, evidence: 'CODESPACES'};
+    if (context.env.values.REMOTE_CONTAINERS === 'true') return {value: {kind: 'Dev Container'}, evidence: 'REMOTE_CONTAINERS'};
+    if (await present('/run/.containerenv')) return {value: {kind: 'Podman'}, evidence: '/run/.containerenv'};
+    if (await present('/.dockerenv')) return {value: {kind: 'Docker'}, evidence: '/.dockerenv'};
+    return undefined;
+  },
+});
+
+export const SYSTEM_CAPABILITIES = [operatingSystem, sessionUser, sessionJobs, sessionDuration, clock, memory, battery, cpu, uptime, container] as CapabilityDefinition<unknown>[];

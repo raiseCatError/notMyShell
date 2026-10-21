@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation; tool behavior studied from public documentation only."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["project.package", "project.build", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.dotnet", "runtime.swift", "runtime.zig", "runtime.deno", "runtime.elixir", "runtime.dart", "runtime.flutter", "runtime.rust", "runtime.java"],
+  "requires": ["project.package", "project.build", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.dotnet", "runtime.swift", "runtime.zig", "runtime.deno", "runtime.bun", "runtime.elixir", "runtime.dart", "runtime.flutter", "runtime.rust", "runtime.java"],
   "modules": [
     {
       "id": "package", "label": "Package", "description": "Version and package manager from the nearest declarative manifest.",
@@ -138,6 +138,18 @@
       ]}]
     },
     {
+      "id": "bun", "label": "Bun", "description": "Bun runtime from .bun-version, package.json (packageManager, engines) or the install location; never run.",
+      "category": "runtime", "priority": 38, "role": "runtime", "icon": "code", "condition": "onCommand",
+      "triggers": ["bun", "bunx"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "bun", "parts": [
+        {"fact": "runtime.bun", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.bun", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.bun", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.bun", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
       "id": "elixir", "label": "Elixir", "description": "Elixir version from mix.exs, .tool-versions or the install location; never run.",
       "category": "runtime", "priority": 37, "role": "runtime", "icon": "elixir", "condition": "onCommand",
       "triggers": ["elixir", "mix", "iex", "elixirc"],
@@ -208,6 +220,7 @@
     {"module": "swift", "evidence": [{"kind": "workspaceFile", "names": ["Package.swift", ".swift-version"]}]},
     {"module": "zig", "evidence": [{"kind": "workspaceFile", "names": ["build.zig", "build.zig.zon", ".zigversion"]}]},
     {"module": "deno", "evidence": [{"kind": "workspaceFile", "names": ["deno.json", "deno.jsonc", ".dvmrc"]}]},
+    {"module": "bun", "evidence": [{"kind": "workspaceFile", "names": ["bun.lockb", "bun.lock", "bunfig.toml", ".bun-version"]}]},
     {"module": "build", "evidence": [{"kind": "workspaceFile", "names": ["MODULE.bazel", "WORKSPACE", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle", "pom.xml", "CMakeLists.txt", "meson.build"]}]},
     {"module": "elixir", "evidence": [{"kind": "workspaceFile", "names": ["mix.exs"]}]},
     {"module": "dart", "evidence": [{"kind": "workspaceFile", "names": ["pubspec.yaml"]}]},

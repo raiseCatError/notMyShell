@@ -277,6 +277,19 @@ test('a shell from an older session service is called out, because the service b
   assert.match(serviceBuildNotice(undefined, own) ?? '', /build not reported/u, 'a service too old to report its build');
 });
 
+test('a session service without this release\'s typing protections: the window says it fails closed, what remains, and when that ends (#426)', async () => {
+  const {serviceInputNotice} = await import('../src/session/SocketSessionClient.js');
+  const {SERVICE_FEATURES} = await import('../src/session/SessionProtocol.js');
+  assert.equal(serviceInputNotice(new Set(SERVICE_FEATURES)), undefined, 'this release\'s service: nothing to say');
+  // v0.20.0's service: the same protocol, without the look result #426's protections are built on.
+  const v020 = new Set(['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history']);
+  const notice = serviceInputNotice(v020) ?? '';
+  assert.match(notice, /typing then is held, not shown, until you choose/u, 'what this window does instead');
+  assert.match(notice, /waits for your approval/u);
+  assert.match(notice, /can still reach the shell there/u, 'says what remains, plainly');
+  assert.match(notice, /restarts by itself once every NMSh window and live session has ended/u);
+});
+
 
 test('transported queue reviews expire at manual submission and controller reattachment', async () => {
   const runtimeDir = scratch('nmsh-queue-review-');

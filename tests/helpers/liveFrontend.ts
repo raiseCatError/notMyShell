@@ -8,6 +8,7 @@ import nodePty, {type IPty} from 'node-pty';
 import {listLiveSessions} from '../../src/session/connectSession.js';
 import {parseSlashCommand} from '../../src/commands/slashCommands.js';
 import {TranscriptStore} from '../../src/sessions/TranscriptStore.js';
+import {markFishCompletionsGenerated} from '../../scripts/test-shell-home.mjs';
 
 export const TSX = import.meta.resolve('tsx');
 export const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
@@ -20,6 +21,22 @@ export async function until(check: () => boolean | Promise<boolean>, timeoutMs =
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${typeof what === 'function' ? what() : what}`);
     await new Promise(resolve => setTimeout(resolve, 25));
   }
+}
+
+/** What a screen-driven wait saw, for a timeout message: repeated redraw rows collapsed, and which of the words it looked for appeared. */
+export function describeScreen(text: string, words: string[] = []): string {
+  const lines: string[] = [];
+  let repeats = 0;
+  for (const raw of text.split(/\r?\n|\r/u)) {
+    const line = raw.replace(/ {2,}/gu, ' ').trim();
+    if (!line) continue;
+    if (line === lines.at(-1)) { repeats += 1; continue; }
+    if (repeats) { lines[lines.length - 1] += `  (x${repeats + 1})`; repeats = 0; }
+    lines.push(line);
+  }
+  if (repeats) lines[lines.length - 1] += `  (x${repeats + 1})`;
+  const seen = words.map(word => `${word}:${text.includes(word) ? 'yes' : 'no'}`).join(' ');
+  return `${seen}${seen ? '; ' : ''}${lines.length} distinct rows, last 60:\n${lines.slice(-60).join('\n')}`;
 }
 
 export function processAlive(pid: number): boolean {
@@ -37,6 +54,8 @@ export class LiveSandbox {
 
   constructor(config: Record<string, unknown> = {}, private readonly extraEnv: Record<string, string> = {}) {
     mkdirSync(this.home);
+    // Fish's detached man-page generator would otherwise outlive the sandbox's shells and race disposal (#403).
+    markFishCompletionsGenerated(this.home);
     mkdirSync(this.temp);
     mkdirSync(join(this.config, 'nmsh'), {recursive: true});
     mkdirSync(this.runtime, {mode: 0o700});
@@ -72,7 +91,9 @@ export class LiveSandbox {
   /** Include externally launched PTYs in the same lifecycle, e.g. built CLI and screen fixtures. */
   trackFrontend(pty: IPty): Frontend {
     const frontend = new Frontend(pty, async command =>
-      (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length);
+      (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length,
+    // Only a sandbox's single session is this frontend's for certain; with several, another may run on purpose.
+    async () => { const sessions = await this.sessions(); return sessions.length !== 1 || sessions[0]!.running === undefined; });
     this.frontends.push(frontend);
     return frontend;
   }
@@ -164,12 +185,20 @@ export class Frontend {
   exitSignal: number | undefined;
   readonly exited: Promise<number>;
 
-  constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>) {
+  constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>,
+    private readonly shellsIdle: () => Promise<boolean> = async () => true) {
     pty.onData(data => { this.output += data; });
     this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; this.exitSignal = event.signal; resolve(event.exitCode); }));
   }
 
   get mark(): number { return this.output.length; }
+
+  /**
+   * How many times NMSh has journaled this exact command as completed. The frontend writes that record when the
+   * shell's prompt returns, so waiting for it to grow is a deterministic end of the command, unlike screen text
+   * (a queue row or an older redrawn "Completed" can match before the command has finished).
+   */
+  completions(command: string): Promise<number> { return this.completedCount(command); }
 
   async waitFor(pattern: RegExp, from = 0, timeoutMs = 20000): Promise<void> {
     const started = Date.now();
@@ -186,6 +215,13 @@ export class Frontend {
   }
 
   async run(command: string, expect: RegExp, {completion = true} = {}): Promise<void> {
+    // At the prompt, as a person types a command they mean to run (#426): a line typed while another command still
+    // runs waits for approval, so a test that just started one (an approval, an answer) waits for its prompt first.
+    // Tests that mean to queue use Ctrl+Q.
+    if (!parseSlashCommand(command) && !(await this.shellsIdle())) {
+      await until(() => this.shellsIdle(), 30_000, `the prompt before ${command}`);
+      await new Promise(done => setTimeout(done, 250));
+    }
     const mark = this.mark;
     const completed = await this.completedCount(command);
     this.pty.write(`${command}\r`);

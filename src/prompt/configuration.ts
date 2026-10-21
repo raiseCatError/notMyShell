@@ -40,6 +40,7 @@ import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
+import {TERMINAL_EDITOR_IDS, type TerminalEditorId} from '../host/terminalEditors.js';
 import {DEFAULT_KEEP_AWAKE_PRESENTATION, normalizeKeepAwakePresentation, type KeepAwakePresentation} from '../keepAwake/presentation.js';
 import {TERMINAL_TITLE_MODES, type TerminalTitleMode} from '../host/terminalTitle.js';
 
@@ -144,10 +145,14 @@ export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscal
 /** Bundled third-party variants (see appearance/themeFamilies). */
 export type ThirdPartyPaletteId = 'catppuccinLatte' | 'catppuccinFrappe' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'dracula'
   | 'tokyonightNight' | 'tokyonightStorm' | 'tokyonightMoon' | 'tokyonightDay' | 'gruvboxDark' | 'gruvboxLight'
-  | 'rosePine' | 'rosePineMoon' | 'rosePineDawn' | 'nord' | 'solarizedDark' | 'solarizedLight' | 'oneDark' | 'oneLight';
+  | 'rosePine' | 'rosePineMoon' | 'rosePineDawn' | 'nord' | 'solarizedDark' | 'solarizedLight' | 'oneDark' | 'oneLight'
+  | 'ayuDark' | 'ayuMirage' | 'ayuLight' | 'kanagawaWave' | 'kanagawaDragon' | 'kanagawaLotus' | 'everforestDark' | 'everforestLight'
+  | 'flexokiDark' | 'flexokiLight' | 'nightOwl' | 'nightOwlLight';
 export const THIRD_PARTY_PALETTE_IDS: readonly ThirdPartyPaletteId[] = ['catppuccinLatte', 'catppuccinFrappe', 'catppuccinMacchiato', 'catppuccinMocha',
   'dracula', 'tokyonightNight', 'tokyonightStorm', 'tokyonightMoon', 'tokyonightDay', 'gruvboxDark', 'gruvboxLight',
-  'rosePine', 'rosePineMoon', 'rosePineDawn', 'nord', 'solarizedDark', 'solarizedLight', 'oneDark', 'oneLight'];
+  'rosePine', 'rosePineMoon', 'rosePineDawn', 'nord', 'solarizedDark', 'solarizedLight', 'oneDark', 'oneLight',
+  'ayuDark', 'ayuMirage', 'ayuLight', 'kanagawaWave', 'kanagawaDragon', 'kanagawaLotus', 'everforestDark', 'everforestLight',
+  'flexokiDark', 'flexokiLight', 'nightOwl', 'nightOwlLight'];
 export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
 /**
  * Rich Git state colors: `semantic` keeps meaningful Git colors under any
@@ -586,6 +591,19 @@ export type OnboardingBackdrop = 'off' | 'subtle' | 'aurora';
 export const STARTING_POINT_IDS = ['recommended', 'minimal', 'customize', 'existing'] as const;
 export type StartingPointId = typeof STARTING_POINT_IDS[number];
 
+/** Where Ask's command suggestions come from: nowhere (default) or the person's local model (#432). */
+export type AskCommandSuggestions = 'off' | 'local';
+/** How real images are drawn: Auto picks the best verified protocol; the others are an explicit choice (see graphics/capabilities). */
+export type GraphicsMode = 'auto' | 'kitty' | 'iterm2' | 'sixel' | 'unicode' | 'off';
+export const GRAPHICS_MODES: readonly GraphicsMode[] = ['auto', 'kitty', 'iterm2', 'sixel', 'unicode', 'off'];
+/** Scaled headings and counters through Kitty's text sizing protocol: Auto when the terminal was shown to scale text, Off, or Enhanced. */
+export type TextSizingSetting = 'auto' | 'off' | 'enhanced';
+export const TEXT_SIZING_SETTINGS: readonly TextSizingSetting[] = ['auto', 'off', 'enhanced'];
+/** The real browser (an installed Chromium, started only when /browser or a rendered preview needs it): Auto, or Off. */
+export type BrowserSetting = 'auto' | 'off';
+export const BROWSER_SETTINGS: readonly BrowserSetting[] = ['auto', 'off'];
+export const ASK_COMMAND_SUGGESTIONS: readonly AskCommandSuggestions[] = ['off', 'local'];
+
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
   /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
@@ -619,6 +637,8 @@ export interface PromptConfiguration {
   liveSessionMultiple: LiveSessionMultiple;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
+  /** Semantic Output: a test or build summary drawn in recognized blocks (#386). Presentation only; Off draws raw only. */
+  semanticOutput: boolean;
   /** What new presentation sessions show at the top; archived sessions keep theirs. */
   welcome: WelcomeProviderId;
   /** Ghost-text suggestion provider; external providers fall back to Native. */
@@ -669,6 +689,19 @@ export interface PromptConfiguration {
   agentProfiles: AgentProfile[];
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
   askRecord: boolean;
+  /**
+   * Command suggestions in Ask (#432): off, or one suggested shell command from the person's local model when Ask's own
+   * resolver cannot place a request. Copy/Insert only, never run. Remote providers are a later, separately reviewed slice.
+   */
+  askCommandSuggestions: AskCommandSuggestions;
+  /** Real image rendering (graphics service); text and menus are never images. */
+  graphicsMode: GraphicsMode;
+  /** Markdown and HTML files open in the document workspace (source, edit, preview); off keeps the read-only viewer and the plain editor. */
+  documentWorkspace?: boolean;
+  /** Use an installed Chromium for /browser and rendered document previews; Off keeps NMSh's own renderer and disables /browser. */
+  browser: BrowserSetting;
+  /** Relative text sizing for document headings, titles and celebrations (OSC 66, where verified). */
+  textSizing: TextSizingSetting;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
   askPresentation: 'chat' | 'normal';
   /** Optional local language understanding; Auto by default (deterministic first, nothing downloads without consent). Folding stays opt-in. */
@@ -689,6 +722,8 @@ export interface PromptConfiguration {
   shellBackend: ShellId;
   /** Where /open and /open-diff delegate: the surrounding editor (auto), Zed, VS Code, or $VISUAL/$EDITOR. */
   openWith: OpenWith;
+  /** The terminal editor /open and `o` in /view use when VISUAL and EDITOR are unset; `environment` is VISUAL/EDITOR only (#366). */
+  terminalEditor: TerminalEditorId;
   /** The terminal window/tab title while NMSh owns the screen: Off (default, the terminal keeps its own), project, or project and session. */
   terminalTitle: TerminalTitleMode;
   nmsh: {
@@ -865,6 +900,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   liveSessionMultiple: 'ask',
   notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
   outputFolding: 'smart',
+  semanticOutput: true,
   welcome: 'vespyr',
   suggestions: 'nmsh',
   history: 'native',
@@ -883,6 +919,10 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionNotices: true,
   copy: {...DEFAULT_COPY},
   askRecord: true,
+  askCommandSuggestions: 'off',
+  graphicsMode: 'auto',
+  textSizing: 'auto',
+  browser: 'auto',
   askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
@@ -895,6 +935,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',
+  terminalEditor: 'environment',
   terminalTitle: 'session',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
@@ -986,6 +1027,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? value.liveSessionMultiple as LiveSessionMultiple : 'ask';
   // Off persists as `never`, so v0.4 configs load unchanged.
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
+  const semanticOutput = value.semanticOutput !== false;
   const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
     ? value.welcome as WelcomeProviderId : 'vespyr';
   const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
@@ -1002,10 +1044,11 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askCommandSuggestions: value.askCommandSuggestions === 'local' ? 'local' as const : 'off' as const, graphicsMode: GRAPHICS_MODES.includes(value.graphicsMode as GraphicsMode) ? value.graphicsMode as GraphicsMode : 'auto', textSizing: TEXT_SIZING_SETTINGS.includes(value.textSizing as TextSizingSetting) ? value.textSizing as TextSizingSetting : 'auto', browser: BROWSER_SETTINGS.includes(value.browser as BrowserSetting) ? value.browser as BrowserSetting : 'auto', askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',
+    terminalEditor: TERMINAL_EDITOR_IDS.includes(value.terminalEditor as TerminalEditorId) ? value.terminalEditor as TerminalEditorId : 'environment',
     terminalTitle: TERMINAL_TITLE_MODES.includes(value.terminalTitle as TerminalTitleMode) ? value.terminalTitle as TerminalTitleMode : 'off' as TerminalTitleMode, toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'ohMyPosh' || promptValue.provider === 'none'
@@ -1069,7 +1112,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -1129,7 +1172,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

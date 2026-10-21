@@ -38,6 +38,11 @@ notMyShell (NMSh) is a terminal frontend that operates over a persistent, real s
 
 NMSh uses a FOLLOW mode during execution, pinning the output viewport to the bottom. During historical inspection, it enters DETACHED mode.
 
+## Graphics and typography (permanent rule)
+Any actual image goes through the shared graphics service (`src/graphics/`, [graphics service](docs/design/graphics-service.md)); no surface decodes, scales, uploads, places or deletes an image itself, and none selects a protocol by terminal name. Capability detection uses bounded terminal replies (never the PTY's input), and every surface has a character-art or placeholder fallback with the reason shown. Document and celebration typography goes through `typeset()` ([typography](docs/design/typography.md)): components ask for a role, the backend decides whether OSC 66 sizing is verified; sized text is never written to transcripts, saved documents or the clipboard, and is only drawn when every one of its rows is visible. Markdown and HTML share one heading scale. Menus, tabs, selection controls and chrome are always text.
+## UI consistency (permanent rule)
+All new NMSh UI reuses the established components and interaction patterns before anything is drawn by hand: `framePanel`, the tab strip (`renderTabStrip`), the selected-row band (`selectedRowBand`), `renderControlRows`, `groupedList`, the Settings and row panels, the palette and glyph tables (`UI_COLORS`, `GLYPHS`, Safe Glyphs, NO_COLOR rules) and the shared panel keys (↑↓ select, ←→/Tab switch, Enter confirm, Esc back). Ad hoc bracketed menus (`[1 Option]`), one-off boxes and private color tables are not the default; a new surface that cannot reuse a component first extends the shared one. Menus, text, selection controls and chrome stay terminal text: graphics protocols and text sizing are for real images and document or celebration typography, never a replacement for ordinary menus. Reviews check this the same way they check input ownership. The multiline paste review (`src/input/BatchReview.ts`) is the reference: [multiline execution modes](docs/design/multiline-execution-modes.md).
+
 ## Input invariants
 - `Shift+Enter`: newline (multiline)
 - `Ctrl+J`: fallback newline
@@ -71,6 +76,9 @@ Input awareness (waiting-for-input state, hidden and single-key input routed to 
 ## Surfaces released in v0.20.0
 Workspace sidebar and detail panel (`/sidebar`, `/panel`, `/keys`, `keymap.json`; one column plan in `src/app/workspaceHost.ts`/`workspaceFrame.ts`), background tasks (`/background`, `/bg`, task bar; session-owned `SessionTasks`, protocol feature `background-tasks`), native modules for .NET, Swift, Zig, Deno, Elixir, Dart, Flutter, build systems, Mercurial and Jujutsu, managed Claude `/model`, `/effort` and mod toggles, related PRs in `/worktrees`; the first-run starting point (`/startup`, `src/setup/startup/`), the guided setup, the shared optional-tools flow (`src/tools/ToolsPanel.ts`), the execution timeline and Queue settings, queue history and typed summaries (`/queue history`, `/queue save-summary`), queued output folding, multi-line paste choices, `/copy` output navigation and `/actions`, the custom color editor and the per-installation update notice. Physical QA status: [v0.20 record](docs/testing/v020-physical-qa.md).
 
+## Surfaces released in v0.22.0 (includes the unpublished v0.21.0 candidate)
+`/view` (read-only viewer for files and completed output; `src/viewer/document.ts`, `ViewerPanel.ts`; `o` opens the file in your editor), `/edit` (a small editor for one text file with atomic, conflict-checked saves; `src/viewer/fileEdit.ts`, `EditorPanel.ts`, `textBuffer.ts`), Semantic Output first phase (deterministic recognizers in `src/output/semantic.ts`; presentation rows only, raw output and plain `/copy` unchanged; `/copy --semantic|--both`), `/track` (one live result of a finite command on the `/watch` scheduler, window-owned; `src/tasks/WatchTasks.ts`, `repeatSafety.ts`, `trackBlock.ts`), Bun, Nix shell and container modules, `/modules explain` and `/modules timings`, five theme families, the parser's bounded live region for multi-row progress (#388), input ownership (keys held for an on-demand look, never routed on a guess; the shell's `done` marker; typing held at the prompt after hidden input; queued entries wait for approval when a hidden question follows: `TerminalApp.holdForOwnershipLook`, `InputWatch.lookNow`), history browsing with History n/N on a free rule, a chosen terminal editor for `/open`, and Ask command suggestions from a local model (Copy/Insert only, never run). State: [v0.22 ledger](docs/development/v022-ledger.md).
+
 ## Testing / verification
 During implementation, run focused affected tests. Use `npm run verify:fast` for
 ordinary iteration (build, an explicit core test subset, and diff checks); it is
@@ -85,6 +93,13 @@ changes and avoid pushing tiny or known-broken edits to use Actions as a test
 runner. GitHub CI provides independent platform verification, not a replacement
 for local checks. See [development verification](docs/development-verification.md)
 for sharding, platform gates and exact-release evidence requirements.
+
+**Dispatching CI.** The `CI` workflow has one concurrency group per workflow and ref with `cancel-in-progress`, so a second
+run on the same ref cancels the first (a pull request's run uses its own ref, so it does not). Before `gh workflow run` or a
+rerun, list the runs for that SHA (`gh run list --workflow CI --branch <branch>`) and reuse a queued or running one; the PR's
+automatic run is enough unless the exact-release evidence needs the dispatched jobs (timing smokes, Fedora), and then dispatch
+once. Follow a run with `gh run watch`, never by dispatching again. A `cancelled` run superseded by a newer one is not a test
+failure: report the authoritative run IDs and the SHA, and call CI green only when every required check of those runs succeeded.
 
 ```bash
 npm run verify:fast
@@ -130,7 +145,8 @@ Key references:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the human-readable architecture overview (runtime and data flows, repository map); deeper detail in `docs/architecture/` and `docs/design/`
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
-- [v0.20.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — current stable release, merged through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392); v0.19.0 was never published separately
+- [v0.22.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0) — current stable release, merged through [PR #444](https://github.com/raiseCatError/notMyShell/pull/444); v0.19.0 and v0.21.0 were never published separately
+- [v0.20.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0) — previous stable release, merged through [PR #392](https://github.com/raiseCatError/notMyShell/pull/392)
 - [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release
 - [PR #328](https://github.com/raiseCatError/notMyShell/pull/328) — merged checkpoint on master; included in the published v0.18.0 release through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345)
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board

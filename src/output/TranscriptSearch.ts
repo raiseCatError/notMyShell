@@ -78,7 +78,7 @@ export function logicalLines(rows: readonly WrappedRow[], include: (row: Wrapped
   let current: LogicalLine | undefined;
   let currentIndex: number | undefined;
   rows.forEach((row, index) => {
-    if (row.isFilterHint || !include(row)) { current = undefined; currentIndex = undefined; return; }
+    if (row.isFilterHint || row.derived || !include(row)) { current = undefined; currentIndex = undefined; return; }
     if (current && row.lineIndex !== undefined && row.lineIndex === currentIndex) {
       current.offsets.push(current.text.length);
       current.rows.push(index);

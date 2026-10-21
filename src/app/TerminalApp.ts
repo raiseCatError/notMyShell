@@ -5,10 +5,15 @@ import {queuePresentationChanges, queueRowKey, staleQueueSnapshot} from '../stat
 import {shellSubmission} from '../shell/submission.js';
 import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
 import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
+import {fitOutcome, newFitReport, type FitReport} from '../prompt/fitReport.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
+import {ArcadeSession, type ArcadeEnvironment} from '../arcade/ArcadeSession.js';
+import {ARCADE_GAMES, findGame, gameNames} from '../arcade/registry.js';
+import {ArcadeStore} from '../arcade/scores.js';
+import {freshSeed} from '../arcade/rng.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
 import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
@@ -61,13 +66,19 @@ import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../th
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
-import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
+import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection, semanticCopyPayload, type CopyContent} from '../clipboard/copySelection.js';
 import {captureOutputAnchor, createOutputSelection, moveOutputSelection, restoreOutputAnchor, revealOutputSelection, validateOutputSelection, type OutputAnchor, type OutputScope, type OutputSelection} from '../output/OutputSelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
 import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, type ReportFormat} from '../clipboard/report.js';
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
+import {displayPath, loadFileDocument, outputDocument, resolveViewPath} from '../viewer/document.js';
+import {createViewer, renderViewer, viewerKey, type ViewerLook, type ViewerState} from '../viewer/ViewerPanel.js';
+import {createEditor, editorKey, renderEditor, type EditorAction, type EditorState} from '../viewer/EditorPanel.js';
+import {openForEdit, saveFile} from '../viewer/fileEdit.js';
+import {bufferText, createDocumentSession, renderDocumentSession, setDocumentMode, syncDocumentViewer, documentSessionKey, documentSessionLook, type DocumentSessionAction, type DocumentMode, type DocumentSession} from '../viewer/DocumentWorkspace.js';
+import {formatForPath} from '../viewer/document.js';
 import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -111,9 +122,9 @@ import {
   customColorEditor,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
-import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
+import {basename, delimiter, dirname, extname, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
@@ -197,7 +208,7 @@ import {helpMarkdown} from '../help/helpContent.js';
 import {renderMarkdownText} from '../help/markdown.js';
 import {sweepAnimates, sweepAnsiRow, sweepCells, sweepOnce} from '../motion/lightSweep.js';
 import {sweepStill, sweepStyleFor} from '../motion/sweepStyle.js';
-import {mixRgb} from '../chroma/chroma.js';
+import {luminance, mixRgb, resolveColor, theme as themeRole} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
@@ -206,7 +217,7 @@ import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
-import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {completionWaitFact, heldAtPromptActions, heldInputActions, heldInputRows, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queueSettingsPreview} from '../status/queueSettingsPreview.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
@@ -216,13 +227,14 @@ import {buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSu
 import type {QueueTimeline} from '../session/ExecutionTimeline.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
-import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
+import {directInput, type InputRequest, type InputState, type InputTiming, type LookResult} from '../session/inputState.js';
 import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
-import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, systemHostEnvironment, terminalEditorPreview, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {TERMINAL_EDITORS} from '../host/terminalEditors.js';
 import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
 import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
 import {compileQuery, createFind, findCount, parseSearchCommand, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
@@ -244,6 +256,7 @@ import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/r
 import {commandReference} from '../shell/CommandReference.js';
 import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/gitAssist.js';
 import {readGitFacts} from '../ask/git.js';
+import {suggestionBlock} from '../ask/commandSuggestions.js';
 import {configTargets, systemConfigEnvironment} from '../ask/configTargets.js';
 import {systemFileAssistEnvironment, validateAfterWrite} from '../ask/configAssist.js';
 import {formatterAllowed} from '../ask/repair.js';
@@ -263,13 +276,16 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
-import {runDoctor} from '../doctor/doctor.js';
-import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
-import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
+import {runDoctor, type DoctorCheck} from '../doctor/doctor.js';
+import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
+import {renderWatchPanel, watchNoticeRows, watchPanelKey, type WatchPanelState} from '../tasks/WatchPanel.js';
+import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
+import {explainModules, moduleTimings} from '../prompt/moduleReport.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, batchBlockText, createBatchReview, createBatchReviewWithRefusal, hasNmshCommand, isNmshStatement, longestShellRun, nmshCommandText, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {BatchSequencer, type SequenceHost, type SequenceItem} from '../input/batchSequence.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -279,7 +295,19 @@ import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
 import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
-import {nmshConfigDirectory} from '../configuration/paths.js';
+import {nmshCacheDirectory, nmshConfigDirectory} from '../configuration/paths.js';
+import {configureTextSizing, describeTextSizing, textSizingEnabled} from '../ui/textSizing.js';
+import {BrowserHost} from '../browser/host.js';
+import {BrowserSession} from '../browser/session.js';
+import {browserPanelKey, createBrowserPanel, renderBrowserPanel, type BrowserPanelState} from '../browser/BrowserPanel.js';
+import {BrowserPreviewView} from '../browser/documentPreview.js';
+import {normalizeAddress} from '../browser/address.js';
+import {decideGraphics, describeGraphics} from '../graphics/capabilities.js';
+import {GraphicsService, type GraphicsHost} from '../graphics/service.js';
+import {ImageError} from '../graphics/raster.js';
+import {DocumentImages, documentRoot} from '../viewer/documentImages.js';
+import {createImageView, IMAGE_EXTENSIONS, imageViewKey, renderImageView, showImage, siblingImages, type ImageViewState} from '../viewer/ImagePanel.js';
+import type {TextOverlay} from '../arcade/Canvas.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
@@ -336,7 +364,7 @@ import {liveSessionRows} from '../sessions/LiveSessionView.js';
 import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
-import {OLDER_SERVICE_SWITCH, serviceBuildNotice} from '../session/SocketSessionClient.js';
+import {OLDER_SERVICE_SWITCH, serviceBuildNotice, serviceInputNotice} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {AgentSessions, normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
@@ -384,7 +412,7 @@ import type {WorkspaceEffect} from './workspaceHost.js';
 import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
-import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
+import {defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -415,8 +443,55 @@ const WARNING = lazyForeground(UI_COLORS.warning);
 const ERROR = lazyForeground(UI_COLORS.failure);
 /** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
 const STOP_TYPE_AHEAD_MS = 2000;
-/** Longest a key waits for an on-demand look at the running command's input state before it is routed anyway. */
-const OWNERSHIP_LOOK_MS = 800;
+/** The narrowest wait headline kept whole beside the queue's tail; narrower, the tail becomes a bare count. */
+const MIN_WAIT_HEADLINE = 18;
+/**
+ * Keys held for an on-demand look at the running command's input state are routed when the look answers. A look is
+ * itself bounded (two probes of at most 1.5 s each); this only guards against an answer that never comes.
+ */
+const OWNERSHIP_LOOK_MS = 5000;
+/** A look still running after this long (a loaded machine) says so in the composer: the typing is kept, not lost. */
+const OWNERSHIP_LOOK_SLOW_MS = 800;
+/**
+ * Typing begun this soon after an answer to a hidden question may be type-ahead for what comes next rather than a reply
+ * to a newer question. This only decides whether held typing counts as a probable reply (discarded) or as unconfirmed
+ * (left for the person at the prompt); it never lets typing run while a look saw hidden input (#426 review).
+ */
+const HIDDEN_ANSWER_TYPE_AHEAD_MS = 1000;
+/** How held keys end: on the evidence (route), dropped, sent to the program as typed, or shown in the composer. */
+type HoldSettle = 'route' | 'discard' | 'send' | 'reveal';
+/**
+ * The keys Tab replays when it shows held typing: text and the keys that edit it, never one that acts. A Ctrl+Q (queue),
+ * Ctrl+S, history, palette or failure key typed while the typing was held must not queue, send or run it (#426 gate).
+ */
+const REVEALABLE_KEYS = new Set<Key['kind']>(['text', 'paste', 'enter', 'newline', 'backspace', 'delete', 'deleteWord', 'deleteLineBefore',
+  'deleteLineAfter', 'left', 'right', 'wordLeft', 'wordRight', 'lineHome', 'lineEnd', 'bufferHome', 'bufferEnd', 'selectLeft', 'selectRight',
+  'selectWordLeft', 'selectWordRight', 'selectLineHome', 'selectLineEnd', 'selectBufferHome', 'selectBufferEnd', 'selectAll']);
+/** Keys held while NMSh looks at whether the running command reads input (#426). */
+interface OwnershipHold {
+  keys: Key[];
+  startId: number;
+  /** A question was open when the hold began: the typing is a reply. */
+  answering: boolean;
+  /** The look has run past OWNERSHIP_LOOK_SLOW_MS: the composer says the typing is kept. */
+  slow: boolean;
+  /** No usable evidence: the typing stays held and hidden until evidence arrives or the person chooses. */
+  uncertain: boolean;
+  /** The session said nothing runs any more (the shell's done marker): the command ended, though its prompt is still coming (#436). */
+  ended: boolean;
+  /** A look saw hidden input: the typing may be a password, so a command that ends never runs it. */
+  sawHidden: boolean;
+  /**
+   * A look saw hidden input right after NMSh answered a hidden question: that question still closing, or a newer one
+   * with no prompt. NMSh cannot tell which, so a command that ends never runs this typing either: it waits at the prompt.
+   */
+  sawAnsweredHidden: boolean;
+  /** The command ended with the typing unconfirmed: held, hidden, at the prompt until the person shows or discards it. */
+  atPrompt: boolean;
+  /** The command line's first word, as the person saw it running. */
+  program: string;
+  settle: (how: HoldSettle) => void;
+}
 /** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
 const QUEUE_CONFIRM_SETTLE_MS = 600;
 /** The transcript keeps at least this many rows when the expanded queue takes some (as withQueueRows does). */
@@ -473,6 +548,8 @@ export class TerminalApp {
   private readonly historyService = new HistoryService();
   /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
   private readonly composerHistory = new ComposerHistory();
+  /** The composer shows an entry recalled by Up/Down and the person has done nothing else since (#389). */
+  private historyBrowsing = false;
   /**
    * What was submitted in this NMSh session, for recall only. NMSh slash
    * commands live here and nowhere else: never zsh, Atuin or other history.
@@ -760,8 +837,26 @@ export class TerminalApp {
 
   private edgeAccessory(kind: 'composerBorder' | 'separator', plan: ScreenPlan, now = Date.now()): {ansi: string; width: number} | undefined {
     const view = this.awakeViewNow(now);
-    if (!view || plan.awake?.slot !== (kind === 'composerBorder' ? 'topEdge' : 'bottomEdge')) return undefined;
+    if (!view || plan.awake?.slot !== (kind === 'composerBorder' ? 'topEdge' : 'bottomEdge')) return this.historyEdge(kind, plan);
     return plan.awake.expandedOnEdge && view.expanded ? view.expanded : view.compact;
+  }
+
+  /**
+   * History n/N while Up/Down browse an unchanged recalled entry (#389): on the bottom composer edge, or the top one
+   * when that is the free one, never over Keep Awake or a header prompt. It never gets a row of its own, so with no
+   * free edge (or no room on it; renderComposerEdge checks the width) it is simply not shown.
+   */
+  private historyEdge(kind: 'composerBorder' | 'separator', plan: ScreenPlan): {ansi: string; width: number} | undefined {
+    if (!this.historyBrowsing || plan.panelActive) return undefined;
+    const at = this.composerHistory.position(this.editor.text);
+    if (!at) return undefined;
+    const edges = composerEdgeStates(plan, this.promptConfiguration.placement);
+    const awake = plan.awake?.slot;
+    const free = edges.bottomEdge === 'available' && awake !== 'bottomEdge' ? 'separator'
+      : edges.topEdge === 'available' && awake !== 'topEdge' ? 'composerBorder' : undefined;
+    if (free !== kind) return undefined;
+    const text = `History ${at.position}/${at.total}`;
+    return {ansi: `${SUBTLE}${text}${RESET}`, width: displayWidth(text)};
   }
 
   private handleKeepAwakeSlash(command: string, slash: Extract<ParsedSlashCommand, {kind: 'keepAwake'}>): void {
@@ -810,7 +905,11 @@ export class TerminalApp {
      * for the shell's prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop
      * causes. Only for STOP_TYPE_AHEAD_MS: a program that survives the signal (a REPL, a remote shell) gets the
      * ordinary routing again, so later typing is never sent into it unasked. */
-    stoppedAt?: number};
+    stoppedAt?: number;
+    /** A question was reported after Ctrl+C or Ctrl+Z: the program survived the stop and asked (#426). */
+    askedAfterStop?: boolean;
+    /** A look found the command done (the shell's authenticated done marker; its prompt hooks may still run). */
+    done?: boolean};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -835,12 +934,47 @@ export class TerminalApp {
    * answer, discarded rather than run if the command ends first). Drafts started before the command's latest output
    * are type-ahead for the shell and stay in the composer.
    */
-  private runningDraft?: {startId: number; at: number; answering: boolean};
+  /** typeAhead: begun right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back: never a reply (#436). */
+  /** afterDone: begun once the shell said the command is done (a look answered idle): type-ahead for the prompt. */
+  private runningDraft?: {startId: number; at: number; answering: boolean; typeAhead: boolean; afterDone?: boolean};
   /**
    * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
    * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
    */
-  private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; release: () => void};
+  private ownershipLook?: OwnershipHold;
+  /**
+   * When NMSh last sent an answer to the running command's hidden question. Typing that begins right after it is
+   * type-ahead, and a look that still sees that question is not new evidence; a newer question ends this at once.
+   */
+  private hiddenAnswer?: {startId: number; at: number};
+  /** The running command's question whose queued entries were last checked (a question is reported repeatedly). */
+  private hiddenQueueCheck?: {startId: number; since: number};
+  /**
+   * A composer draft typed during the running command before it asked for hidden input: it may be the password, typed
+   * before the prompt appeared. It is kept off the composer while the question is open and held at the prompt after.
+   */
+  private stashedDraft?: {startId: number; text: string; program: string};
+  /**
+   * Lines entered right after Ctrl+C or Ctrl+Z, for the prompt the stop brings back (#426, #436). Held, never written
+   * to the terminal, until the outcome is verified: the prompt (they run there, unless the program asked meanwhile),
+   * a question asked after the stop (they are its reply), or the end of the stop window with the program still running
+   * (they go to it; what it never reads is taken back at its end and held for approval). Also lines begun once the
+   * shell said the command is done (`done`): only the prompt settles those.
+   */
+  private stopAhead?: {startId: number; lines: string[]; program: string; timer?: NodeJS.Timeout; done: boolean};
+  /**
+   * The question an answer was just sent to. A report of it sampled before the session saw the answer can arrive
+   * after it: it is stale, and must not send the next command's keys to the program (a new question starts later).
+   */
+  private answeredQuestion?: {startId: number; since: number};
+  /** Applies a question report held back during a stop window (see onInputState), once. */
+  private staleStopReport?: () => void;
+  /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
+  private replayTypedWhile?: string;
+  /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
+  private readonly revealedQueue = new Set<number>();
+  /** Held lines this window added and has not yet seen in the owner's state (so others are the owner's, #426). */
+  private ownHeldAdds = 0;
   private replayingHeld = false;
   /**
    * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
@@ -935,6 +1069,8 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.presenter.setTreatment(this.promptConfiguration.presentation);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
+    this.output.setSemanticOutput(this.promptConfiguration.semanticOutput);
+    this.output.setLiveRows((id, width) => this.trackRows(id, width));
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
     this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
@@ -997,6 +1133,8 @@ export class TerminalApp {
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     const stale = connection?.mode === 'service' ? serviceBuildNotice(this.session.serviceBuild, this.buildIdentity) : undefined;
     if (stale) this.output.addFrontendInteraction('session', stale, INFO);
+    const routing = connection?.mode === 'service' ? serviceInputNotice(this.session.features) : undefined;
+    if (routing) this.output.addFrontendInteraction('session', routing, WARNING);
     this.beginStartupWatch(connection?.attached);
     this.session.start();
     void this.loadInstalledPacks();
@@ -1163,6 +1301,9 @@ export class TerminalApp {
    * byte goes to the program. Reclaimed in onShellPrompt.
    */
   private handOverTerminal(restore = ''): void {
+    // Images uploaded to the terminal are deleted before a program takes the screen.
+    this.graphics?.releaseAll();
+    this.browserPanel?.session.forgetPictures();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
     this.outputProcessing.set(true);
     // A reply still arriving belongs to the program, which now receives every byte anyway.
@@ -1219,6 +1360,16 @@ export class TerminalApp {
         this.handOverTerminal();
       }
       return;
+    }
+    if (this.arcade) {
+      // A command (a queued one, or one from another window) now owns the keyboard: the arcade closes first, so a game never
+      // takes a password or a reply meant for it.
+      this.closeArcade(false);
+      this.output.addFrontendInteraction('/games', 'Closed the arcade: a command started and owns the keyboard. Open it again at the prompt.', INFO);
+    }
+    if (this.browserPanel) {
+      this.closeBrowser(false);
+      this.output.addFrontendInteraction('/browser', 'Closed the browser: a command started and owns the keyboard. Open it again at the prompt.', INFO);
     }
     this.commandModes.reset();
     this.commandLine.reset();
@@ -1289,7 +1440,7 @@ export class TerminalApp {
           process.stdin.resume();
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
-      }, undefined, {graphics: shouldProbeGraphics(process.env)});
+      }, undefined, {graphics: shouldProbeGraphics(process.env), extended: process.env.TERM !== 'dumb'});
       if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
@@ -1374,13 +1525,14 @@ export class TerminalApp {
 
   private readonly onInput = (data: string): void => {
     // Before probes classify a read, or inside a native reader, input can already be sensitive.
-    // Key diagnostics therefore observe only the idle composer, never startup or running-program input.
-    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+    // Key diagnostics therefore observe only the idle composer, never startup or running-program input, nor typing held
+    // at the prompt because it may be a reply to hidden input (#426).
+    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.running && !this.ownershipLook && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
       this.logEditorKeyInput(data);
     }
     if (this.passthrough && !this.startupPending) {
       // Keys held for an ownership look were typed first: they reach the program first.
-      this.ownershipLook?.release();
+      this.ownershipLook?.settle('route');
       this.session.write(data);
       return;
     }
@@ -1457,6 +1609,7 @@ export class TerminalApp {
     this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
+    if (this.arcade) { const size = this.dimensions(); this.arcade.session.resize(size.columns, Math.max(8, size.rows - 4)); }
     this.lastPtyRows = 0;
     this.lastPtyColumns = 0;
     if (this.passthrough) {
@@ -1527,6 +1680,7 @@ export class TerminalApp {
     }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      if (key.kind === 'focusOut') this.arcade?.session.pause();
       return;
     }
     // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
@@ -1616,6 +1770,65 @@ export class TerminalApp {
         this.returnFromPanel();
         if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown');
         else void this.copyRecords(action.records, action.includeStatus);
+      }
+      this.render();
+      return;
+    }
+    if (this.textEditor) {
+      const editor = this.textEditor;
+      const {columns, rows} = this.dimensions();
+      const action = editorKey(editor, key, columns, rows - 4);
+      if (action) this.runEditorAction(editor, action);
+      this.render();
+      return;
+    }
+    if (this.arcade) {
+      const session = this.arcade.session;
+      if (key.kind !== 'paste' && key.kind !== 'mouseMove' && key.kind !== 'mouseClick' && key.kind !== 'mouseDrag' && key.kind !== 'mouseRelease' && key.kind !== 'wheelUp' && key.kind !== 'wheelDown') {
+        if (session.key(key) === 'close') this.closeArcade();
+        else this.syncArcadeClock();
+      }
+      this.render();
+      return;
+    }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const action = browserPanelKey(panel, key, this.panelGeometry(panel.session.viewport().scale));
+      if (action?.kind === 'close') this.closeBrowser();
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      else if (action?.kind === 'open-document') { this.closeBrowser(false); void this.openDocumentSession(action.path, '/browser', 'preview', true); }
+      this.render();
+      return;
+    }
+    if (this.docSession) {
+      const session = this.docSession;
+      const {columns, rows} = this.dimensions();
+      const action = documentSessionKey(session, key, columns, rows - 4, this.documentViewerLook());
+      if (action) this.runDocumentAction(session, action);
+      // Leaving the preview closes its browser page; the engine stays warm for a while and stops by itself when idle.
+      if (session.mode !== 'preview' && session.preview) { session.preview.dispose(); delete session.preview; }
+      this.render();
+      return;
+    }
+    if (this.imageView) {
+      const view = this.imageView;
+      const action = imageViewKey(view, key);
+      if (action?.kind === 'close') this.closeImageView();
+      else if (action?.kind === 'load') void this.loadImageEntry(view, action.index);
+      else if (action?.kind === 'copy') void this.copyText(action.text, action.label);
+      this.render();
+      return;
+    }
+    if (this.viewer) {
+      const viewer = this.viewer;
+      const {columns, rows} = this.dimensions();
+      const action = viewerKey(viewer, key, columns, rows - 4, this.viewerLook());
+      if (action?.kind === 'close') { this.viewer = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
+      else if (action?.kind === 'open') void this.openFromViewer(viewer, action);
+      else if (action?.kind === 'image') void this.openDocumentImage(viewer, action.index);
+      else if (action?.kind === 'copy') {
+        void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
       this.render();
       return;
@@ -1893,7 +2106,7 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
-      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.queueState.entries.map(entry => entry.text)}); }
+      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.shownQueue().entries.filter(entry => !entry.typedWhile || this.revealedQueue.has(entry.id)).map(entry => entry.text)}); }
       this.render();
       return;
     }
@@ -1903,13 +2116,28 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.watchPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'confirm' && panel.confirm) {
         const pending = panel.confirm;
+        const size = this.dimensions();
+        if (size.columns < 40 || size.rows < 14) {
+          panel.message = 'Resize to at least 40 columns and 14 rows to review this recurring command.';
+          this.render();
+          return;
+        }
         panel.confirm = undefined;
         const safety = watchSafety(pending.command);
         if (safety.kind === 'refused') panel.message = safety.reason;
-        else { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+        else if (this.startWatch(pending.track ? `/track ${pending.command}` : `/watch ${pending.command}`, pending.command, pending.cwd, pending.intervalMs, safety, Boolean(pending.track))) {
+          // A confirmed /track shows its block in the transcript; the manager closes.
+          if (pending.track) { this.watchPanel = undefined; this.returnFromPanel(); }
+          else panel.selected = this.watches.active().length - 1;
+        }
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
-      else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'now' && !this.watches.runNow(action.id)) panel.message = 'A result is still being produced; no second one was started.';
+      else if (action?.kind === 'copy') {
+        const latest = this.watches.get(action.id)?.current;
+        if (!latest) panel.message = 'No completed result to copy yet.';
+        else void this.copyText(latest.output, 'Copied the latest result').then(note => { if (note && this.watchPanel === panel) { panel.message = note; this.render(); } });
+      }
       else if (action?.kind === 'stop') this.watches.stop(action.id);
       this.render();
       return;
@@ -1960,20 +2188,16 @@ export class TerminalApp {
       const action = batchReviewKey(review, key, this.dimensions().rows - 4);
       const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
       if (action?.kind === 'queue') {
-        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
-        const texts = batchTexts(review);
-        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
-          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
-        } else {
-          for (const text of texts) {
-            this.syncQueuePolicy();
-            this.session.queue({op: 'add', text});
-            this.sessionSubmissions.push({text, slash: false});
-            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
-          }
-          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
-        }
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, run once, shell commands
+        // through this session's own queue and NMSh's commands through NMSh (never the shell).
+        this.startBatchSequence(review);
         done();
+      } else if (action?.kind === 'steps') {
+        // One at a time (QA F02): each command waits in the composer, unsent, and runs only on the person's Enter.
+        this.batchSequence?.stop('Replaced by One at a time');
+        this.pasteSteps = {items: batchTexts(review).map(text => (isNmshStatement(text) ? nmshCommandText(text) : text)), next: 0, running: false};
+        done();
+        this.offerPasteStep();
       } else if (action?.kind === 'block') {
         done();
         void this.runReviewedBlock(batchBlockText(review));
@@ -2034,6 +2258,18 @@ export class TerminalApp {
       }
       // Any other key (typing, editing) invalidates the paste preview and continues normal processing
       this.pastePreview = undefined;
+    }
+    if ((key.kind === 'escape' || key.kind === 'interrupt') && this.batchSequence?.active && !this.running && !this.hasModalInput() && !this.editor.text) {
+      this.batchSequence.stop('Stopped');
+      this.dropFinishedSequence();
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' && this.pasteSteps && !this.pasteSteps.running && this.editor.text && !this.hasModalInput()) {
+      this.stopPasteSteps('Stopped');
+      this.editor.clear();
+      this.render();
+      return;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
     if (this.background.panel) { this.handleBackgroundPanelKey(key); return; }
@@ -2160,6 +2396,10 @@ export class TerminalApp {
               if (affordance.copy && x >= affordance.copy.column && x <= affordance.copy.end) { this.selection = undefined; void this.copyBlock(row.blockStartId); return; }
               if (x >= affordance.column) { this.selection = undefined; this.openBlockPalette(row.blockStartId); this.render(); return; }
             }
+            if (key.kind === 'mouseClick' && row.semanticToggle !== undefined) {
+              this.output.toggleSemanticDetails(row.semanticToggle);
+              this.render();
+            }
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
               this.output.toggleExpanded(row.commandIndex);
               this.render();
@@ -2247,9 +2487,16 @@ export class TerminalApp {
     }
     if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
-      // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
-      if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
-      this.ownershipLook.release();
+      const hold = this.ownershipLook;
+      // Ctrl+C is never held, and what was typed before it whose reader NMSh did not know is discarded, as a terminal
+      // flushes its input queue on an interrupt: it never becomes a queued entry or the next command (#426).
+      if (key.kind === 'interrupt') hold.settle('discard');
+      // Held at the prompt there is no program to send it to: only showing or discarding it settles it.
+      else if (hold.atPrompt && key.kind === 'sendToProgram') return;
+      else if (hold.uncertain && key.kind === 'sendToProgram') { hold.settle('send'); return; }
+      else if (hold.uncertain && key.kind === 'complete') { hold.settle('reveal'); return; }
+      else if (hold.uncertain && key.kind === 'escape') { hold.settle('discard'); return; }
+      else { hold.keys.push(key); return; }
     } else if (this.needsOwnershipLook(key)) {
       this.holdForOwnershipLook(key);
       return;
@@ -2263,6 +2510,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (key.kind === 'escape' && this.stopAhead && !this.editor.text) { this.settleStopAhead('cancel'); return; }
     if (key.kind === 'escape' && this.queueCompose) {
       this.queueCompose = false;
       this.editor.clear();
@@ -2282,7 +2530,9 @@ export class TerminalApp {
     // is discarded rather than left to run as the next shell command.
     if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
       // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt, not a reply.
-      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !this.justStopped()};
+      const typeAhead = this.justStopped();
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !typeAhead, typeAhead,
+        ...(this.running.done ? {afterDone: true} : {})};
     }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
@@ -2340,7 +2590,7 @@ export class TerminalApp {
         this.session.interrupt();
         // Ctrl+C ends a waiting question: what is typed next is for the prompt, never a reply to discard.
         this.runningDraft = undefined;
-        this.answerSent();
+        this.answerSent(true);
       } else {
         this.editor.clear();
         this.selectedSuggestion = 0;
@@ -2358,9 +2608,12 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(); }
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(true); }
       return;
     }
+    // Anything but Up/Down (typing, pasting, deleting, moving the caret, selecting) makes a recalled command a draft:
+    // Up/Down move within it again, and the next recall starts a fresh snapshot (#389).
+    if (key.kind !== 'up' && key.kind !== 'down') this.historyBrowsing = false;
     if (key.kind === 'selectAll') {
       if (!this.running) this.editor.selectAll();
       return;
@@ -2438,8 +2691,7 @@ export class TerminalApp {
       else this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
     } else if (key.kind === 'up' && isSlash && !searchSurface && suggestions.length > 0 && this.leaveSlashMenu()) {
       // Left the slash menu; fall through to history recall below.
-      const {columns} = this.dimensions();
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
+      this.historyStep('up');
     } else if (key.kind === 'complete') {
       const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
       if (action === 'shell-suggestion') {
@@ -2539,22 +2791,20 @@ export class TerminalApp {
     else if (key.kind === 'selectWordLeft') this.editor.selectWordLeft();
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
-      const {columns} = this.dimensions();
       // Spatial focus: the shelf sits above the composer. Only an already visible shelf, from a completely idle
       // composer; a hidden shelf is never revealed by ↑, which stays shell history.
       if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
       // Then the background task bar (only from an idle composer, only when tasks are shown), then history.
       if (this.enterBackgroundBar(key)) return;
-      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('previous');
+      this.historyStep('up');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       if (this.enterBackgroundBar(key)) return;
       this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
-      const {columns} = this.dimensions();
       // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (↑ then focuses it).
       if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
-      if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && this.composerHistoryEligible()) this.recallHistory('next');
+      this.historyStep('down');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
       this.editor.selectDown(this.inputColumns(columns), this.railInputPrefix(columns));
@@ -2643,8 +2893,28 @@ export class TerminalApp {
       : this.composerHistory.next(current);
     if (text === undefined) return;
     this.editor.replaceText(text);
+    // Past the newest entry the draft returns and browsing ends; otherwise the composer shows a recalled entry.
+    this.historyBrowsing = this.composerHistory.active;
     this.selectedSuggestion = 0;
     this.shellSuggestions = [];
+  }
+
+  /**
+   * Up/Down in the shell composer (#389). While it shows an unchanged recalled entry, each press is one history entry,
+   * however many explicit or wrapped rows the entry has. Otherwise the caret moves between visual rows first, and
+   * crossing the first or last row enters or leaves history, as for any draft.
+   */
+  private historyStep(direction: 'up' | 'down'): void {
+    const eligible = this.composerHistoryEligible();
+    if (this.historyBrowsing && eligible && this.composerHistory.showing(this.editor.text)) {
+      this.recallHistory(direction === 'up' ? 'previous' : 'next');
+      return;
+    }
+    this.historyBrowsing = false;
+    const {columns} = this.dimensions();
+    const moved = direction === 'up' ? this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns))
+      : this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns));
+    if (!moved && eligible) this.recallHistory(direction === 'up' ? 'previous' : 'next');
   }
 
   private async fetchSuggestions(): Promise<void> {
@@ -2873,6 +3143,13 @@ export class TerminalApp {
       else this.configureClipboardChanges(slash.suggestions);
     }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
+    else if (slash.kind === 'view') this.openViewer(slash.target, command.trim());
+    else if (slash.kind === 'arcade') this.openArcade(slash.game, command.trim());
+    else if (slash.kind === 'browser') await this.openBrowser(slash.target, command.trim());
+    else if (slash.kind === 'editFile') {
+      if (!slash.target) this.output.addFrontendInteraction(command.trim(), 'Name a file: /edit notes.md. Your own editor and vim, nano or micro still work as usual.', INFO);
+      else this.openTextEditor(slash.target, command.trim());
+    }
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -2893,6 +3170,9 @@ export class TerminalApp {
       if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
     }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'modules' && slash.report === 'explain') this.output.addFrontendBlock(command.trim(), explainModules(this.promptConfiguration.modules, this.modulesContext(), this.promptConfiguration, Date.now(),
+      (id, surface) => fitOutcome(surface === 'contextRail' ? this.lastFit.rail : surface === 'statusStrip' ? this.lastFit.strip : undefined, id)));
+    else if (slash.kind === 'modules' && slash.report === 'timings') this.output.addFrontendBlock(command.trim(), moduleTimings(id => this.contextEngine.status(id)));
     else if (slash.kind === 'modules') { this.panelOrigin = undefined; this.openModulesManager(); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'screensaver') {
@@ -2979,7 +3259,7 @@ export class TerminalApp {
     else if (slash.kind === 'providers') this.openProvidersOverview(slash.family);
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
-    else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
+    else if (slash.kind === 'watch') this.handleWatch(command.trim(), slash.op, slash.arguments, slash.track === true);
     else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
@@ -3008,7 +3288,7 @@ export class TerminalApp {
         category: 'Transcript', action: {kind: 'keepHistoryClip', id: history.id}}] : [];
     const composerItems: PaletteItem[] = this.editor.text.trim() && !isSlashInput(this.editor.text)
       ? [{id: 'clip:keep-composer', label: 'Keep composer draft as clip', detail: 'Keep text in memory without changing the draft or executing it', category: 'Transcript', action: {kind: 'keepComposerClip'}}] : [];
-    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record, this.blockOptions(record)) : [])]);
   }
 
   /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
@@ -3200,7 +3480,7 @@ export class TerminalApp {
     if (this.running || this.settingsPanelActive) return;
     const record = this.output.view().completed.find(item => item.startId === startId);
     if (record && !record.frontend) {
-      this.paletteState = createPalette(blockPaletteItems(record));
+      this.paletteState = createPalette(blockPaletteItems(record, this.blockOptions(record)));
       this.blockPaletteContext = {palette: this.paletteState, scope: this.outputScope()};
       if (this.outputNavigation?.intent === 'actions' && this.outputNavigation.focusedId === startId) {
         this.blockPaletteReturn = {selection: this.outputNavigation, palette: this.paletteState};
@@ -3213,7 +3493,7 @@ export class TerminalApp {
     const records = this.output.view().completed;
     const index = records.findIndex(item => item.startId === startId);
     const record = records[index];
-    if (!record || !blockPaletteItems(record).some(item => item.action.kind === 'block' && item.action.id === action)) return;
+    if (!record || !blockPaletteItems(record, this.blockOptions(record)).some(item => item.action.kind === 'block' && item.action.id === action)) return;
     // Selection itself never runs actions. An explicit choice ends it before any editor/program handoff.
     this.endOutputNavigation(false);
     const includeStatus = this.promptConfiguration.copy.includeStatus;
@@ -3230,6 +3510,8 @@ export class TerminalApp {
       try { await writeClipboard(record.command); this.noteClipboard(`Copied command · ${copyStats(record.command).characters.toLocaleString()} characters`, 'success'); }
       catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'view') this.openOutputViewer(record);
+    else if (action === 'details') this.output.toggleSemanticDetails(record.startId);
     else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
@@ -3361,8 +3643,12 @@ export class TerminalApp {
     if (!(slash?.kind === 'ask' && !this.promptConfiguration.askRecord)) this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
     if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
 
+    const step = this.pasteSteps && !this.pasteSteps.running ? this.pasteSteps : undefined;
+    if (step) step.running = true;
     if (slash) {
       await this.runSlash(command, slash);
+      // NMSh's own command has done its part; one that started a shell command is followed at its prompt.
+      if (step && step === this.pasteSteps && !this.running) this.pasteStepDone(true);
       this.render();
       return;
     }
@@ -3553,6 +3839,576 @@ export class TerminalApp {
     finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
   }
 
+  /** Which conditional block actions this block offers. */
+  private blockOptions(record: CompletedCommand): {details: boolean} {
+    return {details: Boolean(this.output.semanticFor(record)?.items.length)};
+  }
+
+  private viewerLook(): ViewerLook {
+    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), sized: textSizingEnabled()};
+  }
+
+  /** Which way images are drawn right now, from the live capabilities and settings. */
+  private graphicsDecision(): ReturnType<typeof decideGraphics> {
+    const {columns, rows} = this.dimensions();
+    return decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows});
+  }
+
+  /** The graphics service, created on first use; its host answers from the live capabilities and settings. */
+  private graphicsService(): GraphicsService {
+    if (this.graphics) return this.graphics;
+    const host: GraphicsHost = {
+      decision: () => this.graphicsDecision(),
+      send: data => this.renderer.sendRaw(data),
+      scratchDir: () => {
+        const directory = join(defaultRuntimeDir(), 'images');
+        try { ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(directory, {recursive: true, mode: 0o700}); } catch { /* the converter reports it */ }
+        return directory;
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+    };
+    this.graphics = new GraphicsService(host);
+    return this.graphics;
+  }
+
+  /** Close the document's images (their uploads go with them) when no document is open. */
+  private releaseViewerImages(): void {
+    this.viewerImages?.close();
+    this.viewerImages = undefined;
+  }
+
+  /** `/view image.png`: the image viewer, with the folder's other images a keypress away. */
+  private async openImageViewer(path: string, command: string): Promise<void> {
+    const {entries, index} = await siblingImages(path);
+    if (this.stopped || this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    const view = createImageView(entries, index);
+    this.imageView = view;
+    this.render();
+    await this.loadImageEntry(view, index, command);
+  }
+
+  private async loadImageEntry(view: ImageViewState, index: number, command = '/view'): Promise<void> {
+    const entry = view.entries[index];
+    if (!entry) return;
+    view.loading = true;
+    this.render();
+    try {
+      const image = await this.graphicsService().load(entry.path);
+      if (this.imageView === view && !this.stopped) showImage(view, index, image);
+    } catch (error) {
+      if (this.imageView === view && !this.stopped) showImage(view, index, undefined, error instanceof ImageError ? error.message : `${command}: the image could not be read.`);
+    }
+    this.render();
+  }
+
+  /** The image viewer for image `index` of the open document; Esc comes back to the document where it was. */
+  private async openDocumentImage(viewer: ViewerState, index: number): Promise<void> {
+    const images = this.viewerImages;
+    if (!images) return;
+    const list = images.list().filter(item => item.path);
+    const position = list.findIndex(item => item.index === index);
+    if (position < 0) { viewer.note = images.list().find(item => item.index === index)?.note ?? 'That image cannot be shown.'; this.render(); return; }
+    const view = createImageView(list.map(item => ({path: item.path!, name: item.path!.split('/').pop() ?? 'image', alt: item.alt})), position, {returnTo: viewer});
+    // Opened from a document session, Esc returns to that session exactly as it was (its buffer and edits are untouched).
+    if (this.docSession && this.docSession.viewer === viewer) { view.returnToSession = this.docSession; delete view.returnTo; this.docSession = undefined; }
+    this.viewer = undefined;
+    this.imageView = view;
+    await this.loadImageEntry(view, position);
+  }
+
+  private closeImageView(): void {
+    const view = this.imageView;
+    if (!view) return;
+    this.imageView = undefined;
+    this.graphics?.releaseOwner(view.owner);
+    if (view.returnToSession) this.docSession = view.returnToSession as DocumentSession;
+    else if (view.returnTo) this.viewer = view.returnTo;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** The image viewer's overlay (iTerm2, Sixel) at its screen cells, or none. */
+  private imageOverlay(plan: ScreenPlan, region: {top: number; height: number} | undefined): ImageOverlay | undefined {
+    const placed = this.imageView?.overlay;
+    if (!placed || !region || !plan.panelActive) return undefined;
+    const row = region.top + placed.y + (plan.panelPosition === 'top' ? -1 : 0);
+    if (row < region.top || row + placed.placement.size.rows > region.top + region.height) return undefined;
+    const column = placed.x + (this.workspace.open ? this.workspaceColumns().center.x : 0);
+    return {key: placed.placement.key, row, column, size: placed.placement.size, transmit: placed.placement.transmit, place: placed.placement.place, cleanup: placed.placement.cleanup};
+  }
+
+  /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
+  private syncTypography(): void {
+    if (this.viewerImages && !this.viewer && !this.imageView && !this.docSession) this.releaseViewerImages();
+    const capabilities = this.host.capabilities;
+    const key = `${this.promptConfiguration.textSizing}|${capabilities.textSizing?.scale ?? '-'}|${capabilities.textSizing?.width ?? '-'}`;
+    if (key === this.typographyKey) return;
+    this.typographyKey = key;
+    configureTextSizing({setting: this.promptConfiguration.textSizing, capabilities, env: process.env});
+  }
+
+  /** The panel's sized-text blocks at screen cells: only blocks that lie wholly inside the panel are ever placed. */
+  private panelTextBlocks(plan: ScreenPlan, region: {top: number; height: number} | undefined): Array<{row: number; column: number; columns: number; rows: number; sequence: string}> {
+    if (!region || !plan.panelActive || !this.panelBlocks.length) return [];
+    const shift = plan.panelPosition === 'top' ? -1 : 0;
+    const columnShift = this.workspace.open ? this.workspaceColumns().center.x : 0;
+    return this.panelBlocks.flatMap(block => {
+      const row = region.top + block.y + shift;
+      return row >= region.top && row + block.rows <= region.top + region.height
+        ? [{row, column: block.x + columnShift, columns: block.columns, rows: block.rows, sequence: block.sequence}] : [];
+    });
+  }
+
+  // ---- Real browser -------------------------------------------------------------------------------------------
+
+  private browserHostService(): BrowserHost {
+    this.browserHost ??= new BrowserHost({profileDir: join(nmshCacheDirectory(), 'browser'), idleMs: 60_000, env: process.env});
+    return this.browserHost;
+  }
+
+  /** Whether the page should be told the terminal is dark: the theme's text is light. */
+  private themeColorScheme(): 'light' | 'dark' {
+    return luminance(resolveColor(themeRole('primary'))) > 0.5 ? 'dark' : 'light';
+  }
+
+  /** Where the panel's first row is on the screen (1-based), for mapping mouse positions onto a page. */
+  private panelGeometry(scale: number): {top: number; left: number; cell: {width: number; height: number}; scale: number} {
+    const plan = this.presentationFrame?.plan;
+    const region = plan?.regions.find(item => item.kind === 'panel');
+    return {top: (region?.top ?? 0) + 1 - (plan?.panelPosition === 'top' ? 1 : 0), left: 1 + (this.workspace.open ? this.workspaceColumns().center.x : 0), cell: this.graphicsDecision().cell, scale};
+  }
+
+  private newBrowserSession(engine: Awaited<ReturnType<BrowserHost['engine']>>): BrowserSession {
+    const graphics = this.graphicsService();
+    const session = new BrowserSession({
+      engine, openStream: owner => graphics.openStream(owner), cell: () => this.graphicsDecision().cell, scale: 'auto',
+      colorScheme: this.themeColorScheme(), reducedMotion: !this.decorativeMotionAllowed(),
+    });
+    session.onChange(() => { if (!this.stopped) this.render(); });
+    return session;
+  }
+
+  /** /browser [address | file]: a real Chromium in a panel. Never while a program owns the terminal; never downloads a browser. */
+  private async openBrowser(target: string, command: string): Promise<void> {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The browser opens at the prompt: let the running command finish first, so its input is never taken by a page.', INFO);
+      return;
+    }
+    if (this.promptConfiguration.browser === 'off') {
+      this.output.addFrontendInteraction(command, 'The real browser is off (Settings → General → Real browser). /view still renders documents with NMSh\'s own renderer.', INFO);
+      return;
+    }
+    const address = target ? normalizeAddress(target, {cwd: this.shellCwd, home: homedir()}) : undefined;
+    if (address && !address.ok) { this.output.addFrontendInteraction(command, address.reason, INFO); return; }
+    if (address?.ok && address.local) { await this.openDocumentSession(address.local, command, 'preview', true); return; }
+    const host = this.browserHostService();
+    const availability = await host.availability();
+    if (!availability.ok) {
+      this.output.addFrontendInteraction(command, `${availability.reason} NMSh does not download a browser; set NMSH_BROWSER to one you installed. /view renders documents with NMSh's own renderer.`, INFO);
+      return;
+    }
+    if (this.stopped || this.hasModalInput()) return;
+    let engine;
+    try { engine = await host.engine(); }
+    catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'The browser could not start.', ERROR); return; }
+    if (this.stopped || this.hasModalInput()) return;
+    const session = this.newBrowserSession(engine);
+    const panel = createBrowserPanel(session, {cwd: this.shellCwd, home: homedir()});
+    this.panelOrigin = undefined;
+    this.browserPanel = panel;
+    this.render();
+    const opened = await session.open(address?.ok ? address.url : 'about:blank');
+    if (!opened.ok) this.output.addFrontendInteraction(command, opened.reason, ERROR);
+    if (!address) { panel.focus = 'address'; panel.draft = ''; }
+    this.render();
+  }
+
+  private closeBrowser(restore = true): void {
+    const panel = this.browserPanel;
+    if (!panel) return;
+    this.browserPanel = undefined;
+    panel.session.dispose();
+    const back = this.browserReturn;
+    this.browserReturn = undefined;
+    if (!restore) return;
+    if (back) this.docSession = back;
+    else this.returnFromPanel();
+    this.render();
+  }
+
+  /** A link the preview refused, opened in the real browser on the person's request; Esc there returns to the document. */
+  private openLinkInBrowser(url: string): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.browserReturn = session;
+    this.docSession = undefined;
+    void this.openBrowser(url, '/browser').then(() => { if (!this.browserPanel && this.browserReturn === session) { this.docSession = session; this.browserReturn = undefined; this.render(); } });
+  }
+
+  /** Start the document session's Chromium preview (the native renderer shows meanwhile, and stays if no browser can be used). */
+  private async startBrowserPreview(session: DocumentSession): Promise<void> {
+    if (this.previewStarting === session || session.preview || this.promptConfiguration.browser === 'off') return;
+    this.previewStarting = session;
+    try {
+      const host = this.browserHostService();
+      const availability = await host.availability();
+      if (!availability.ok) { session.note = `${availability.reason} Showing NMSh's own preview.`; return; }
+      const [engine, previews] = await Promise.all([host.engine(), host.previews()]);
+      if (this.docSession !== session || session.mode !== 'preview') return;
+      const browserSession = this.newBrowserSession(engine);
+      const file = session.editor.file;
+      const kind = formatForPath(file.path).format === 'html' ? 'html' : 'markdown';
+      const view = await BrowserPreviewView.open({
+        session: browserSession, previews, html: text => host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme()}),
+        geometry: () => this.panelGeometry(browserSession.viewport().scale), openLink: url => this.openLinkInBrowser(url), dirty: () => session.editor.buffer.dirty,
+      }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted});
+      if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
+      if (this.docSession !== session || session.mode !== 'preview') { view.dispose(); return; }
+      session.preview = view;
+      // The person may have turned scripts on or off while the preview was starting: what runs must match what the screen says.
+      if (view.trusted !== session.trusted) void view.setTrusted(session.trusted, bufferText(session.editor));
+    } catch (error) {
+      session.note = `${error instanceof Error ? error.message : 'The browser preview could not start.'} Showing NMSh's own preview.`;
+    } finally {
+      if (this.previewStarting === session) this.previewStarting = undefined;
+      this.render();
+    }
+  }
+
+  // ---- Vespyr Arcade ------------------------------------------------------------------------------------------
+
+  private arcadeEnvironment(): ArcadeEnvironment {
+    this.arcadeStore ??= new ArcadeStore({directory: nmshConfigDirectory()});
+    return {
+      store: this.arcadeStore,
+      now: () => Date.now(),
+      motion: () => {
+        const reduced = !this.decorativeMotionAllowed();
+        const off = this.promptConfiguration.presentation.effectsOff;
+        return {reduced, effects: off ? 'off' : reduced ? 'subtle' : this.promptConfiguration.motion.rendering === 'rich' ? 'rich' : 'normal'};
+      },
+      color: () => colorLevel(),
+      safeGlyphs: () => getCurrentGlyphMode() === 'safe',
+      seed: () => freshSeed(),
+    };
+  }
+
+  /** /games, /game and /arcade: the hub, or one game by id or alias. Never while a program owns the terminal. */
+  private openArcade(name: string | undefined, command: string): void {
+    if (this.running || this.passthrough || this.externalPassthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'The arcade opens at the prompt: let the running command finish first, so its input is never taken by a game.', INFO);
+      return;
+    }
+    const game = name ? findGame(name) : undefined;
+    if (name && !game) {
+      this.output.addFrontendInteraction(command, `No game named "${name}". Try /games, or one of: ${gameNames().join(', ')}.`, INFO);
+      return;
+    }
+    this.closeArcade(false);
+    const {columns, rows} = this.dimensions();
+    const session = new ArcadeSession(this.arcadeEnvironment(), ARCADE_GAMES, {columns, rows: Math.max(8, rows - 4)}, game);
+    this.arcade = {session, interval: 0, floor: 40, last: performance.now()};
+    this.syncArcadeClock();
+  }
+
+  /** Subscribe to the shared clock exactly while the session wants frames, at the rate it asks for. */
+  private syncArcadeClock(): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    const wanted = arcade.session.interval;
+    const floor = arcade.session.floor;
+    if (arcade.interval === wanted && arcade.floor === floor) return;
+    arcade.stop?.();
+    arcade.stop = undefined;
+    arcade.interval = wanted;
+    arcade.floor = floor;
+    arcade.last = performance.now();
+    if (wanted > 0) arcade.stop = presentationClock.subscribe(() => this.tickArcade(), wanted, floor);
+  }
+
+  private tickArcade(): void {
+    const arcade = this.arcade;
+    if (!arcade || this.stopped) return;
+    const now = performance.now();
+    const elapsed = Math.max(0, now - arcade.last);
+    arcade.last = now;
+    arcade.session.frame(elapsed);
+    this.syncArcadeClock();
+    this.render();
+  }
+
+  private closeArcade(restore = true): void {
+    const arcade = this.arcade;
+    if (!arcade) return;
+    arcade.stop?.();
+    this.arcade = undefined;
+    arcade.session.dispose();
+    if (restore) { this.returnFromPanel(); this.render(); }
+  }
+
+  /**
+   * /view: a completed output by its /copy number (the latest when no target is given), or a file relative to the
+   * shell's directory. The file is read asynchronously and read-only; a failure is reported in the transcript.
+   */
+  private openViewer(target: string, command: string): void {
+    this.viewerLoad?.abort();
+    this.viewerLoad = undefined;
+    if (!target || /^[1-9]\d{0,2}$/u.test(target)) {
+      const number = target ? Number(target) : 1;
+      const record = this.output.recentShellCommands()[number - 1];
+      if (!record) {
+        this.output.addFrontendInteraction(command, target ? `No completed command output at ${number}.` : 'No completed output yet. /view <file> opens a file.', target ? ERROR : INFO);
+        return;
+      }
+      this.openOutputViewer(record);
+      return;
+    }
+    // A picture opens in the image viewer; its text cannot be shown (binary), and SVG is source text, never drawn.
+    const imagePath = resolveViewPath(target, this.shellCwd);
+    if (IMAGE_EXTENSIONS.has(extname(imagePath).slice(1).toLowerCase())) { void this.openImageViewer(imagePath, command); return; }
+    // Markdown and HTML open in the document workspace (source, edit and preview of one buffer) when the file can be edited
+    // safely; a file that cannot is read in the read-only viewer, as before.
+    const kind = formatForPath(imagePath).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) {
+      void this.openDocumentSession(target, command, 'source', true);
+      return;
+    }
+    const load = new AbortController();
+    this.viewerLoad = load;
+    void loadFileDocument(target, this.shellCwd, {signal: load.signal}).then(async result => {
+      if (this.viewerLoad !== load || this.stopped) return;
+      if (!result.ok) { this.viewerLoad = undefined; this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Images of a Markdown or HTML file: found, resolved inside its folder or project and loaded within a short deadline.
+      let images: DocumentImages | undefined;
+      const document = result.document;
+      if ((document.format === 'markdown' || document.format === 'html') && document.origin.kind === 'file' && this.promptConfiguration.graphicsMode !== 'off') {
+        const base = dirname(document.origin.realPath);
+        images = new DocumentImages(this.graphicsService(), base, await documentRoot(base), () => { if (!this.stopped) this.render(); });
+        images.collect(document);
+        if (images.count) await images.load(1200);
+      }
+      if (this.viewerLoad !== load || this.stopped) { images?.close(); return; }
+      this.viewerLoad = undefined;
+      // Another panel opened while the file was read: it keeps the keys; the file is not opened over it.
+      if (this.hasModalInput()) { images?.close(); return; }
+      this.panelOrigin = undefined;
+      this.releaseViewerImages();
+      if (images?.count) this.viewerImages = images;
+      else images?.close();
+      this.viewer = createViewer(document);
+      this.render();
+    });
+  }
+
+  /**
+   * /edit: open one small text file in NMSh's editor, or say in the transcript why it cannot be edited (refused files
+   * stay readable in /view). `returnTo` is the viewer it was opened from; it is reopened if the file cannot be edited.
+   */
+  private openTextEditor(target: string, command: string, returnTo?: ViewerState): void {
+    const kind = formatForPath(resolveViewPath(target, this.shellCwd)).format;
+    if ((kind === 'markdown' || kind === 'html') && this.promptConfiguration.documentWorkspace !== false) { void this.openDocumentSession(target, command, 'edit', false); return; }
+    void openForEdit(target, this.shellCwd).then(result => {
+      if (this.stopped) return;
+      if (!result.ok) {
+        if (returnTo && !this.hasModalInput()) { returnTo.note = result.reason; this.viewer = returnTo; }
+        else this.output.addFrontendInteraction(command, result.reason, ERROR);
+        this.render();
+        return;
+      }
+      if (this.hasModalInput()) return;
+      this.panelOrigin = undefined;
+      this.textEditor = createEditor(result.file);
+      this.render();
+    });
+  }
+
+  /** The editor's requests that touch the disk or the clipboard; the panel shows the outcome. */
+  private runEditorAction(editor: EditorState, action: EditorAction): void {
+    if (action.kind === 'close') { this.textEditor = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'copy') {
+      void this.copyText(action.text, 'Copied').then(note => { if (note && this.textEditor === editor) { editor.note = {text: note, tone: 'success'}; this.render(); } });
+      return;
+    }
+    editor.busy = true;
+    if (action.kind === 'reload') {
+      void openForEdit(editor.file.path, this.shellCwd).then(result => {
+        editor.busy = false;
+        if (this.textEditor !== editor) return;
+        if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; this.render(); return; }
+        this.textEditor = {...createEditor(result.file), note: {text: 'Reloaded from disk; your changes were discarded.', tone: 'info'}};
+        this.render();
+      });
+      return;
+    }
+    const lines = [...editor.buffer.lines];
+    void saveFile(editor.file, lines, {...(action.force ? {force: true} : {})}).then(result => {
+      editor.busy = false;
+      if (this.textEditor !== editor) return;
+      if (result.ok) {
+        editor.file = result.file;
+        // Only what was written is clean: typing during the save stays unsaved.
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        if (action.thenClose) { this.textEditor = undefined; this.returnFromPanel(); }
+        else editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+      } else if (result.conflict) {
+        editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
+      } else editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'};
+      this.render();
+    });
+  }
+
+  // ---- Document session -------------------------------------------------------------------------------------
+
+  /** The viewer look for the session's read-only modes. */
+  private documentViewerLook(): ViewerLook {
+    const look = this.viewerLook();
+    return this.docSession ? documentSessionLook(this.docSession, look) : look;
+  }
+
+  /**
+   * /view and /edit on a Markdown or HTML file: one buffer shown as source, editor or preview. `fallback`: /view falls back to the
+   * read-only viewer when the file cannot be edited safely (too big, read-only, mixed line endings…); /edit says why in the transcript.
+   */
+  private async openDocumentSession(target: string, command: string, mode: DocumentMode, fallback: boolean): Promise<void> {
+    // /view never creates a file: one that does not exist is reported by the read-only path.
+    if (fallback && !existsSync(resolveViewPath(target, this.shellCwd))) { await this.openReadOnlyDocument(target, command, 'it does not exist'); return; }
+    const result = await openForEdit(target, this.shellCwd);
+    if (this.stopped) return;
+    if (!result.ok) {
+      if (!fallback) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+      // Not editable: the read-only viewer still shows it (rendered), saying why it cannot be edited.
+      await this.openReadOnlyDocument(target, command, result.reason);
+      return;
+    }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    this.viewer = undefined;
+    this.docSession = createDocumentSession(result.file, mode);
+    if (mode === 'preview') this.beginPreview(this.docSession, false);
+    this.render();
+  }
+
+  private async openReadOnlyDocument(target: string, command: string, why: string): Promise<void> {
+    const load = new AbortController();
+    this.viewerLoad = load;
+    const result = await loadFileDocument(target, this.shellCwd, {signal: load.signal});
+    if (this.viewerLoad !== load || this.stopped) return;
+    this.viewerLoad = undefined;
+    if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); this.render(); return; }
+    if (this.hasModalInput()) return;
+    this.panelOrigin = undefined;
+    this.releaseViewerImages();
+    const viewer = createViewer(result.document);
+    viewer.note = `Read-only: ${why}`;
+    this.viewer = viewer;
+    this.render();
+  }
+
+  /** Entering the preview, or refreshing it: the page shows the buffer as it is now. Without a browser the native renderer does. */
+  private beginPreview(session: DocumentSession, refresh: boolean): void {
+    syncDocumentViewer(session, true);
+    if (session.mode === 'preview' || refresh) session.viewer.rendered = true;
+    this.refreshDocumentImages(session);
+    // A real browser renders the same buffer when one is installed; refreshing swaps the served page and reloads it.
+    if (session.preview) { if (refresh) void session.preview.refresh(bufferText(session.editor)); return; }
+    void this.startBrowserPreview(session);
+  }
+
+  /** The session's native preview draws local images of the CURRENT buffer, found and loaded like a viewed document's. */
+  private refreshDocumentImages(session: DocumentSession): void {
+    if (this.promptConfiguration.graphicsMode === 'off') return;
+    const document = session.viewer.document;
+    if (document.origin.kind !== 'file') return;
+    const base = dirname(document.origin.realPath);
+    this.releaseViewerImages();
+    const images = new DocumentImages(this.graphicsService(), base, base, () => { if (!this.stopped && this.docSession === session) this.render(); });
+    images.collect(document);
+    if (!images.count) { images.close(); return; }
+    this.viewerImages = images;
+    void documentRoot(base).then(async root => {
+      if (this.viewerImages !== images) return;
+      const rooted = new DocumentImages(this.graphicsService(), base, root, () => { if (!this.stopped && this.docSession === session) this.render(); });
+      rooted.collect(document);
+      if (this.viewerImages !== images) { rooted.close(); return; }
+      images.close();
+      this.viewerImages = rooted;
+      await rooted.load(0);
+      if (this.docSession === session) this.render();
+    });
+  }
+
+  private closeDocumentSession(): void {
+    const session = this.docSession;
+    if (!session) return;
+    this.docSession = undefined;
+    session.preview?.dispose();
+    this.releaseViewerImages();
+    this.returnFromPanel();
+  }
+
+  /** The session's requests that touch the disk, the clipboard or the preview. */
+  private runDocumentAction(session: DocumentSession, action: DocumentSessionAction): void {
+    const editor = session.editor;
+    if (action.kind === 'close') { this.closeDocumentSession(); return; }
+    if (action.kind === 'copy') {
+      void this.copyText(action.text, 'Copied').then(note => { if (note && this.docSession === session) { editor.note = {text: note, tone: 'success'}; session.viewer.note = note; this.render(); } });
+      return;
+    }
+    if (action.kind === 'preview') { this.beginPreview(session, action.refresh); return; }
+    if (action.kind === 'trust') {
+      session.note = action.on ? 'Scripts are on for this preview.' : 'Scripts are off for this preview.';
+      void session.preview?.setTrusted(action.on, bufferText(editor));
+      return;
+    }
+    if (action.kind === 'open') { void this.openFromViewer(session.viewer, {path: action.path}); return; }
+    if (action.kind === 'image') { void this.openDocumentImage(session.viewer, action.index); return; }
+    editor.busy = true;
+    if (action.kind === 'reload') {
+      void openForEdit(editor.file.path, this.shellCwd).then(result => {
+        editor.busy = false;
+        if (this.docSession !== session) return;
+        if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
+        const fresh = createDocumentSession(result.file, session.mode === 'edit' ? 'edit' : 'source');
+        fresh.note = 'Reloaded from disk; your changes were discarded.';
+        fresh.viewer.note = fresh.note;
+        session.preview?.dispose();
+        this.docSession = fresh;
+        this.render();
+      });
+      return;
+    }
+    const lines = [...editor.buffer.lines];
+    void saveFile(editor.file, lines, {...(action.force ? {force: true} : {})}).then(result => {
+      editor.busy = false;
+      if (this.docSession !== session) return;
+      if (result.ok) {
+        editor.file = result.file;
+        if (editor.buffer.lines.length === lines.length && editor.buffer.lines.every((line, index) => line === lines[index])) editor.buffer.markSaved();
+        if (action.thenClose) { this.closeDocumentSession(); this.render(); return; }
+        editor.note = {text: `Saved ${editor.file.title}.`, tone: 'success'};
+        session.viewer.note = `Saved ${editor.file.title}.`;
+        syncDocumentViewer(session, session.mode === 'preview');
+      } else if (result.conflict) {
+        editor.dialog = {kind: 'conflict', focus: 0, conflict: result.conflict, reason: result.reason, ...(action.thenClose ? {thenClose: true} : {})};
+      } else { editor.note = {text: `${result.reason} Your text is still here.`, tone: 'error'}; session.viewer.note = result.reason; }
+      this.render();
+    });
+  }
+
+  /** View output: the record's stored output, numbered as /copy numbers it. */
+  private openOutputViewer(record: CompletedCommand): void {
+    const number = this.output.recentShellCommands().indexOf(record) + 1;
+    this.panelOrigin = undefined;
+    // The text /copy copies (tabs as the program wrote them), without the optional completion status.
+    this.viewer = createViewer(outputDocument({command: record.command, output: recordCopyText(record, false), exitCode: record.exitCode}, Math.max(1, number)));
+    this.render();
+  }
+
   /** Compare output…: straight to the difference when the other side is known, otherwise choose it (previous run first). */
   private openCompare(base: CompletedCommand, partner?: CompletedCommand): void {
     this.panelOrigin = undefined;
@@ -3575,7 +4431,9 @@ export class TerminalApp {
     if (!this.outputNavigationAvailable()) return;
     const parsed = parseCopyArgs(args);
     if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
-    const {selector, status, report} = parsed.request;
+    const {status, report, content} = parsed.request;
+    // --semantic and --both copy directly: without a selection they take the latest output, whatever the copy mode.
+    const selector = content === 'semantic' || content === 'both' ? (parsed.request.selector.kind === 'default' ? {kind: 'latest' as const, count: 1} : parsed.request.selector) : parsed.request.selector;
     const includeStatus = status ?? this.promptConfiguration.copy.includeStatus;
     if (selector.kind === 'picker' || (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'picker')) {
       this.panelOrigin = undefined;
@@ -3590,7 +4448,7 @@ export class TerminalApp {
     const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
     if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
     if (report) { this.startReport(resolved.records, report); return; }
-    await this.copyRecords(resolved.records, includeStatus);
+    await this.copyRecords(resolved.records, includeStatus, undefined, parsed.request.content);
   }
 
   /**
@@ -3598,9 +4456,11 @@ export class TerminalApp {
    * stored output, oldest first, each followed by its recorded completion status when asked. Nothing to copy leaves
    * the clipboard as it was. Feedback is a brief note above the composer, given only after the write succeeded.
    */
-  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string): Promise<boolean> {
+  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string, content: CopyContent = 'raw'): Promise<boolean> {
     const scope = this.outputScope();
-    const payload = [before ?? '', copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
+    // --semantic / --both: the reading as text (raw for a record without one, said in the note); raw is the default.
+    const semantic = content === 'raw' ? undefined : semanticCopyPayload(records, content, includeStatus, record => this.output.semanticFor(record));
+    const payload = [before ?? '', semantic ? semantic.payload : copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
     if (!payload.trim()) {
       const what = records.length === 1 ? `${records[0]!.command.split('\n')[0]!.slice(0, 60)} printed no output` : 'the selected commands printed no output';
       this.noteClipboard(`Nothing to copy: ${what}; the clipboard is unchanged`, 'info');
@@ -3614,7 +4474,8 @@ export class TerminalApp {
       const live = this.output.recentShellCommands();
       this.output.expandBlocks(records.filter(record => live.includes(record) && recordCopyText(record, includeStatus)).map(record => record.startId));
     }
-    this.noteClipboard(copiedNote(records.length, copyStats(payload), includeStatus), 'success');
+    const fallback = semantic?.unavailable ? ` · ${semantic.unavailable === records.length ? 'semantic unavailable, copied raw' : `${semantic.unavailable} without a semantic reading copied raw`}` : '';
+    this.noteClipboard(`${copiedNote(records.length, copyStats(payload), includeStatus)}${content === 'semantic' && !fallback ? ' · semantic' : content === 'both' && !fallback ? ' · raw and semantic' : ''}${fallback}`, 'success');
     return true;
   }
 
@@ -4070,6 +4931,12 @@ export class TerminalApp {
   }
 
   private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
+    const step = this.pasteSteps?.running && this.running ? this.pasteSteps : undefined;
+    this.shellPrompt(exitCode, cwd, at);
+    if (step && step === this.pasteSteps) this.pasteStepDone(exitCode === 0);
+  }
+
+  private shellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
     this.completionService.invalidate();
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
@@ -4210,6 +5077,16 @@ export class TerminalApp {
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
     }
+    // Keys still held for this command's look are settled now that it is over (#426).
+    this.ownershipLook?.settle('route');
+    if (this.stopAhead?.startId === command.startId) this.settleStopAhead('prompt', Boolean(command.askedAfterStop));
+    else this.settleStopAhead('drop');
+    // A draft typed before this command asked for hidden input may be the password: held, never back in the composer.
+    if (this.stashedDraft?.startId === command.startId) {
+      const stashed = this.stashedDraft;
+      this.stashedDraft = undefined;
+      this.holdAtPrompt(stashed.text, stashed.program);
+    }
     // A command may have changed what workspace facts say (npm version, terraform workspace select, aws configure).
     this.contextEngine.invalidate('command');
     void this.refreshContext(cwd);
@@ -4324,7 +5201,10 @@ export class TerminalApp {
     if (this.renderRail?.columns === columns) return this.renderRail.prepared;
     const configuration = this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh'
       ? {...this.promptConfiguration, contextRail: {...this.promptConfiguration.contextRail, mode: 'off' as const}} : this.promptConfiguration;
-    return prepareRail(this.promptContext(), columns, configuration);
+    const report = newFitReport();
+    const prepared = prepareRail(this.promptContext(), columns, configuration, 0, report);
+    this.lastFit.rail = report;
+    return prepared;
   }
 
   private contextRailRows(columns: number): string[] {
@@ -4905,7 +5785,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4921,6 +5801,7 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
+    this.panelBlocks = [];
     const minimum = this.panelMinimum();
     const {rows} = this.dimensions();
     if (minimum && !fits(minimum, columns, rows)) {
@@ -4947,6 +5828,18 @@ export class TerminalApp {
     if (this.summaryReview) return renderReportReview(this.summaryReview.document, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.arcade) { const arcadeFrame = this.arcade.session.render(); this.panelBlocks = arcadeFrame.overlays; return arcadeFrame.rows; }
+    if (this.browserPanel) {
+      const panel = this.browserPanel;
+      const view = renderBrowserPanel(panel, columns, this.dimensions().rows - 4);
+      // The previous picture is deleted once the new rows are written.
+      setImmediate(() => panel.session.settle());
+      return view.rows;
+    }
+    if (this.docSession) { const rows = renderDocumentSession(this.docSession, columns, this.dimensions().rows - 4, this.documentViewerLook()); this.panelBlocks = this.docSession.overlays; return rows; }
+    if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
+    if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
+    if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
     if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
       {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanelPreview(columns));
@@ -5027,7 +5920,7 @@ export class TerminalApp {
     if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
     if (this.queueHistoryPanel) return framePanel(renderQueueHistoryPanel(this.queueHistoryPanel, this.queueState, columns, this.dimensions().rows - 4), columns);
-    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.shownQueue(), this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -5291,7 +6184,7 @@ export class TerminalApp {
     else if (destination === 'cursor') this.openCursorPanel();
     else if (destination === 'themeStudio') this.openThemeStudio();
     else if (destination === 'themeBridge') void this.openThemeBridge();
-    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
+    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation' || destination === 'editor') this.startProviderPanel(destination);
     else if (destination === 'queue') this.rowPanel = createRowPanel('Queue', '/queue · /settings queue', [...QUEUE_SETTINGS_ROW_IDS], 'queue');
     else void this.startKeyboard();
   }
@@ -5875,6 +6768,12 @@ export class TerminalApp {
   private reportReview?: ReportReviewState;
   /** Compare output…: choosing the other block, then the difference. */
   private comparePanel?: ComparePanelState;
+  /** The native read-only viewer (/view, View output); owns keys while open. */
+  private viewer?: ViewerState;
+  /** A file /view is still reading; a newer request or Esc cancels it. */
+  private viewerLoad?: AbortController;
+  /** NMSh's small text editor (/edit, e in /view); owns keys while open. */
+  private textEditor?: EditorState;
   private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
   private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
   /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */
@@ -7237,6 +8136,7 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
+    this.output.setSemanticOutput(next.semanticOutput);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
     return true;
@@ -7348,8 +8248,10 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'): void {
-    const state: ProviderPanelState = family === 'welcome'
+  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor'): void {
+    const state: ProviderPanelState = family === 'editor'
+      ? createProviderPanel(family, 'Terminal editor', TERMINAL_EDITORS, this.promptConfiguration.terminalEditor)
+      : family === 'welcome'
       ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
       : family === 'navigation' ? createProviderPanel(family, 'Directory navigation', NAVIGATION_PROVIDERS, this.promptConfiguration.navigation)
       : family === 'picker' ? createProviderPanel(family, 'Picker', PICKER_PROVIDERS, this.promptConfiguration.picker)
@@ -7369,6 +8271,7 @@ export class TerminalApp {
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
     if (state.family === 'navigation') return [`${SUBTLE}Find with /dirs; selecting inserts a visible cd command. Press Enter separately to navigate.${RESET}`];
+    if (state.family === 'editor') return terminalEditorPreview(selected.id, process.env).map(line => `${SUBTLE}${line}${RESET}`);
     if (state.family === 'picker') return [`${SUBTLE}Selections restore the composer; cancel leaves it unchanged. Missing or failing tools use Native.${RESET}`];
     if (state.family === 'history') return [`${SUBTLE}${selected.id === 'atuin' ? 'Read-only local history; existing hooks unchanged; no sync.' : 'Shell-approved journal metadata and imported zsh history.'}${RESET}`];
     if (state.family === 'suggestions') {
@@ -7429,7 +8332,9 @@ export class TerminalApp {
 
   private saveProviderChoice(state: ProviderPanelState): void {
     const selected = providerPanelSelection(state);
-    const next = state.family === 'welcome'
+    const next = state.family === 'editor'
+      ? {...structuredClone(this.promptConfiguration), terminalEditor: selected.id as PromptConfiguration['terminalEditor']}
+      : state.family === 'welcome'
       ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
       : state.family === 'navigation' ? {...structuredClone(this.promptConfiguration), navigation: selected.id as PromptConfiguration['navigation']}
       : state.family === 'picker' ? {...structuredClone(this.promptConfiguration), picker: selected.id as PromptConfiguration['picker']}
@@ -7482,6 +8387,7 @@ export class TerminalApp {
       if (next.welcome === 'none') this.welcomeGeneration++;
       this.output.setTranscriptAppearance(next.transcript);
       this.output.setOutputFolding(next.outputFolding);
+    this.output.setSemanticOutput(next.semanticOutput);
       this.output.presenter.setTreatment(next.presentation);
       this.output.presenter.setLayout(next.transcriptPresentation);
       this.transcriptPanelState = undefined;
@@ -7925,7 +8831,7 @@ export class TerminalApp {
     const now = Date.now();
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
-    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...watchNoticeRows(this.watches.active(), now).map(row => truncateAnsi(row, columns)), ...this.pastePreviewRows(columns), ...this.pasteStepRows(columns), ...this.sequenceRows(columns)];
     const background = this.backgroundRows(columns);
     return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
@@ -7946,7 +8852,7 @@ export class TerminalApp {
    * show the review. A boundary the shell does not accept means command separation is refused with a clear explanation,
    * while still providing Run as block, Edit, or Cancel choices.
    */
-  private async openBatchReview(text: string): Promise<void> {
+  private async openBatchReview(text: string, current: () => boolean = () => this.pastePreview?.text === text): Promise<void> {
     const shell = this.batchShell();
     if (!shell) return;
     const capacity = Math.max(0, QUEUE_LIMIT - this.queueState.entries.length);
@@ -7958,16 +8864,148 @@ export class TerminalApp {
       return;
     }
     const check = await verifyCommands(batchTexts(review), shell);
-    if (this.stopped || this.pastePreview?.text !== text) return;
+    if (this.stopped || !current()) return;
+    if (!this.queueAvailable() && longestShellRun(review.entries) > 0) review.queueOff = this.session.features.has('queue')
+      ? 'Queue all is not offered: queueing is off (Settings → Sessions → Queue commands).'
+      : 'Queue all is not offered: this session\'s service is older and has no command queue.';
     if (check.ok) {
       review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · ');
       this.batchReview = review;
     } else {
       this.batchReview = createBatchReviewWithRefusal(text, shell, capacity, check.reason);
-      this.pastePreview = {...this.pastePreview, batch: false};
+      if (this.pastePreview) this.pastePreview = {...this.pastePreview, batch: false};
       if (this.pasteReview) this.pasteReview.batch = false;
     }
     this.render();
+  }
+
+  /**
+   * QA F02: Enter on text the shell grammar splits into several statements, one of them an NMSh command (a pasted
+   * `cd …` then `/modules`, four `/track` lines, or the same typed with Ctrl+J). Submitted as it is, the shell would get
+   * NMSh's lines (zsh: "no such file or directory: /modules") or the block would be one broken slash command. Nothing
+   * is submitted or queued: the text opens the reviewed list, whose one-at-a-time choice offers each command in turn.
+   */
+  private reviewMixedBlock(text: string): boolean {
+    const shell = this.batchShell();
+    if (!shell || !text.includes('\n')) return false;
+    const review = createBatchReview(text, shell, QUEUE_LIMIT);
+    if (!review || !hasNmshCommand(review)) return false;
+    this.editor.clear();
+    this.composerHistory.reset();
+    this.runningDraft = undefined;
+    this.pendingMixedBlock = text;
+    void this.openBatchReview(text, () => this.pendingMixedBlock === text).finally(() => { if (this.pendingMixedBlock === text) this.pendingMixedBlock = undefined; });
+    this.render();
+    return true;
+  }
+
+  /** Queue all: confirm once, then the sequencer runs the reviewed commands in order (see input/batchSequence). */
+  private startBatchSequence(review: BatchReviewState): void {
+    const items: SequenceItem[] = review.entries.map(entry => {
+      const nmsh = isNmshStatement(entry.text);
+      return {nmsh, text: nmsh ? nmshCommandText(entry.text) : entry.text};
+    });
+    const needsQueue = items.some(item => !item.nmsh);
+    if (needsQueue && (!this.queueAvailable() || longestShellRun(review.entries) > QUEUE_LIMIT - this.queueState.entries.length)) {
+      this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+      return;
+    }
+    this.batchSequence?.stop('Replaced by a new Queue all');
+    this.pasteSteps = undefined;
+    const sequence = new BatchSequencer(items, this.sequenceHost());
+    this.batchSequence = sequence;
+    this.output.addFrontendInteraction('/ps', `Queue all: ${items.length} command${items.length === 1 ? '' : 's'}. They run in order${needsQueue ? ' (shell commands through /queue)' : ''}; it stops on a failure, and Esc stops it.`, INFO);
+    sequence.poke();
+    this.dropFinishedSequence();
+  }
+
+  private sequenceHost(): SequenceHost {
+    return {
+      queueView: () => {
+        const timeline = this.queueState.timeline;
+        return {
+          entries: this.queueState.entries.length,
+          dispatching: Boolean(this.queueState.dispatching),
+          paused: Boolean(this.queueState.paused),
+          ...(timeline ? {chain: {id: timeline.id, status: timeline.status, failurePolicy: timeline.failurePolicy, failed: timeline.counts.failed, interrupted: timeline.counts.interrupted}} : {}),
+        };
+      },
+      queueFree: () => QUEUE_LIMIT - this.queueState.entries.length,
+      addShell: text => {
+        this.syncQueuePolicy();
+        this.session.queue({op: 'add', text});
+        this.sessionSubmissions.push({text, slash: false});
+        if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+      },
+      foregroundBusy: () => Boolean(this.running || this.passthrough || this.externalPassthrough || this.startupPending || this.preparingCommand),
+      modalOpen: () => this.hasModalInput(),
+      composerEmpty: () => !this.editor.text,
+      runNmsh: async text => {
+        this.editor.replaceText(text);
+        await this.submit(false, true, false);
+      },
+      say: text => this.output.addFrontendInteraction('Queue all', text, INFO),
+      changed: () => this.render(),
+    };
+  }
+
+  private dropFinishedSequence(): void {
+    if (this.batchSequence && !this.batchSequence.active) this.batchSequence = undefined;
+  }
+
+  /** Ask the sequencer to continue once the current state allows (a prompt, an empty queue, a closed panel). */
+  private scheduleSequencePoke(): void {
+    if (!this.batchSequence || this.sequencePokeScheduled) return;
+    this.sequencePokeScheduled = true;
+    queueMicrotask(() => {
+      this.sequencePokeScheduled = false;
+      if (this.stopped) return;
+      this.batchSequence?.poke();
+      this.dropFinishedSequence();
+    });
+  }
+
+  /** The strip above the composer while Queue all runs: where it is and how to stop it. */
+  private sequenceRows(columns: number): string[] {
+    const sequence = this.batchSequence;
+    if (!sequence?.active) return [];
+    return [truncateAnsi(`${SUBTLE}${sequence.statusLine()}${RESET}`, columns)];
+  }
+
+  /** The next pasted command, unsent, when the composer is free; the last one ends the list. */
+  private offerPasteStep(): void {
+    const steps = this.pasteSteps;
+    if (!steps || steps.running || this.running || this.editor.text) return;
+    const item = steps.items[steps.next];
+    if (item === undefined) { this.pasteSteps = undefined; return; }
+    steps.next += 1;
+    this.editor.insertPaste(item);
+    this.composerHistory.reset();
+  }
+
+  /** A pasted command finished: the next is offered after a success; a failure stops the rest, as the queue pauses. */
+  private pasteStepDone(ok: boolean): void {
+    const steps = this.pasteSteps;
+    if (!steps) return;
+    steps.running = false;
+    if (!ok) { this.stopPasteSteps('That command did not succeed'); return; }
+    if (steps.next >= steps.items.length) { this.pasteSteps = undefined; return; }
+    this.offerPasteStep();
+  }
+
+  private stopPasteSteps(why: string): void {
+    const steps = this.pasteSteps;
+    this.pasteSteps = undefined;
+    if (!steps) return;
+    const left = steps.items.length - steps.next;
+    if (left > 0) this.output.addFrontendInteraction('pasted commands', `${why}; the ${left === 1 ? 'next pasted command was' : `${left} pasted commands after it were`} not offered.`, INFO);
+  }
+
+  /** The one-at-a-time strip above the composer: which pasted command waits there, and how to stop. */
+  private pasteStepRows(columns: number): string[] {
+    const steps = this.pasteSteps;
+    if (!steps || steps.running || !this.editor.text || this.running) return [];
+    return [truncateAnsi(`${SUBTLE}Pasted command ${steps.next} of ${steps.items.length} · Enter runs it · Esc stops${RESET}`, columns)];
   }
 
   /**
@@ -7976,7 +9014,7 @@ export class TerminalApp {
    */
   private async runReviewedBlock(text: string): Promise<void> {
     if (this.running) {
-      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete or choose Queue separately.', ERROR);
+      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete, or choose Queue all.', ERROR);
       return;
     }
     this.editor.replaceText(text);
@@ -8292,10 +9330,17 @@ export class TerminalApp {
     const record = this.awakeRecord;
     const display = configuration.keepAwake.display;
     // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
-    return renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
+    // The live row records how it fitted routed modules, for /modules explain; previews of a draft do not.
+    const report = configuration === this.promptConfiguration ? newFitReport() : undefined;
+    const row = renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
       record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined,
-      this.statusStripModuleItems(configuration));
+      this.statusStripModuleItems(configuration), report);
+    if (report) this.lastFit.strip = report;
+    return row;
   }
+
+  /** How the last live frame fitted routed modules on the Rail and the Strip (#365). */
+  private readonly lastFit: {rail?: FitReport; strip?: FitReport} = {};
 
   /** Strip-routed modules with their group and, for the path, a shorter form the fitter may use first. */
   private statusStripModuleItems(configuration = this.promptConfiguration): StripModuleItem[] {
@@ -8318,7 +9363,7 @@ export class TerminalApp {
   private openPanel?: OpenPanelState;
 
   private hostActions(): HostActionAdapter {
-    return resolveHostActions(this.promptConfiguration.openWith);
+    return resolveHostActions(this.promptConfiguration.openWith, systemHostEnvironment(), this.promptConfiguration.terminalEditor);
   }
 
   /** path:line references in the newest outputs, each with the cwd its command ran in. */
@@ -8373,6 +9418,25 @@ export class TerminalApp {
     }
     const failure = await runHostAction(action);
     report(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`, failure ? ERROR : INFO);
+  }
+
+  /**
+   * `o` in /view: the file shown goes to the person's editor through the /open bridge. A GUI editor opens beside NMSh
+   * and the viewer stays; a terminal editor's command goes in the composer for the person to run, so the viewer
+   * closes, and a draft already there is never replaced.
+   */
+  private async openFromViewer(viewer: ViewerState, target: {path: string; line?: number}): Promise<void> {
+    const action = this.hostActions().openFile({path: target.path, ...(target.line ? {line: target.line} : {})});
+    const say = (note: string) => { if (this.viewer === viewer) { viewer.note = note; this.render(); } };
+    if (action.kind === 'unsupported') return say(action.reason);
+    if (action.kind === 'compose') {
+      if (this.editor.text.trim()) return say(`The composer has a draft. Clear it, then press o to put the ${action.label} command there.`);
+      this.viewer = undefined;
+      this.returnFromPanel();
+      return this.performHostAction(action, (message, style) => { this.output.addFrontendInteraction('/view', message, style); this.render(); });
+    }
+    const failure = await runHostAction(action);
+    say(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`);
   }
 
   /** Changes whenever presented rows may have changed; matches are recomputed only then. */
@@ -8507,16 +9571,48 @@ export class TerminalApp {
   private doctorPanel?: DoctorPanelState;
   private watchPanel?: WatchPanelState;
   /** Watches NMSh schedules itself; they live (and stop) with this window. */
-  private readonly watches = new WatchTasks(resolveCommand('sh') ?? '/bin/sh');
-  private readonly watchSubscription = this.watches.onChange((_watch, transition) => {
+  private readonly watches = new WatchTasks(resolveCommand('sh') ?? '/bin/sh', Date.now, () => ({...process.env, PATH: this.shellPath()}));
+  /** Watches started with /track: their live transcript block keeps the height it reached (see trackBlockRows). */
+  private readonly trackBlocks = new Map<string, {reserved: number; finalized: boolean}>();
+  private readonly watchSubscription = this.watches.onChange((watch, transition) => {
     if (this.stopped) return;
     // A watch moving between failing and passing is one meaningful event.
     if (transition) this.transitions.echo(transition === 'pass' ? 'taskDone' : 'taskFailed', Date.now());
+    // A tracker the person stopped leaves its last result in the transcript once (a closing window leaves nothing).
+    const block = this.trackBlocks.get(watch.id);
+    if (block && watch.status === 'stopped' && !block.finalized) {
+      block.finalized = true;
+      this.output.addFrontendBlock(`/track ${watch.command}`, finalResultRows(watch));
+      // The anchored transcript row can render its stopped state directly from the task.
+      // The mutable per-tracker height bookkeeping is no longer needed after finalization.
+      this.trackBlocks.delete(watch.id);
+    }
     this.render();
   });
 
+  /** A /track block's live rows (presentation only). */
+  private trackRows(id: string, width: number): string[] {
+    const block = this.trackBlocks.get(id);
+    const {rows, reserved} = trackBlockRows(this.watches.get(id), width, Date.now(), block?.reserved ?? 0, this.watches.sampling(id));
+    if (block) block.reserved = reserved;
+    return rows;
+  }
+
+  /** Start a classified (or confirmed) watch; /track also writes its block, whose live rows follow it in place. */
+  private startWatch(command: string, watched: string, cwd: string, intervalMs: number | undefined, safety: Exclude<WatchSafety, {kind: 'refused'}>, track: boolean): boolean {
+    let watch;
+    try { watch = this.watches.start(watched, cwd, intervalMs, safety); }
+    catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'Could not start tracking.', ERROR); return false; }
+    if (track) {
+      this.trackBlocks.set(watch.id, {reserved: 0, finalized: false});
+      const place = cwd === this.shellCwd ? 'here' : `in ${displayPath(cwd)}`;
+      this.output.addTrackBlock(watch.id, command, [`${GLYPHS.info} Tracking ${watch.command} ${place} with sh -c and your shell's PATH (not its aliases or functions). /track stop ends it.`]);
+    }
+    return true;
+  }
+
   /** /watch …: start (classified first), list, pause, resume, run now, stop. */
-  private handleWatch(command: string, op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start', argument: string): void {
+  private handleWatch(command: string, op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start' | 'copy', argument: string, track = false): void {
     const active = this.watches.active();
     const pick = () => {
       const index = /^\d+$/u.test(argument) ? Number(argument) - 1 : active.length - 1;
@@ -8524,24 +9620,52 @@ export class TerminalApp {
     };
     if (op === 'list') { this.panelOrigin = undefined; this.watchPanel = {selected: 0, output: false}; return; }
     if (op === 'start') {
-      const {command: watched, intervalMs} = parseWatch(argument);
+      const parsed = parseWatch(argument);
+      if (parsed.error) { this.output.addFrontendInteraction(command, parsed.error, ERROR); return; }
+      const {command: watched, intervalMs} = parsed;
       const safety = watchSafety(watched);
       if (safety.kind === 'refused') { this.output.addFrontendInteraction(command, safety.reason, ERROR); return; }
       this.panelOrigin = undefined;
       if (safety.kind === 'confirm' || safety.remote) {
         this.watchPanel = {selected: 0, output: false, confirm: {command: watched, cwd: this.shellCwd, ...(intervalMs ? {intervalMs} : {}),
-          reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no'}};
+          reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no', ...(track ? {track: true} : {})}};
         return;
       }
-      this.watches.start(watched, this.shellCwd, intervalMs, safety);
-      this.watchPanel = {selected: this.watches.active().length - 1, output: false};
+      // /track shows its result in the transcript; /watch opens its manager as before.
+      if (this.startWatch(command, watched, this.shellCwd, intervalMs, safety, track) && !track) this.watchPanel = {selected: this.watches.active().length - 1, output: false};
       return;
     }
-    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stopped every watch.', INFO); return; }
+    const noun = track ? 'tracker' : 'watch';
+    if (op === 'stop' && argument === 'all') {
+      for (const watch of active) this.watches.stop(watch.id);
+      this.output.addFrontendInteraction(command, active.length ? `Stopped every ${noun}; their processes are being ended.` : `Nothing is being ${track ? 'tracked' : 'watched'}.`, INFO);
+      return;
+    }
     const watch = pick();
-    if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
-    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
-    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Running' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the watch on ${watch.command}.` : 'Nothing changed.', INFO);
+    if (!watch) { this.output.addFrontendInteraction(command, `Nothing is being ${track ? 'tracked' : 'watched'}.`, INFO); return; }
+    if (op === 'copy') {
+      if (!watch.current) { this.output.addFrontendInteraction(command, `No completed result of ${watch.command} yet.`, INFO); return; }
+      // The latest completed result only, as plain text: never earlier refreshes, never the block's own lines.
+      void this.copyText(watch.current.output, `Copied the latest result of ${watch.command.slice(0, 40)}`);
+      return;
+    }
+    if (op === 'now' && !this.watches.runNow(watch.id)) {
+      this.output.addFrontendInteraction(command, `A result of ${watch.command} is still being produced; no second one was started.`, INFO);
+      return;
+    }
+    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : true;
+    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refreshing' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the ${noun} on ${watch.command}.` : 'Nothing changed.', INFO);
+  }
+
+  /** What the graphics service and the typography backend decided, and why, as /doctor rows under the host terminal. */
+  private graphicsDoctorChecks(): DoctorCheck[] {
+    const section = 'Host terminal';
+    const {columns, rows} = this.dimensions();
+    const lines = describeGraphics(decideGraphics({capabilities: this.host.capabilities, env: process.env, mode: this.promptConfiguration.graphicsMode, color: colorLevel(), safeGlyphs: getCurrentGlyphMode() === 'safe', columns, rows}));
+    return [
+      {section, label: lines[0]!, state: 'info', detail: lines.slice(1).join(' · ')},
+      {section, label: describeTextSizing({setting: this.promptConfiguration.textSizing, capabilities: this.host.capabilities, env: process.env}), state: 'info'},
+    ];
   }
 
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
@@ -8579,7 +9703,7 @@ export class TerminalApp {
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
         ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
-      if (this.doctorPanel === panel) { panel.checks = checks; panel.selected = 0; }
+      if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks()]; panel.selected = 0; }
     } finally { clock?.(); }
     this.render();
   }
@@ -8955,6 +10079,32 @@ export class TerminalApp {
   /** The one place the clipboard is read (only /ps calls it). */
   private readClipboardText: () => Promise<string> = () => readClipboard();
   private pasteReview?: PasteReviewState;
+  /** A mixed block from the composer whose reviewed list is being prepared (QA F02). */
+  private pendingMixedBlock?: string;
+  /** Reviewed commands offered one at a time in the composer (QA F02); `running`: the offered one was entered. */
+  private pasteSteps?: {items: string[]; next: number; running: boolean};
+  /** The Vespyr Arcade panel: owns keys and frames while open, nothing else. */
+  private arcade?: {session: ArcadeSession; stop?: () => void; interval: number; floor: number; last: number};
+  private arcadeStore?: ArcadeStore;
+  /** Sized-text blocks the active panel asked for this frame, relative to its rows (placed by render). */
+  private panelBlocks: TextOverlay[] = [];
+  private typographyKey = '';
+  /** The one graphics service: every image NMSh draws goes through it. */
+  private graphics?: GraphicsService;
+  /** The images of the open document (Markdown or HTML) and the standalone image viewer. */
+  private viewerImages?: DocumentImages;
+  private imageView?: ImageViewState;
+  /** A Markdown or HTML file open for reading, editing and preview at once (see viewer/DocumentWorkspace). */
+  private docSession?: DocumentSession;
+  /** The real browser (an installed Chromium), reached only through this host and only when a browser surface is opened. */
+  private browserHost?: BrowserHost;
+  private browserPanel?: BrowserPanelState;
+  /** The document session a /browser opened from a preview link returns to. */
+  private browserReturn?: DocumentSession;
+  private previewStarting?: DocumentSession;
+  /** Queue all (a reviewed paste run in order, shell and NMSh commands alike). */
+  private batchSequence?: BatchSequencer;
+  private sequencePokeScheduled = false;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -9351,14 +10501,40 @@ export class TerminalApp {
   }
 
   /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
+  /**
+   * Ask's answer: its own resolver (and the optional intent model) first. Only what that cannot place (unclear or
+   * unsupported, never a refusal) may get one suggested command, and only when the person turned command suggestions
+   * on (#432). The suggestion is Copy/Insert only, labelled by NMSh; the model gets the request, shell and OS family.
+   */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
+    const outcome = await this.resolveAskOwn(text, state);
+    if (outcome.kind !== 'unclear' && outcome.kind !== 'unsupported') return outcome;
+    if (this.promptConfiguration.askCommandSuggestions !== 'local' || this.askState !== state) {
+      return outcome.kind === 'unsupported' && outcome.shellTask
+        ? {...outcome, text: `${outcome.text}\nCommand suggestions (Settings → Ask) can suggest one command from your local model for you to check.`} : outcome;
+    }
+    if (this.askStage) this.setAskStage('Asking your local model for a command');
+    const result = await this.understanding.suggestCommand({text, shell: this.shellId, os: process.platform === 'darwin' ? 'macOS' : 'Linux'});
+    if (this.askState !== state) return outcome;
+    const next = outcome.kind === 'unclear' ? outcome.categories : undefined;
+    if ('unavailable' in result) return {kind: 'answer', capability: 'help.command', text: result.unavailable, ...(next?.length ? {next} : {})};
+    const model = this.configuration.localUnderstanding.model?.label ?? 'local model';
+    // The model declined: Ask's own answer stands, saying so.
+    if (!result.suggestion) return {...outcome, text: `Your local model (${model}) suggested no command for this. ${outcome.text}`};
+    return {kind: 'answer', capability: 'help.command', text: 'A suggested command, for you to check before running it yourself.',
+      block: suggestionBlock(result.suggestion, model)};
+  }
+
+  private async resolveAskOwn(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
     const commands = this.askCommands();
     const files = systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath, name => resolveCommand(name), commands.install);
     const deterministic = resolveRequest(text, context, {rejected: state.rejected}, commands, files);
     const deterministicRoute = () => { this.understanding.lastRoute = {route: 'deterministic', at: Date.now()}; return deterministic; };
-    if (!this.understanding.eligible('ask')) return deterministicRoute();
+    // A refusal, or something Ask does not do (a shell task), is an answer, not uncertainty: in any mode the intent
+    // model never re-reads it into the nearest capability it was offered (QA F04).
+    if (!this.understanding.eligible('ask') || deterministic.kind === 'unsafe' || deterministic.kind === 'unsupported') return deterministicRoute();
     // Auto: deterministic first; the model only when it is unsure. Always: the model first, still feeding deterministic builders.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
     if (!this.understanding.prefersModel && !unsure) return deterministicRoute();
@@ -10231,6 +11407,25 @@ export class TerminalApp {
   }
 
   /**
+   * Rows of the shell's terminal (#443). Each resize signals the foreground job (SIGWINCH), and Fish 3 loses a terminal
+   * write that signal interrupts, so the size never follows NMSh's own chrome: it is the transcript capacity of a
+   * reference layout for this window and these settings (a running command's activity row, a one-line composer, no
+   * menu, inspector, notice or panel). The transcript region may then be shorter than the terminal, as it already is
+   * under Dock Top or with the queue's list: the newest rows show. While a command runs only a real change of the window
+   * (onResize, or the end of a full-screen handover, both reset lastPtyRows) or of its width resizes its terminal.
+   */
+  private ptyRows(columns: number, rows: number): number {
+    if (this.running && this.lastPtyRows && this.lastPtyColumns === columns) return this.lastPtyRows;
+    const height = this.stripActive(columns, rows) ? rows - 1 : rows;
+    const transcriptRows = this.output.wrapped(columns).length;
+    return planScreen({rows: height, inputRows: 1, suggestions: 0, inspectorRows: 0, running: true, detached: false, hasOutput: true,
+      composerPosition: this.promptConfiguration.composerPosition, panelPosition: this.panelPositionInEffect(), transcriptRows,
+      contextPlacement: this.promptConfiguration.placement, hasVisibleContext: this.hasVisibleProviderPrompt(),
+      composerLayout: this.effectivePromptProvider === 'none' ? 'oneLine' : this.promptConfiguration.composerLayout,
+      composerDividers: this.promptConfiguration.composerDividers, railPresentation: this.preparedRail(columns).presentation}).ptyRows;
+  }
+
+  /**
    * The expanded queue (header and list) when the screen has room, else undefined (the one-line row says it). Room
    * follows the terminal's height: up to three commands from 24 rows, two from 18, none below. Hidden while a
    * program waits for input: its question stays next to the composer.
@@ -10245,7 +11440,7 @@ export class TerminalApp {
     if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
     const review = this.queueReview?.kind;
     const now = this.activityAnimationNow || Date.now();
-    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {now, animate: this.decorativeMotionAllowed() && colorLevel() !== 'none' && colorLevel() !== 'ansi16' && getCurrentGlyphMode() !== 'safe', treatment: this.promptConfiguration.presentation,
+    return budget >= 2 ? queueBlock(this.shownQueue(), columns, budget, {now, animate: this.decorativeMotionAllowed() && colorLevel() !== 'none' && colorLevel() !== 'ansi16' && getCurrentGlyphMode() !== 'safe', treatment: this.promptConfiguration.presentation,
       liveTimeline: this.promptConfiguration.queue.liveTimeline, recentResults: this.promptConfiguration.queue.recentResults, upcoming: this.promptConfiguration.queue.upcoming,
       row: (key, index) => this.queueVisibleRows.set(key, index),
       animationElapsed: this.running ? presentationAnimationElapsed(now - this.running.startedAt) : 0,
@@ -10314,11 +11509,16 @@ export class TerminalApp {
     } else if (value === 'e') {
       this.queueReview = undefined;
       this.beginQueueEdit(review.id);
+    } else if (key.kind === 'complete' && review.kind === 'approve') {
+      // The person asks to see a held line before deciding; nothing else ever shows it.
+      this.revealedQueue.add(review.id);
     }
     this.render();
   }
 
   private render(): void {
+    this.syncTypography();
+    this.scheduleSequencePoke();
     this.reconcileOutputNavigation();
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
@@ -10348,10 +11548,13 @@ export class TerminalApp {
     const menuOverflow = completionMenu && plan.suggestionCount > 1 && availableSuggestions.length > plan.suggestionCount;
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, menuOverflow ? plan.suggestionCount - 1 : plan.suggestionCount);
     const hiddenBelow = menuOverflow ? availableSuggestions.length - suggestionView.start - suggestionView.items.length : 0;
-    if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
-      this.lastPtyRows = plan.ptyRows;
+    const ptyRows = this.ptyRows(columns, rows);
+    if (this.lastPtyRows !== ptyRows || this.lastPtyColumns !== columns) {
+      this.lastPtyRows = ptyRows;
       this.lastPtyColumns = columns;
-      this.session.resize(columns, plan.ptyRows);
+      this.session.resize(columns, ptyRows);
+      this.output.setScreenRows(ptyRows);
+      this.output.setScreenColumns(columns);
     }
 
     const wrapped = this.output.wrapped(columns);
@@ -10517,7 +11720,8 @@ export class TerminalApp {
       // Flow can scroll the input row off screen.
       cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
-    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
+    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns) ?? this.imageOverlay(plan, panelRegion));
+    this.renderer.setTextBlocks(this.panelTextBlocks(plan, panelRegion));
     this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
@@ -11185,7 +12389,7 @@ export class TerminalApp {
       const summary = this.running && !ownsRunning ? this.currentActivity() : phraseFits ? combined : factual;
       const timing = elapsed === undefined ? '' : `${formatDuration(elapsed)} current command${waitedDetail(this.inputState, Date.now(), elapsed)}`;
       const expressive = phrase && !phraseFits ? `${phrase}${timing ? ` · ${SECONDARY}${timing}${RESET}` : ''}` : `${SECONDARY}${timing}${RESET}`;
-      const hint = this.queueReview ? queueRow(this.queueState, columns, {review: this.queueReview.kind}) : this.queueAffordance() ? `${SUBTLE}${columns < 45 ? 'Enter reviews · /q' : 'Enter to review · Esc to review clear · /queue'}${RESET}` : expressive;
+      const hint = this.queueReview ? queueRow(this.shownQueue(), columns, {review: this.queueReview.kind}) : this.queueAffordance() ? `${SUBTLE}${columns < 45 ? 'Enter reviews · /q' : 'Enter to review · Esc to review clear · /queue'}${RESET}` : expressive;
       const concise = displayWidth(hint ?? '') <= columns ? hint : phrase && elapsed !== undefined ? `${phrase} · ${SECONDARY}${formatDuration(elapsed)}${RESET}` : hint;
       return [truncateAnsi(summary, columns), concise ? truncateAnsi(concise, columns) : ''];
     }
@@ -11193,13 +12397,23 @@ export class TerminalApp {
     const queue = listed?.[0] ?? this.queueLine(columns);
     if (!this.running) return queue ? (listed ? ['', queue] : [queue, '']) : [];
     const request = this.inputState?.request;
+    // Typing held without evidence of who reads it: say so, and how to choose, in the rows a wait would use. Typing held
+    // at the prompt for a command that ended is not this command's: the composer says it.
+    if (this.ownershipLook?.uncertain && !this.ownershipLook.atPrompt) return heldInputRows(this.running.command.trim().split(/\s+/u)[0] || 'the command', columns);
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
       const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
-      const count = this.queueAvailable() ? this.queueState.entries.length : 0;
-      // The question keeps both rows; the queue is a count at the end of the headline, when it fits.
-      const tail = count ? `${SUBTLE} · ${queueGlyph()} ${count} queued${RESET}` : '';
-      if (tail && rows[0] !== undefined && displayWidth(stripAnsi(rows[0])) + displayWidth(stripAnsi(tail)) <= columns) rows[0] += tail;
+      const entries = this.queueAvailable() ? this.queueState.entries : [];
+      // The question keeps both rows and the queue's list steps aside (QA F03): the headline still says the queue is
+      // there, and when its entries now wait for approval. The headline is shortened before the tail is, and a bare
+      // count is the last resort, so the queue never seems to vanish.
+      if (entries.length && rows[0] !== undefined) {
+        const approval = entries.filter(entry => entry.condition === 'approve' && !entry.approved).length;
+        const tails = [`${queueGlyph()} ${entries.length} queued${approval ? ` · ${approval} for approval` : ''}`, `${queueGlyph()} ${entries.length}`];
+        const tail = tails.find(text => columns - displayWidth(text) - 3 >= MIN_WAIT_HEADLINE) ?? tails[1]!;
+        const room = Math.max(1, columns - displayWidth(tail) - 3);
+        rows[0] = `${truncateAnsi(rows[0], room)}${SUBTLE} · ${tail}${RESET}`;
+      }
       return rows.map(row => truncateAnsi(row, columns));
     }
     const activity = truncateAnsi(this.currentActivity(), columns);
@@ -11210,16 +12424,73 @@ export class TerminalApp {
 
   /** While a command runs, the empty composer says what Enter will do with what you type. */
   private composerHint(): {text: string; waiting: boolean} | undefined {
+    // Typing held when a command ended right after its hidden input: whatever runs now, only the person settles it.
+    if (this.ownershipLook?.atPrompt && !this.passthrough) return {text: heldAtPromptActions(this.ownershipLook.program), waiting: true};
+    if (this.stopAhead && this.running?.startId === this.stopAhead.startId && !this.editor.text) {
+      return {text: `${this.stopAhead.done ? 'Runs when the prompt is back' : `Runs at the prompt once ${this.stopAhead.program} stops`} · Esc takes it back`, waiting: false};
+    }
     if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
+    if (this.ownershipLook?.uncertain) return {text: heldInputActions(this.running.command.trim().split(/\s+/u)[0] || 'the command'), waiting: true};
+    if (this.ownershipLook?.slow) return {text: `Checking whether ${program} is waiting for input · your typing is kept`, waiting: false};
     // A waiting program gets the one instruction, with or without a queue; a question NMSh has not yet probed reads
     // as a line.
     if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
     if (!this.queueAvailable()) return undefined;
-    return {text: `Enter queues the next command · Ctrl+S sends to ${program}`, waiting: false};
+    return {text: `Enter holds it for approval · Ctrl+Q runs it after · Ctrl+S sends to ${program}`, waiting: false};
+  }
+
+  /**
+   * A line entered right after Ctrl+C or Ctrl+Z (see stopAhead). It is never written while the stopped command still
+   * owns the terminal: a survivor that never asks would leave it in the terminal, and the shell would then run it.
+   */
+  private holdForStop(text: string, done = false): void {
+    const running = this.running!;
+    this.editor.clear();
+    this.runningDraft = undefined;
+    if (this.stopAhead?.startId === running.startId) { this.stopAhead.lines.push(text); this.render(); return; }
+    const program = commandWords(running.command)[0] ?? 'the command';
+    // A done command only has its prompt left to come: nothing but that prompt settles the line, never time.
+    let timer: NodeJS.Timeout | undefined;
+    if (!done) {
+      timer = setTimeout(() => this.settleStopAhead('window'), Math.max(0, (running.stoppedAt ?? Date.now()) + STOP_TYPE_AHEAD_MS - Date.now()));
+      timer.unref?.();
+    }
+    this.stopAhead = {startId: running.startId, lines: [text], program, ...(timer ? {timer} : {}), done};
+    this.render();
+  }
+
+  /**
+   * Where the lines held after a stop go, once that is known: `prompt` (the stopped command ended), `asked` (it survived
+   * and asks now: its reply), `window` (the stop window ended), `cancel` (Esc: back to the composer), `drop`.
+   */
+  private settleStopAhead(how: 'prompt' | 'asked' | 'window' | 'cancel' | 'drop', asked = false): void {
+    const held = this.stopAhead;
+    if (!held) return;
+    // A question held back during the window applies first, whichever timer fires first: the program still reads.
+    if (how === 'window') this.staleStopReport?.();
+    if (how === 'window' && this.running?.startId === held.startId && this.inputState?.request) how = 'asked';
+    if (how === 'window' && this.running?.startId !== held.startId) return;
+    if (held.timer) clearTimeout(held.timer);
+    this.stopAhead = undefined;
+    if (how === 'drop') return;
+    if (how === 'cancel') { this.editor.replaceText(held.lines.join('\n')); this.render(); return; }
+    if (how === 'asked') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
+    // The program survived the stop: the lines go to it, as a terminal delivers type-ahead (it may ask without NMSh
+    // seeing it: on macOS the ^C a terminal echoes ends the question-shaped line). Whatever it never reads, the shell
+    // takes back when the command ends, and it waits for approval there: never a command by itself.
+    if (how === 'window') { this.session.write(held.lines.map(line => `${line}\r`).join('')); this.answerSent(); this.render(); return; }
+    // It asked something after the stop and then ended: no line is known to be for the prompt; each waits for approval.
+    if (asked) { for (const line of held.lines) this.enqueue(line, held.program); return; }
+    // The verified prompt: the first line as if entered there, any others queued after it, in order.
+    const [first, ...rest] = held.lines;
+    if (this.editor.text || !first) { for (const line of held.lines) this.enqueue(line); return; }
+    this.editor.replaceText(first);
+    this.routeComposer('enter');
+    for (const line of rest) this.enqueue(line);
   }
 
   /** Ctrl+C or Ctrl+Z was sent moments ago: typing is type-ahead for the prompt the stop brings back. */
@@ -11235,6 +12506,17 @@ export class TerminalApp {
    */
   private answersByDefault(): boolean {
     return Boolean(this.inputState?.request) || (this.commandLine.open && promptShaped(this.commandLine.line));
+  }
+
+  /**
+   * The queue as drawn (#426): a held line (typedWhile) appears as where it came from, never as its text, until the
+   * person asks to see it (Tab in its review, or editing it). Every queue surface draws this; actions use the real state.
+   */
+  private shownQueue(state: QueueState = this.queueState): QueueState {
+    if (!state.entries.some(entry => entry.typedWhile && !this.revealedQueue.has(entry.id))) return state;
+    const reviewing = this.queueReview?.kind === 'approve' ? this.queueReview.id : undefined;
+    return {...state, entries: state.entries.map(entry => entry.typedWhile && !this.revealedQueue.has(entry.id)
+      ? {...entry, text: `(typed while ${entry.typedWhile} ran${entry.id === reviewing ? ' · Tab shows it' : ''})`} : entry)};
   }
 
   /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
@@ -11259,13 +12541,13 @@ export class TerminalApp {
         const cause = pause.reason === 'failed' ? `exit ${pause.exitCode} · ${pauseReason(pause)}` : pause.reason === 'user' ? 'Paused manually' : pauseReason(pause);
         return truncateAnsi(`${STOPPED}${cause}${RESET}${SUBTLE} · ${this.queueState.entries.length} waiting${RESET}`, columns);
       }
-      const next = this.queueState.entries[0]!;
+      const next = this.shownQueue().entries[0]!;
       const tail = ` · ${next.condition === 'approve' && !next.approved ? 'Approval' : 'Next'} · ${this.queueState.entries.length} pending`;
       return truncateAnsi(`${SECONDARY}${GLYPHS.selection} ${queuePreview(next.text, Math.max(1, columns - displayWidth(tail) - 2))}${SUBTLE}${tail}${RESET}`, columns);
     }
     if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
     const affordance = this.queueAffordance();
-    return queueRow(this.queueState, columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
+    return queueRow(this.shownQueue(), columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
   }
 
   private onQueueState(state: QueueState, news: QueueNews): void {
@@ -11273,6 +12555,7 @@ export class TerminalApp {
     const previous = this.queueState;
     if (staleQueueSnapshot(previous, state)) return;
     this.queueState = state;
+    this.noteHeldLines(previous, state);
     const pause = this.pendingQueuePause;
     if (pause && (news.refused || pause.revision === undefined || (state.revision !== undefined && state.revision > pause.revision))) {
       this.pendingQueuePause = undefined;
@@ -11294,6 +12577,7 @@ export class TerminalApp {
     if (!this.replaying && getCurrentGlyphMode() !== 'safe' && colorLevel() !== 'ansi16') {
       for (const change of queuePresentationChanges(previous, state)) this.transitions.highlight(change.target, change.tone, Date.now(), change.phase);
     }
+    this.scheduleSequencePoke();
     if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;
@@ -11350,8 +12634,37 @@ export class TerminalApp {
     this.render();
   }
 
-  /** Add the composer's text to the queue. */
-  private enqueue(text: string): void {
+  /**
+   * Held lines (typedWhile) that appeared in the owner's queue (#426). Those this window did not add are typing a
+   * command never read, which the owner took back from the terminal when it ended: said once, without their text. With
+   * queueing off they would wait unseen, so they are removed instead. Reveals end with their entries.
+   */
+  private noteHeldLines(previous: QueueState, state: QueueState): void {
+    for (const id of this.revealedQueue) if (!state.entries.some(entry => entry.id === id)) this.revealedQueue.delete(id);
+    const known = new Set(previous.entries.map(entry => entry.id));
+    const fresh = state.entries.filter(entry => entry.typedWhile && !known.has(entry.id));
+    const own = Math.min(this.ownHeldAdds, fresh.length);
+    this.ownHeldAdds -= own;
+    const owner = fresh.slice(own);
+    if (!owner.length) return;
+    const program = owner[0]!.typedWhile!;
+    if (!this.queueAvailable() && this.session.features.has('queue')) {
+      for (const entry of owner) this.session.queue({op: 'remove', id: entry.id});
+      this.output.addFrontendInteraction(program, `${program} did not read some of your typing; it was discarded, not run.`, INFO);
+      return;
+    }
+    this.output.addFrontendInteraction(program, `${program} did not read some of your typing; it never runs by itself and waits for your approval (/queue).`, INFO);
+  }
+
+  /**
+   * Add the composer's text to the queue. `typedWhile`: the program that ran when this line was entered with a plain
+   * Enter, with no question NMSh could see (#426). The line may be that program's reply to a read NMSh never saw (a timed
+   * read that gave up between looks, any program's read on macOS), and nothing about its text says otherwise: `yes`, a
+   * one-time code and `ls` are all valid replies. So it is quarantined: the owner holds it for the person's approval,
+   * it is shown by where it came from rather than by its text, and it is never offered again by Up. Ctrl+Q (no
+   * typedWhile) is the explicit way to queue a command to run after.
+   */
+  private enqueue(text: string, typedWhile?: string): void {
     if (!this.queueAvailable()) {
       this.output.addFrontendInteraction('/queue', this.session.features.has('queue')
         ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
@@ -11359,9 +12672,19 @@ export class TerminalApp {
       return;
     }
     this.syncQueuePolicy();
-    this.session.queue({op: 'add', text});
-    this.sessionSubmissions.push({text, slash: false});
-    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+    if (typedWhile === undefined) {
+      this.session.queue({op: 'add', text});
+      this.sessionSubmissions.push({text, slash: false});
+      if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+    } else {
+      const conditions = this.queueConditionsAvailable();
+      // A service without per-entry approval pauses the whole queue first, so nothing runs before the pause lands.
+      if (!conditions) this.session.queue({op: 'pause'});
+      this.session.queue({op: 'add', text, ...(conditions ? {condition: 'approve' as const, typedWhile} : {})});
+      if (conditions) this.ownHeldAdds += 1;
+      // The note never repeats the text: it may be a password.
+      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after.`, INFO);
+    }
     this.editor.clear();
     this.composerHistory.reset();
     this.runningDraft = undefined;
@@ -11402,6 +12725,11 @@ export class TerminalApp {
       }
       // A rapid second Enter after confirming a queue review is not an answer for the command it just started.
       if (intent === 'enter' && !text.trim() && Date.now() - this.queueConfirmedAt < QUEUE_CONFIRM_SETTLE_MS) return;
+      // Right after Ctrl+C or Ctrl+Z, a line is for the prompt the stop brings back; it waits for that to be verified.
+      // So is a line begun once the shell said the command is done (its prompt hooks run): no program is left to read
+      // it, and it is no reply (#436). One begun before that may be a reply, and is held for approval below.
+      const afterDone = Boolean(this.running.done && this.runningDraft?.startId === this.running.startId && this.runningDraft.afterDone);
+      if (intent === 'enter' && text.trim() && (this.justStopped() || afterDone) && !this.answersByDefault() && !this.passthrough) { this.holdForStop(text, afterDone && !this.justStopped()); return; }
       const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
@@ -11411,10 +12739,14 @@ export class TerminalApp {
         return;
       }
       if (!text.trim()) return;
-      this.enqueue(text);
+      if (this.reviewMixedBlock(text)) return;
+      this.enqueue(text, intent === 'enter' ? commandWords(this.running.command)[0] ?? 'the command' : undefined);
       return;
     }
     if (intent === 'send') return;
+    // Held keys replayed after their command ended: this Enter was pressed while it ran, so it is no command (#426).
+    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.replayTypedWhile); return; }
+    if (this.reviewMixedBlock(text)) return;
     if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
     const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
@@ -11423,7 +12755,11 @@ export class TerminalApp {
       this.render();
       return;
     }
-    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
+    // A held line waiting for approval at the head runs nothing by itself, so it never holds the prompt: a command you
+    // submit there runs now (#426). Anything behind the held line waits for it either way.
+    const head = this.queueState.entries[0];
+    const held = Boolean(head && head.condition === 'approve' && !head.approved);
+    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused && !held))) {
       this.enqueue(text);
       return;
     }
@@ -11602,7 +12938,38 @@ export class TerminalApp {
   private onInputState(state: InputState): void {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
+    // The question just answered, reported late: it is answered (#426). A later one is new.
+    if (state.request && this.answeredQuestion?.startId === this.running.startId && state.request.since <= this.answeredQuestion.since) {
+      const {request: _answered, ...rest} = state;
+      state = rest;
+    }
+    // A question newer than the hidden one NMSh answered: typing from now on may be its reply, not type-ahead.
+    if (state.request && this.hiddenAnswer && state.request.since > this.hiddenAnswer.at) this.hiddenAnswer = undefined;
+    // A question that began before Ctrl+C or Ctrl+Z is the one the stop ended, reported late (the session sampled it
+    // before it saw the stop): while typing is type-ahead for the prompt, it routes nothing to the program (#436). If it
+    // is still the session's word when that window closes (the program kept reading through the stop), it applies
+    // then, so a hidden question goes back to direct, never drawn input. A question asked after the stop is new.
+    const stoppedAt = this.running.stoppedAt;
+    if (state.request && stoppedAt !== undefined && this.justStopped() && state.request.since < stoppedAt) {
+      const {request: _ended, ...current} = state;
+      const running = this.running;
+      const reported = state;
+      const apply = () => {
+        if (this.staleStopReport === apply) this.staleStopReport = undefined;
+        if (this.running === running && this.inputState === current) this.onInputState(reported);
+      };
+      this.staleStopReport = apply;
+      const later = setTimeout(apply, Math.max(0, stoppedAt + STOP_TYPE_AHEAD_MS - Date.now()));
+      later.unref?.();
+      state = current;
+    }
     this.inputState = state;
+    // The shell said the command is done: typing begun from now on is for the prompt, never a reply (#426, #436).
+    if (state.done) this.running.done = true;
+    if (state.request && stoppedAt !== undefined && state.request.since >= stoppedAt) {
+      this.running.askedAfterStop = true;
+      if (this.stopAhead?.startId === this.running.startId) this.settleStopAhead('asked');
+    }
     const draft = this.runningDraft;
     if (state.terminalOwner) {
       // A native reader took the terminal: what was typed for this command after it started is its input, as a
@@ -11610,20 +12977,103 @@ export class TerminalApp {
       const typed = draft && draft.startId === this.running.startId && !this.queueCompose && !this.queueEdit ? this.editor.text : '';
       this.onActiveModeChange('PASSTHROUGH');
       if (typed && this.passthrough) { this.editor.clear(); this.runningDraft = undefined; this.session.write(typed); }
-      this.ownershipLook?.release();
+      this.ownershipLook?.settle('route');
       return;
     }
     const request = state.request;
     // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
     // meant for it: a terminal would already have delivered them. Hand them over now instead of hiding them.
-    if (request && directInput(request) && draft && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
+    if (request && directInput(request) && draft && !draft.typeAhead && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
       const typed = this.editor.text;
       this.editor.clear();
       this.runningDraft = undefined;
       this.session.write(typed);
-    } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
+    } else if (request && draft && !draft.typeAhead && draft.at >= request.since && this.editor.text) draft.answering = true;
+    if (request?.mode === 'hidden') this.stashDraftTypedBefore(request);
+    if (request) this.holdQueuedReplies(request);
     // The evidence a held key waited for has arrived.
-    if (request) this.ownershipLook?.release();
+    if (request) this.ownershipLook?.settle('route');
+    this.render();
+  }
+
+  /**
+   * A question can come after its reply was already typed and entered: with no question to answer yet (or one NMSh
+   * could not yet see, on a loaded machine), that Enter queued it as a command (#426, documented limit). When the
+   * command asks for input, the entries queued while it ran may be that reply: they wait for the person's approval
+   * instead of running after it, so a reply, or a password, never runs as a shell command by itself. Entries queued before the command started are left as they
+   * are, and so are those queued while this question is already shown (Ctrl+Q): each question is checked once, when it
+   * is first reported. Its `since` is no boundary: it can be when the shell went idle (a `sleep` before the `read`).
+   */
+  private holdQueuedReplies(request: InputRequest): void {
+    const running = this.running;
+    if (!running || !this.queueAvailable()) return;
+    const hidden = request.mode === 'hidden';
+    if (this.hiddenQueueCheck?.startId === running.startId && this.hiddenQueueCheck.since === request.since) return;
+    this.hiddenQueueCheck = {startId: running.startId, since: request.since};
+    // Entries already waiting (a line that did not start with a command) are counted, not changed; approved ones are left.
+    const typed = this.queueState.entries.filter(entry => entry.addedAt >= running.startedAt && !(entry.condition === 'approve' && entry.approved));
+    if (!typed.length) return;
+    const program = commandWords(running.command)[0] ?? 'The command';
+    if (this.queueConditionsAvailable()) {
+      for (const entry of typed) if (entry.condition !== 'approve') this.session.queue({op: 'condition', id: entry.id, condition: 'approve'});
+      const count = typed.length === 1 ? 'the command queued while it ran waits' : `the ${typed.length} commands queued while it ran wait`;
+      this.output.addFrontendInteraction(program, `${program} asked for ${hidden ? 'hidden ' : ''}input; ${count} for your approval (/queue), in case one was its reply.`, INFO);
+    } else {
+      // An older session service without per-entry approval: the whole queue waits instead.
+      this.session.queue({op: 'pause'});
+      this.output.addFrontendInteraction(program, `${program} asked for ${hidden ? 'hidden ' : ''}input; the queue is paused (/queue), in case a command queued while it ran was its reply.`, INFO);
+    }
+  }
+
+  /**
+   * When the running command asks for hidden input, a draft typed in the composer during it, before the question,
+   * may be the password typed before the prompt appeared (a terminal's program would usually flush it). It leaves the
+   * composer, so it is neither shown nor sent as the answer, and is held at the prompt when the command ends; an Enter
+   * held with it was for that draft, never an empty answer for the question.
+   */
+  private stashDraftTypedBefore(request: InputRequest): void {
+    const running = this.running;
+    const draft = this.runningDraft;
+    // Type-ahead typed right after Ctrl+C or Ctrl+Z is the person's next command for the prompt (#436), not a reply.
+    if (!running || !draft || draft.typeAhead || draft.startId !== running.startId || draft.at >= request.since) return;
+    if (this.queueCompose || this.queueEdit || !this.editor.text) return;
+    const text = this.editor.text;
+    this.editor.clear();
+    this.runningDraft = undefined;
+    const program = running.command.trim().split(/\s+/u)[0] || 'the command';
+    this.stashedDraft = this.stashedDraft?.startId === running.startId
+      ? {...this.stashedDraft, text: `${this.stashedDraft.text}\n${text}`} : {startId: running.startId, text, program};
+    const hold = this.ownershipLook;
+    if (hold && !hold.atPrompt && hold.keys.every(key => key.kind === 'enter' || key.kind === 'newline')) hold.settle('discard');
+  }
+
+  /** Show held typing in the composer: its text and edits only (REVEALABLE_KEYS), and never its final Enter. */
+  private revealHeld(keys: readonly Key[]): void {
+    const shown = keys.filter(key => REVEALABLE_KEYS.has(key.kind));
+    let end = shown.length;
+    while (end > 0 && shown[end - 1]!.kind === 'enter') end -= 1;
+    this.replayingHeld = true;
+    try { for (const item of shown.slice(0, end)) this.handleKey(item.kind === 'enter' ? {kind: 'newline'} as Key : item); } finally { this.replayingHeld = false; }
+    this.render();
+  }
+
+  /** Hold text at the prompt, hidden, until the person shows it (Tab) or discards it (Esc, Ctrl+C); nothing else settles it. */
+  private holdAtPrompt(text: string, program: string): void {
+    const keys: Key[] = text.split('\n').flatMap((line, index) => index ? [{kind: 'newline'} as Key, {kind: 'text', value: line} as Key] : [{kind: 'text', value: line} as Key]);
+    const existing = this.ownershipLook;
+    if (existing?.atPrompt) { existing.keys.unshift(...keys); this.render(); return; }
+    if (existing) existing.settle('route');
+    let settled = false;
+    const hold: OwnershipHold = {keys, startId: -1, answering: false, slow: false, uncertain: true, ended: true, sawHidden: false,
+      sawAnsweredHidden: false, atPrompt: true, program, settle: how => {
+        if (settled || (how !== 'reveal' && how !== 'discard')) return;
+        settled = true;
+        if (this.ownershipLook === hold) this.ownershipLook = undefined;
+        if (how === 'reveal') { this.revealHeld(hold.keys); return; }
+        this.output.addFrontendInteraction(program, 'Your held typing was discarded, not sent or run.', INFO);
+        this.render();
+      }};
+    this.ownershipLook = hold;
     this.render();
   }
 
@@ -11640,44 +13090,137 @@ export class TerminalApp {
     return key.kind === 'enter' && Boolean(text.trim()) && !isSlashInput(text) && this.queueAvailable() && !this.answersByDefault();
   }
 
-  /** Hold the key (and any typed after it) until the session has looked, then route them on that evidence. */
+  /**
+   * Hold the key (and any typed after it) until the session has looked, then route them on that evidence. Until then
+   * nothing typed is drawn, sent or queued: it may be a hidden reply, and its Enter may answer the command or queue the
+   * next one (#426). A look usually answers in milliseconds; after OWNERSHIP_LOOK_SLOW_MS the composer says the typing
+   * is kept. When the look saw nothing usable, or never answers within OWNERSHIP_LOOK_MS, the typing stays held and
+   * hidden (uncertain) until evidence arrives or the person chooses: Ctrl+S sends it to the program, Tab shows it in
+   * the composer, Esc discards it. It is never routed on a guess. Ctrl+C discards it, as a terminal flushes its input.
+   * A command that ends while its typing was held past the slow mark never runs it. One that ends while a look saw
+   * hidden input right after a hidden answer leaves the typing held at the prompt for the person (Tab or Esc).
+   */
   private holdForOwnershipLook(key: Key): void {
     const running = this.running!;
     const keys = [key];
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      clearTimeout(timer);
-      if (this.ownershipLook?.keys === keys) this.ownershipLook = undefined;
-      // The command ended while NMSh looked. A reply to its open question is discarded, never run; anything else
+    // The command line's own first word (sudo, not the command sudo runs): what the person sees running.
+    const program = running.command.trim().split(/\s+/u)[0] || 'the command';
+    const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter' || item.kind === 'newline';
+    const discarded = (message: string) => { if (keys.some(typing)) this.output.addFrontendInteraction(program, message, INFO); };
+    let settled = false;
+    const settle = (how: HoldSettle) => {
+      if (settled) return;
+      // Held at the prompt: no evidence, timer or later command settles it, only the person (Tab, Esc, Ctrl+C).
+      if (hold.atPrompt && how !== 'reveal' && how !== 'discard') return;
+      const ended = hold.ended || this.running?.startId !== running.startId;
+      const doubted = hold.slow || hold.uncertain || hold.sawHidden;
+      // The command ended while a look still saw hidden input right after NMSh answered a hidden question. The typing
+      // is the next command or a reply to a second question with no prompt that gave up first; nothing tells them
+      // apart, and a time window is no proof. It is neither run nor dropped: it waits, hidden, for the person.
+      if (how === 'route' && ended && !hold.answering && !doubted && hold.sawAnsweredHidden && keys.some(typing)) {
+        clearTimeout(bound);
+        clearTimeout(slow);
+        hold.atPrompt = true;
+        hold.uncertain = true;
+        this.render();
+        return;
+      }
+      settled = true;
+      clearTimeout(bound);
+      clearTimeout(slow);
+      if (this.ownershipLook === hold) this.ownershipLook = undefined;
+      if (how === 'discard') {
+        if (doubted) discarded('Your held typing was discarded, not sent or run.');
+        this.render();
+        return;
+      }
+      if (how === 'send') {
+        // What the composer shows and what was held, in the order typed, as the bytes a terminal sends.
+        const bytes = `${this.editor.text}${keys.map(item => directKeyBytes(item) ?? '').join('')}`;
+        this.editor.clear();
+        this.runningDraft = undefined;
+        if (bytes) this.session.write(bytes);
+        if (/[\r\n]/u.test(bytes)) this.answerSent();
+        this.render();
+        return;
+      }
+      if (how === 'reveal') {
+        this.revealHeld(keys);
+        return;
+      }
+      // The command ended while NMSh looked. A reply to its open question is discarded, never run; so is typing held
+      // past the slow mark, since NMSh never learned whether it was a reply (a timed read that gave up). Anything else
       // is what it would have been without the look: typing for the next command, Enter running it after.
-      const ended = this.running?.startId !== running.startId;
-      const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter';
-      if (ended && hold.answering && keys.some(typing)) {
-        this.output.addFrontendInteraction(commandWords(running.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      if (ended && (hold.answering || doubted) && keys.some(typing)) {
+        discarded(hold.answering ? 'The command finished before your reply was sent; the reply was discarded, not run.'
+          : `${program} ended before NMSh could tell whether your typing was for it; it was discarded, not run.`);
+        const rest = keys.filter(item => !typing(item));
+        this.replayingHeld = true;
+        try { for (const item of rest) this.handleKey(item); } finally { this.replayingHeld = false; }
+        this.render();
+        return;
       }
       // The program took the terminal meanwhile (a native reader, a full-screen program): the keys are its own, in order.
       if (!ended && this.passthrough) {
         for (const item of keys) { const bytes = directKeyBytes(item); if (bytes) this.session.write(bytes); }
         return;
       }
-      const replay = ended && hold.answering ? keys.filter(item => !typing(item)) : keys;
       this.replayingHeld = true;
-      try { for (const item of replay) this.handleKey(item); } finally { this.replayingHeld = false; }
+      // Keys typed while the command ran: an Enter among them never runs a command at the prompt (#426).
+      if (ended) this.replayTypedWhile = program;
+      try { for (const item of keys) this.handleKey(item); } finally { this.replayingHeld = false; this.replayTypedWhile = undefined; }
       this.render();
     };
-    const timer = setTimeout(release, OWNERSHIP_LOOK_MS);
-    timer.unref?.();
-    const hold = {keys, startId: running.startId, answering: this.answersByDefault(), release};
+    // No usable evidence yet: keep the typing held and hidden, and say so (never route it on a guess).
+    const doubt = () => {
+      if (settled || hold.atPrompt) return;
+      if (this.running?.startId !== running.startId || this.passthrough || this.inputState?.request || this.inputState?.terminalOwner) { settle('route'); return; }
+      hold.uncertain = true;
+      this.render();
+    };
+    const bound = setTimeout(doubt, OWNERSHIP_LOOK_MS);
+    bound.unref?.();
+    const slow = setTimeout(() => { hold.slow = true; this.render(); }, OWNERSHIP_LOOK_SLOW_MS);
+    slow.unref?.();
+    // Only typing begun just after the answer, with no newer question since, may be type-ahead (#433 review): a second
+    // hidden question that NMSh has not reported yet must still count its reply as possibly a password.
+    const startedAt = Date.now();
+    const afterHiddenAnswer = () => this.hiddenAnswer?.startId === running.startId && startedAt - this.hiddenAnswer.at <= HIDDEN_ANSWER_TYPE_AHEAD_MS;
+    const hold: OwnershipHold = {keys, startId: running.startId, answering: this.answersByDefault(), slow: false, uncertain: false, ended: false,
+      sawHidden: false, sawAnsweredHidden: false, atPrompt: false, program, settle};
     this.ownershipLook = hold;
-    void this.lookWhenStarted(running.startId, Date.now() + OWNERSHIP_LOOK_MS).then(release, release);
+    // A look that saw nothing usable (a probe failed or timed out) gets one more look before the typing is left held:
+    // gathering evidence once more, not waiting longer. An older service never says what it saw, so its typing is left
+    // held the same way: fail closed, never routed on no evidence (#426).
+    let relooked = false;
+    const deadline = Date.now() + OWNERSHIP_LOOK_MS;
+    const look = () => void this.lookWhenStarted(running.startId, deadline).then(answered, () => answered('unknown'));
+    const answered = (result: LookResult | undefined) => {
+      if (settled || hold.atPrompt) return;
+      // Hidden input seen just after NMSh answered this command's hidden question is usually that question, open until
+      // its read returns, and the typing type-ahead; but it can be a second question with no prompt. Either way the
+      // typing is not a known reply (not discarded) and not known type-ahead (never run by itself if the command ends).
+      if (result === 'hidden') { if (afterHiddenAnswer()) hold.sawAnsweredHidden = true; else hold.sawHidden = true; }
+      // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
+      // held by a command that ended apply now, not those for one still running. Typing is type-ahead for the prompt
+      // only when the shell's done marker reached this window before it began (InputState.done): a look's idle says
+      // when the look sampled, not when the key was pressed.
+      if (result === 'idle') hold.ended = true;
+      // An older service never says what it saw: that is no evidence either, so its typing stays held (fail closed).
+      const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request) || result === undefined;
+      if (!blind) settle('route');
+      else if (!relooked && this.running?.startId === running.startId) { relooked = true; look(); }
+      else doubt();
+    };
+    look();
   }
 
   /** Look once the shell has started the command (keys typed right after Enter arrive before its exec). */
-  private async lookWhenStarted(startId: number, deadline: number): Promise<void> {
+  private async lookWhenStarted(startId: number, deadline: number): Promise<LookResult | undefined> {
     while (this.running?.startId === startId && this.running.awaitingExec && Date.now() < deadline) await new Promise(done => setTimeout(done, 15));
-    if (this.running?.startId === startId && !this.running.awaitingExec) await this.session.lookInput?.();
+    if (this.running?.startId !== startId) return 'idle';
+    if (this.running.awaitingExec) return 'unknown';
+    return this.session.lookInput?.();
   }
 
   /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
@@ -11685,13 +13228,14 @@ export class TerminalApp {
     if (key.kind === 'interrupt') {
       if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
       this.session.interrupt();
-      this.answerSent();
+      this.answerSent(true);
       return;
     }
     if (key.kind === 'eof') { this.session.endInput(); return; }
     const bytes = directKeyBytes(key);
     if (!bytes) return;
     const mode = this.inputState?.request?.mode;
+    if (mode === 'hidden' && /[\r\n]/u.test(bytes) && this.running) this.hiddenAnswer = {startId: this.running.startId, at: Date.now()};
     this.session.write(bytes);
     // One key answers a key read; Enter ends a hidden line (as the session's watch also decides).
     if (mode === 'key' || /[\r\n]/u.test(bytes)) this.answerSent();
@@ -11702,8 +13246,11 @@ export class TerminalApp {
    * keys typed next (the next command, at typing speed) are routed on fresh evidence, never on the question that was
    * just answered, so they never reach a program that stopped reading or a shell prompt NMSh does not draw.
    */
-  private answerSent(): void {
-    if (this.inputState?.request) this.inputState = {timing: this.inputState.timing};
+  private answerSent(stopped = false): void {
+    const request = this.inputState?.request;
+    // A stop is no answer: a program that reads through Ctrl+C still asks the same question (#436).
+    if (request && this.running && !stopped) this.answeredQuestion = {startId: this.running.startId, since: request.since};
+    if (request) this.inputState = {timing: this.inputState!.timing};
     this.commandLine.reset();
   }
 
@@ -11942,6 +13489,12 @@ export class TerminalApp {
     this.stopped = true;
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
+    this.closeArcade(false);
+    this.closeBrowser(false);
+    this.docSession?.preview?.dispose();
+    void this.browserHost?.shutdown();
+    this.releaseViewerImages();
+    this.graphics?.releaseAll();
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();

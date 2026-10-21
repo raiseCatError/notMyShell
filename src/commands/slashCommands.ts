@@ -19,7 +19,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/theme-bridge': {group: 'Appearance', title: 'Open Theme Bridge'}, '/chroma': {group: 'Appearance', title: 'Open Chroma'},
   '/chrome': {group: 'Appearance', title: 'Open UI Chrome'}, '/cursor': {group: 'Appearance', title: 'Open Cursor & effects'},
   '/motion': {group: 'Appearance', title: 'Open Motion'}, '/glyphs': {group: 'Appearance', title: 'Configure Glyph Style'},
-  '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'},
+  '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'}, '/game': {alias: '/games'}, '/arcade': {alias: '/games'},
   '/screensaver': {group: 'Appearance', title: 'Open Idle visuals'}, '/activity': {group: 'Appearance', title: 'Open Live activity colors'},
   '/prompt': {group: 'Composer & transcript', title: 'Open Prompt'}, '/modules': {group: 'Composer & transcript', title: 'Open Modules'}, '/layout': {group: 'Composer & transcript', title: 'Configure Composer Layout'},
   '/composer': {alias: '/layout'}, '/syntax': {group: 'Composer & transcript', title: 'Open Syntax highlighting'},
@@ -39,8 +39,19 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/action', insertion: '/action', alias: '/actions', description: 'Same as /actions, including /action N'},
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Select completed output: Up/Down, Enter copies, Esc returns (saved Quick Copy preferences still apply)'},
-  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
+  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status; --semantic or --both the Semantic Output reading'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
+  {name: '/games', insertion: '/games', description: 'Vespyr Arcade: Vespyr Run, Flight and Dash, Classic Sudoku and Vespyr Doku, with local high scores (/game run · /game sudoku · /arcade vespyr-doku)'},
+  {name: '/game', insertion: '/game', description: 'Same as /games; /game <name> opens a game directly: run, flight, dash, sudoku, vespyr-doku'},
+  {name: '/arcade', insertion: '/arcade', description: 'Same as /games'},
+  {name: '/game run', insertion: '/game run', description: 'Vespyr Run: an endless runner. Space or ↑ jumps, ↓ ducks'},
+  {name: '/game flight', insertion: '/game flight', description: 'Vespyr Flight: fly through endless gaps. Space or ↑ flaps'},
+  {name: '/game dash', insertion: '/game dash', description: 'Vespyr Dash: a rhythm platformer over spikes and gaps. Space or ↑ jumps'},
+  {name: '/game sudoku', insertion: '/game sudoku', description: 'Classic Sudoku with notes, hints, undo and best times'},
+  {name: '/game vespyr-doku', insertion: '/game vespyr-doku', description: 'Vespyr Doku: one cat in every row, column and colored region, none touching'},
+  {name: '/browser', insertion: '/browser', description: 'A real browser (Chromium) in NMSh: /browser · /browser https://example.com · /browser ./index.html. Needs an installed Chrome or Chromium; nothing is downloaded'},
+  {name: '/view', insertion: '/view ', description: 'Read a file or a completed output in a native viewer: /view README.md · /view 2 (output 2, numbered as /copy) · /view (latest output)'},
+  {name: '/edit', insertion: '/edit ', description: 'Edit a small text file in NMSh: /edit notes.md (Ctrl+S saves safely, Esc closes; vim, nano and your editor still work as usual)'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
   {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
   {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
@@ -49,7 +60,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
-  {name: '/modules', insertion: '/modules', description: 'Context modules, catalog and Context Packs: show, route to a surface, search; saved as you change them'},
+  {name: '/modules', insertion: '/modules', description: 'Context modules, catalog and Context Packs: show, route to a surface, search; saved as you change them (/modules explain · /modules timings)'},
   {name: '/cursor', insertion: '/cursor', description: 'Text caret shape and blink while NMSh owns the composer'},
   {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
   {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
@@ -126,7 +137,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
   {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
   {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings'},
-  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume|refresh)'},
+  {name: '/track', insertion: '/track ', description: 'Keep one live result of a finite command in the transcript, refreshed in place (/track df -h · /track --every 5s -- docker system df · pause|resume|refresh|stop|copy)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
@@ -168,10 +180,18 @@ export type ParsedSlashCommand =
   | {kind: 'pins'}
   /** /compare [A [B]]: outputs by /copy number; A defaults to the latest, B to A's previous run (or a choice). */
   | {kind: 'compare'; first?: number; second?: number; error?: string}
+  /** /view [path | N]: a file (relative to the shell's directory, ~ for home), output N as /copy numbers it, or the latest output. */
+  | {kind: 'view'; target: string}
+  /** /browser [address | path]: the real browser panel (Chromium, started on demand). */
+  | {kind: 'browser'; target: string}
+  /** /games, /game and /arcade are one command: the hub, or a game by id or alias. */
+  | {kind: 'arcade'; game?: string}
+  /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
+  | {kind: 'editFile'; target: string}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
-  | {kind: 'modules'}
+  | {kind: 'modules'; report?: 'explain' | 'timings'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
   | {kind: 'themeBridge'}
@@ -226,7 +246,7 @@ export type ParsedSlashCommand =
   | {kind: 'providers'; family?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'}
   | {kind: 'llm'}
   | {kind: 'doctor'}
-  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start' | 'copy'; arguments: string; /** Typed as /track: keep one live result in the transcript. */ track?: boolean}
   | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
@@ -263,6 +283,14 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const clips = /^\/clips(?:\s+suggestions\s+(on|off))?\s*$/u.exec(input);
   if (clips) return {kind: 'clips', ...(clips[1] ? {suggestions: clips[1] === 'on'} : {})};
   if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
+  const browser = /^\/browser(?:\s+([\s\S]*))?$/u.exec(input);
+  if (browser) return {kind: 'browser', target: (browser[1] ?? '').trim()};
+  const arcade = /^\/(?:games|game|arcade)(?:\s+(.*?))?\s*$/u.exec(input);
+  if (arcade) return {kind: 'arcade', ...(arcade[1] ? {game: arcade[1]} : {})};
+  const view = /^\/view(?:\s+([\s\S]*))?$/u.exec(input);
+  if (view) return {kind: 'view', target: (view[1] ?? '').trim()};
+  const editFile = /^\/edit(?:\s+([\s\S]*))?$/u.exec(input);
+  if (editFile) return {kind: 'editFile', target: (editFile[1] ?? '').trim()};
   // /cp is /copy: one parser, one handler, every form.
   if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
   const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
@@ -270,7 +298,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
-  if (/^\/modules\s*$/u.test(input)) return {kind: 'modules'};
+  const modules = /^\/modules(?:\s+(explain|timings))?\s*$/u.exec(input);
+  if (modules) return modules[1] ? {kind: 'modules', report: modules[1] as 'explain' | 'timings'} : {kind: 'modules'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
   if (/^\/theme-bridge\s*$/u.test(input)) return {kind: 'themeBridge'};
@@ -377,11 +406,14 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings|history|save-summary))?\s*$/u.exec(input);
   if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
     : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'};
-  const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
+  // /track shares the /watch scheduler, safety gate and manager; it also keeps one live result in the transcript.
+  const watch = /^\/(watch|track)(?:\s+(.*))?$/u.exec(input);
   if (watch) {
-    const rest = (watch[1] ?? '').trim();
-    const op = /^(stop|pause|resume|now)(?:\s+(.*))?$/u.exec(rest);
-    return op ? {kind: 'watch', op: op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()} : {kind: 'watch', op: rest ? 'start' : 'list', arguments: rest};
+    const track = watch[1] === 'track';
+    const rest = (watch[2] ?? '').trim();
+    const op = new RegExp(`^(stop|pause|resume|now|refresh${track ? '|copy' : ''})(?:\\s+(.*))?$`, 'u').exec(rest);
+    const kind = op ? (op[1] === 'refresh' ? 'now' : op[1]) as 'stop' | 'pause' | 'resume' | 'now' | 'copy' : rest && rest !== 'list' ? 'start' : 'list';
+    return {kind: 'watch', op: kind, arguments: op ? (op[2] ?? '').trim() : rest === 'list' ? '' : rest, ...(track ? {track: true} : {})};
   }
   const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
   if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};

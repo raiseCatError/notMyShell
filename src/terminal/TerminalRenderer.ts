@@ -39,6 +39,17 @@ export function rowForTerminal(row: string, columns: number | undefined): string
   return row.replace(/\u001B\[0?K/gu, '');
 }
 
+/** A sized-text block at a screen cell (zero-based row and column); `sequence` draws it with the cursor at that cell. */
+export interface TextBlock {
+  row: number;
+  column: number;
+  columns: number;
+  rows: number;
+  sequence: string;
+}
+
+const blockKey = (block: TextBlock): string => `${block.row}:${block.column}:${block.columns}x${block.rows}:${block.sequence}`;
+
 export class TerminalRenderer {
   private previous: string[] = [];
   private active = false;
@@ -148,6 +159,30 @@ export class TerminalRenderer {
     this.overlayPlaced = false;
   }
 
+  /** Sized-text blocks (OSC 66) the current frame wants, and the ones already on screen. */
+  private textBlocks: TextBlock[] = [];
+  private placedBlocks = new Map<string, TextBlock>();
+
+  /**
+   * Show these sized-text blocks (see ui/textSizing). The terminal erases a whole multicell block when any one of its cells
+   * is overwritten or erased, so the renderer writes every row first and draws the blocks after, and draws a block again
+   * whenever a row it covers was rewritten. A block that goes away forces its rows to repaint, which erases it.
+   */
+  setTextBlocks(next: readonly TextBlock[]): void {
+    this.textBlocks = [...next];
+    const keys = new Set(next.map(blockKey));
+    for (const [key, block] of this.placedBlocks) {
+      if (keys.has(key)) continue;
+      this.placedBlocks.delete(key);
+      for (let row = block.row; row < block.row + block.rows; row += 1) if (row < this.previous.length) this.previous[row] = '\u0000';
+    }
+  }
+
+  /** Raw bytes for an owner of terminal-side objects (the graphics service uploading an image). Nothing while a program owns the screen. */
+  sendRaw(data: string): void {
+    if (this.active && !this.suspended && data) this.write(data);
+  }
+
   /** The rows last written to the screen, for presentation-only captures (screen savers). Never sent anywhere. */
   snapshot(): string[] {
     return this.previous.map(row => (row === '\u0000' ? '' : row));
@@ -164,6 +199,12 @@ export class TerminalRenderer {
     const overlay = this.overlay;
     const placeOverlay = Boolean(overlay && (!this.overlayPlaced
       || changedRows.some(row => row >= overlay.row && row < overlay.row + overlay.size.rows)));
+    const changed = new Set(changedRows);
+    const blocksToPlace = this.textBlocks.filter(block => {
+      if (!this.placedBlocks.has(blockKey(block))) return true;
+      for (let row = block.row; row < block.row + block.rows; row += 1) if (changed.has(row)) return true;
+      return false;
+    });
     const cursor = {
       row: frame.cursorRow,
       column: frame.cursorColumn,
@@ -173,7 +214,7 @@ export class TerminalRenderer {
       || cursor.row !== this.previousCursor.row
       || cursor.column !== this.previousCursor.column
       || cursor.visible !== this.previousCursor.visible;
-    if (changedRows.length === 0 && !cursorChanged && !placeOverlay) return;
+    if (changedRows.length === 0 && !cursorChanged && !placeOverlay && blocksToPlace.length === 0) return;
 
     // Hide the caret while it travels only when it actually moves or changes visibility. A repaint under a
     // caret that stays visible in place (animated dividers or Chroma, a clock tick) toggles nothing: each
@@ -188,6 +229,10 @@ export class TerminalRenderer {
       if (!this.overlayTransmitted) { output += overlay.transmit; this.overlayTransmitted = true; }
       output += `\u001B[${overlay.row + 1};${overlay.column + 1}H${overlay.place}`;
       this.overlayPlaced = true;
+    }
+    for (const block of blocksToPlace) {
+      output += `\u001B[${block.row + 1};${block.column + 1}H${block.sequence}`;
+      this.placedBlocks.set(blockKey(block), block);
     }
     output += `\u001B[${frame.cursorRow};${frame.cursorColumn}H`;
     if (cursor.visible && !steady) output += '\u001B[?25h';
@@ -205,6 +250,7 @@ export class TerminalRenderer {
     // A foreground program owns the screen now: no NMSh image may stay on it.
     this.clearOverlay();
     this.suspended = true;
+    this.placedBlocks.clear();
     // Pop kitty mode while still on the alt screen
     this.childModes.reset('alternate');
     this.childModes.observeModes(restore);
@@ -226,6 +272,7 @@ export class TerminalRenderer {
     if (!this.active || !this.suspended) return;
     this.suspended = false;
     this.overlayPlaced = false;
+    this.placedBlocks.clear();
     this.previous = [];
     this.previousCursor = undefined;
     // Clean each child keyboard stack on its own screen, finish on alternate,
@@ -237,6 +284,7 @@ export class TerminalRenderer {
     this.previous = [];
     this.previousCursor = undefined;
     this.overlayPlaced = false;
+    this.placedBlocks.clear();
   }
 
   leave(): void {
@@ -249,6 +297,8 @@ export class TerminalRenderer {
       return;
     }
     this.clearOverlay();
+    this.placedBlocks.clear();
+    this.textBlocks = [];
     this.active = false;
     this.previous = [];
     this.previousCursor = undefined;

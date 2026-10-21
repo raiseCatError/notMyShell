@@ -13,6 +13,7 @@ import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
 import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from '../session/QueueSummary.js';
+import {recognizeOutput, type SemanticResult} from './semantic.js';
 
 export {renderHistoricalContext} from './TranscriptPresenter.js';
 
@@ -155,6 +156,13 @@ export class OutputBuffer {
   /** How rows look; presentation state here is never serialized into transcripts. */
   readonly presenter = new TranscriptPresenter();
   private outputFolding: OutputFoldingMode = 'smart';
+  /** Semantic Output (#386): readings of completed output, derived and never stored; details open/closed per block. */
+  private semanticOutput = true;
+  private readonly semanticReadings = new WeakMap<CompletedCommand, SemanticResult | null>();
+  private readonly semanticDetails = new Map<number, boolean>();
+  /** /track: the stored line each live result is drawn under (line id → tracker id), and who draws it. */
+  private readonly trackAnchors = new Map<number, string>();
+  private liveRowsProvider?: (id: string, width: number) => readonly string[];
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
@@ -196,6 +204,8 @@ export class OutputBuffer {
   private retireClearedBlocks(): void {
     this.completed.length = 0;
     this.userToggled.clear();
+    this.semanticDetails.clear();
+    this.trackAnchors.clear();
     this.setOutputFilter(undefined);
     if (!this.active) return;
     this.active.start = 0;
@@ -271,6 +281,8 @@ export class OutputBuffer {
     this.firstRun = undefined;
     this.parser.restore([]);
     this.completed.length = 0;
+    this.semanticDetails.clear();
+    this.trackAnchors.clear();
     this.visualGaps.clear();
     this.lineTypes.clear();
     this.historicalContexts.clear();
@@ -352,7 +364,21 @@ export class OutputBuffer {
     const placed = startId >= after && outputStartId <= this.parser.completedCount() && (header || (startId === 0 && outputStartId === 0));
     if (!placed) this.retireClearedBlocks();
     else if (!header) this.active.cleared = true;
+    // The resumed command may go on redrawing its own rows (not NMSh's lines written into its block meanwhile).
+    let ownRows = placed ? outputStartId : 0;
+    for (let line = ownRows; line < this.parser.completedCount(); line += 1) if (this.lineTypes.has(line)) ownRows = line + 1;
+    this.parser.fenceAt(ownRows);
     return {cleared: Boolean(this.active.cleared)};
+  }
+
+  /** The PTY's rows, which bound how far a program's output can redraw rows above its newest line. */
+  setScreenRows(rows: number): void {
+    this.parser.setScreenRows(rows);
+  }
+
+  /** The PTY's columns: a program's long lines occupy rows at this width when it moves its cursor over them. */
+  setScreenColumns(columns: number): void {
+    this.parser.setScreenColumns(columns);
   }
 
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
@@ -608,7 +634,63 @@ export class OutputBuffer {
       firstRun: this.firstRun,
       ownerOf: this.blockOwnership(),
       foldHighlights: record => this.foldHighlightsFor(record),
+      // Only a transcript with /track blocks pays for the per-line lookup.
+      ...(this.trackAnchors.size ? {liveRows: (line: number, width: number) => {
+        const id = this.trackAnchors.get(line);
+        return id === undefined ? undefined : this.liveRowsProvider?.(id, width);
+      }} : {}),
+      semantic: record => {
+        const result = this.semanticFor(record);
+        return result ? {result, open: this.semanticDetailsOpen(record, result)} : undefined;
+      },
     };
+  }
+
+  setSemanticOutput(on: boolean): void { this.semanticOutput = on; }
+
+  /** Who draws each /track block's live rows (presentation only; nothing it returns is stored). */
+  setLiveRows(provider: (id: string, width: number) => readonly string[]): void { this.liveRowsProvider = provider; }
+
+  /**
+   * A /track block: NMSh's lines for the command, stored once like any frontend block; the tracker's live result is
+   * drawn under its last line and replaced in place on every refresh. Returns that line's id.
+   */
+  addTrackBlock(id: string, command: string, rows: readonly string[]): number {
+    this.addFrontendBlock(command, rows);
+    const anchor = this.parser.completedCount() - 1;
+    this.trackAnchors.set(anchor, id);
+    return anchor;
+  }
+
+
+  /**
+   * The block's Semantic Output reading, computed once per record from its stored output (never stored, so a resumed
+   * transcript reads it again lazily). Only shell commands with output are read; Off reads nothing.
+   */
+  semanticFor(record: CompletedCommand): SemanticResult | undefined {
+    if (!this.semanticOutput || record.frontend || record.activities?.length || !record.output) return undefined;
+    let reading = this.semanticReadings.get(record);
+    if (reading === undefined) {
+      reading = recognizeOutput(record.command, record.output, record.exitCode) ?? null;
+      this.semanticReadings.set(record, reading);
+    }
+    // The usefulness gate: a short, passing output already reads well; a listing of failures is always worth it.
+    if (!reading || (reading.outcome === 'passed' && !reading.items.length && record.output.split('\n').length < 10)) return undefined;
+    return reading;
+  }
+
+  /** Details start open when the raw output is folded (they are what it hides), closed when it is expanded. */
+  semanticDetailsOpen(record: CompletedCommand, result = this.semanticFor(record)): boolean {
+    if (!result?.items.length) return false;
+    return this.semanticDetails.get(record.startId) ?? !record.expanded;
+  }
+
+  toggleSemanticDetails(startId: number): boolean {
+    const record = this.completed.find(item => item.startId === startId);
+    const result = record && this.semanticFor(record);
+    if (!record || !result?.items.length) return false;
+    this.semanticDetails.set(startId, !this.semanticDetailsOpen(record, result));
+    return true;
   }
 
   /** Important hidden lines of a collapsed block, by line id; computed on first draw and kept per block identity. */

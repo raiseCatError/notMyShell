@@ -26,7 +26,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -114,9 +114,12 @@ export type ServerMessage =
    */
   /** The session's command queue (QueueState as JSON) and what just happened to it. */
   | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
-  /** The look asked for by input-look id is done; only to frontends that listed 'input-look'. */
-  | {type: 'input-looked'; id: number}
-  | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
+  /**
+   * The look asked for by input-look id is done; only to frontends that listed 'input-look'. result: what it saw
+   * (a LookResult), from services that advertise 'input-look-result'; older frontends ignore it.
+   */
+  | {type: 'input-looked'; id: number; result?: string}
+  | {type: 'input-state'; terminalOwner?: number; done?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
   | {type: 'tasks'; state: string}
   /** New output of one task (TaskUpdate as JSON). */
@@ -203,7 +206,7 @@ const SHAPES: Record<string, Shape> = {
   dismiss: {sessionId: 'string'},
   queue: {change: 'string'},
   'input-look': {id: 'int'},
-  'input-looked': {id: 'int'},
+  'input-looked': {id: 'int', result: 'string?'},
   'queue-state': {state: 'string', dispatched: 'int?', refused: 'string?', dropped: 'int?'},
   task: {change: 'string'},
   tasks: {state: 'string'},
@@ -222,7 +225,7 @@ const SHAPES: Record<string, Shape> = {
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?', queued: 'string?'},
   prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
-  'input-state': {terminalOwner: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
+  'input-state': {terminalOwner: 'int?', done: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -319,7 +322,7 @@ export class FrameDecoder {
 export function inputStateMessage(state: InputState): Extract<ServerMessage, {type: 'input-state'}> {
   const request = state.request;
   return {type: 'input-state', waitedMs: Math.round(state.timing.waitedMs), waits: state.timing.waits,
-    ...(state.terminalOwner ? {terminalOwner: 1} : {}),
+    ...(state.terminalOwner ? {terminalOwner: 1} : {}), ...(state.done ? {done: 1} : {}),
     ...(request ? {since: request.since, confidence: request.confidence, mode: request.mode,
       ...(request.prompt ? {prompt: request.prompt.slice(0, 200)} : {}), ...(request.program ? {program: request.program.slice(0, 64)} : {})} : {})};
 }
@@ -329,9 +332,10 @@ export function inputStateFrom(message: Extract<ServerMessage, {type: 'input-sta
   const confidence = INPUT_CONFIDENCES.find(item => item === message.confidence);
   const mode = INPUT_MODES.find(item => item === message.mode);
   const timing = {waitedMs: message.waitedMs, waits: message.waits};
-  if (message.terminalOwner === 1) return {terminalOwner: true, timing};
-  if (message.since === undefined || !confidence || !mode) return {timing};
-  return {request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
+  const done = message.done === 1 ? {done: true as const} : {};
+  if (message.terminalOwner === 1) return {terminalOwner: true, ...done, timing};
+  if (message.since === undefined || !confidence || !mode) return {...done, timing};
+  return {...done, request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
 }
 
 /** A queue change from a frontend, or undefined when it is not one: every field checked, nothing guessed. */
@@ -354,7 +358,9 @@ function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined 
     case 'add': {
       if (text_ === undefined) return undefined;
       const condition = queueConditionFrom(value.condition);
-      return value.condition !== undefined && !condition ? undefined : {op: 'add', text: text_, ...(condition ? {condition} : {})};
+      const typedWhile = typedWhileFrom(value.typedWhile);
+      if ((value.condition !== undefined && !condition) || (value.typedWhile !== undefined && !typedWhile)) return undefined;
+      return {op: 'add', text: text_, ...(condition ? {condition} : {}), ...(typedWhile ? {typedWhile} : {})};
     }
     case 'condition': {
       const condition = queueConditionFrom(value.condition);
@@ -381,6 +387,10 @@ function queueOpFieldsFrom(value: Record<string, unknown>): QueueOp | undefined 
 
 const queueConditionFrom = (value: unknown): QueueCondition | undefined => value === 'always' || value === 'approve' ? value : undefined;
 
+/** A program name for a held line: printable, bounded; anything with control characters is refused, never cleaned. */
+const typedWhileFrom = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() && !/[\u0000-\u001f\u007f-\u009f]/u.test(value) ? value.slice(0, 64) : undefined;
+
 const PAUSE_REASONS = ['user', 'failed', 'interrupted', 'shell-switched', 'restored'] as const;
 
 function queueEntryFrom(raw: unknown): QueueEntry | undefined {
@@ -388,7 +398,10 @@ function queueEntryFrom(raw: unknown): QueueEntry | undefined {
   const item = raw as Record<string, unknown>;
   if (!Number.isSafeInteger(item.id) || typeof item.text !== 'string' || item.text.length > ENTRY_LIMIT || !Number.isSafeInteger(item.addedAt)) return undefined;
   const condition = queueConditionFrom(item.condition);
-  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})};
+  const typedWhile = typedWhileFrom(item.typedWhile);
+  if (item.typedWhile !== undefined && !typedWhile) return undefined;
+  return {id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {}),
+    ...(typedWhile ? {typedWhile} : {})};
 }
 
 /** The queue a queue-state message describes; anything malformed is dropped, never guessed. */

@@ -5,7 +5,7 @@ import {runExternal} from '../../providers/providers.js';
 import {completionLabel, filterCompletions, type CompletionCandidate, type CompletionContext, type CompletionKind, type CompletionSource} from '../completion.js';
 import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
-import {fishQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
+import {fishQuote, UNREAD_DRAIN_SCRIPT, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
 import {fishEnvironmentSnapshot} from '../../context/shellEnvironment.js';
@@ -29,12 +29,33 @@ const FISH_BUILTINS = new Set(['and', 'begin', 'bg', 'bind', 'block', 'break', '
   'math', 'not', 'or', 'path', 'printf', 'pwd', 'random', 'read', 'realpath', 'return', 'set', 'set_color', 'source', 'status', 'string', 'switch', 'test',
   'time', 'true', 'type', 'ulimit', 'wait', 'while', 'abbr', 'argparse']);
 
-function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
+/**
+ * One of NMSh's markers. Fish 3 does not retry a terminal write that a signal interrupts (a window-size change while
+ * the write waits): it prints "write: Interrupted system call" on its own stderr and the bytes are gone, and a lost
+ * marker leaves NMSh wrong about whether a command runs (#443). Retrying in Fish still printed that error, and a burst
+ * of resizes could interrupt every retry. On Fish 3 the marker goes through `cat` instead: printf only fills a pipe (a
+ * few bytes, never blocked), and cat, which ignores the window-size signal and retries an interrupted write, writes
+ * it to the terminal. The marker travels on stdin, never in a process's arguments. Fish 4 retries by itself.
+ */
+export const FISH_MARK_FUNCTION = `if string match -qr '^[0-3]\\.' -- $version; and command -q cat
+  function __nmsh_mark
+    printf $argv | command cat
+  end
+else
+  function __nmsh_mark
+    printf $argv 2>/dev/null; or printf $argv
+  end
+end`;
+
+function bootstrap(context: LaunchContext, originalTerm: string | undefined): string {
+  const {token, knowledgePath, bridgeEnvPath} = context;
   const sync = bridgeEnvPath ? '\n    nmsh_bridge_sync' : '';
-  const marker = (body: string) => `printf '\\e]777;nmsh;${token};${body}\\a'`;
+  const marker = (body: string) => `__nmsh_mark '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed fish session bootstrap (private, per session)
 ${originalTerm ? `set -gx TERM ${fishQuote(originalTerm)}` : ''}
 set -g fish_greeting
+# NMSh's markers survive an interrupted write (#443).
+${FISH_MARK_FUNCTION}
 # Fish >= 4 only; NMSh shows its own suggestions.
 set -g fish_autosuggestion_enabled 0
 function fish_prompt
@@ -86,6 +107,15 @@ function __nmsh_preexec --on-event fish_preexec
 end
 function __nmsh_postexec --on-event fish_postexec
   set -l nmsh_status $status
+  # The command is done (#436): nothing until the prompt marker is its input.
+  ${marker('done')}
+  # Input NMSh delivered to the command that it never read: taken out of the terminal before Fish's reader starts,
+  # and handed to NMSh to hold for approval; it never runs as a command (#426).
+  if test -s ${fishQuote(context.unreadFlag ?? '')}
+    set -l nmsh_unread (command sh -c ${fishQuote(UNREAD_DRAIN_SCRIPT)} </dev/tty 2>/dev/null)
+    printf '' > ${fishQuote(context.unreadFlag ?? '')}
+    test -n "$nmsh_unread"; and ${marker('unread;%s')} $nmsh_unread
+  end
   __nmsh_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} $nmsh_status "$PWD"
 end

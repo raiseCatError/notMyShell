@@ -7,7 +7,7 @@ import {shellKnowledgeBootstrap} from '../ShellKnowledge.js';
 import {resolveZsh} from '../zshExecutable.js';
 import {parseZshHistoryInChunks} from '../HistoryService.js';
 import {ShellCompletionSource} from '../CompletionService.js';
-import type {LaunchContext, ShellAdapter, ShellLaunch} from './ShellAdapter.js';
+import {UNREAD_DRAIN_SCRIPT, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 const ZSH_BUILTINS = new Set(['alias', 'autoload', 'bg', 'bindkey', 'builtin', 'cd', 'command', 'echo', 'emulate', 'eval', 'exec', 'exit', 'export', 'fc', 'fg',
@@ -33,7 +33,7 @@ export const zshAdapter: ShellAdapter = {
   unavailableReason(env) {
     try { resolveZsh(env); return undefined; } catch (error) { return error instanceof Error ? error.message : 'zsh was not found'; }
   },
-  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath}: LaunchContext): ShellLaunch {
+  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath, unreadFlag}: LaunchContext): ShellLaunch {
     // Proxy .zshenv
     writeFileSync(join(stateDir, '.zshenv'), `
 if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
@@ -82,6 +82,22 @@ function nmsh_tty_echo {
 }
 
 ${bridgeEnvPath ? bridgeBootstrap('zsh', bridgeEnvPath) : ''}
+# The first prompt hook: the command is done (#436). Hooks after it (the person's, then NMSh's) may hold the
+# terminal for a while; nothing they do is the command reading input. It hands the status on to them unchanged.
+function nmsh_done {
+  local nmsh_status=$?
+  printf '\\e]777;nmsh;${token};done\\a'
+  # Input NMSh delivered to the command that it never read is taken out of the terminal here, before this shell reads
+  # its next command line, and handed to NMSh to hold for approval: it never runs as a command (#426).
+  if [[ -s ${shellQuote(unreadFlag ?? '')} ]]; then
+    local nmsh_unread
+    nmsh_unread=\$(command sh -c ${shellQuote(UNREAD_DRAIN_SCRIPT)} </dev/tty 2>/dev/null)
+    : >| ${shellQuote(unreadFlag ?? '')}
+    [[ -n \$nmsh_unread ]] && printf '\\e]777;nmsh;${token};unread;%s\\a' "\$nmsh_unread"
+  fi
+  return \$nmsh_status
+}
+
 function nmsh_precmd {
   local nmsh_status=$?
   nmsh_capture_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
@@ -94,7 +110,7 @@ function nmsh_precmd {
   # Themes such as Powerlevel10k move their own hook to the end of
   # precmd_functions every cycle; move ours back after it so the next cycle
   # still blanks last. Their prompt-spacing options must not return either.
-  precmd_functions=(\${precmd_functions:#nmsh_precmd} nmsh_precmd)
+  precmd_functions=(nmsh_done \${precmd_functions:#nmsh_(done|precmd)} nmsh_precmd)
   unsetopt prompt_cr prompt_sp
   nmsh_tty_echo -echo
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
@@ -116,6 +132,7 @@ ${shellKnowledgeBootstrap(join(stateDir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
+precmd_functions=(nmsh_done \${precmd_functions:#nmsh_done})
 
 # Startup is over: this shell has read its files. A zsh started from it (a tmux
 # pane, a nested shell) must be an ordinary zsh, not a second copy of this

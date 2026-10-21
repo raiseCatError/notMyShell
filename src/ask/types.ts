@@ -94,7 +94,8 @@ export interface CommandBlock {
   argv: string[];
   /** Indices of argv that are placeholders, never filled by guessing. */
   placeholders?: number[];
-  provenance: 'reference' | 'context';
+  /** suggested: a command the person's local model proposed (#432); Copy/Insert only, its risk labelled by NMSh. */
+  provenance: 'reference' | 'context' | 'suggested';
   risk: ActionRisk;
   /** One line under the command: what it does here. */
   note?: string;
@@ -158,7 +159,8 @@ export type AskOutcome =
     direct?: boolean}
   | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
   | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]; referents?: AskReferents}
-  | {kind: 'unsupported'; text: string; alternative?: AskOption}
+  /** shellTask: a task for a shell command (QA F04), which command suggestions may help with. */
+  | {kind: 'unsupported'; text: string; alternative?: AskOption; shellTask?: true}
   | {kind: 'unsafe'; text: string; alternative?: AskOption; referents?: AskReferents}
   | {kind: 'unclear'; text: string; categories: AskOption[]};
 

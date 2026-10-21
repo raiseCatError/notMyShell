@@ -3,7 +3,7 @@ import {connect, createServer, type Server, type Socket} from 'node:net';
 import {join} from 'node:path';
 import type {LocalModelChoice, LocalUnderstandingMode} from '../prompt/configuration.js';
 import {isQwen3, type ModelRuntime, type Reasoning} from './runtimes.js';
-import {foldPrompt, FOLD_SCHEMA, intentPrompt, INTENT_SCHEMA, type FoldRequest, type IntentRequest} from './tasks.js';
+import {commandPrompt, COMMAND_SCHEMA, foldPrompt, FOLD_SCHEMA, intentPrompt, INTENT_SCHEMA, type CommandRequest, type FoldRequest, type IntentRequest} from './tasks.js';
 
 /**
  * The user-global local model service. Every NMSh window is a client of one
@@ -13,7 +13,7 @@ import {foldPrompt, FOLD_SCHEMA, intentPrompt, INTENT_SCHEMA, type FoldRequest, 
  * per-window context between requests.
  */
 export const MODEL_PROTOCOL = 1;
-export const MODEL_FEATURES = ['intent', 'fold', 'status'] as const;
+export const MODEL_FEATURES = ['intent', 'fold', 'status', 'command'] as const;
 export const modelSocketPath = (runtimeDir: string) => join(runtimeDir, `nmsh-model-v${MODEL_PROTOCOL}.sock`);
 
 export type Priority = 'interactive' | 'diagnostic' | 'background';
@@ -24,6 +24,8 @@ export type ClientMessage =
   | {type: 'hello'; protocol: number}
   | {type: 'infer'; id: number; priority: Priority; task: 'intent'; input: IntentRequest; mode: LocalUnderstandingMode; model: LocalModelChoice; reasoning?: Reasoning}
   | {type: 'infer'; id: number; priority: Priority; task: 'fold'; input: FoldRequest; mode: LocalUnderstandingMode; model: LocalModelChoice; reasoning?: Reasoning}
+  /** #432: one suggested shell command; only to services that advertise 'command'. */
+  | {type: 'infer'; id: number; priority: Priority; task: 'command'; input: CommandRequest; mode: LocalUnderstandingMode; model: LocalModelChoice; reasoning?: Reasoning}
   | {type: 'status'; id: number}
   | {type: 'configure'; mode: LocalUnderstandingMode; model?: LocalModelChoice}
   /** Unload the model now (it loads again on next use); queued work still finishes first. */
@@ -49,10 +51,10 @@ export interface ModelServiceOptions {
   now?: () => number;
 }
 
-interface Job {client: Client; id: number; priority: Priority; task: 'intent' | 'fold'; input: unknown; model: LocalModelChoice; enqueued: number; reasoning: Reasoning}
+interface Job {client: Client; id: number; priority: Priority; task: 'intent' | 'fold' | 'command'; input: unknown; model: LocalModelChoice; enqueued: number; reasoning: Reasoning}
 interface Client {send: (message: ServiceMessage) => void}
 
-const TOKEN_BUDGET = {intent: 160, fold: 40} as const;
+const TOKEN_BUDGET = {intent: 160, fold: 40, command: 220} as const;
 /** A bounded thinking pass: room for brief reasoning plus the JSON answer, never open-ended. */
 const THINKING_BUDGET = 640;
 
@@ -143,10 +145,10 @@ export class ModelService {
           const runtime = await this.ensureLoaded(job.model);
           this.state = 'busy';
           const signal = AbortSignal.timeout(this.requestTimeoutMs);
-          const prompt = job.task === 'intent' ? intentPrompt(job.input as IntentRequest) : foldPrompt(job.input as FoldRequest);
+          const prompt = job.task === 'intent' ? intentPrompt(job.input as IntentRequest) : job.task === 'command' ? commandPrompt(job.input as CommandRequest) : foldPrompt(job.input as FoldRequest);
           // Only llama.cpp gets the explicit Qwen3 template; other runtimes apply their own and stay non-thinking.
           if (job.reasoning === 'thinking' && job.model.runtime !== 'llama.cpp') job.reasoning = 'fast';
-          const output = await runtime.infer(prompt, job.task === 'intent' ? INTENT_SCHEMA : FOLD_SCHEMA, job.reasoning === 'thinking' ? THINKING_BUDGET : TOKEN_BUDGET[job.task], signal,
+          const output = await runtime.infer(prompt, job.task === 'intent' ? INTENT_SCHEMA : job.task === 'command' ? COMMAND_SCHEMA : FOLD_SCHEMA, job.reasoning === 'thinking' ? THINKING_BUDGET : TOKEN_BUDGET[job.task], signal,
             {reasoning: job.reasoning, qwen3: isQwen3(job.model)});
           this.state = 'ready';
           job.client.send({type: 'result', id: job.id, ok: true, output, reasoning: job.reasoning});

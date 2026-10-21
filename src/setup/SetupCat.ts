@@ -264,8 +264,11 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     routeRow('setupPresets', 'Starting point', 'NMSh Recommended, Minimal Terminal, Customize Everything or Keep Existing · /startup', 'setupQuick', 'General'),
     {row: configRow('panelPosition'), note: draft => draft.panelPosition === 'top' ? 'Panels like this one sit at the top of the screen' : 'Panels like this one sit at the bottom of the screen'},
   ]},
-  {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
+  {id: 'terminal', title: 'Terminal', intro: ['Glyphs, images, sized headings and the browser your terminal can show.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
+    {row: configRow('graphicsMode')},
+    {row: configRow('textSizing')},
+    {row: configRow('browser')},
   ]},
   // Look: the theme first, then what depends on it (text, chrome), then Chroma, the one place it is chosen, with its
   // own rows under it. Motion-wide switches (Reduced Motion, Decorative effects) are on the Motion step.
@@ -369,6 +372,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('dividerDensity')},
     {row: configRow('dividerColors'), note: () => 'Live composer dividers follow Divider lines (Look, under Chroma); past dividers never move'},
     {row: configRow('outputFolding')},
+    {row: configRow('semanticOutput')},
   ]},
   {id: 'history', title: 'History & navigation', intro: ['NMSh Native covers history, directory jumps and picking.', 'External providers are optional alternatives.'], rows: [
     providerRow('setupHistory', 'History', 'Command history source', 'History', HISTORY_PROVIDERS,
@@ -414,6 +418,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
       : 'NMSh titles the window while it owns the screen; programs keep their own title while they run'},
     {row: configRow('agentActivity')},
     {row: configRow('openWith')},
+    routeRow('setupTerminalEditor', 'Terminal editor', 'For /open and o in /view when VISUAL and EDITOR are not set: choose one installed here', 'editor', 'Sessions'),
     {row: configRow('notifications')},
     {row: configRow('notifyAfter')},
     {row: configRow('notifyOnSuccess')},
@@ -430,6 +435,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('localUnderstanding'), note: draft => localUnderstandingNote(draft)},
     {row: configRow('localUnderstandingAsk'), note: () => 'Improve Ask understanding'},
     {row: configRow('localUnderstandingFolding'), note: () => 'Improve Smart Folding'},
+    {row: configRow('askCommandSuggestions'), note: draft => draft.askCommandSuggestions === 'local'
+      ? 'Local model: a request Ask cannot place may get one suggested command, labelled by NMSh, to copy or insert. It never runs'
+      : 'Off: Ask answers on its own; nothing is sent to a model for commands'},
   ]},
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),
@@ -500,6 +508,7 @@ export const SETUP_EQUIVALENTS: Readonly<Record<string, string>> = {
   provider: 'setupPromptProvider', welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', navigation: 'setupNavigation', picker: 'setupPicker',
   cursorSpeed: 'cursorAdvanced', cursorIntensity: 'cursorAdvanced', cursorTrail: 'cursorAdvanced', cursorParticles: 'cursorAdvanced',
   tools: 'setupToolChoice', themeStudio: 'setupThemeStudio', onboardingBackdrop: 'setupPresets', themeBridge: 'setupThemeBridge', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
+  terminalEditor: 'setupTerminalEditor',
 };
 
 /** Where each Settings entry point (a full panel) is reached from Setup: a section, or the route row that opens it. */
@@ -507,7 +516,7 @@ export const SETUP_ENTRY_COVERAGE: Readonly<Record<string, string>> = {
   appearance: 'setupHostWindow', glyph: 'glyphStyle', prompt: 'setupPromptModules', transcript: 'transcriptPresentation', syntax: 'syntaxHighlighting', keyboard: 'setupKeyboard',
   welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', picker: 'setupPicker', navigation: 'setupNavigation', layout: 'composerPosition', toolConfig: 'setupToolConfig', tools: 'setupBrowseTools', screensaver: 'idleTimeout', setup: 'setupToolChoice',
   cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
-  queue: 'queueTimeline', setupQuick: 'setupPresets',
+  queue: 'queueTimeline', setupQuick: 'setupPresets', editor: 'setupTerminalEditor',
 };
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {

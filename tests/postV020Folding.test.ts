@@ -15,12 +15,14 @@ import {beginSelection} from '../src/output/TranscriptSelection.js';
 import {executionFrameFixture} from './support/executionTimelineFrames.js';
 import {DEFAULT_PROMPT_CONFIGURATION, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
+import {markFishCompletionsGenerated} from '../scripts/test-shell-home.mjs';
 
 const sequence = (n: number) => Array.from({length: n}, (_, i) => `${i + 1}`).join('\n') + '\n';
 
 async function realApp(shell: ShellId) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), `nmsh-fold-${shell}-`)));
   const cwd = join(root, 'project'); mkdirSync(cwd);
+  markFishCompletionsGenerated(root, {dataHome: join(root, 'data')});
   const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'NMSH_RETURN_SESSION', 'NMSH_HANDOFF_SHELL', 'TERM_PROGRAM'];
   const saved = new Map(keys.map(key => [key, process.env[key]]));
   const previousCwd = process.cwd();
@@ -241,7 +243,8 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) test(`real ${shell} queued
       const foregroundDone = f.run('sleep 1.5');
       await started;
       f.app['editor'].replaceText('seq 1 450');
-      f.app['handleKey']({kind: 'enter'});
+      // Ctrl+Q queues a command to run after (#426: a plain Enter would hold the line for approval).
+      f.app['handleKey']({kind: 'queueCommand'});
       const deadline = Date.now() + 10000;
       // enqueue() clears the editor synchronously but the entry itself arrives with the session's queueState
       // event; under load the two observables can separate by a task tick, so wait for both (still bounded).

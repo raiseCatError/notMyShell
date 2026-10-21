@@ -6,7 +6,7 @@ import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import nodePty from 'node-pty';
 import {detectTerminalHost} from '../src/host/terminalHost.js';
-import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
+import {describeScreen, LiveSandbox, strip, until} from './helpers/liveFrontend.js';
 import {inForeground, uniqueSleep} from './helpers/processState.js';
 
 /**
@@ -220,15 +220,29 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
-  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${plain(from).slice(-800)}`);
-  const run = async (command: string, expect: RegExp) => { const mark = output.length; pty.write(`${command}\r`); await waitFor(expect, mark); };
+  const waitFor = (pattern: RegExp, from: number) => until(() => pattern.test(plain(from)), 20000, () => `${pattern}:\n${describeScreen(plain(from), ['JOB-GONE', 'Completed', 'approval'])}`);
+  // Each command's own completion row before the next is typed: a line typed while one still runs waits for approval (#426).
+  // The screen is not that signal: a redraw repeats older rows, so a "Completed" row can be older than the command (seen in CI:
+  // `jobs` still running when the next line was typed, which NMSh rightly held). The journal records a command once its prompt is back.
+  const run = async (command: string, expect: RegExp) => {
+    const before = await frontend.completions(command);
+    const mark = output.length;
+    pty.write(`${command}\r`);
+    await waitFor(expect, mark);
+    await until(async () => await frontend.completions(command) > before, 20000, `completed journal for ${command}`);
+  };
   try {
     await waitFor(/❯/, 0);
     await run('echo "STY-${STY:+set}"', /STY-set/);
-    await run('echo SIZE-$(stty size | tr " " x)', /SIZE-\d+x100/);
+    const probe = 'echo SIZE-$(stty size | tr " " x)';
+    await run(probe, /SIZE-\d+x100/);
+    const probed = await frontend.completions(probe);
     pty.resize(120, 40);
     await until(async () => { const mark = output.length; pty.write('echo SIZE-$(stty size | tr " " x)\r');
-      try { await until(() => /SIZE-\d+x120/u.test(plain(mark)), 2000); return true; } catch { return false; } }, 20000, 'resize reached the shell');
+      try { await until(() => /SIZE-\d+x120[\s\S]*Completed/u.test(plain(mark)), 2000); return true; } catch { return false; } }, 20000, 'resize reached the shell');
+    // Each probe is entered at the prompt; one entered while an earlier probe still ran is held (#426), never run: wait for
+    // the probe that reached the shell to be recorded before the next line is typed.
+    await until(async () => await frontend.completions(probe) > probed, 20000, 'the resized probe is recorded');
     const duration = uniqueSleep(176);
     pty.write(`sleep ${duration}\r`);
     await until(() => inForeground(duration), 20000, 'sleep in the foreground');
@@ -279,12 +293,17 @@ test('mouse-enabled tmux client detach/reattach preserves one attached NMSh and 
       const second = attach();
       await second.waitFor(/❯/);
       const mark = second.mark;
-      second.pty.write(`${quote(process.execPath)} ${quote(fixture)} fullscreen\r`);
+      const fullscreen = `${quote(process.execPath)} ${quote(fixture)} fullscreen`;
+      second.pty.write(`${fullscreen}\r`);
       await second.waitFor(/INTERACTIVE-READY-fullscreen/, mark);
       second.pty.resize(82, 28);
       await second.waitFor(/INTERACTIVE-SIZE-27x82/, mark); // tmux reserves its status row.
       second.pty.write('q');
       await second.waitFor(/INTERACTIVE-EXIT-0/, mark);
+      // The program's exit is not NMSh's: a line typed before NMSh has seen the command end is held for approval (#426), as
+      // designed. Wait for the journal to record the command, as the less section above does.
+      await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+        .some(record => record.command === fullscreen), 20000, 'fullscreen completion journal');
       await pane.run('echo AFTER-TMUX-CLIENT', /AFTER-TMUX-CLIENT/);
       assert.equal((await sandbox.sessions())[0]!.id, live!.id);
     } finally { pane.kill(); await sandbox.dispose(); }

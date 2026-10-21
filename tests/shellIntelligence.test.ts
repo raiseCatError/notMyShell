@@ -102,11 +102,17 @@ test('complete snapshots reveal unshadowed commands, partial snapshots preserve 
     service.applyShellKnowledge('function positive\npartial\n');
     assert.equal(await service.classifyCommand('positive'), 'function');
     assert.equal(await service.classifyCommand('configured_only'), 'alias');
+    // A lookup in flight when newer knowledge arrives is asked again against that knowledge (#408): the answer its
+    // old knowledge implied (plain lookup: unknown) is never cached, and the new one (configured: the rc alias) is.
+    service.applyShellKnowledge('complete\n');
+    const superseded = service.classifyCommand('configured_only');
+    service.applyShellKnowledge('partial\n');
+    assert.equal(await superseded, 'alias');
+    assert.equal(service.cache.get('configured_only'), 'alias');
     service.applyShellKnowledge('alias live_alias\ncomplete\n');
-    const stale = service.classifyCommand('stale_result');
+    const named = service.classifyCommand('latest');
     service.applyShellKnowledge('function latest\ncomplete\n');
-    assert.equal(await stale, 'unknown');
-    assert.equal(service.cache.has('stale_result'), false);
+    assert.equal(await named, 'function', 'answered from the knowledge that superseded it, not settled as unknown');
     service.kill();
     assert.equal(await service.classifyCommand('latest'), 'function');
   } finally {

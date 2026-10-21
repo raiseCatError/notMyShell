@@ -147,15 +147,88 @@ test('composer: multiline drafts move by line first, then enter and leave histor
   } finally { stop(app); }
 });
 
-test('composer: a recalled multiline command navigates its own lines before older history', () => {
+test('composer (#389): a recalled multiline command is one history step; Up and Down move entry by entry', () => {
+  const {app, text} = historyApp(['echo oldest', 'echo older', 'printf 1\nprintf 2\nprintf 3\nprintf 4\nprintf 5', 'echo newest']);
+  try {
+    app['onInput'](UP);
+    assert.equal(text(), 'echo newest');
+    app['onInput'](UP);
+    assert.equal(text(), 'printf 1\nprintf 2\nprintf 3\nprintf 4\nprintf 5', 'the five-line entry, recalled whole');
+    app['onInput'](UP);
+    assert.equal(text(), 'echo older', 'one Up past it, not five');
+    app['onInput'](DOWN);
+    assert.equal(text(), 'printf 1\nprintf 2\nprintf 3\nprintf 4\nprintf 5', 'one Down back to it');
+    app['onInput'](DOWN);
+    assert.equal(text(), 'echo newest', 'and one Down past it');
+    app['onInput'](UP);
+    app['onInput'](UP);
+    app['onInput'](UP);
+    app['onInput'](UP);
+    assert.equal(text(), 'echo oldest');
+    app['onInput'](UP);
+    assert.equal(text(), 'echo oldest', 'oldest: no wrap');
+    for (let index = 0; index < 4; index++) app['onInput'](DOWN);
+    assert.equal(text(), '', 'Down past the newest restores the empty draft');
+    assert.equal(app['composerHistory'].active, false);
+  } finally { stop(app); }
+});
+
+test('composer (#389): a recalled command wider than the composer is one step too (soft-wrapped rows)', () => {
+  const long = `echo ${'x'.repeat(200)}`;
+  const {app, text} = historyApp(['echo older', long]);
+  try {
+    app['onInput'](UP);
+    assert.equal(text(), long);
+    app['onInput'](UP);
+    assert.equal(text(), 'echo older', 'not one Up per wrapped row');
+    app['onInput'](DOWN);
+    assert.equal(text(), long);
+  } finally { stop(app); }
+});
+
+test('composer (#389): editing, moving the caret, selecting or pasting in a recalled command ends browsing', () => {
+  const multi = 'printf a\nprintf b\nprintf c';
+  const cases: Array<[string, (app: TerminalApp) => void, string]> = [
+    ['typing', app => app['onInput']('x'), 'printf a\nprintf b\nprintf cx'],
+    ['moving the caret', app => app['handleKey']({kind: 'left'}), multi],
+    ['moving a word', app => app['handleKey']({kind: 'wordLeft'}), multi],
+    ['going to the line start', app => app['handleKey']({kind: 'lineHome'}), multi],
+    ['selecting', app => app['handleKey']({kind: 'selectLeft'}), multi],
+    ['pasting', app => app['onInput']('\u001b[200~ y\u001b[201~'), 'printf a\nprintf b\nprintf c y'],
+  ];
+  for (const [name, act, expected] of cases) {
+    const {app, text} = historyApp(['echo older', multi]);
+    try {
+      app['onInput'](UP);
+      assert.equal(text(), multi, `${name}: recalled`);
+      act(app);
+      assert.equal(text(), expected, `${name}: the action itself`);
+      app['onInput'](UP);
+      assert.equal(text(), expected, `${name}: Up moves within the text again, not to an older entry`);
+      assert.notEqual(text(), 'echo older');
+    } finally { stop(app); }
+  }
+});
+
+test('composer (#389): Down past the newest restores the exact unsent draft, multiline and caret included', () => {
   const {app, text} = historyApp(['echo older', 'printf a\nprintf b']);
   try {
+    app['onInput']('first');
+    app['onInput']('\n');
+    app['onInput']('second');
+    app['handleKey']({kind: 'bufferEnd'});
+    app['onInput'](UP);
+    assert.equal(text(), 'first\nsecond', 'Up inside a fresh multiline draft moves the caret first');
     app['onInput'](UP);
     assert.equal(text(), 'printf a\nprintf b');
     app['onInput'](UP);
-    assert.equal(text(), 'printf a\nprintf b', 'moved to the first line of the recalled command');
+    assert.equal(text(), 'echo older', 'browsing: one step per entry');
+    app['onInput'](DOWN);
+    app['onInput'](DOWN);
+    assert.equal(text(), 'first\nsecond', 'the exact draft');
+    assert.equal(app['composerHistory'].active, false);
     app['onInput'](UP);
-    assert.equal(text(), 'echo older');
+    assert.equal(text(), 'first\nsecond', 'the restored draft is a draft again: Up moves within it');
   } finally { stop(app); }
 });
 

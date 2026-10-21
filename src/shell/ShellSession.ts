@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {QUERY_HOLD_MS, QueryOrder} from './QueryOrder.js';
 import { spawn, type IPty } from 'node-pty';
-import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {MAX_SHELL_KNOWLEDGE_BYTES} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -14,6 +14,9 @@ import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 import {InputWatch} from '../session/InputWatch.js';
 import type {InputState} from '../session/inputState.js';
 import {systemProbe, type TerminalProbe} from '../session/terminalProbe.js';
+
+/** How long typing held after a command is done waits for the rest of its line before it is held as it is. */
+const HELD_LINE_SETTLE_MS = 250;
 
 interface SessionEvents {
   data: [string];
@@ -25,12 +28,20 @@ interface SessionEvents {
   exit: [{ exitCode: number; signal?: number }];
   /** Whether the running command credibly waits for input, and its waiting time (see InputWatch). */
   inputState: [InputState];
+  /**
+   * Input delivered for the finished command that it never read (#426), taken out of the terminal by the shell's first
+   * prompt hook, or that arrived once the shell said the command was done. Never written to the shell's command reader.
+   */
+  unread: [text: string, program: string];
 }
 
 /** node-pty's error for an ioctl on a PTY whose descriptor is already closed. */
 export function isClosedPtyError(error: unknown): boolean {
   return error instanceof Error && /\bEBADF\b/u.test(error.message);
 }
+
+/** The per-session file that asks the shell's first prompt hook to take back unread input (see ShellAdapter). */
+export const UNREAD_FLAG = '.nmsh-unread';
 
 export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly pty: IPty;
@@ -59,6 +70,23 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private lastSubmitted = '';
   /** One authoritative input-awareness state per session, next to the PTY. */
   readonly inputWatch: InputWatch;
+  /**
+   * #426 lifecycle: the shell's first prompt hook drains the terminal of input the command never read only when this
+   * file is non-empty, so a command NMSh delivered nothing to costs nothing. Written before the first delivery.
+   */
+  private readonly unreadFlag: string;
+  private delivered = false;
+  /** Between the shell's done marker and its prompt: the command is over, so nothing more is delivered to it. */
+  private done = false;
+  /** The first word of the running command line, to say whose typing a held line was. */
+  private program = '';
+  /**
+   * Typing that arrived after the command was done (#426): input reaches the session in whatever pieces the terminal
+   * delivered it, so it is put back together as the lines the person typed before it is held. A partial line waits for
+   * the rest of it, and is held as it is when the prompt comes or the person stops typing.
+   */
+  private heldAfterDone = '';
+  private heldTimer: NodeJS.Timeout | undefined;
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env,
     shell: ShellId | ShellAdapter = 'zsh', probe: TerminalProbe | undefined = systemProbe()) {
@@ -73,9 +101,11 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     // A private per-session bootstrap directory (zsh keeps its historical ZDOTDIR name).
     const stateDir = mkdtempSync(join(tmpdir(), this.adapter.id === 'zsh' ? 'nmsh-zdotdir-' : 'nmsh-shell-'));
     this.zdotdir = stateDir;
+    this.unreadFlag = join(stateDir, UNREAD_FLAG);
     let launch;
     try {
-      launch = this.adapter.launch({home, env, token, stateDir, knowledgePath: join(stateDir, '.nmsh-knowledge'), bridgeEnvPath: bridgeEnvPath(this.adapter.id, env)});
+      launch = this.adapter.launch({home, env, token, stateDir, knowledgePath: join(stateDir, '.nmsh-knowledge'), bridgeEnvPath: bridgeEnvPath(this.adapter.id, env),
+        unreadFlag: this.unreadFlag});
     } catch (error) {
       this.cleanup();
       throw error;
@@ -168,9 +198,40 @@ export class ShellSession extends EventEmitter<SessionEvents> {
    */
   private send(data: string, submission = false): void {
     if (submission) this.lastSubmitted = data.replace(/\r$/u, '');
+    if (this.ready && !submission && !this.atPrompt) {
+      // The command is done (its prompt hooks run): nothing can read this for it, and the shell's command reader is
+      // next. It is held for the person, never written (#426).
+      if (this.done) { this.holdAfterDone(data); return; }
+      if (!this.delivered) {
+        this.delivered = true;
+        // Before the bytes: whatever reaches the terminal for this command, its end takes back what was never read.
+        try { writeFileSync(this.unreadFlag, '1'); } catch { /* the hook then finds nothing to take; documented limit */ }
+      }
+    }
     if (this.ready) { this.inputWatch.onInput(data); this.order.input(data); return; }
     if (this.pendingInputBytes() + Buffer.byteLength(data, 'utf8') <= PENDING_INPUT_LIMIT) this.pendingInput += data;
     else this.emit('inputRejected', data, submission);
+  }
+
+  private holdAfterDone(data: string): void {
+    this.heldAfterDone += data;
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    const end = Math.max(this.heldAfterDone.lastIndexOf('\r'), this.heldAfterDone.lastIndexOf('\n'));
+    if (end >= 0) {
+      const lines = this.heldAfterDone.slice(0, end + 1);
+      this.heldAfterDone = this.heldAfterDone.slice(end + 1);
+      this.emit('unread', lines, this.program);
+    }
+    if (!this.heldAfterDone) return;
+    this.heldTimer = setTimeout(() => this.releaseHeldAfterDone(), HELD_LINE_SETTLE_MS);
+    this.heldTimer.unref?.();
+  }
+
+  private releaseHeldAfterDone(): void {
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    const text = this.heldAfterDone;
+    this.heldAfterDone = '';
+    if (text && !this.exited) this.emit('unread', text, this.program);
   }
 
   interrupt(): void {
@@ -182,7 +243,11 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   }
 
   endInput(): void {
-    // End of input is ordinary input: it keeps its place after anything typed before it.
+    // End of input is ordinary input: it keeps its place after anything typed before it, and is held like it (#426).
+    if (this.ready && !this.atPrompt) {
+      if (this.done) return;
+      if (!this.delivered) { this.delivered = true; try { writeFileSync(this.unreadFlag, '1'); } catch { /* see send */ } }
+    }
     this.inputWatch.onInput('\u0004');
     this.order.input('\u0004');
   }
@@ -211,6 +276,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.order.dispose();
     this.inputWatch.dispose();
     if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = undefined; }
+    this.heldAfterDone = '';
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
@@ -227,8 +294,15 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         }
       } else if (event.kind === 'reader') {
         if (this.ready && !this.atPrompt) this.inputWatch.onReader();
+      } else if (event.kind === 'done') {
+        if (this.ready && !this.atPrompt) { this.done = true; this.inputWatch.onDone(); }
+      } else if (event.kind === 'unread') {
+        if (this.ready && event.text) this.emit('unread', event.text, this.program);
       } else if (event.kind === 'exec') {
         this.atPrompt = false;
+        this.done = false;
+        this.delivered = false;
+        this.program = (event.command.trim().split(/\s+/u)[0] ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/gu, '').slice(0, 64);
         this.commandStart = true;
         // Bash cannot report the text of a line it chose not to record; the submitted text stands in.
         if (this.ready) {
@@ -246,7 +320,10 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         this.pendingInput = '';
         if (pending && !this.exited) this.pty.write(pending);
       } else {
+        this.releaseHeldAfterDone();
         this.atPrompt = true;
+        this.done = false;
+        this.delivered = false;
         // Final waiting time first, so it travels with the prompt that completes the command.
         this.inputWatch.onPrompt();
         const {waitedMs, waits} = this.inputWatch.state.timing;

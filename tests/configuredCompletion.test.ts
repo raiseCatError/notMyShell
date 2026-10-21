@@ -10,7 +10,9 @@ import {CompletionService} from '../src/shell/CompletionService.js';
 test('real configured candidate capture is bounded to 4096 records', async () => {
   const home = mkdtempSync(join(tmpdir(), 'nmsh-large-completion-'));
   writeFileSync(join(home, '.zshrc'), 'autoload -Uz compinit\ncompinit -D\n_large() { compadd -J large -- value{1..5000}; }\ncompdef _large large\n');
-  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 4000, queryMs: 2000});
+  // This bounds the records, not startup: the helper's own startup cap (5 s) and a long query window keep a loaded
+  // machine's compinit from turning into an empty result.
+  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 5000, queryMs: 2000});
   try {
     const values = await source.query({buffer: 'large v', cwd: home}, new AbortController().signal);
     assert.equal(values.length, 4096);

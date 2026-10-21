@@ -41,7 +41,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       let mark = first.mark;
       first.pty.write(`${failed.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
-      first.pty.write(`${afterFailure}\r`);
+      first.pty.write(`${afterFailure}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
@@ -57,14 +57,14 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = first.mark;
       first.pty.write(`sleep ${duration}\r`);
       await until(() => inForeground(duration), 20_000, 'sleep owns input before interrupt');
-      first.pty.write(`${afterInterrupt}\r`);
+      first.pty.write(`${afterInterrupt}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
       first.pty.write('w');
       await first.waitFor(/runs even after a failure/u, mark);
       first.pty.write('\u001b[27u');
-      await first.waitFor(/Enter queues the next command/u, mark);
+      await first.waitFor(/Enter holds it for approval · Ctrl\+Q runs it after/u, mark);
       first.pty.write('\u0003');
       await first.waitFor(/Queue paused:[\s\S]*was interrupted/u, mark);
       await first.run('echo AFTER-INTERRUPT', /AFTER-INTERRUPT/u);
@@ -77,7 +77,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = first.mark;
       first.pty.write(`${gated.command}\r`);
       await first.waitFor(/CONDITION-HOLD/u, mark);
-      first.pty.write(`${approved}\r`);
+      first.pty.write(`${approved}\u0011`);
       await first.waitFor(/Queue · 2 commands/u, mark);
       first.pty.write('/queue\r');
       await first.waitFor(/Command queue/u, mark);
@@ -106,6 +106,11 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       mark = back.mark;
       back.pty.write('a');
       await until(() => contents() === 'after-failure\napproved\n', 20_000, 'only the explicitly approved entry runs');
+      // The marker is written while the command runs; this window still has to see it finish. A line typed in the few
+      // milliseconds before it has seen the shell's events is taken for the next command's own exec (#426: the window's
+      // view of the shell trails the shell's by the time its events take to arrive, longer on a loaded machine).
+      await until(async () => (await sandbox.transcripts().list()).some(item => item.transcript.records.some(record => record.command === approved)),
+        20_000, 'the approved command is recorded before the next line is typed');
       back.pty.write('\u001b[27u');
       await back.run('echo CONDITIONS-DONE', /CONDITIONS-DONE/u);
       assert.equal(contents(), 'after-failure\napproved\n', 'no duplicate or inherited approval');
@@ -114,7 +119,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records);
       for (const command of [afterFailure, approved]) {
         const matches = records.filter(record => record.command === command);
-        assert.equal(matches.length, 1, 'each reviewed command recorded once');
+        assert.equal(matches.length, 1, `each reviewed command recorded once: ${command} among ${JSON.stringify(records.map(record => [record.command, record.exitCode]))}`);
         assert.equal(matches[0]!.historicalContext?.cwd, join(sandbox.home, 'scope'), 'the queue keeps the real shell directory');
         assert.match(matches[0]!.lifecycleText, /from queue/u);
       }

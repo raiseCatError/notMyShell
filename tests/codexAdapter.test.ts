@@ -33,7 +33,13 @@ test('messages: items, approvals and turn results normalize from structured fiel
   }
 });
 
-async function session(scenario: string, act: (session: CodexSession, events: AgentEvent[], wait: (kind: AgentEvent['kind'], count?: number) => Promise<void>) => Promise<void>) {
+/**
+ * Runs one scenario and returns what the client sent, as the fake server recorded it. The server records a message when
+ * it reads it, which can be after the turn settles (a refusal written after the person's answer), so `recorded` says
+ * what the test needs on record; it is waited for (bounded) rather than read at whatever moment the turn settled.
+ */
+async function session(scenario: string, act: (session: CodexSession, events: AgentEvent[], wait: (kind: AgentEvent['kind'], count?: number) => Promise<void>) => Promise<void>,
+  recorded: (client: Array<Record<string, unknown>>) => boolean = () => true) {
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-codex-'));
   const log = join(directory, 'client.log');
   const events: AgentEvent[] = [];
@@ -50,7 +56,9 @@ async function session(scenario: string, act: (session: CodexSession, events: Ag
   try {
     assert.deepEqual(codex.start(), {ok: true});
     await act(codex, events, wait);
-    const client = (await readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+    const read = async () => (await readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+    let client = await read();
+    for (const deadline = Date.now() + 5000; !recorded(client) && Date.now() < deadline; client = await read()) await new Promise(resolve => setTimeout(resolve, 20));
     return client;
   } finally {
     codex.close();
@@ -78,7 +86,7 @@ test('a session: handshake, thread, a message, one approval answered by the pers
     ]);
     assert.deepEqual(events.filter(event => event.kind === 'assistant'), [{kind: 'assistant', text: 'Cleaned.'}]);
     assert.deepEqual(events.at(-1), {kind: 'settled', ok: true});
-  });
+  }, client => client.some(message => message.id === 100) && client.some(message => message.id === 101));
   // The two responses race (the refusal is immediate, the approval waits for the person), so only the first four are ordered.
   assert.deepEqual(client.slice(0, 4).map(message => message.method), ['initialize', 'initialized', 'thread/start', 'turn/start']);
   assert.equal(client.length, 6);

@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest stable release: [v0.20.0 — Terminal workflow, first-run setup, background tasks & native modules](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0), the first stable release since v0.18.0. It includes the terminal workflow from the v0.19.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0200---2026-10-18) for its scope, upgrade notes and known limitations.
+Latest stable release: [v0.22.0 — Native viewing, images, a real browser and Vespyr Arcade](https://github.com/raiseCatError/notMyShell/releases/tag/v0.22.0), released 2026-10-21: `/view` and `/edit`, images, a Markdown and HTML workspace with an optional Chromium preview, `/browser`, Vespyr Arcade, three ways to run a reviewed multiline paste, Semantic Output, `/track`, safer typing while commands run, history browsing, Ask command suggestions from your local model, more native modules and theme families. It includes the v0.21.0 candidate, which was never published separately. The `master` branch includes this released work; see the [changelog](CHANGELOG.md#0220---2026-10-21) for its scope, upgrade notes and known limitations, including what was not verified in a physical terminal. The previous stable release is [v0.20.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.20.0).
 
 ## See notMyShell in motion
 
@@ -60,6 +60,8 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 - **Theme Studio and Theme Bridge** — built-in, imported and custom themes in `/theme`; opt-in `/theme-bridge` carries the active theme to fzf, less/man, file listings, bat, tmux, Vim, Neovim and Helix through files NMSh owns and you review.
 - **Curated tools** — `/tools` finds, explains and (on request) installs a short list of shell tools; `/providers` picks the picker, history, navigation and suggestion providers; `/tmux` and `/dotfiles` import settings safely.
 - **Shell frameworks, handled carefully** — Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit and Antidote are detected; shell config is treated as code, never as harmless data.
+- **Documents, images and a real browser (v0.22)** — `/view` opens Markdown and HTML as one workspace with a source, an editor and a rendered preview of the same buffer; images are drawn in Ghostty and Kitty and as character art everywhere else; `/browser` shows a real Chromium page when you have Chrome installed (nothing is downloaded). Larger headings appear in terminals that prove they can scale text.
+- **Vespyr Arcade (v0.22)** — `/games` (`/game`, `/arcade`): three endless Vespyr games, Classic Sudoku and Vespyr Doku, with local scores and no accounts.
 - **Keep Awake** — `/zoomies` (also `/caffeinate`, `/awake`) keeps the machine or display awake through the OS's own mechanism and shows that it is on, quietly.
 - **Personality, optional** — Chroma color treatments, motion, screensavers and Vespyr, the NMSh cat. All of it respects Reduced Motion, Safe glyphs and `NO_COLOR`.
 
@@ -69,7 +71,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 ## Native modules and the Context Engine
 
-NMSh's shipped native module ecosystem uses trusted capabilities to resolve contextual facts and routes them to the Main Prompt, Context Rail or Right Context. For upcoming work, see the [open v0.21 candidate issues](https://github.com/raiseCatError/notMyShell/issues?q=is%3Aissue+is%3Aopen+label%3Acandidate%3Av0.21); candidate labels are planning signals, not release promises.
+NMSh's shipped native module ecosystem uses trusted capabilities to resolve contextual facts and routes them to the Main Prompt, Context Rail or Right Context. For upcoming work, see the [open issues](https://github.com/raiseCatError/notMyShell/issues); labels are planning signals, not release promises.
 
 v0.17.0 introduced fact metadata, native module routing and the Context Rail. v0.18.0 adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
@@ -171,6 +173,8 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
+| Files and output (v0.22) | `/view` (files, images and completed output; Markdown and HTML open as source, editor and preview of one buffer), `/edit`, `/browser` (a real browser, optional), `/track` (one live result of a command), `/copy --semantic` |
+| Games (v0.22) | `/games` (`/game`, `/arcade`; `/game run`, `flight`, `dash`, `sudoku`, `vespyr-doku`) |
 | Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
@@ -225,6 +229,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
 - Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours.
 - Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
+- Images, scaled headings, the Chromium frames and the games are covered by automated tests but have not been physically verified in a real terminal; character art is the fallback everywhere a graphics protocol is not proven. See the [v0.22 physical QA record](docs/testing/v022-physical-qa.md).
 
 ## Documentation
 
@@ -233,6 +238,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - [Context Modules](docs/architecture/context-modules.md) — facts, routing, Context Rail and declarative pack direction
 - [Demo gallery](docs/demos.md) — every feature clip in one place
 - [ShellAdapter](docs/architecture/shell-adapter.md), [platforms](docs/architecture/platforms.md), [terminal stack](docs/architecture/terminal-stack.md)
+- [Graphics service](docs/design/graphics-service.md), [typography](docs/design/typography.md), [document workspace](docs/design/document-workspace.md), [real browser](docs/design/browser.md), [Vespyr Arcade](docs/design/arcade.md), [multiline execution modes](docs/design/multiline-execution-modes.md)
 - [Themes, imports and Theme Bridge](docs/design/theme-bridge.md), [Chroma and UI chrome](docs/design/chroma-and-ui-chrome.md), [idle visuals](docs/design/idle-visuals.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Support](SUPPORT.md)
 

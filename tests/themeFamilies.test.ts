@@ -63,7 +63,8 @@ test('Starship and Oh My Posh imports preview lossy mapping before saving and pr
 });
 
 test('theme families: canonical variants, valid ids, licenses recorded, NMSh themes unchanged', () => {
-  assert.deepEqual(THEME_FAMILIES.map(family => family.id), ['nmsh', 'catppuccin', 'dracula', 'tokyonight', 'gruvbox', 'rosepine', 'nord', 'solarized', 'onedark', 'custom']);
+  assert.deepEqual(THEME_FAMILIES.map(family => family.id), ['nmsh', 'catppuccin', 'dracula', 'tokyonight', 'gruvbox', 'rosepine', 'nord', 'solarized', 'onedark',
+    'ayu', 'kanagawa', 'everforest', 'flexoki', 'nightowl', 'custom']);
   for (const family of THEME_FAMILIES.filter(item => item.id !== 'nmsh' && item.id !== 'custom')) {
     assert.ok(family.source?.startsWith('https://github.com/'), family.id);
     assert.ok(family.license, family.id);
@@ -83,6 +84,18 @@ test('theme families: canonical variants, valid ids, licenses recorded, NMSh the
   assert.equal(themeVariant('solarizedDark')!.roles.project, '#268bd2');
   assert.equal(themeVariant('rosePine')!.roles.project, '#c4a7e7');
   assert.equal(themeVariant('oneDark')!.roles.project, '#61afef');
+  // v0.21 families, against the pinned upstream files named in docs/design/theme-families.md.
+  assert.deepEqual(familyVariants('ayu').map(variant => variant.variant), ['Dark', 'Mirage', 'Light']);
+  assert.deepEqual(familyVariants('kanagawa').map(variant => variant.variant), ['Wave', 'Dragon', 'Lotus']);
+  assert.deepEqual(familyVariants('everforest').map(variant => variant.variant), ['Dark', 'Light']);
+  assert.deepEqual(familyVariants('flexoki').map(variant => variant.variant), ['Dark', 'Light']);
+  assert.deepEqual(familyVariants('nightowl').map(variant => variant.variant), ['Night Owl', 'Light Owl']);
+  assert.equal(themeVariant('ayuMirage')!.ui.accent, '#ffcc66', 'ayu mirage accent tint');
+  assert.equal(themeVariant('kanagawaWave')!.ui.primary, '#dcd7ba', 'fujiWhite');
+  assert.equal(themeVariant('kanagawaWave')!.roles.project, '#7e9cd8', 'crystalBlue (fun)');
+  assert.equal(themeVariant('everforestDark')!.ui.primary, '#d3c6aa');
+  assert.equal(themeVariant('flexokiLight')!.roles.project, '#205ea6', 'blue-600');
+  assert.equal(themeVariant('nightOwl')!.ui.selection, '#1d3b53', 'editor.selectionBackground');
   assert.equal(NATIVE_PALETTE_IDS.length, 12, 'the NMSh family keeps its twelve themes');
 });
 
@@ -313,4 +326,31 @@ test('color picker: truecolor field and hue, 256-color grid, NO_COLOR channels, 
   setIconStyle('safe');
   try { assert.ok(renderColorPicker(createColorPicker('#ffffff', 'truecolor'), 'x', 50, 'truecolor').some(row => row.includes('+'))); }
   finally { setIconStyle('nerd'); }
+});
+
+test('Theme Studio: / filters the built-in list by name, family or dark/light; Esc clears before it closes', () => {
+  const context = {themes: [], accent: 'mauve' as const, pinnedTo: () => []};
+  const state = createThemeStudio(context);
+  const press = (...keys: Array<string | {kind: string}>) => {
+    let action;
+    for (const key of keys) action = studioKey(state, (typeof key === 'string' ? {kind: 'text', value: key} : key) as never, 'none', '/', context);
+    return action;
+  };
+  press('/', ...'kanagawa'.split(''));
+  const shown = plain(renderThemeStudio(state, context, 80, 30, 'none', []));
+  assert.match(shown, /Filter: kanagawa▏ · 3 of \d+/u);
+  assert.match(shown, /Kanagawa Wave[\s\S]*Kanagawa Dragon[\s\S]*Kanagawa Lotus/u);
+  assert.doesNotMatch(shown, /Lavender Native/u);
+  press({kind: 'enter'}, {kind: 'down'});
+  assert.deepEqual(press({kind: 'enter'}), {kind: 'activate', ref: 'builtin:kanagawaDragon'}, 'selection follows the filtered list');
+  assert.equal(state.previewChroma, false);
+  press({kind: 'escape'});
+  assert.equal(state.builtinFilter, undefined, 'Esc cleared the filter');
+  press('/', ...'light ayu'.split(''));
+  assert.match(plain(renderThemeStudio(state, context, 80, 30, 'none', [])), /1 of \d+[\s\S]*Ayu Light/u);
+  press({kind: 'escape'}, '/', ...'catppuccin latte'.split(''));
+  assert.match(plain(renderThemeStudio(state, context, 80, 30, 'none', [])), /1 of \d+[\s\S]*Catppuccin Latte/u);
+  assert.equal(state.previewChroma, false, 'c typed into the filter is text, not the Chroma toggle');
+  press({kind: 'escape'});
+  assert.deepEqual(press({kind: 'escape'}), {kind: 'close'});
 });

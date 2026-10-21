@@ -5,7 +5,7 @@ import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, ASK_COMMAND_SUGGESTIONS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -16,7 +16,7 @@ import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_COLOR_LABELS, CURSOR_IDLE_COLOR_SOURCES, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COLOR_PRESET_STOPS} from '../chroma/colorPresets.js';
 import {renderControls} from './controls.js';
-import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
+import {BROWSER_SETTINGS, COPY_MODES, COPY_MODE_LABELS, GRAPHICS_MODES, TEXT_SIZING_SETTINGS} from '../prompt/configuration.js';
 import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
@@ -52,6 +52,7 @@ import {framePanel, renderTabStrip} from './PanelShell.js';
 import {stepIndex, toggleValue} from './formControls.js';
 import {ASK_PRESENTATION_LABELS, ASK_PRESENTATIONS} from '../ask/AskPanel.js';
 import {displayWidth, highlightMatches, truncateAnsi} from '../util/text.js';
+import {TERMINAL_EDITORS} from '../host/terminalEditors.js';
 
 /** The three top-level views of the one shared panel behind /settings, /config, and /status. */
 export const SETTINGS_VIEWS = ['Settings', 'Status', 'Config'] as const;
@@ -91,7 +92,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor' | 'toolConfig' | 'tools'
   | 'setup' | 'setupQuick' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge' | 'queue';
 
 interface SettingsRowBase {
@@ -339,6 +340,15 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
     get: config => config.glyphStyle, set: (config, glyphStyle) => ({...config, glyphStyle, glyphChoiceComplete: true})}),
+  enumRow({id: 'graphicsMode', label: 'Images', description: 'How real images are drawn in /view, Markdown and HTML. Auto uses the best protocol your terminal proved it supports (Kitty graphics, iTerm2, Sixel), else Unicode character art; the others are an explicit choice that is not verified. Menus and text are never images. /doctor shows what was detected', category: 'General',
+    values: GRAPHICS_MODES, labels: ['Auto', 'Kitty graphics', 'iTerm2 inline', 'Sixel', 'Unicode character art', 'Off'],
+    get: config => config.graphicsMode, set: (config, graphicsMode) => ({...config, graphicsMode})}),
+  enumRow({id: 'textSizing', label: 'Text sizing', description: 'Larger headings and counters in documents, games and celebrations where your terminal proved it can scale text (Kitty\'s text sizing protocol). Off keeps ordinary text; Enhanced scales more, still only where verified', category: 'General',
+    values: TEXT_SIZING_SETTINGS, labels: ['Auto', 'Off', 'Enhanced'],
+    get: config => config.textSizing, set: (config, textSizing) => ({...config, textSizing})}),
+  enumRow({id: 'browser', label: 'Real browser', description: 'Use an installed Chrome or Chromium for /browser and for rendered Markdown and HTML previews. It starts only when needed and stops when idle; nothing is downloaded. Off keeps NMSh\'s own renderer and disables /browser', category: 'General',
+    values: BROWSER_SETTINGS, labels: ['Auto', 'Off'],
+    get: config => config.browser, set: (config, browser) => ({...config, browser})}),
   enumRow({id: 'onboardingBackdrop', label: 'Starting point backdrop', description: 'The sky behind the starting-point selector (/startup): the real Aurora, subtle, or off. A cycles it there too', category: 'General',
     values: ['aurora', 'subtle', 'off'] as const, labels: ['Aurora on', 'Subtle', 'Off'],
     get: config => config.onboardingBackdrop, set: (config, onboardingBackdrop) => ({...config, onboardingBackdrop})}),
@@ -411,6 +421,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
+  {id: 'semanticOutput', label: 'Semantic Output', description: 'A one-line test or build summary (counts as the tool printed them) and the failures or diagnostics it listed, in recognized blocks. The output itself is unchanged; Off shows raw output only',
+    category: 'Transcript', control: 'boolean', get: config => config.semanticOutput, set: (config, semanticOutput) => ({...config, semanticOutput})},
   enumRow({id: 'updateMode', label: 'Automatic updates', description: 'Automatic prepares verified releases for the next launch (official source installs only); Notify only announces them; Off never checks. /update works on request', category: 'Updates',
     values: UPDATE_MODES, labels: ['Automatic', 'Notify only', 'Off'],
     get: config => config.updateMode, set: (config, updateMode) => ({...config, updateMode})}),
@@ -480,6 +492,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     }}),
   {id: 'askRecord', label: 'Record Ask in transcript', description: 'Keep Ask questions and replies with this session\'s transcript; commands or actions you approve still follow their normal history rules', category: 'Ask',
     control: 'boolean', get: config => config.askRecord, set: (config, askRecord) => ({...config, askRecord})},
+  enumRow({id: 'askCommandSuggestions', label: 'Command suggestions', description: 'When Ask cannot place a request, suggest one shell command from your local model (/llm). You check it, then copy or insert it; NMSh never runs it', category: 'Ask',
+    values: ASK_COMMAND_SUGGESTIONS, labels: ['Off', 'Local model'],
+    get: config => config.askCommandSuggestions, set: (config, askCommandSuggestions) => ({...config, askCommandSuggestions})}),
   enumRow({id: 'askPresentation', label: 'Ask presentation', description: 'Chat puts your Ask turns on the right; Normal keeps both sides on the left. The transcript keeps its own presentation', category: 'Ask',
     values: ASK_PRESENTATIONS, labels: ASK_PRESENTATIONS.map(mode => ASK_PRESENTATION_LABELS[mode]),
     get: config => config.askPresentation, set: (config, askPresentation) => ({...config, askPresentation})}),
@@ -495,6 +510,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'openWith', label: 'Open with', description: 'Where /open and /open-diff hand files: the editor around NMSh (Auto), Zed, VS Code, or VISUAL/EDITOR', category: 'Sessions',
     values: OPEN_WITH_IDS, labels: ['Auto', 'Zed', 'VS Code', 'VISUAL / EDITOR'],
     get: config => config.openWith, set: (config, openWith) => ({...config, openWith})}),
+  {id: 'terminalEditor', label: 'Terminal editor', description: 'Used by /open and o in /view when VISUAL and EDITOR are not set: choose one installed here', category: 'Sessions',
+    control: 'child', destination: 'editor', value: config => TERMINAL_EDITORS.find(editor => editor.id === config.terminalEditor)?.label ?? 'VISUAL / EDITOR'},
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
     control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
@@ -672,14 +689,14 @@ export const CONFIG_GROUPS = ['General', 'Appearance', 'Prompt & Composer', 'Edi
 export type ConfigGroup = typeof CONFIG_GROUPS[number];
 
 export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
-  glyphStyle: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
+  glyphStyle: 'General', graphicsMode: 'General', textSizing: 'General', browser: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
   promptVibrance: 'Appearance',
   showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
-  transcriptPresentation: 'Editor', openWith: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
+  transcriptPresentation: 'Editor', openWith: 'Editor', terminalEditor: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
   reducedMotion: 'Cursor & Motion', effectsOff: 'Cursor & Motion',
   shellBackend: 'Shell & Providers', suggestions: 'Shell & Providers',
   localUnderstanding: 'Local Understanding',
-  askRecord: 'Transcript & Privacy', askPresentation: 'Transcript & Privacy', outputFolding: 'Transcript & Privacy',
+  askRecord: 'Transcript & Privacy', askPresentation: 'Transcript & Privacy', outputFolding: 'Transcript & Privacy', semanticOutput: 'Transcript & Privacy',
 };
 export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   General: 'General', Updates: 'General',
@@ -706,17 +723,17 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
-  'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
+  'glyphStyle', 'graphicsMode', 'textSizing', 'browser', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
   'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
-  'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
+  'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith', 'terminalEditor',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',
   'motion_rendering', 'motion_contextTransitions', 'motion_commandLaunch', 'motion_completionHighlight', 'motion_completionEffect', 'motion_cursorTravel', 'motion_eventFeedback', 'motion_intensity', 'motion_speed',
   'reducedMotion', 'effectsOff',
   'sessionNotices', 'terminalTitle', 'agentActivity', 'notifications',
   'shellBackend', 'welcome', 'suggestions', 'history', 'picker', 'navigation', 'tools', 'toolUpdateChecks', 'installSuggestions',
   'localUnderstanding',
-  'askRecord', 'askPresentation', 'outputFolding',
+  'askRecord', 'askPresentation', 'askCommandSuggestions', 'outputFolding', 'semanticOutput',
 ];
 const groupRank = (row: SettingsRow) => CONFIG_GROUPS.indexOf(configGroup(row));
 /** Sort key: group, the root's place in CONFIG_ORDER, the root's own position, then the row's (so a child stays under its parent). */
