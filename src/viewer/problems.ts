@@ -83,6 +83,8 @@ export class ProblemsRunner {
       this.report = report;
       this.dismissed.clear();
       ProblemsRunner.notify?.();
+    } catch {
+      // A check that could not run (the folder vanished, a read failed) leaves the last report as it was; it never throws into the editor.
     } finally { this.running -= 1; }
   }
 

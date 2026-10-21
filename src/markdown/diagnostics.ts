@@ -1,7 +1,8 @@
-import {lstat, open, realpath} from 'node:fs/promises';
-import {dirname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {constants} from 'node:fs';
+import {lstat, open, readlink, realpath} from 'node:fs/promises';
+import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {parseBlockLines, type Block} from './blocks.js';
-import {headingsFromLines, resolveFragment} from './sourceMap.js';
+import {headingsFromLines, resolveFragment, type HeadingEntry} from './sourceMap.js';
 
 /**
  * Offline static diagnostics for Markdown, HTML and CSS documents (#466). Everything here reads the document's own lines (the
@@ -57,8 +58,16 @@ export const MAX_DIAGNOSTICS = 500;
 export const MAX_CHECKS = 400;
 const MAX_PATH = 1024;
 const MAX_TARGET_BYTES = 256 * 1024;
+const MAX_TARGET_READS = 50;
+/** Markdown lines longer than this are scanned only this far (the rest is reported, not guessed at). */
+const MAX_LINE = 20_000;
 
-/** A checker confined to `root`: lexical `..` and symlinks are both resolved before a path is called inside. */
+/**
+ * A checker confined to `root`. The path is lexically resolved, then walked one component at a time from the root: a symlink
+ * (even a dangling one, even one into a folder this user cannot read) is resolved at the component where it is met and the
+ * result must stay inside the real root before the walk goes on, so nothing beyond the root is ever looked at and a link
+ * out of it can never be told apart from any other.
+ */
 export function createLocalFs(docDir: string, root: string): LocalFs {
   let realRoot: Promise<string> | undefined;
   const rootReal = () => realRoot ??= realpath(root).catch(() => root);
@@ -68,20 +77,37 @@ export function createLocalFs(docDir: string, root: string): LocalFs {
     const resolved = resolve(docDir, path);
     if (!inside(root, resolved)) return {state: 'outside'};
     const base = await rootReal();
+    const segments = relative(root, resolved).split(sep).filter(Boolean);
+    let current = root;
+    for (let index = 0; index < segments.length; index += 1) {
+      const next = join(current, segments[index]!);
+      let info;
+      try { info = await lstat(next); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        return {state: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'unreadable'};
+      }
+      if (info.isSymbolicLink()) {
+        let target: string;
+        try { target = await realpath(next); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') return {state: 'unreadable'};
+          // Dangling: the place it points to is judged without looking at it.
+          try { return {state: inside(base, resolve(join(current), await readlink(next))) ? 'missing' : 'outside'}; } catch { return {state: 'unreadable'}; }
+        }
+        if (!inside(base, target)) return {state: 'outside'};
+        current = target;
+        continue;
+      }
+      current = next;
+    }
     try {
-      const real = await realpath(resolved);
-      if (!inside(base, real)) return {state: 'outside'};
-      const info = await lstat(real);
-      return {state: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'unreadable', real};
+      const info = await lstat(current);
+      return {state: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'unreadable', real: current};
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'EACCES' || code === 'EPERM') return {state: 'unreadable'};
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') return {state: 'unreadable'};
-      // Missing: but a symlinked folder on the way may already lead out of the root.
-      for (let ancestor = dirname(resolved); ancestor !== dirname(ancestor); ancestor = dirname(ancestor)) {
-        try { const real = await realpath(ancestor); return {state: inside(base, real) ? 'missing' : 'outside'}; } catch { /* keep climbing */ }
-      }
-      return {state: 'missing'};
+      return {state: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'unreadable'};
     }
   }
   return {
@@ -90,8 +116,17 @@ export function createLocalFs(docDir: string, root: string): LocalFs {
       const found = await locate(path);
       if (found.state !== 'file' || !found.real) return undefined;
       let handle;
-      try { handle = await open(found.real, 'r'); const buffer = Buffer.alloc(maxBytes); const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0); return buffer.subarray(0, bytesRead).toString('utf8'); }
-      catch { return undefined; } finally { await handle?.close().catch(() => undefined); }
+      try {
+        // Never follow a link or wait on a pipe: the file is opened as the regular file it was a moment ago, or not at all.
+        handle = await open(found.real, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (constants.O_NOCTTY ?? 0));
+        const info = await handle.stat();
+        const before = await lstat(found.real);
+        if (!info.isFile() || info.ino !== before.ino || info.dev !== before.dev) return undefined;
+        if (await realpath(found.real) !== found.real) return undefined;
+        const buffer = Buffer.alloc(Math.min(maxBytes, info.size));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return buffer.subarray(0, bytesRead).toString('utf8');
+      } catch { return undefined; } finally { await handle?.close().catch(() => undefined); }
     },
   };
 }
@@ -146,6 +181,7 @@ class Run {
   external = 0;
   truncated = false;
   private readonly states = new Map<string, Promise<FileState>>();
+  private readonly targets = new Map<string, Promise<HeadingEntry[] | undefined>>();
   private ids = 0;
   constructor(readonly input: DiagnoseInput) {}
   get aborted() { return Boolean(this.input.signal?.aborted); }
@@ -165,34 +201,47 @@ class Run {
     return pending;
   }
 
-  /** Report a destination written in the document. `kindOfAsset`: a missing file is an error either way; the wording differs. */
+  /** The headings of another Markdown file, read once per path and counted against the same bound as other file work. */
+  targetHeadings(path: string): Promise<HeadingEntry[] | undefined> | undefined {
+    const known = this.targets.get(path);
+    if (known) return known;
+    if (!this.input.fs || this.targets.size >= MAX_TARGET_READS) { this.truncated = true; return undefined; }
+    const pending = this.input.fs.readText(path, MAX_TARGET_BYTES).then(text => text === undefined ? undefined : headingsFromLines(text.split('\n')));
+    this.targets.set(path, pending);
+    return pending;
+  }
+
+  /** Report a destination written in the document; `exactSpan` false when only the line is known. */
   async reference(destination: string, line: number, column: number, headings: ReturnType<typeof headingsFromLines> | undefined, ids: ReadonlySet<string> | undefined, softFragments: boolean): Promise<void> {
     const end = column + destination.length;
-    const target = classify(destination);
+    const exact = !destination.includes('\n') && !destination.includes('\r');
+    const add = (code: string, severity: Severity, message: string) => this.add(code, severity, message, line, exact ? column : undefined, exact ? end : undefined);
+    const target = classify(destination.replace(/\\([!-/:-@[-`{-~])/gu, '$1'));
     switch (target.kind) {
       case 'ignore': return;
       case 'external': this.external += 1; return;
-      case 'unsafe': this.add('unsafe-scheme', 'warning', `A ${target.scheme}: link is never followed or checked here.`, line, column, end); return;
-      case 'absolute': this.add('absolute-path', 'unverified', 'Absolute and home-relative paths are not checked.', line, column, end); return;
+      case 'unsafe': add('unsafe-scheme', 'warning', `A ${target.scheme}: link is never followed or checked here.`); return;
+      case 'absolute': add('absolute-path', 'unverified', 'Absolute and home-relative paths are not checked.'); return;
       case 'fragment': {
+        if (!headings && !ids) return;
         const found = headings ? resolveFragment(headings, target.fragment) : undefined;
         let decoded = target.fragment;
         try { decoded = decodeURIComponent(decoded); } catch { /* as written */ }
         if (found || ids?.has(decoded) || ids?.has(target.fragment) || decoded.toLowerCase() === 'top') return;
-        this.add('broken-fragment', softFragments ? 'warning' : 'error', softFragments ? `No heading or id “${target.fragment}” here (other generators may build ids differently).` : `No heading or id “${target.fragment}” in this document.`, line, column, end);
+        add('broken-fragment', softFragments ? 'warning' : 'error', softFragments ? `No heading or id “${target.fragment}” here (other generators may build ids differently).` : `No heading or id “${target.fragment}” in this document.`);
         return;
       }
       case 'local': {
         const pending = this.stat(target.path);
-        if (!pending) { if (!this.input.fs) this.add('unverified-local', 'unverified', 'Not checked: this document has no folder yet. Save it to check local files.', line, column, end); return; }
+        if (!pending) { if (!this.input.fs) add('unverified-local', 'unverified', 'Not checked: this document has no folder yet. Save it to check local files.'); return; }
         const state = await pending;
         if (this.aborted) return;
-        if (state === 'outside') this.add('outside-root', 'unverified', 'Points outside the document\'s folder or project; not checked.', line, column, end);
-        else if (state === 'unreadable') this.add('unreadable', 'warning', 'This path cannot be read or checked.', line, column, end);
-        else if (state === 'missing') this.add('missing-file', 'error', `No such file: ${target.path}`, line, column, end);
+        if (state === 'outside') add('outside-root', 'unverified', 'Points outside the document\'s folder or project; not checked.');
+        else if (state === 'unreadable') add('unreadable', 'warning', 'This path cannot be read or checked.');
+        else if (state === 'missing') add('missing-file', 'error', `No such file: ${target.path.replace(/[\r\n]+/gu, ' ')}`);
         else if (state === 'file' && target.fragment && /\.(?:md|markdown)$/iu.test(target.path) && this.input.fs) {
-          const text = await this.input.fs.readText(target.path, MAX_TARGET_BYTES);
-          if (text !== undefined && !resolveFragment(headingsFromLines(text.split('\n')), target.fragment)) this.add('broken-fragment-in-file', 'warning', `No heading “${target.fragment}” in ${target.path}.`, line, column, end);
+          const headingsOfTarget = await this.targetHeadings(target.path);
+          if (headingsOfTarget && !resolveFragment(headingsOfTarget, target.fragment)) add('broken-fragment-in-file', 'warning', `No heading “${target.fragment}” in ${target.path}.`);
         }
         return;
       }
@@ -209,63 +258,100 @@ function codeLines(blocks: readonly Block[], into: Set<number>): void {
 }
 
 const normalize = (label: string) => label.trim().replace(/\s+/gu, ' ').toLowerCase();
-const maskCode = (text: string) => text.replace(/(`+)[\s\S]*?\1/gu, span => ' '.repeat(span.length));
+const blankOut = (text: string) => text.replace(/[^\n]/gu, ' ');
+const MAX_PARAGRAPH_FOR_SPANS = 200_000;
+
+/** The lines to scan: code, front matter, HTML comments and code spans (also across lines of a paragraph) blanked, columns kept. */
+function scannable(lines: readonly string[], skip: ReadonlySet<number>): string[] {
+  let text = lines.map((line, at) => skip.has(at) ? '' : line).join('\n');
+  text = text.replace(/<!--[\s\S]*?-->/gu, blankOut);
+  const cut = text.split('\n');
+  let start = 0;
+  while (start < cut.length) {
+    if (!cut[start]!.trim()) { start += 1; continue; }
+    let end = start;
+    while (end < cut.length && cut[end]!.trim()) end += 1;
+    const paragraph = cut.slice(start, end).join('\n');
+    if (paragraph.includes('`') && paragraph.length <= MAX_PARAGRAPH_FOR_SPANS) cut.splice(start, end - start, ...paragraph.replace(/(`+)[\s\S]*?\1/gu, blankOut).split('\n'));
+    start = end;
+  }
+  return cut;
+}
+
+const LINK = /(!?)(?<!\\)\[((?:[^\[\]\\!]|\\.|\[[^\[\]\\]{0,200}\]|!\[[^\[\]]{0,200}\]\([^()\s]{0,500}\)|!(?!\[)){0,400})\]\(\s*(<[^>\n]{0,1000}>|[^\s()]{0,1000}(?:\([^\s()]{0,300}\)[^\s()]{0,300}){0,5})/gdu;
+const REFERENCE = /(?<![\\!])\[([^\[\]\\]{1,400})\]\[([^\[\]\\]{0,400})\]/gdu;
+const FOOTNOTE = /(?<!\\)\[\^([^\]\s]{1,200})\](?!:)/gdu;
+const DEFINITION = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3})\[([^\]^][^\]]{0,999})\]:[ \t]*(<[^>\n]{0,1000}>|\S{0,1000})/du;
+const NOTE_DEFINITION = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3})\[\^([^\]\s]{1,200})\]:/u;
+const INLINE_IMG = /<img\b[^>]{0,2000}?\bsrc\s*=\s*(?:"([^"\n]{0,1000})"|'([^'\n]{0,1000})')/gdiu;
 
 async function markdown(run: Run): Promise<void> {
   const lines = run.input.lines;
   const blocks = parseBlockLines(lines, {html: true});
   const skip = new Set<number>();
   codeLines(blocks, skip);
-  if (lines[0]?.trim() === '---') for (let at = 1; at < Math.min(lines.length, 200); at += 1) if (/^(?:---|\.\.\.)\s*$/u.test(lines[at]!)) { for (let line = 0; line <= at; line += 1) skip.add(line); break; }
+  const fence = lines[0]?.trim();
+  if (fence === '---' || fence === '+++') for (let at = 1; at < Math.min(lines.length, 200); at += 1) if (lines[at]!.trim() === fence || (fence === '---' && lines[at]!.trim() === '...')) { for (let line = 0; line <= at; line += 1) skip.add(line); break; }
   const headings = headingsFromLines(lines, {html: true});
   const seen = new Map<string, number>();
   for (const heading of headings) {
-    const key = heading.slug;
-    if (key === undefined) continue;
+    if (heading.slug === undefined) continue;
     const first = seen.get(heading.text.toLowerCase());
-    if (first !== undefined) run.add('duplicate-heading', 'info', `Same heading text as line ${first + 1}; its anchor is #${key}.`, heading.line);
+    if (first !== undefined) run.add('duplicate-heading', 'info', `Same heading text as line ${first + 1}; its anchor is #${heading.slug}.`, heading.line);
     else seen.set(heading.text.toLowerCase(), heading.line);
   }
   const soft = lines.some(line => /\bid\s*=|\{#/u.test(line));
+  const text = scannable(lines, skip);
   const definitions = new Set<string>(), footnoteDefs = new Map<string, number>();
   const refs: Array<{label: string; line: number; start: number; end: number}> = [], notes: Array<{label: string; line: number; start: number; end: number}> = [];
-  const destinations: Array<{destination: string; line: number; column: number; image?: boolean; alt?: string}> = [];
-  lines.forEach((text, line) => {
+  const destinations: Array<{destination: string; line: number; column: number; alt?: {text: string; start: number; end: number}}> = [];
+  let longLine = false;
+  text.forEach((full, line) => {
     if (skip.has(line) || run.aborted) return;
-    const masked = maskCode(text);
+    if (full.length > MAX_LINE && !longLine) { longLine = true; run.add('long-line', 'info', `This line is over ${MAX_LINE.toLocaleString('en-US')} characters; only its first part is checked.`, line); }
+    const masked = full.length > MAX_LINE ? full.slice(0, MAX_LINE) : full;
     let from = 0;
-    const note = /^ {0,3}\[\^([^\]\s]+)\]:/u.exec(masked);
-    const definition = note ? undefined : /^ {0,3}\[([^\]]+)\]:[ \t]*(<[^>\n]*>|\S+)/du.exec(masked);
-    if (note) { footnoteDefs.set(note[1]!, line); from = note[0].length; }
+    const note = NOTE_DEFINITION.exec(masked);
+    const definition = note ? undefined : DEFINITION.exec(masked);
+    if (note) { footnoteDefs.set(note[2]!, line); from = note[0].length; }
     if (definition) {
-      definitions.add(normalize(definition[1]!));
-      const raw = definition[2]!;
-      const start = definition.indices![2]![0] + (raw.startsWith('<') ? 1 : 0);
-      destinations.push({destination: raw.startsWith('<') ? raw.slice(1, -1) : raw, line, column: start});
+      definitions.add(normalize(definition[2]!));
+      let raw = definition[3]!, at = definition.indices![3]![0], target = line;
+      if (!raw) {
+        // The destination may start the next line.
+        const following = /^\s*(<[^>\n]*>|\S+)/u.exec(text[line + 1] ?? '');
+        if (following) { raw = following[1]!; at = following[0].length - raw.length; target = line + 1; }
+      }
+      if (raw) destinations.push({destination: raw.startsWith('<') ? raw.slice(1, -1) : raw, line: target, column: at + (raw.startsWith('<') ? 1 : 0)});
       from = definition[0].length;
     }
     const rest = masked.slice(from);
-    for (const match of rest.matchAll(/(!?)(?<!\\)\[((?:[^\]\\]|\\.)*)\]\(\s*(<[^>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)/gdu)) {
+    for (const match of rest.matchAll(LINK)) {
       const raw = match[3]!;
       const [startIndex] = match.indices![3]!;
       const angle = raw.startsWith('<');
-      destinations.push({destination: angle ? raw.slice(1, -1) : raw, line, column: from + startIndex + (angle ? 1 : 0), ...(match[1] ? {image: true, alt: match[2]!} : {})});
+      destinations.push({destination: angle ? raw.slice(1, -1) : raw, line, column: from + startIndex + (angle ? 1 : 0),
+        ...(match[1] ? {alt: {text: match[2]!, start: from + match.index!, end: from + match.index! + 3 + match[2]!.length}} : {})});
     }
-    for (const match of rest.matchAll(/(?<![\\!])\[((?:[^\]\\]|\\.)+)\]\[((?:[^\]\\]|\\.)*)\]/gdu)) {
+    for (const match of rest.matchAll(INLINE_IMG)) {
+      const group = match[1] !== undefined ? 1 : 2;
+      destinations.push({destination: match[group]!, line, column: from + match.indices![group]![0]});
+    }
+    for (const match of rest.matchAll(REFERENCE)) {
       if (match[1]!.startsWith('^')) continue;
       const label = match[2]! || match[1]!;
       const [start, end] = match.indices![match[2]! ? 2 : 1]!;
       refs.push({label, line, start: from + start, end: from + end});
     }
-    for (const match of rest.matchAll(/(?<!\\)\[\^([^\]\s]+)\](?!:)/gdu)) { const [start, end] = match.indices![1]!; notes.push({label: match[1]!, line, start: from + start, end: from + end}); }
-    run.external += [...rest.matchAll(/<([a-zA-Z][a-zA-Z0-9+.-]*:[^>\s]*)>/gu)].filter(autolink => classify(autolink[1]!).kind === 'external').length;
+    for (const match of rest.matchAll(FOOTNOTE)) { const [start, end] = match.indices![1]!; notes.push({label: match[1]!, line, start: from + start, end: from + end}); }
+    run.external += [...rest.matchAll(/<([a-zA-Z][a-zA-Z0-9+.-]{0,30}:[^>\s]{0,1000})>/gu)].filter(autolink => classify(autolink[1]!).kind === 'external').length;
   });
   for (const item of destinations) {
     if (run.aborted) return;
-    if (item.image && !item.alt!.trim()) run.add('image-alt', 'warning', 'This image has no alternative text.', item.line, item.column - 1, item.column - 1 + item.destination.length + 1);
+    if (item.alt && !item.alt.text.trim()) run.add('image-alt', 'warning', 'This image has no alternative text.', item.line, item.alt.start, item.alt.end);
     await run.reference(item.destination, item.line, item.column, headings, undefined, soft);
   }
-  for (const ref of refs) if (!definitions.has(normalize(ref.label))) run.add('undefined-reference', 'error', `No link reference definition for “${ref.label}”.`, ref.line, ref.start, ref.end);
+  for (const ref of refs) if (!definitions.has(normalize(ref.label))) run.add('undefined-reference', 'info', `“${ref.label}” looks like a reference link but nothing defines it; it will show as plain text.`, ref.line, ref.start, ref.end);
   const used = new Set<string>();
   for (const note of notes) { used.add(note.label); if (!footnoteDefs.has(note.label)) run.add('undefined-footnote', 'error', `No definition for footnote [^${note.label}].`, note.line, note.start, note.end); }
   for (const [label, line] of footnoteDefs) if (!used.has(label)) run.add('unreferenced-footnote', 'warning', `Footnote [^${label}] is defined but never referenced.`, line);
@@ -273,43 +359,85 @@ async function markdown(run: Run): Promise<void> {
 
 // ---- CSS and HTML -----------------------------------------------------------------------------------------------
 
-async function cssUrls(run: Run, text: string, line: number, columnBase: number): Promise<void> {
-  for (const match of text.matchAll(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^)\s'"]*))\s*\)/gdu)) {
-    const value = match[1] ?? match[2] ?? match[3] ?? '';
-    const [start] = match.indices![match[1] !== undefined ? 1 : match[2] !== undefined ? 2 : 3]!;
-    if (TEMPLATED.test(value)) { run.add('unverified-dynamic', 'unverified', 'A templated address cannot be checked statically.', line, columnBase + start, columnBase + start + value.length); continue; }
-    await run.reference(value, line, columnBase + start, undefined, undefined, false);
-  }
-}
+interface CssUrl {value: string; line: number; column: number}
 
-function cssSyntax(run: Run, lines: readonly string[]): void {
+/** One pass over CSS: its url() and @import addresses (not those in comments or strings) and its first bracket problem. */
+function scanCss(text: string, baseLine: number, baseColumn: number): {urls: CssUrl[]; issue?: {message: string; line: number; column: number}} {
+  const urls: CssUrl[] = [];
   const stack: Array<{char: string; line: number; column: number}> = [];
-  let comment = false, quote = '';
-  for (let line = 0; line < lines.length; line += 1) {
-    const text = lines[line]!;
-    for (let column = 0; column < text.length; column += 1) {
-      const char = text[column]!;
-      if (comment) { if (char === '*' && text[column + 1] === '/') { comment = false; column += 1; } continue; }
-      if (quote) { if (char === '\\') column += 1; else if (char === quote) quote = ''; continue; }
-      if (char === '/' && text[column + 1] === '*') { comment = true; column += 1; continue; }
-      if (char === '"' || char === '\'') { quote = char; continue; }
-      if (char === '{' || char === '(') stack.push({char, line, column});
-      else if (char === '}' || char === ')') {
-        const open = stack.pop();
-        if (!open || (open.char === '{') !== (char === '}')) { run.add('css-syntax', 'warning', `Unexpected “${char}”.`, line, column, column + 1); return; }
-      }
+  let issue: {message: string; line: number; column: number} | undefined;
+  let line = baseLine, column = baseColumn;
+  const advance = (char: string) => { if (char === '\n') { line += 1; column = 0; } else column += 1; };
+  for (let at = 0; at < text.length;) {
+    const char = text[at]!;
+    if (char === '/' && text[at + 1] === '*') {
+      const end = text.indexOf('*/', at + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      for (; at < stop; at += 1) advance(text[at]!);
+      if (end < 0 && !issue) issue = {message: 'A comment is never closed.', line, column};
+      continue;
     }
-    quote = '';
+    if (char === '"' || char === '\'') {
+      let end = at + 1;
+      while (end < text.length && text[end] !== char) end += text[end] === '\\' ? 2 : 1;
+      const stop = Math.min(text.length, end + 1);
+      for (; at < stop; at += 1) advance(text[at]!);
+      continue;
+    }
+    if (char === '\\') { advance(char); at += 1; if (at < text.length) { advance(text[at]!); at += 1; } continue; }
+    const rest = text.slice(at, at + 7);
+    if (/^url\(/iu.test(rest) || /^@import\s/iu.test(text.slice(at, at + 8))) {
+      const isUrl = /^url\(/iu.test(rest);
+      let cursor = at + (isUrl ? 4 : 7);
+      let startLine = line, startColumn = column + (cursor - at);
+      for (let skipTo = at; skipTo < cursor; skipTo += 1) advance(text[skipTo]!);
+      while (cursor < text.length && /\s/u.test(text[cursor]!)) { advance(text[cursor]!); startLine = line; startColumn = column; cursor += 1; }
+      startLine = line; startColumn = column;
+      const quote = text[cursor] === '"' || text[cursor] === '\'' ? text[cursor]! : undefined;
+      let value = '';
+      let end = cursor;
+      if (quote) {
+        end = cursor + 1;
+        while (end < text.length && text[end] !== quote && value.length < 2000) { value += text[end] === '\\' ? text[end + 1] ?? '' : text[end]; end += text[end] === '\\' ? 2 : 1; }
+        startColumn += 1;
+        end += 1;
+      } else if (isUrl) {
+        while (end < text.length && text[end] !== ')' && !/\s/u.test(text[end]!) && value.length < 2000) { value += text[end]; end += 1; }
+      }
+      if (value && (quote || isUrl)) urls.push({value, line: startLine, column: startColumn});
+      for (; cursor < end; cursor += 1) advance(text[cursor]!);
+      // url( ... ): the closing bracket belongs to it.
+      if (isUrl) {
+        while (cursor < text.length && /\s/u.test(text[cursor]!)) { advance(text[cursor]!); cursor += 1; }
+        if (text[cursor] === ')') { advance(')'); cursor += 1; }
+      }
+      at = cursor;
+      continue;
+    }
+    if ((char === '{' || char === '(') ) stack.push({char, line, column});
+    else if (char === '}' || char === ')') {
+      const open = stack.pop();
+      if (!issue && (!open || (open.char === '{') !== (char === '}'))) issue = {message: `Unexpected “${char}”.`, line, column};
+    }
+    advance(char); at += 1;
   }
   const open = stack.at(-1);
-  if (open) run.add('css-syntax', 'warning', `“${open.char}” is never closed.`, open.line, open.column, open.column + 1);
-  else if (comment) run.add('css-syntax', 'warning', 'A comment is never closed.', lines.length - 1);
+  if (!issue && open) issue = {message: `“${open.char}” is never closed.`, line: open.line, column: open.column};
+  return {urls, ...(issue ? {issue} : {})};
+}
+
+async function cssUrls(run: Run, urls: readonly CssUrl[], ids: ReadonlySet<string> | undefined): Promise<void> {
+  for (const url of urls) {
+    if (run.aborted) return;
+    if (TEMPLATED.test(url.value)) { run.add('unverified-dynamic', 'unverified', 'A templated address cannot be checked statically.', url.line, url.column, url.column + url.value.length); continue; }
+    await run.reference(url.value, url.line, url.column, undefined, ids, false);
+  }
 }
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const OPTIONAL_END = new Set(['p', 'li', 'dt', 'dd', 'tr', 'td', 'th', 'thead', 'tbody', 'tfoot', 'option', 'optgroup', 'colgroup', 'html', 'head', 'body']);
 const RAW_TEXT = new Set(['script', 'style', 'textarea', 'title']);
-const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>`=]+))?)*)\s*(\/?)>/gdu;
+const TAG = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>`=]+))?)*)\s*(\/?)>/gdu;
 const ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`=]+)))?/gdu;
 const MAX_HTML_CHARS = 1_500_000;
 
@@ -321,16 +449,16 @@ async function html(run: Run): Promise<void> {
   const source = lines.join('\n');
   if (source.length > MAX_HTML_CHARS) { run.truncated = true; return; }
   const where = (position: number) => { let low = 0, high = starts.length - 1; while (low < high) { const mid = (low + high + 1) >> 1; if (starts[mid]! <= position) low = mid; else high = mid - 1; } return {line: low, column: position - starts[low]!}; };
-  const text = source.replace(/<!--[\s\S]*?-->/gu, comment => comment.replace(/[^\n]/gu, ' '));
+  const text = source;
   interface Tag {name: string; attributes: Map<string, {value: string; start: number; end: number}>; at: number}
   const ids = new Map<string, number>(), fragments: Array<{value: string; position: number; end: number}> = [], labelsFor = new Set<string>(), controls: Array<{tag: Tag; labelled: boolean}> = [];
   const stack: Array<{name: string; at: number}> = [];
-  let dynamic = 0, inLabel = 0;
+  let dynamic = 0, inLabel = 0, templateDepth = 0, baseSeen = false;
   const jobs: Array<() => Promise<void>> = [];
   let last = 0;
   for (const match of text.matchAll(TAG)) {
     if (run.aborted) return;
-    if (match.index! < last) continue;
+    if (match.index! < last || match[0].startsWith('<!--')) continue;
     const closing = Boolean(match[1]);
     const name = match[2]!.toLowerCase();
     const attributes = new Map<string, {value: string; start: number; end: number}>();
@@ -338,12 +466,13 @@ async function html(run: Run): Promise<void> {
     const base = match.indices![3]?.[0] ?? match.index!;
     for (const attribute of attributeText.matchAll(ATTRIBUTE)) {
       const group = attribute.indices![2] ?? attribute.indices![3] ?? attribute.indices![4];
-      attributes.set(attribute[1]!.toLowerCase(), {value: attribute[2] ?? attribute[3] ?? attribute[4] ?? '', start: base + (group?.[0] ?? attribute.indices![1]![1]), end: base + (group?.[1] ?? attribute.indices![1]![1])});
+      if (!attributes.has(attribute[1]!.toLowerCase())) attributes.set(attribute[1]!.toLowerCase(), {value: attribute[2] ?? attribute[3] ?? attribute[4] ?? '', start: base + (group?.[0] ?? attribute.indices![1]![1]), end: base + (group?.[1] ?? attribute.indices![1]![1])});
     }
     const tag: Tag = {name, attributes, at: match.index!};
     const position = where(match.index!);
     if (closing) {
       if (name === 'label' && inLabel > 0) inLabel -= 1;
+      if (name === 'template' && templateDepth > 0) templateDepth -= 1;
       const found = stack.map(entry => entry.name).lastIndexOf(name);
       if (found < 0) { if (!VOID.has(name)) run.add('unexpected-closing-tag', 'warning', `</${name}> has no matching opening tag.`, position.line, position.column, position.column + match[0].length); }
       else { for (let at = stack.length - 1; at > found; at -= 1) { const open = stack[at]!; if (!OPTIONAL_END.has(open.name)) { const place = where(open.at); run.add('unclosed-tag', 'warning', `<${open.name}> is never closed.`, place.line, place.column, place.column + open.name.length + 1); } } stack.length = found; }
@@ -353,15 +482,18 @@ async function html(run: Run): Promise<void> {
         stack.push({name, at: match.index!});
       }
       if (name === 'label') inLabel += 1;
+      if (name === 'base' && attributes.has('href')) baseSeen = true;
+      const inert = templateDepth > 0;
+      if (name === 'template') templateDepth += 1;
       const dynamicHere = [...attributes.values()].some(attribute => TEMPLATED.test(attribute.value));
       if (dynamicHere) { dynamic += 1; const first = [...attributes.values()].find(attribute => TEMPLATED.test(attribute.value))!; const place = where(first.start); run.add('unverified-dynamic', 'unverified', 'A templated attribute cannot be checked statically.', place.line, place.column, place.column + (first.end - first.start)); }
-      const id = attributes.get('id');
+      const id = inert ? undefined : attributes.get('id');
       if (id?.value) { if (ids.has(id.value)) { const place = where(id.start); run.add('duplicate-id', 'error', `The id “${id.value}” is used twice (first on line ${where(ids.get(id.value)!).line + 1}).`, place.line, place.column, place.column + id.value.length); } else ids.set(id.value, id.start); }
       const named = attributes.get('name');
       if (name === 'a' && named?.value) ids.set(named.value, named.start);
       const asset = (attribute: string) => {
         const entry = attributes.get(attribute);
-        if (!entry || !entry.value || dynamicHere) return;
+        if (!entry || !entry.value || dynamicHere || inert) return;
         const place = where(entry.start);
         jobs.push(() => run.reference(entry.value, place.line, place.column, undefined, undefined, false));
       };
@@ -379,7 +511,7 @@ async function html(run: Run): Promise<void> {
         const rest = text.slice(contentStart);
         const end = new RegExp(`</${name}\\s*>`, 'iu').exec(rest);
         const content = end ? rest.slice(0, end.index) : rest;
-        if (name === 'style') { const origin = where(contentStart); content.split('\n').forEach((part, index) => jobs.push(() => cssUrls(run, part, origin.line + index, index === 0 ? origin.column : 0))); }
+        if (name === 'style' && !inert) { const origin = where(contentStart); const scanned = scanCss(content, origin.line, origin.column); jobs.push(() => cssUrls(run, scanned.urls, new Set(ids.keys()))); }
         last = contentStart + content.length + (end ? end[0].length : 0);
         if (end) stack.pop();
       }
@@ -400,7 +532,8 @@ async function html(run: Run): Promise<void> {
     run.add('form-label', 'warning', `This <${control.tag.name}> has no label (use <label for>, a wrapping <label> or aria-label).`, place.line, place.column, place.column + control.tag.name.length + 1);
   }
   if (dynamic > 0) run.external += 0;
-  for (const job of jobs) { if (run.aborted) return; await job(); }
+  if (baseSeen) run.add('unverified-dynamic', 'unverified', 'A <base href> changes how relative addresses resolve; local files are not checked in this document.', 0);
+  else for (const job of jobs) { if (run.aborted) return; await job(); }
 }
 
 export async function diagnose(input: DiagnoseInput): Promise<DiagnosticReport> {
@@ -410,8 +543,9 @@ export async function diagnose(input: DiagnoseInput): Promise<DiagnosticReport> 
     if (input.format === 'markdown') await markdown(run);
     else if (input.format === 'html') await html(run);
     else {
-      cssSyntax(run, input.lines);
-      for (let line = 0; line < input.lines.length && !run.aborted; line += 1) await cssUrls(run, input.lines[line]!, line, 0);
+      const scanned = scanCss(input.lines.map(line => line.length > MAX_LINE ? line.slice(0, MAX_LINE) : line).join('\n'), 0, 0);
+      if (scanned.issue) run.add('css-syntax', 'warning', scanned.issue.message, scanned.issue.line, scanned.issue.column, scanned.issue.column + 1);
+      await cssUrls(run, scanned.urls, undefined);
     }
   } catch (error) {
     if (!run.aborted) run.add('diagnostics-failed', 'info', `Checking stopped early: ${error instanceof Error ? error.message : 'unknown error'}.`, 0);

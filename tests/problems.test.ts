@@ -228,3 +228,28 @@ test('Problems works in source, preview, hybrid and split: P (or F1 e) opens it 
     }
   } finally { p.cleanup(); }
 });
+
+test('review 6, 7, 13: a failing filesystem factory is not an unhandled rejection; the focus stays on a row when the list shrinks', async () => {
+  const p = project();
+  try {
+    const editor = await editorOn(p.write('a.md', '[a](nope.md) [b](nope2.md) [c](nope3.md)\n'));
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', listener);
+    const broken = new ProblemsRunner(editor, {debounceMs: 5, makeFs: async () => { throw new Error('boom'); }});
+    broken.enable();
+    await new Promise(done => setTimeout(done, 40));
+    process.off('unhandledRejection', listener);
+    assert.deepEqual(rejections, []);
+    broken.dispose();
+    editor.problems = new ProblemsRunner(editor, {debounceMs: 5});
+    press(editor, F1); press(editor, 'e');
+    await settle(() => Boolean(editor.problems!.report), 'report');
+    press(editor, '\u001b[B'); press(editor, '\u001b[B');
+    editor.buffer.caret = {line: 0, column: 0}; editor.buffer.delete(); editor.buffer.delete();
+    for (let step = 0; step < 24; step += 1) editor.buffer.delete();
+    await settle(() => editor.problems!.visible().length < 3 && !editor.problems!.busy, 'a shorter report');
+    assert.match(screen(editor), /▸/u, 'a row is still selected');
+    editor.problems!.dispose();
+  } finally { p.cleanup(); }
+});

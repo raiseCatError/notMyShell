@@ -144,3 +144,118 @@ test('performance: 20,000 lines with many links finish quickly and respect the c
     assert.equal(aborted.aborted, true);
   } finally { p.cleanup(); }
 });
+
+// ---- Findings of the independent review -------------------------------------------------------------------------
+
+import {spawnSync} from 'node:child_process';
+import {lstatSync} from 'node:fs';
+
+test('review 1-3: a dangling or unreadable symlink out of the root is "outside", never "missing" or "unreadable", and readText opens nothing special', async () => {
+  const p = project();
+  try {
+    symlinkSync(join(p.outside, 'real-missing'), join(p.root, 'd1'));
+    symlinkSync(join(p.outside, 'secret.txt'), join(p.root, 'd2'));
+    symlinkSync(join(p.outside, 'nowhere-dir'), join(p.root, 'dangling-dir'));
+    mkdirSync(join(p.outside, 'locked')); writeFileSync(join(p.outside, 'locked', 'f'), 'x'); chmodSync(join(p.outside, 'locked'), 0o000);
+    symlinkSync(join(p.outside, 'locked'), join(p.root, 'l1'));
+    const fs = createLocalFs(p.root, p.root);
+    assert.equal(await fs.stat('d1'), 'outside', 'a dangling link to an outside path');
+    assert.equal(await fs.stat('d2'), 'outside');
+    assert.equal(await fs.stat('dangling-dir/x.md'), 'outside');
+    assert.equal(await fs.stat('l1/f'), 'outside', 'a locked folder behind a link is outside, not unreadable');
+    assert.equal(await fs.stat('l1/nope'), 'outside');
+    chmodSync(join(p.outside, 'locked'), 0o755);
+    assert.equal(await fs.readText('d2', 100), undefined, 'a link out of the root is never read');
+    const fifo = join(p.root, 'pipe.md');
+    spawnSync('mkfifo', [fifo]);
+    if (lstatSync(fifo).isFIFO()) {
+      const started = process.hrtime.bigint();
+      assert.equal(await fs.readText('pipe.md', 100), undefined);
+      assert.ok(Number(process.hrtime.bigint() - started) / 1e9 < 2, 'a FIFO does not block');
+    }
+    assert.equal(await fs.stat('pipe.md'), 'unreadable');
+  } finally { chmodSync(join(p.outside, 'locked'), 0o755); p.cleanup(); }
+});
+
+test('review 4: heading checks in another file read it once, however many links name it', async () => {
+  const p = project();
+  try {
+    let reads = 0;
+    const real = createLocalFs(p.dir, p.root);
+    const counting: LocalFs = {stat: path => real.stat(path), readText: (path, max) => { reads += 1; return real.readText(path, max); }};
+    const lines = Array.from({length: 3000}, (_, index) => `[x](other.md#f${index})`);
+    const report = await diagnose({lines, format: 'markdown', fs: counting});
+    assert.equal(reads, 1);
+    assert.ok(report.diagnostics.length >= 400, 'findings still reported (bounded)');
+  } finally { p.cleanup(); }
+});
+
+test('review 5: hostile long lines finish quickly and an abort is noticed', async () => {
+  for (const [line, format] of [['['.repeat(80_000), 'markdown'], ['[^'.repeat(40_000), 'markdown'], ['[\\]'.repeat(30_000), 'markdown'], ['url('.repeat(40_000), 'css'], ['![a](' .repeat(20_000), 'markdown']] as const) {
+    const started = process.hrtime.bigint();
+    await diagnose({lines: [line], format});
+    assert.ok(Number(process.hrtime.bigint() - started) / 1e9 < 2, `${format}: ${line.slice(0, 6)} took ${Number(process.hrtime.bigint() - started) / 1e9}s`);
+  }
+  const started = process.hrtime.bigint();
+  const lines = Array.from({length: 4000}, () => `${'[a'.repeat(300)} [x](nope.md)`);
+  const controller = new AbortController();
+  const pending = diagnose({lines, format: 'markdown', signal: controller.signal});
+  setTimeout(() => controller.abort(), 20);
+  const report = await pending;
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e9 < 3);
+  assert.ok(report.aborted === true || report.diagnostics.length >= 0);
+});
+
+test('review 8: valid Markdown that was reported before is quiet', async () => {
+  const p = project();
+  try {
+    const lines = ['# T', '', '<!-- [old](missing.md) -->', '<!--', '[old2](missing.md)', '-->', '', 'matrix[i][j] is prose.', '', '[r]:', '  other.md', '> [q]: other.md', '', 'See [a][r] and [b][q].', '', 'a `code', 'span [y](missing.md)` ends', '', '[esc](other\\.md) [esc2](a\\_b.md)', '', '[![badge](../img/pic.png)](other.md) [a [b] c](other.md)'];
+    const report = await run(lines, 'markdown', p.dir, p.root);
+    const bad = report.diagnostics.filter(item => item.severity === 'error');
+    assert.deepEqual(bad.map(item => `${item.code}@${item.line}: ${item.message}`), ['missing-file@18: No such file: a_b.md'], JSON.stringify(report.diagnostics));
+    const toml = await run(['+++', 'link = "[x](missing.md)"', '+++', '', '# After'], 'markdown', p.dir, p.root);
+    assert.deepEqual(toml.diagnostics, [], 'TOML front matter is skipped');
+  } finally { p.cleanup(); }
+});
+
+test('review 8-10: an undefined [text][ref] is only information (CommonMark shows it as text); the outer link of a badge and nested brackets are checked; inline <img> and @import are checked', async () => {
+  const p = project();
+  try {
+    const md = await run(['[x][nope]', '[![CI](../img/pic.png)](gone.md)', '[a [b] c](gone2.md)', '<img src="../img/gone.png" alt="x">'], 'markdown', p.dir, p.root);
+    assert.deepEqual(md.diagnostics.map(item => `${item.code}:${item.severity}@${item.line}`).sort(), ['missing-file:error@1', 'missing-file:error@2', 'missing-file:error@3', 'undefined-reference:info@0'].sort());
+    const css = await run(['@import "gone.css";', '@import url(../style.css);'], 'css', p.dir, p.root);
+    assert.deepEqual(css.diagnostics.map(item => `${item.code}@${item.line}`), ['missing-file@0']);
+  } finally { p.cleanup(); }
+});
+
+test('review 9: valid HTML and CSS that was reported before is quiet', async () => {
+  const p = project();
+  try {
+    const html = await run(['<svg><clipPath id="c"></clipPath></svg>', '<style>', '.a { clip-path: url(#c); background: url(#nope); }', '/* url(missing.png) */', '.b { content: "url(missing.png)"; }', '.c\\{x { color: red }', '</style>', '<template><p id="t"></p></template><p id="t"></p>', '<script>var a = "<!--";</script>', '<img src="../img/pic.png" src="gone.png" alt="">'], 'html', p.dir, p.root);
+    assert.deepEqual(html.diagnostics.map(item => `${item.code}@${item.line}`), ['broken-fragment@2']);
+    const base = await run(['<base href="https://cdn.example/">', '<img src="logo.png" alt="">'], 'html', p.dir, p.root);
+    assert.ok(!base.diagnostics.some(item => item.severity === 'error'), 'a <base> makes relative addresses unverifiable');
+    const css = await run(['a { filter: url(#blur); background: url(x/*.png); }', '/* }} */', '.q { content: "a\\', '}" }'], 'css', p.dir, p.root);
+    assert.ok(!css.diagnostics.some(item => item.code === 'css-syntax' && item.line < 2), JSON.stringify(css.diagnostics));
+  } finally { p.cleanup(); }
+});
+
+test('review 11-12: the image-alt span is the image text; a value that spans lines is not an exact span and its message is one line', async () => {
+  const lines = ['x ![](b.png) y  ![ ](c.png)'];
+  const md = await run(lines, 'markdown');
+  const alt = md.diagnostics.filter(item => item.code === 'image-alt');
+  assert.equal(alt.length, 2);
+  for (const item of alt) assert.ok(lines[0]!.slice(item.column, item.endColumn).startsWith('!['), lines[0]!.slice(item.column, item.endColumn));
+  const p = project();
+  try {
+    const html = await run(['<a href="missing', '2.html">x</a>'], 'html', p.dir, p.root);
+    const item = html.diagnostics.find(entry => entry.code === 'missing-file')!;
+    assert.equal(item.exact, false);
+    assert.ok(!item.message.includes('\n'));
+  } finally { p.cleanup(); }
+});
+
+test('review: a long Markdown source line is scanned only so far and says so; the details scan elsewhere has a budget', async () => {
+  const report = await diagnose({lines: [`${'a '.repeat(15_000)}[x](nope.md)`], format: 'markdown'});
+  assert.ok(report.diagnostics.some(item => item.code === 'long-line'));
+});

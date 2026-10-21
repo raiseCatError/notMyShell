@@ -4636,7 +4636,7 @@ export class TerminalApp {
   private runEditorAction(editor: EditorState, action: EditorAction): void {
     if (action.kind === 'draft' || action.kind === 'draft-discard' || action.kind === 'draft-keep') { this.runDraftAction(editor, action); return; }
     if (action.kind === 'playground') { this.releaseEditor(editor); this.textEditor = undefined; void this.openPlayground(action.choice); return; }
-    if (action.kind === 'save-as') { this.saveAs(editor, action.path, Boolean(action.thenClose), () => this.textEditor === editor, () => { this.textEditor = undefined; this.returnFromPanel(); }); return; }
+    if (action.kind === 'save-as') { this.saveAs(editor, action.path, Boolean(action.thenClose), () => this.textEditor === editor, () => { this.releaseEditor(editor); this.textEditor = undefined; this.returnFromPanel(); }); return; }
     if (editor.file.scratch && (action.kind === 'review' || action.kind === 'review-apply' || action.kind === 'reload' || action.kind === 'save')) { editor.note = {text: 'A Playground document has no file yet: Save As creates one.', tone: 'info'}; return; }
     if (action.kind === 'review' || action.kind === 'review-apply') { this.reviewDisk(editor, action.kind === 'review-apply', () => this.textEditor === editor); return; }
     if (action.kind === 'close') { this.releaseEditor(editor); this.textEditor = undefined; this.returnFromPanel(); return; }
@@ -4650,7 +4650,7 @@ export class TerminalApp {
         editor.busy = false;
         if (this.textEditor !== editor) return;
         if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; this.render(); return; }
-        this.drafts().discard(editor);
+        this.releaseEditor(editor);
         this.textEditor = {...createEditor(result.file), note: {text: 'Reloaded from disk; your changes were discarded.', tone: 'info'}};
         this.render();
       });
@@ -4794,7 +4794,7 @@ export class TerminalApp {
         editor.busy = false;
         if (this.docSession !== session) return;
         if (!result.ok) { editor.note = {text: result.reason, tone: 'error'}; session.viewer.note = result.reason; this.render(); return; }
-        this.drafts().discard(editor);
+        this.releaseEditor(editor);
         const fresh = createDocumentSession(result.file, session.mode === 'edit' || session.mode === 'hybrid' ? session.mode : 'source');
         fresh.note = 'Reloaded from disk; your changes were discarded.';
         fresh.viewer.note = fresh.note;

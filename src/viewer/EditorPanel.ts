@@ -199,6 +199,7 @@ function jumpToDiagnostic(state: EditorState, item: Diagnostic): void {
 
 function problemsKey(state: EditorState, dialog: EditorDialog, key: Key): void {
   const items = problemList(state, dialog);
+  dialog.focus = Math.max(0, Math.min(dialog.focus, items.length - 1));
   if (key.kind === 'escape' || key.kind === 'interrupt') { state.dialog = undefined; return; }
   if (key.kind === 'up' || key.kind === 'focusPrevious' || key.kind === 'suggestPrevious') { dialog.focus = Math.max(0, dialog.focus - 1); return; }
   if (key.kind === 'down' || key.kind === 'suggestNext') { dialog.focus = Math.min(Math.max(0, items.length - 1), dialog.focus + 1); return; }
@@ -600,6 +601,7 @@ function footerRows(state: EditorState, columns: number): string[] {
     const dialog = state.dialog;
     const runner = state.problems;
     const items = problemList(state, dialog);
+    dialog.focus = Math.max(0, Math.min(dialog.focus, items.length - 1));
     const accent = foreground(UI_COLORS.accent), subtle = foreground(UI_COLORS.subtle);
     const safe = getIconStyle() === 'safe';
     const glyph = (severity: Severity) => safe ? ({error: 'E', warning: 'W', info: 'i', unverified: '?'})[severity] : ({error: '✖', warning: '▲', info: 'ℹ', unverified: '?'})[severity];
