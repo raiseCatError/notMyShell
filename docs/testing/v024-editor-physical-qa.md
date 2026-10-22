@@ -30,6 +30,12 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] A symlink out of the project and `/etc/passwd`-style paths are reported as not checked; an external URL is never fetched (watch the network).
 - [ ] 30, 50, 80 and 120 columns; NO_COLOR; Safe Glyphs (E/W/i/?).
 
+## Browser Console (#466)
+- [ ] NOT RUN: An HTML file with an inline script that throws, `console.error`/`console.warn`, a missing image and a remote `<img>`. Chromium preview (`h`), scripts off: `C` shows the missing image and the refusal only, and says scripts are off; the page's scripts stay off (nothing it would do happens). `T` turns scripts on: after the reload the exception and console lines appear; Enter on the exception opens the editor at the exact line; Back returns.
+- [ ] NOT RUN: Edit the text without refreshing: Enter says the text changed; `r` refreshes and the entries start again. A Markdown file: entries never go to a line.
+- [ ] NOT RUN: Tab filters, typing searches, Del clears, Shift+↑↓ marks, Ctrl+C shows the review, Enter copies; paste it somewhere and check no preview address token, query value or `password=` value is in it.
+- [ ] NOT RUN: Undo, dirty marker, caret and selection are as they were after opening and closing the Console; `/browser` pages in another tab never show up in it; 30, 50, 80 and 120 columns; NO_COLOR; Safe Glyphs; Ghostty and Zed.
+
 ## Hybrid view (#460)
 - [ ] Open a Markdown file, F3 (is F3 delivered by the terminal and by Zed?): headings, bold, links, lists, tables, quotes and fences render; the block under the caret shows its source; moving with the arrows swaps blocks without the screen jumping.
 - [ ] Type in every kind of block; select across blocks with Shift+Down (both show source); undo/redo; insert a snippet and Tab through it.

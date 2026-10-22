@@ -108,6 +108,8 @@ NMSh: bounded PNG decoder (graphics service) ──► Kitty placeholders │ iT
 ## Not verified, and remaining #462 work
 
 - Physical Ghostty and Zed QA: **NOT RUN** (added to `docs/testing/v024-editor-physical-qa.md`).
-- `/doctor` does not report Mermaid's location or version yet.
+- `/doctor` reports (Documents section) the browser it would use, the Mermaid it found (path, version, a warning for a major other
+  than the tested 12), the setting and, when diagrams would not be drawn, the reason in the service's own order. It launches nothing and
+  does not read the bundle (`probeMermaid` opens and `fstat`s it), so it says what was found, never that drawing works.
 - Remaining #462 items outside diagrams: following `#fragment` links inside a rendered document, outline refinements (the optional
   persistent outline rail), pointer toggling of `<details>` (and hybrid toggling).

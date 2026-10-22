@@ -18,6 +18,10 @@ export const MAX_LIBRARY_BYTES = 16 * 1024 * 1024;
 const BUNDLE = path.join('dist', 'mermaid.min.js');
 
 export type LocatedLibrary = {ok: true; path: string; version: string; source: string} | {ok: false; reason: string};
+/** What `/doctor` reports: the install the locator would use, found by the same rules, without reading the bundle. */
+export type MermaidProbe = {ok: true; path: string; version: string} | {ok: false; reason: string};
+/** The release NMSh's tests draw with (CI fetches exactly this one). Other versions are used, not promised. */
+export const TESTED_MERMAID = '12.2.0';
 
 export interface LocateOptions {
   env: NodeJS.ProcessEnv;
@@ -43,7 +47,7 @@ export function libraryCandidates(options: Omit<LocateOptions, 'candidates'>): s
   return out;
 }
 
-async function readBundle(file: string, packageDir: string | undefined): Promise<LocatedLibrary> {
+async function readBundle(file: string, packageDir: string | undefined, read = true): Promise<LocatedLibrary> {
   let version = 'unknown';
   if (packageDir) {
     let manifest: {name?: unknown; version?: unknown};
@@ -66,6 +70,7 @@ async function readBundle(file: string, packageDir: string | undefined): Promise
     if (!stat.isFile()) return {ok: false, reason: `${file} is not a regular file.`};
     if (stat.size > MAX_LIBRARY_BYTES) return {ok: false, reason: `${file} is too large (${Math.round(stat.size / 1048576)} MB) to be the Mermaid bundle.`};
     if ((stat.mode & 0o002) !== 0) return {ok: false, reason: `${file} can be changed by anyone on this machine, so NMSh does not run it.`};
+    if (!read) return {ok: true, path: file, version, source: ''};
     const source = await handle.readFile({encoding: 'utf8'});
     if (source.length === 0) return {ok: false, reason: `${file} is empty.`};
     return {ok: true, path: file, version, source};
@@ -87,18 +92,28 @@ async function resolveCandidate(candidate: string): Promise<{file: string; packa
 }
 
 export async function locateMermaid(options: LocateOptions): Promise<LocatedLibrary> {
+  return find(options, true);
+}
+
+/** The same search and checks as `locateMermaid`, but the bundle is only opened and `fstat`ed, never read. */
+export async function probeMermaid(options: LocateOptions): Promise<MermaidProbe> {
+  const found = await find(options, false);
+  return found.ok ? {ok: true, path: found.path, version: found.version} : found;
+}
+
+async function find(options: LocateOptions, read: boolean): Promise<LocatedLibrary> {
   const explicit = options.env.NMSH_MERMAID?.trim();
   if (explicit) {
     if (!path.isAbsolute(explicit)) return {ok: false, reason: `NMSH_MERMAID must be an absolute path (it is ${JSON.stringify(explicit.slice(0, 200))}).`};
     const {file, packageDir} = await resolveCandidate(explicit);
-    const found = await readBundle(file, packageDir);
+    const found = await readBundle(file, packageDir, read);
     return found.ok ? found : {ok: false, reason: `NMSH_MERMAID: ${found.reason}`};
   }
   for (const candidate of options.candidates ?? libraryCandidates(options)) {
     const stat = await fs.stat(path.join(candidate, BUNDLE)).catch(() => undefined);
     if (!stat) continue;
     const {file, packageDir} = await resolveCandidate(candidate);
-    return readBundle(file, packageDir);
+    return readBundle(file, packageDir, read);
   }
   return {ok: false, reason: `Mermaid is not installed. ${INSTALL_HINT}`};
 }

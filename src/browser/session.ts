@@ -1,3 +1,4 @@
+import {ConsoleLog} from './console.js';
 import type {FrameStream} from '../graphics/stream.js';
 import {plainText, popupAddress} from './address.js';
 import type {BrowserEngine, BrowserPage, Frame, KeyEventInput, MouseEventInput, PageEvent, PageKind, Viewport} from './types.js';
@@ -84,6 +85,9 @@ interface Tab {
   unsubscribe: Array<() => void>;
   retry?: unknown;
   closed: boolean;
+  /** A document preview's runtime Console (#466): what its page reported for the current document, redacted and bounded. */
+  console?: ConsoleLog;
+  consoleName?: string;
 }
 
 export class BrowserSession {
@@ -114,6 +118,9 @@ export class BrowserSession {
   get activeIndex(): number { return this.active_; }
 
   view(): TabView[] { return this.tabs_.map(viewOf); }
+
+  /** The active tab's Console, when it is a document preview opened with one. */
+  console(): ConsoleLog | undefined { return this.tabs_[this.active_]?.console; }
 
   activeView(): TabView | undefined {
     const tab = this.tabs_[this.active_];
@@ -171,7 +178,7 @@ export class BrowserSession {
 
   // ---- tabs ------------------------------------------------------------------------------------------------------
 
-  async open(url = 'about:blank', options: {background?: boolean; kind?: PageKind; scripts?: boolean} = {}): Promise<OpenResult> {
+  async open(url = 'about:blank', options: {background?: boolean; kind?: PageKind; scripts?: boolean; console?: {documentName: string}} = {}): Promise<OpenResult> {
     if (this.disposed) return {ok: false, reason: 'The browser is closed.'};
     if (this.tabs_.length >= MAX_TABS) {
       const reason = `${MAX_TABS} tabs are open. Close one first.`;
@@ -181,6 +188,7 @@ export class BrowserSession {
     const tab = this.makeTab(url);
     if (options.kind) tab.kind = options.kind;
     if (options.scripts !== undefined) tab.scripts = options.scripts;
+    if (options.console && options.kind === 'preview') { tab.console = new ConsoleLog(); tab.consoleName = options.console.documentName; }
     this.tabs_.push(tab);
     if (!options.background) this.activateTab(tab);
     this.touch();
@@ -199,6 +207,7 @@ export class BrowserSession {
       page = await this.options.engine.open({
         kind: tab.kind ?? 'web', url, viewport: this.viewport(),
         ...(tab.scripts !== undefined ? {scripts: tab.scripts} : {}),
+        ...(tab.consoleName !== undefined ? {console: {documentName: tab.consoleName}} : {}),
         ...(this.options.colorScheme ? {colorScheme: this.options.colorScheme} : {}),
         ...(this.options.reducedMotion !== undefined ? {reducedMotion: this.options.reducedMotion} : {}),
       });
@@ -265,6 +274,7 @@ export class BrowserSession {
     for (const off of tab.unsubscribe.splice(0)) { try { off(); } catch { /* already gone */ } }
     if (tab.retry !== undefined) { this.clock.clearTimeout(tab.retry); tab.retry = undefined; }
     tab.stream.dispose();
+    tab.console?.dispose();
     const page = tab.page;
     tab.page = undefined;
     if (page) void page.close().catch(() => undefined);
@@ -333,7 +343,12 @@ export class BrowserSession {
         else void this.open(url);
         break;
       }
-      case 'crashed': this.fail(tab, 'The page crashed.'); break;
+      case 'console': tab.console?.add(event.entry); break;
+      case 'document': tab.console?.reset(); break;
+      case 'crashed':
+        tab.console?.add({severity: 'error', origin: 'page', message: 'The page crashed. Refreshing the preview opens it again.'});
+        this.fail(tab, 'The page crashed.');
+        break;
       case 'closed': this.fail(tab, 'The page was closed.'); break;
     }
     this.touch();

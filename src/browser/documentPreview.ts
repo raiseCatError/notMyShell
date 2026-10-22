@@ -6,6 +6,7 @@ import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import type {PreviewView} from '../viewer/DocumentWorkspace.js';
+import type {ConsoleFeed} from '../viewer/consoleDialog.js';
 import {cellToViewport} from './keymap.js';
 import type {BrowserSession} from './session.js';
 import type {PreviewHandle, PreviewServer} from './types.js';
@@ -28,6 +29,8 @@ export interface PreviewDocument {
   root: string;
   text: string;
   trusted: boolean;
+  /** How the page is made from the file (HTML is served as written; Markdown is converted). */
+  kind?: 'html' | 'markdown';
 }
 
 export interface DocumentPreviewDeps {
@@ -63,7 +66,7 @@ export class BrowserPreviewView implements PreviewView {
     const view = new BrowserPreviewView(deps, document);
     try {
       view.handle = await deps.previews.serve({html: deps.html(document.text), root: document.root, trusted: document.trusted, name: document.name});
-      const opened = await deps.session.open(view.handle.url, {kind: 'preview', scripts: document.trusted});
+      const opened = await deps.session.open(view.handle.url, {kind: 'preview', scripts: document.trusted, console: {documentName: document.name}});
       if (!opened.ok) { view.dispose(); return {error: opened.reason}; }
     } catch (error) {
       view.dispose();
@@ -106,6 +109,13 @@ export class BrowserPreviewView implements PreviewView {
   }
 
   problems(): ReadonlyArray<{path: string; reason: string}> { return this.handle?.problems() ?? []; }
+
+  /** The page's runtime Console: read-only, filled by the page itself; opening it never changes scripts or the network. */
+  console(): ConsoleFeed | undefined {
+    const log = this.disposed ? undefined : this.deps.session.console();
+    if (!log) return undefined;
+    return {log, documentName: this.document.name, scripts: this.document.trusted, kind: this.document.kind ?? 'markdown', servedText: () => this.document.text};
+  }
   capturing(): boolean { return Boolean(this.finding); }
 
   status(): string | undefined {
@@ -116,6 +126,9 @@ export class BrowserPreviewView implements PreviewView {
     if (view?.find) parts.push(view.find.matches ? `${view.find.current}/${view.find.matches} for “${view.find.query}”` : `no match for “${view.find.query}”`);
     const notice = this.deps.session.notice();
     if (notice) parts.push(notice);
+    const reported = this.deps.session.console()?.entries() ?? [];
+    const errors = reported.filter(record => record.severity === 'error').length, warnings = reported.filter(record => record.severity === 'warning').length;
+    if (errors || warnings) parts.push(`Console: ${[errors ? `${errors} error${errors === 1 ? '' : 's'}` : '', warnings ? `${warnings} warning${warnings === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')} (C)`);
     const missing = this.problems();
     if (missing.length) parts.push(`${missing.length} resource${missing.length === 1 ? '' : 's'} missing or refused (${missing.at(-1)!.path})`);
     return parts.join(' · ') || undefined;
@@ -128,7 +141,7 @@ export class BrowserPreviewView implements PreviewView {
     const width = Math.max(10, columns - 4);
     const controls = renderControlRows(this.finding
       ? [['Enter', 'find'], ['Esc', 'cancel']]
-      : [['↑↓', 'scroll'], ['/', 'find'], ['+/-', 'zoom'], ['h', 'source'], ['e', 'edit'], ['r', 'refresh'], ['T', this.document.trusted ? 'scripts off' : 'scripts on'], ...(this.deps.session.lastBlocked ? [['o', 'open link'] as const] : []), ['Esc', 'source']], width);
+      : [['↑↓', 'scroll'], ['/', 'find'], ['+/-', 'zoom'], ['h', 'source'], ['e', 'edit'], ['r', 'refresh'], ['T', this.document.trusted ? 'scripts off' : 'scripts on'], ['C', 'console'], ...(this.deps.session.lastBlocked ? [['o', 'open link'] as const] : []), ['Esc', 'source']], width);
     const title = truncateText(this.document.name, Math.max(8, Math.floor(width * 0.5)));
     const detail = `rendered by Chromium${this.document.trusted ? ' · scripts on' : ''}`;
     const header = `  ${primary}${title}${RESET}${this.deps.dirty() ? `${warning} ● edited${RESET}` : ''}  ${subtle}${truncateText(detail, Math.max(1, width - displayWidth(title) - (this.deps.dirty() ? 10 : 0) - 2))}${RESET}`;

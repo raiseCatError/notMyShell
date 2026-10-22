@@ -79,6 +79,20 @@ async function check(host: LocatorHost, executable: string): Promise<BrowserAvai
   return {ok: true, executable, version};
 }
 
+/**
+ * The executable `locateBrowser` would try first, found by looking at the filesystem only (`--version` is not run), for `/doctor`.
+ * Whether it really is a usable Chrome is decided when a browser surface first opens.
+ */
+export async function findBrowserExecutable(host: Pick<LocatorHost, 'platform' | 'env' | 'isExecutable'> = realLocatorHost, override?: string): Promise<{ok: true; executable: string} | {ok: false; reason: string}> {
+  const configured = override ?? host.env.NMSH_BROWSER;
+  if (configured) {
+    if (!path.isAbsolute(configured)) return {ok: false, reason: 'NMSH_BROWSER must be the absolute path of a browser executable.'};
+    return (await host.isExecutable(configured)) ? {ok: true, executable: configured} : {ok: false, reason: `NMSH_BROWSER points to ${configured}, which is not an executable file.`};
+  }
+  for (const candidate of await candidatePaths(host)) if (await host.isExecutable(candidate)) return {ok: true, executable: candidate};
+  return {ok: false, reason: `No Chrome, Chromium or Edge was found. ${INSTALL_HINT}`};
+}
+
 export async function locateBrowser(host: LocatorHost = realLocatorHost, override?: string): Promise<BrowserAvailability> {
   const configured = override ?? host.env.NMSH_BROWSER;
   if (configured) {

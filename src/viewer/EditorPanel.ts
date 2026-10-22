@@ -14,6 +14,7 @@ import {reviewKey, renderReview, type ReviewState} from './ReviewPanel.js';
 import {paletteEntries, type PaletteEntry, type PaletteFormat} from './EditorPalette.js';
 import {DocumentIndex, SourceAnchor, type HeadingEntry} from '../markdown/sourceMap.js';
 import {ProblemsRunner, SEVERITY_ORDER} from './problems.js';
+import {consoleKey, consoleRows, openConsoleDialog, type ConsoleDialog, type ConsoleFeed} from './consoleDialog.js';
 import type {Diagnostic, Severity} from '../markdown/diagnostics.js';
 import {advanceSnippet, insertFootnote, insertSnippet, insideSnippet, type SnippetSession} from './snippets.js';
 import {continueList, insertLink, renumberFootnotes, renumberList, shiftListItems, toggleTask, wrapSelection, type EditResult, type WrapKind} from './markdownEdit.js';
@@ -32,7 +33,9 @@ const REVERSE = '\u001b[7m';
 const WHEEL_ROWS = 3;
 
 export interface EditorDialog {
-  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground' | 'outline' | 'problems';
+  kind: 'unsaved' | 'conflict' | 'recover' | 'markdown' | 'snippets' | 'playground' | 'outline' | 'problems' | 'console';
+  /** The browser preview's runtime Console (#466). */
+  console?: ConsoleDialog;
   /** Problems: which severities are listed (all, problems = errors and warnings, errors). */
   filter?: 'all' | 'problems' | 'errors';
   /** How many recoverable Playground documents the chooser can offer. */
@@ -76,6 +79,8 @@ export interface EditorState {
   diagramsAsked?: boolean;
   /** The caret moved without a key press in the editor (a jump from a list): the next draw scrolls it into view. */
   revealPending?: boolean;
+  /** The last jump came from the browser preview's Console: the workspace shows the text (the page is not the text). */
+  consoleJump?: boolean;
   /** The editor sits in a document workspace: its footer names the split key. */
   workspace?: boolean;
   note?: {text: string; tone: 'info' | 'error' | 'success'};
@@ -174,6 +179,23 @@ export function openProblems(state: EditorState): void {
   state.problems ??= new ProblemsRunner(state);
   if (state.problems.enabled) state.problems.refresh(); else state.problems.enable();
   state.dialog = {kind: 'problems', focus: 0, query: '', filter: 'all'};
+}
+
+/** The browser preview's runtime Console (#466): a read-only list of what the page reported; see consoleDialog.ts. */
+export function openConsole(state: EditorState, feed: ConsoleFeed): void {
+  state.dialog = {kind: 'console', focus: 0, console: openConsoleDialog(feed)};
+}
+
+/** Move the caret to a position as a jump the editor's Back returns from. */
+function jumpToPosition(state: EditorState, line: number, column: number): void {
+  const jumps = state.jumps ??= [];
+  jumps.push(new SourceAnchor(state.buffer, state.buffer.caret));
+  while (jumps.length > MAX_JUMPS) jumps.shift()!.dispose();
+  const target = Math.max(0, Math.min(line, state.buffer.lines.length - 1));
+  state.buffer.caret = {line: target, column: Math.min(column, state.buffer.lines[target]!.length)};
+  state.buffer.anchor = undefined;
+  state.lastJump = target;
+  state.revealPending = true;
 }
 
 const FILTERS: Array<'all' | 'problems' | 'errors'> = ['all', 'problems', 'errors'];
@@ -355,6 +377,13 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
   if (dialog.kind === 'snippets') { paletteKey(state, dialog, key); return undefined; }
   if (dialog.kind === 'outline') { outlineKey(state, dialog, key); return undefined; }
   if (dialog.kind === 'problems') { problemsKey(state, dialog, key); return undefined; }
+  if (dialog.kind === 'console' && dialog.console) {
+    return consoleKey(dialog.console, key, {
+      text: () => state.buffer.lines.join('\n'), lines: () => state.buffer.lines,
+      jump: (line, column) => { jumpToPosition(state, line, column); state.consoleJump = true; },
+      close: () => { state.dialog = undefined; },
+    });
+  }
   const controls = dialogControls(dialog);
   const text = key.kind === 'text' ? key.value.toLowerCase() : undefined;
   if (key.kind === 'left' || key.kind === 'focusPrevious') { dialog.focus = (dialog.focus + controls.length - 1) % controls.length; return undefined; }
@@ -602,6 +631,7 @@ function recoverMessage(state: EditorState, dialog: EditorDialog): string {
 
 function footerRows(state: EditorState, columns: number): string[] {
   const width = Math.max(1, columns - 4);
+  if (state.dialog?.kind === 'console' && state.dialog.console) return consoleRows(state.dialog.console, width);
   if (state.dialog?.kind === 'problems') {
     const dialog = state.dialog;
     const runner = state.problems;
