@@ -29,7 +29,9 @@ export interface DocumentDiagramOptions {
 
 /** A one-line reason from a library message (Mermaid's parse errors are several lines with a caret drawing). */
 export function shortReason(message: string): string {
-  const lines = message.split('\n').map(line => line.trim()).filter(line => line && !/^[-.]*\^$/u.test(line) && !/^\.\.\./u.test(line));
+  // Reasons can come from files on disk (a package.json) or the library: no terminal controls or bidi formatting reach a row.
+  // eslint-disable-next-line no-control-regex
+  const lines = message.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, '').split('\n').map(line => line.trim()).filter(line => line && !/^[-.]*\^$/u.test(line) && !/^\.\.\./u.test(line));
   const text = lines.length > 1 ? `${lines[0]!.replace(/:$/u, '')}: ${lines.at(-1)}` : (lines[0] ?? message);
   return text.length > 240 ? `${text.slice(0, 239)}…` : text;
 }
@@ -105,10 +107,11 @@ export class DocumentDiagrams implements DiagramProvider, DiagramClient {
     if (!check.ok) return empty(check.reason);
     const theme = this.options.theme();
     const key = diagramKey(source, theme);
+    const capped = empty(`NMSh draws at most ${MAX_DOCUMENT_DIAGRAMS} diagrams in one document`);
     if (this.collecting) {
-      if (!this.collecting.has(key) && this.collecting.size >= MAX_DOCUMENT_DIAGRAMS) return empty(`NMSh draws at most ${MAX_DOCUMENT_DIAGRAMS} diagrams in one document`);
+      if (!this.collecting.has(key) && this.collecting.size >= MAX_DOCUMENT_DIAGRAMS) return capped;
       this.collecting.add(key);
-    }
+    } else if (!this.shown.has(key) && this.shown.size >= MAX_DOCUMENT_DIAGRAMS) return capped;
     if (!this.attached) { this.service().attach(this); this.attached = true; }
     const entry = this.service().request(key, source, mermaidConfig(theme));
     let index = this.order.indexOf(key);

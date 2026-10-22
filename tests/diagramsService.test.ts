@@ -226,3 +226,47 @@ test('an idle renderer page closes by itself; the browser engine then stops on i
   await clock.advance(200);
   assert.equal(renderers.length, 2);
 });
+
+// ---- Regressions from the independent review ----------------------------------------------------------------------------
+
+test('review: a document that closes or switches while its diagram is drawing does not leave that diagram failed for the next one', async () => {
+  let release: (() => void) | undefined;
+  const crashing: Behaviour = request => new Promise(resolve => { release = () => resolve(request.source.includes('first') ? {ok: false, code: 'crashed', reason: 'The browser page drawing diagrams stopped.'} : ok(request) as DiagramRenderResult); });
+  const {clock, service, document} = lab(crashing);
+  const viewer = document().doc;
+  viewer.pass(() => viewer.slot('flowchart LR\n first'));
+  await clock.advance(200);
+  assert.equal(service.stats.renders, 1);
+  // The person presses e: the viewer's diagrams are released (the page closes, the drawing in flight is lost) and the session shows the same fence.
+  viewer.close();
+  release!();
+  await clock.advance(10);
+  const session = document().doc;
+  const slot = session.pass(() => session.slot('flowchart LR\n first'));
+  assert.doesNotMatch(slot.note ?? '', /stopped/u);
+  assert.equal(service.stats.crashes, 0);
+  await clock.advance(200);
+  release!();
+  await clock.advance(200);
+  assert.equal(service.stats.renders, 2);
+});
+
+test('review: past the per-document cap, a block rendered on its own (hybrid) says so instead of queueing forever', async () => {
+  const {clock, service, document} = lab();
+  const {doc} = document();
+  const sources = Array.from({length: 26}, (_, i) => `flowchart LR\n  A --> N${i}`);
+  doc.want(sources);
+  for (const source of sources) doc.slot(source);
+  await clock.advance(300);
+  for (let frame = 0; frame < 3; frame++) { for (const source of sources) doc.slot(source); await clock.advance(300); }
+  assert.match(doc.slot(sources[25]!).note ?? '', /at most 24 diagrams/u);
+  assert.equal(service.stats.dropped, 0);
+  assert.equal(service.stats.renders, 24);
+});
+
+test('review: reasons shown in rows carry no terminal controls, whatever file or library they came from', async () => {
+  const {shortReason} = await import('../src/diagrams/document.js');
+  const text = shortReason('Mermaid 9.0\u001b]52;c;ZXZpbA==\u0007 at /x is too old‮: NMSh needs version 10 or newer.');
+  assert.doesNotMatch(text, /[\u0000-\u001f\u007f-\u009f‮]/u);
+  assert.match(text, /too old/u);
+});

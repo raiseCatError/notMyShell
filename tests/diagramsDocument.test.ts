@@ -223,3 +223,16 @@ test('Split: typing in the text pane draws only the text that is on screen once 
     assert.deepEqual(press(state, 'D', look, 140), [{kind: 'diagrams'}]);
   } finally { diagrams.close(); rmSync(root, {recursive: true, force: true}); }
 });
+
+test('review: D in the browser preview asks for the diagrams (its page says to press D); other keys still go to the page', async () => {
+  const {root, state} = await openDoc();
+  const {diagrams, look} = diagramLab('manual');
+  try {
+    press(state, 'h', look);
+    const keys: string[] = [];
+    state.preview = {render: () => ({rows: []}), key: key => { keys.push(key.kind === 'text' ? key.value : key.kind); }, dispose: () => {}, status: () => undefined, capturing: () => false, refresh: async () => {}, setTrusted: async () => {}};
+    assert.deepEqual(press(state, 'D', look), [{kind: 'diagrams'}]);
+    press(state, 'j', look);
+    assert.deepEqual(keys, ['j']);
+  } finally { diagrams.close(); rmSync(root, {recursive: true, force: true}); }
+});

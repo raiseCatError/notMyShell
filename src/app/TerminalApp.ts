@@ -4892,6 +4892,8 @@ export class TerminalApp {
       // The provider exists once a rendered view of this session was drawn; asking from the editor first creates it.
       if (!editor.file.scratch) this.documentDiagrams(session, formatForPath(editor.file.path).format === 'markdown');
       this.requestDiagrams(text => { editor.note = {text, tone: 'info'}; session.note = text; });
+      // The browser preview shows the fences as its page: rebuild it so they are requested (and drawn once ready).
+      if (session.mode === 'preview' && session.preview) void session.preview.refresh(bufferText(editor));
       return;
     }
     if (action.kind === 'diagram') { this.openDiagramImage(session.viewer, action.index); return; }
@@ -6348,7 +6350,6 @@ export class TerminalApp {
   }
 
   private panelContentRows(columns: number): string[] {
-    this.sweepDiagrams();
     this.agentCaret = undefined;
     if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
@@ -12068,6 +12069,8 @@ export class TerminalApp {
   }
 
   private render(): void {
+    // A document closed for good lets go of its diagrams (pictures, and the renderer page once no document is left).
+    this.sweepDiagrams();
     this.syncTypography();
     this.scheduleSequencePoke();
     this.reconcileOutputNavigation();

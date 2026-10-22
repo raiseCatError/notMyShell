@@ -176,14 +176,18 @@ export class DiagramService {
     const blocked = await this.options.backend.blocked().catch(error => error instanceof Error ? error.message : 'Diagrams cannot be drawn here.');
     if (blocked) { this.fail(entry, 'unavailable', blocked); return; }
     const renderer = await this.rendererNow();
+    if (this.abandoned(entry)) return;
     if ('error' in renderer) { this.fail(entry, 'unavailable', renderer.error); return; }
     this.counters.renders += 1;
     const result = await renderer.render({source: entry.source, config: entry.config, scale: this.options.scale, timeoutMs: this.options.timeoutMs})
       .catch(error => ({ok: false as const, code: 'failed' as const, reason: error instanceof Error ? error.message : 'The diagram could not be drawn.'}));
+    if (!result.ok && (result.code === 'timeout' || result.code === 'crashed' || renderer.closed)) this.closeRenderer();
+    // Nobody shows it any more (the document closed or switched while it was drawing, which may also have closed the page): it is
+    // forgotten, not failed, so the next document that shows the same text gets it drawn.
+    if (this.abandoned(entry)) return;
     if (!result.ok) {
       if (result.code === 'timeout') this.counters.timeouts += 1;
       if (result.code === 'crashed') this.counters.crashes += 1;
-      if (result.code === 'timeout' || result.code === 'crashed' || renderer.closed) this.closeRenderer();
       this.fail(entry, result.code, result.reason);
       return;
     }
@@ -195,6 +199,13 @@ export class DiagramService {
     } catch (error) {
       this.fail(entry, 'failed', error instanceof Error ? error.message : 'The drawing could not be read.');
     }
+  }
+
+  private abandoned(entry: DiagramEntry): boolean {
+    if (this.wanted(entry.key)) return false;
+    this.entries.delete(entry.key);
+    this.counters.dropped += 1;
+    return true;
   }
 
   private async rendererNow(): Promise<DiagramRenderer | {error: string}> {
