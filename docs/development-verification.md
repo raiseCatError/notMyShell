@@ -44,7 +44,7 @@ session scenarios run fully on Node 26 on both macOS and Ubuntu.
 ## CI gates
 
 Code PRs run quality on Ubuntu/Node 26, three macOS/Node 26 shards, three Ubuntu/Node
-26 shards (10-minute cap each, about twice a shard's normal time), and curated Ubuntu/Node 22 compatibility. Each shard builds because
+26 shards (12-minute cap each, about 1.5 times the slowest measured job, so a hang still fails), and curated Ubuntu/Node 22 compatibility. Each shard builds because
 built-launcher tests otherwise skip on a clean checkout. Each integration shard
 and smoke job checks helper-process leaks, including after a test failure.
 Existing hard latency assertions remain in the canonical tests.

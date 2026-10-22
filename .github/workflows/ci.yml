@@ -71,9 +71,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    # Three shards per OS keep each job near five minutes (two ran 8-10 minutes by October 2026). The cap stays at twice
-    # that so a hang still fails the job instead of running on; individual tests keep their own 120 s timeout.
-    timeout-minutes: 10
+    # Three shards per OS: test steps measured 4.9-6.6 minutes and whole jobs 6-7.8 minutes on 2026-10-22 (two shards had
+    # reached 8-10 minutes against a 10-minute cap). The cap is about 1.5x the slowest job, so slow macOS runners pass and a
+    # hang still fails the job; every test keeps its own 120 s timeout.
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
