@@ -57,7 +57,8 @@ const SECRET_PATTERNS: ReadonlyArray<[RegExp, string | ((match: string, ...group
 ];
 
 /** A URL anywhere in a message (absolute addresses only; bounded so a hostile line cannot make it slow). */
-const URL_IN_TEXT = /\b(?:https?|wss?|ftp|file|blob|data):[^\s"'<>()[\]{}`]{1,2048}/giu;
+// No word boundary before the scheme: `xhttps://user:pw@host` must still be found (a scheme glued to a word is still an address).
+const URL_IN_TEXT = /(?:https?|wss?|ftp|file|blob|data):[^\s"'<>`]+/giu;
 
 export interface RedactContext {
   /** The address of the previewed document (`http://127.0.0.1:<port>/<token>/`): its token never leaves this module. */
@@ -73,11 +74,20 @@ function previewBase(documentUrl: string | undefined): URL | undefined {
   if (!documentUrl) return undefined;
   try {
     const url = new URL(documentUrl);
-    if (url.protocol !== 'http:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost')) return undefined;
+    if (url.protocol !== 'http:' || !isLoopback(url.hostname)) return undefined;
     const token = url.pathname.split('/')[1];
     if (!token) return undefined;
     return new URL(`${url.origin}/${token}/`);
   } catch { return undefined; }
+}
+
+function isLoopback(host: string): boolean {
+  return host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/u.test(host);
+}
+
+/** The same preview server reached by another loopback name (localhost, [::1]): same port, same token path. */
+function samePreview(url: URL, base: URL): boolean {
+  return url.protocol === 'http:' && isLoopback(url.hostname) && url.port === base.port;
 }
 
 export type ClassifiedUrl = {target: 'document' | 'local' | 'external'; label: string};
@@ -88,18 +98,30 @@ export type ClassifiedUrl = {target: 'document' | 'local' | 'external'; label: s
  * credentials removed, query values and the fragment replaced, and `data:` reduced to its type.
  */
 export function classifyUrl(raw: string, context: RedactContext = {}): ClassifiedUrl {
+  const classified = classifyRaw(raw, context);
+  // Every label is scrubbed like message text (the token, the home folder, likely secrets), whatever path produced it.
+  return {target: classified.target, label: scrub(classified.label, context).slice(0, 300)};
+}
+
+/** An address that does not parse: no credentials and nothing after `?` or `#`. */
+function unparsedAddress(text: string): string {
+  return text.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/*)[^/?#\s]*@/u, '$1').replace(/[?#][\s\S]*$/u, '?…');
+}
+
+function classifyRaw(raw: string, context: RedactContext): ClassifiedUrl {
   const text = raw.slice(0, MAX_RAW).replace(CONTROLS, '');
   const base = previewBase(context.documentUrl);
   let url: URL;
-  try { url = new URL(text); } catch { return {target: 'external', label: redactText(text, {}, false).slice(0, 300)}; }
-  if (base && url.origin === base.origin && url.pathname.startsWith(base.pathname)) {
+  try { url = new URL(text); } catch { return {target: 'external', label: unparsedAddress(text)}; }
+  if (base && samePreview(url, base) && url.pathname.startsWith(base.pathname)) {
     const relative = url.pathname.slice(base.pathname.length);
-    if (relative === '' || relative === 'index.html') return {target: 'document', label: context.documentName ?? 'this document'};
+    // Only the token's root is the buffer; `index.html` beside the document is a file on disk, not this text.
+    if (relative === '') return {target: 'document', label: context.documentName ?? 'this document'};
     let decoded = relative;
     try { decoded = decodeURIComponent(relative); } catch { /* keep it encoded */ }
     return {target: 'local', label: decoded.replace(CONTROLS, '').slice(0, 300)};
   }
-  if (base && url.origin === base.origin) return {target: 'external', label: `${url.origin}/${REDACTED}`};
+  if (base && samePreview(url, base)) return {target: 'external', label: `${url.origin}/${REDACTED}`};
   if (url.protocol === 'data:') return {target: 'external', label: `data:${/^[\w.+-]+\/[\w.+-]+/u.exec(url.pathname)?.[0] ?? ''},…`};
   if (url.protocol === 'blob:') return {target: 'external', label: 'blob:…'};
   if (url.protocol === 'file:') {
@@ -110,8 +132,7 @@ export function classifyUrl(raw: string, context: RedactContext = {}): Classifie
   url.password = '';
   const keys = [...new Set([...url.searchParams.keys()])].slice(0, 12);
   const query = keys.length ? `?${keys.map(key => `${encodeURIComponent(key)}=…`).join('&')}` : '';
-  const shown = `${url.protocol}//${url.host}${url.pathname}${query}${url.hash ? '#…' : ''}`;
-  return {target: 'external', label: redactText(shown, {}, false).slice(0, 300)};
+  return {target: 'external', label: `${url.protocol}//${url.host}${url.pathname}${query}${url.hash ? '#…' : ''}`};
 }
 
 function decodeSafe(text: string): string {
@@ -122,6 +143,12 @@ function decodeSafe(text: string): string {
 export function redactText(raw: string, context: RedactContext = {}, urls = true): string {
   let text = raw.slice(0, MAX_RAW).replace(CONTROLS, '').replace(/\r\n?/gu, '\n');
   if (urls) text = text.replace(URL_IN_TEXT, match => classifyUrl(match, context).label);
+  return scrub(text, context);
+}
+
+/** Likely secrets, the home folder and the preview token, wherever they appear. */
+function scrub(input: string, context: RedactContext): string {
+  let text = input;
   for (const [pattern, replacement] of SECRET_PATTERNS) text = text.replace(pattern, replacement as string);
   if (context.home && context.home.length > 1) text = text.split(context.home).join('~');
   // Whatever token the preview address carried is gone even if it appeared outside a URL.
@@ -137,6 +164,10 @@ interface RemoteObject {type?: string; subtype?: string; value?: unknown; unseri
 interface CallFrame {functionName?: string; url?: string; lineNumber?: number; columnNumber?: number}
 
 function remoteText(arg: RemoteObject): string {
+  return remoteTextRaw(arg).slice(0, MAX_RAW);
+}
+
+function remoteTextRaw(arg: RemoteObject): string {
   if (arg.type === 'string') return String(arg.value ?? '');
   if (arg.unserializableValue !== undefined) return String(arg.unserializableValue);
   if (arg.type === 'undefined') return 'undefined';
@@ -164,7 +195,7 @@ function formatArgs(args: readonly RemoteObject[]): string {
       return value;
     });
   }
-  return [head, ...rest.map(remoteText)].join(' ');
+  return [head.slice(0, MAX_RAW), ...rest.map(remoteText)].join(' ').slice(0, MAX_RAW);
 }
 
 function frameText(frame: CallFrame, context: RedactContext): string {
@@ -336,6 +367,8 @@ export function sourcePosition(entry: ConsoleEntry, context: SourceContext): {li
   if (context.kind !== 'html') return {reason: 'the page is generated from Markdown, so its lines are not the file\'s'};
   if (where.line === undefined) return {reason: 'no line was reported'};
   if (context.servedText === undefined || context.servedText !== context.currentText) return {reason: 'the text changed since the page loaded (r in the preview refreshes it)'};
+  // The browser counts a lone CR (and, in scripts, U+2028/U+2029) as a line break; the buffer does not, so lines would drift.
+  if (/[\r\u2028\u2029]/u.test(context.servedText)) return {reason: 'the document has line breaks the browser counts differently (a lone CR, U+2028 or U+2029)'};
   if (where.line >= context.lines.length) return {reason: 'the line is past the end of the document'};
   const length = context.lines[where.line]!.length;
   return {line: where.line, column: Math.min(where.column ?? 0, length)};
@@ -346,7 +379,8 @@ export function consoleCopyText(records: readonly ConsoleRecord[], documentName:
   const out = [`Console of ${documentName.replace(CONTROLS, '')} (NMSh browser preview, redacted)`];
   for (const record of records) {
     const where = record.location ? ` ${record.location.label}${record.location.line !== undefined ? `:${record.location.line + 1}${record.location.column !== undefined ? `:${record.location.column + 1}` : ''}` : ''}` : '';
-    out.push(`[${record.severity}] ${record.origin}${where}${record.count > 1 ? ` (×${record.count})` : ''}: ${record.message}`);
+    // Continuation lines are indented, so page text cannot pose as another entry in the copy.
+    out.push(`[${record.severity}] ${record.origin}${where}${record.count > 1 ? ` (×${record.count})` : ''}: ${record.message.split('\n').join('\n    | ')}`);
     for (const frame of record.stack ?? []) out.push(`    at ${frame}`);
   }
   return out.join('\n');

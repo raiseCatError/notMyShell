@@ -6,7 +6,7 @@ import type {ConsoleEntry} from '../src/browser/console.js';
 import type {ChromePage} from '../src/browser/engine/page.js';
 import {locateMermaid} from '../src/diagrams/library.js';
 import {mermaidConfig} from '../src/diagrams/mermaid.js';
-import {chromeSkipReason, createLab, Events, localSite, waitFor, type Lab} from './support/browserFixtures.js';
+import {chromeSkipReason, disposeSharedLab, Events, localSite, sharedLab, waitFor, type Lab} from './support/browserFixtures.js';
 
 /**
  * The document Console (#466) against a real Chromium: what a page reports arrives redacted and placed; scripts stay off unless
@@ -15,9 +15,8 @@ import {chromeSkipReason, createLab, Events, localSite, waitFor, type Lab} from 
  */
 const skip = await chromeSkipReason();
 const view = {width: 600, height: 400, scale: 1};
-let shared: Lab | undefined;
-const lab = (): Lab => shared ??= createLab();
-after(async () => { await shared?.dispose(); shared = undefined; });
+const lab = (): Lab => sharedLab();
+after(disposeSharedLab);
 const closeAll = async () => { await Promise.all(lab().engine.pages().map(page => page.close().catch(() => undefined))); };
 
 const PAGE = [

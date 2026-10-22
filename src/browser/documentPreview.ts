@@ -88,6 +88,8 @@ export class BrowserPreviewView implements PreviewView {
   refresh(text: string): Promise<void> {
     return this.enqueue(async () => {
       if (this.disposed || !this.handle) return;
+      // What the old load reported must not be mapped against the new text.
+      this.deps.session.console()?.reset();
       this.document = {...this.document, text};
       this.handle.update(this.deps.html(text));
       await this.deps.session.reload();
@@ -100,6 +102,7 @@ export class BrowserPreviewView implements PreviewView {
       if (this.disposed) return;
       // Scripts go off before anything else changes, so a failure part-way never leaves them on.
       if (!trusted) await this.deps.session.setScripts(false);
+      this.deps.session.console()?.reset();
       this.document = {...this.document, trusted, text};
       this.handle?.dispose();
       this.handle = await this.deps.previews.serve({html: this.deps.html(text), root: this.document.root, trusted, name: this.document.name});

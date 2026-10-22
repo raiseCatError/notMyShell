@@ -51,7 +51,7 @@ async function readBundle(file: string, packageDir: string | undefined, read = t
   let version = 'unknown';
   if (packageDir) {
     let manifest: {name?: unknown; version?: unknown};
-    try { manifest = JSON.parse(await fs.readFile(path.join(packageDir, 'package.json'), 'utf8')) as typeof manifest; }
+    try { manifest = JSON.parse(await readManifest(path.join(packageDir, 'package.json'))) as typeof manifest; }
     catch { return {ok: false, reason: `${packageDir} has no readable package.json.`}; }
     if (manifest.name !== 'mermaid') return {ok: false, reason: `${packageDir} is not the mermaid package.`};
     version = typeof manifest.version === 'string' ? manifest.version.slice(0, 40) : 'unknown';
@@ -77,6 +77,16 @@ async function readBundle(file: string, packageDir: string | undefined, read = t
   } finally {
     await handle.close();
   }
+}
+
+/** package.json without blocking on a FIFO or reading a huge file: a regular file of at most 1 MB. */
+async function readManifest(file: string): Promise<string> {
+  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error('not a package.json');
+    return await handle.readFile({encoding: 'utf8'});
+  } finally { await handle.close(); }
 }
 
 /** The bundle path and package folder for a candidate: a package folder, or a file inside one's dist/. */

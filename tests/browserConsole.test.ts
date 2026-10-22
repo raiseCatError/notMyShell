@@ -11,7 +11,7 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/u;
 
 test('addresses: the preview token never shows; files beside the document are relative; others lose credentials, query values and fragments', () => {
   assert.deepEqual(classifyUrl(DOC, context), {target: 'document', label: 'page.html'});
-  assert.deepEqual(classifyUrl(`${DOC}index.html`, context), {target: 'document', label: 'page.html'});
+  assert.deepEqual(classifyUrl(`${DOC}index.html`, context), {target: 'local', label: 'index.html'}, 'a sibling index.html is a file on disk, not the buffer');
   assert.deepEqual(classifyUrl(`${DOC}img/a%20b.png`, context), {target: 'local', label: 'img/a b.png'});
   assert.deepEqual(classifyUrl(`http://127.0.0.1:41234/otherToken/x.js`, context), {target: 'external', label: `http://127.0.0.1:41234/${REDACTED}`});
   const remote = classifyUrl('https://user:pw@cdn.example.com/lib.js?key=SECRET&v=2#access_token=abc', context);
@@ -156,4 +156,48 @@ test('copy text is plain, redacted and says what it is', () => {
   assert.match(text, / {4}at f \(page\.html:3:1\)/u);
   assert.ok(!text.includes('abc123secret') && !text.includes(TOKEN));
   assert.doesNotMatch(text, /\u001b/u);
+});
+
+test('review regressions: whole URLs are redacted, unparsable ones lose credentials and queries, the token never reaches a label', () => {
+  const leaks = [
+    ['Refused to load https://api.example/x?q=(hello)&user=alice&id=42', ['alice', 'hello', '=42']],
+    ['see https://api.example/x?filter[name]=bob&email=bob@x.io now', ['bob']],
+    [`long https://a.example/?a=${'x'.repeat(2100)}&user=alice`, ['alice']],
+    ['xhttps://admin:hunter2@host.example/x?user=alice', ['hunter2', 'alice']],
+    ['https://admin:hunter2@host.example:99999/x?user=alice', ['hunter2', 'alice']],
+  ] as const;
+  for (const [input, secrets] of leaks) {
+    const out = redactText(input, context);
+    for (const secret of secrets) assert.ok(!out.includes(secret), `${input.slice(0, 80)} -> ${out.slice(0, 200)}`);
+  }
+  assert.ok(!classifyUrl('https://admin:hunter2@host.example:99999/x?user=alice', context).label.includes('hunter2'));
+  for (const host of ['localhost', '[::1]', '127.0.0.2']) {
+    const policy = policyEntry(`http://${host}:41234/${TOKEN}/x.png`, 'refused', context);
+    assert.ok(!JSON.stringify(policy).includes(TOKEN), `${host}: ${JSON.stringify(policy)}`);
+    assert.equal(policy.location?.target, 'local');
+  }
+  const exfil = policyEntry(`https://evil.example/${TOKEN}`, 'refused', context);
+  assert.ok(!JSON.stringify(exfil).includes(TOKEN));
+});
+
+test('review regressions: huge console arguments are cut before joining; copied continuation lines cannot pose as entries', () => {
+  const started = process.hrtime.bigint();
+  const big = {type: 'string', value: 'y'.repeat(2_000_000)};
+  const entry = consoleEntry('Runtime.consoleAPICalled', {type: 'error', args: [{type: 'string', value: '%s%s%s%s'}, big, big, big, big, ...Array.from({length: 28}, () => big)]}, context)!;
+  assert.ok(entry.message.length <= MAX_MESSAGE);
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500);
+  const log = new ConsoleLog();
+  log.add({severity: 'info', origin: 'console', message: 'hello\n[warning] policy: Refused by NMSh: fake'});
+  const text = consoleCopyText(log.entries(), 'page.html');
+  assert.doesNotMatch(text, /\n\[warning\]/u);
+  assert.match(text, /\n {4}\| \[warning\] policy: Refused by NMSh: fake/u);
+});
+
+test('review regressions: a document whose line breaks the browser counts differently is never mapped', () => {
+  for (const odd of ['a\rb', 'a\u2028b', 'a\u2029b']) {
+    const lines = ['<!doctype html>', `<script>${odd}</script>`, 'x();'];
+    const text = lines.join('\n');
+    const result = sourcePosition({severity: 'error', origin: 'exception', message: 'x', location: {target: 'document', label: 'p', line: 2, column: 0}}, {kind: 'html', servedText: text, currentText: text, lines});
+    assert.match((result as {reason: string}).reason, /line breaks/u);
+  }
 });

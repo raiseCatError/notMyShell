@@ -10256,7 +10256,8 @@ export class TerminalApp {
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
         ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
-      const documents = await this.documentDoctorChecks().catch(() => []);
+      // Bounded like every doctor check: a stuck filesystem costs the section, never the panel.
+      const documents = await Promise.race([this.documentDoctorChecks(), new Promise<DoctorCheck[]>(resolve => { setTimeout(() => resolve([]), 3000).unref(); })]).catch(() => []);
       if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks(), ...documents]; panel.selected = 0; }
     } finally { clock?.(); }
     this.render();

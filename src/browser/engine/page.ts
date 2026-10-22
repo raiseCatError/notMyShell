@@ -172,6 +172,7 @@ export class ChromePage implements BrowserPage {
    * listener arrives (bounded), so errors of the first load are not lost.
    */
   private early: PageEvent[] | undefined;
+  private refusedNavigation = false;
 
   private constructor(private readonly host: PageHost, id: string, options: OpenOptions) {
     this.id = id;
@@ -436,8 +437,10 @@ export class ChromePage implements BrowserPage {
 
   private onMainFrameNavigated(frame: {id: string; url: string; unreachableUrl?: string}): void {
     this.mainFrameId = frame.id;
-    // A new document: what the previous one reported belongs to it (Page.frameNavigated is cross-document only).
-    this.emit({type: 'document'});
+    // A new document: what the previous one reported belongs to it (Page.frameNavigated is cross-document only). The blank page
+    // NMSh shows after refusing a navigation is not a new document of the person's: the refusal it explains stays.
+    if (this.refusedNavigation && frame.url === 'about:blank') this.refusedNavigation = false;
+    else this.emit({type: 'document'});
     if (frame.url.startsWith('chrome-error:')) {
       // Chrome's own page for a failed load: show the address the person asked for.
       this.setUrl(frame.unreachableUrl ?? this._url);
@@ -445,6 +448,7 @@ export class ChromePage implements BrowserPage {
       const verdict = this.kind === 'preview' ? this.checkPreviewUrl(frame.url) : checkWebUrl(frame.url);
       if (!verdict.ok) {
         this.block(frame.url, verdict.reason);
+        this.refusedNavigation = true;
         void this.send('Page.navigate', {url: 'about:blank'}).catch(() => undefined);
         return;
       }

@@ -344,6 +344,16 @@ test('a multi-line or long message shows its first line and says how to read all
   } finally { w.cleanup(); }
 });
 
+test('review regression: a refresh forgets the old load at once, so its entries are never mapped against the new text', async () => {
+  const w = await workspace();
+  try {
+    w.page.emit({type: 'console', entry: error('old', {target: 'document', label: 'page.html', line: 3, column: 0})});
+    w.state.editor.buffer.insert('new ');
+    await w.view.refresh(w.state.editor.buffer.lines.join('\n'));
+    assert.equal(w.session.console()!.size, 0);
+  } finally { w.cleanup(); }
+});
+
 test('the preview status line counts Console errors and names the key', async () => {
   const w = await workspace();
   try {
