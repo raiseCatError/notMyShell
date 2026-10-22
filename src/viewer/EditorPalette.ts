@@ -27,6 +27,7 @@ const MARKDOWN_ACTIONS: ReadonlyArray<[action: string, title: string, descriptio
   ['Action.Problems', 'Problems…', 'Check links, images, anchors and footnotes (offline) and jump to each finding', 'problems diagnostics lint check broken links images errors warnings'],
   ['Action.Headings', 'Go to heading…', 'Search the document\'s headings and jump to one', 'heading outline navigate jump toc contents'],
   ['Action.Back', 'Back to previous position', 'Return to where you were before the last jump', 'back return previous jump'],
+  ['Action.Diagrams', 'Draw diagrams', 'Draw this document\'s Mermaid diagrams in the rendered views (uses the installed browser and Mermaid)', 'mermaid diagram diagrams chart flowchart sequence draw render'],
 ];
 const TABLE_ACTIONS: ReadonlyArray<[string, string, string, string]> = [
   ['Action.RowAdd', 'Table: add row', 'A new empty row below the caret row', 'table row add insert'],

@@ -1,9 +1,10 @@
 import {spawn, type ChildProcess} from 'node:child_process';
 import fs from 'node:fs';
 import type {Readable, Writable} from 'node:stream';
-import type {BrowserAvailability, BrowserEngine, BrowserPage, BrowserStats, OpenOptions} from '../types.js';
+import type {BrowserAvailability, BrowserEngine, BrowserPage, BrowserStats, DiagramLibrary, DiagramRenderer, OpenOptions} from '../types.js';
 import {CdpClient} from './cdp.js';
 import {locateBrowser, realLocatorHost, type LocatorHost} from './chrome.js';
+import {ChromeDiagramRenderer} from './diagram.js';
 import {ChromePage} from './page.js';
 
 /**
@@ -110,6 +111,11 @@ export class ChromeEngine implements BrowserEngine {
     if (page.isClosed) throw new Error('The browser closed while the page was opening.');
     this.open_.set(page.id, page);
     return page;
+  }
+
+  async openDiagramRenderer(library: DiagramLibrary): Promise<DiagramRenderer> {
+    const page = await this.open({kind: 'preview', viewport: {width: 800, height: 600, scale: 1}, scripts: false}) as ChromePage;
+    return ChromeDiagramRenderer.create(page, library);
   }
 
   private armIdle(): void {

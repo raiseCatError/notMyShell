@@ -59,3 +59,12 @@ Automated tests cover the logic headlessly. Everything below is **NOT RUN** unti
 - [ ] Choose per hunk, preview with `r`, undo a choice with `z`, apply with Enter, undo the whole merge with Ctrl+Z, save, and check the file with `cat -A` (line endings kept).
 - [ ] Change the file again while the review is open, then Enter: the review restarts. Delete it: the review ends and says so.
 - [ ] Keys never reach the shell while the review is open; after it closes the composer is as it was.
+
+## Mermaid diagrams (#462)
+- [ ] With `npm install -g mermaid` and Chrome installed: open a Markdown file with flowchart, sequence, class and state fences; Preview shows `(diagram not drawn: not drawn yet: press D …)`; `D` draws them (Ghostty: pixels through Kitty placeholders; Zed: character art). No Chromium process exists before `D` (`pgrep -fl "Google Chrome.*nmsh"`).
+- [ ] `i` on a diagram opens the image viewer; `+`/`-` zoom, arrows pan, Esc returns to the same place.
+- [ ] Hybrid (F3): move into a diagram fence (exact source, editable), type, move out: the edited diagram appears after a moment; undo/redo. Split (F2): type in the fence; the preview pane updates after you pause.
+- [ ] Settings → General → Mermaid diagrams: Automatic draws without `D`; Off shows the fences as code with the reason. Theme change redraws in the new colours.
+- [ ] Without Mermaid installed, with Real browser Off, and with Images Off: the fence is shown as written with the matching reason; nothing hangs.
+- [ ] A syntax error shows Mermaid's message; a very large diagram is refused with the limit; closing the document leaves no Chromium page (the browser stops about a minute later).
+- [ ] 30, 50, 80 and 120 columns; NO_COLOR (grey diagrams, ASCII character art where no graphics protocol); Safe Glyphs.

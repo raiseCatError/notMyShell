@@ -139,3 +139,62 @@ test('the native preview draws local images of the current buffer, and closing t
     assert.equal(f.app['viewerImages'], undefined, 'closing the document closes its images');
   } finally { f.done(); }
 });
+
+// ---- #462 Mermaid diagrams in the app -----------------------------------------------------------------------------------
+
+const MERMAID_DOC = '# Plan\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nText after.\n';
+
+test('Mermaid on request (default): opening and previewing a document starts nothing; D asks, the reason shows, closing lets go of everything', async () => {
+  const f = fixture();
+  try {
+    f.app['promptConfiguration'] = {...f.app['promptConfiguration'], browser: 'off'};
+    writeFileSync(join(f.dir, 'plan.md'), MERMAID_DOC);
+    await f.view('plan.md');
+    f.key({kind: 'text', value: 'h'});
+    assert.match(f.screen(), /diagram not drawn: not drawn yet: press D/u);
+    assert.match(f.screen(), /flowchart LR/u, 'the fence shows exactly as written');
+    assert.equal(f.app['diagramService'], undefined, 'no diagram service exists until the person asks');
+    assert.equal(f.app['browserHost'], undefined, 'nothing browser-related was created');
+    f.key({kind: 'text', value: 'D'});
+    assert.ok(f.app['diagramService']);
+    await settle(() => /real browser, which is off/u.test(f.screen()));
+    assert.match(f.screen(), /diagram not drawn: Diagrams are drawn by the real browser, which is off/u);
+    assert.equal(f.app['browserHost'], undefined, 'the browser setting is off: no host either');
+    assert.equal(readFileSync(join(f.dir, 'plan.md'), 'utf8'), MERMAID_DOC, 'the document is never rewritten');
+    f.key({kind: 'escape'});
+    f.key({kind: 'escape'});
+    assert.equal(f.app['docSession'], undefined);
+    f.frame.capture();
+    assert.equal(f.app['diagrams'], undefined, 'the closed document\'s diagrams are released');
+    assert.equal(f.app['diagramService'].stats.documents, 0);
+    assert.equal(f.app['diagramService'].stats.rendererOpen, false);
+    f.type('echo ok');
+    assert.equal(f.app['editor'].text, 'echo ok', 'typing goes back to the composer');
+  } finally { f.done(); }
+});
+
+test('Mermaid automatic: the preview draws the diagram from the drawing service; Off keeps the fence as code with the reason', async () => {
+  const f = fixture();
+  try {
+    f.app['promptConfiguration'] = {...f.app['promptConfiguration'], browser: 'off', diagrams: 'auto'};
+    const {DiagramService} = await import('../src/diagrams/service.js');
+    const drawn: string[] = [];
+    f.app['diagramService'] = new DiagramService({settleMs: 0, backend: {
+      blocked: async () => undefined,
+      library: async () => ({ok: true, path: '/m.js', version: '12.2.0', source: '//'}),
+      open: async () => ({closed: false, render: async (request: {source: string}) => { drawn.push(request.source); return {ok: true, png: encodePng({width: 40, height: 20, data: new Uint8Array(40 * 20 * 4).fill(200)}), width: 40, height: 20, type: 'flowchart-v2'}; }, close: async () => {}}),
+      decode: (png: Uint8Array, name: string, key: string) => f.app['graphicsService']().fromPng(png, name, key),
+    }});
+    writeFileSync(join(f.dir, 'plan.md'), MERMAID_DOC);
+    await f.view('plan.md');
+    f.key({kind: 'text', value: 'h'});
+    f.screen();
+    await settle(() => /mermaid · flowchart/u.test(f.screen()));
+    assert.match(f.screen(), /mermaid · flowchart/u);
+    assert.deepEqual(drawn, ['flowchart LR\n  A --> B']);
+    assert.doesNotMatch(f.screen(), /flowchart LR/u);
+    f.app['promptConfiguration'] = {...f.app['promptConfiguration'], diagrams: 'off'};
+    assert.match(f.screen(), /diagram not drawn: Mermaid diagrams are off/u);
+    assert.match(f.screen(), /flowchart LR/u);
+  } finally { f.done(); }
+});

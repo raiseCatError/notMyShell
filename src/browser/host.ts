@@ -53,7 +53,7 @@ export class BrowserHost {
   }
 
   /** The complete HTML for a document's text. Only valid after `engine()` or `previews()` resolved. */
-  html(text: string, kind: 'html' | 'markdown', options: {title: string; colorScheme: 'light' | 'dark'}): string {
+  html(text: string, kind: 'html' | 'markdown', options: {title: string; colorScheme: 'light' | 'dark'; diagram?: (source: string) => {src: string; alt: string} | {note: string}}): string {
     if (!this.loaded) throw new Error('The browser module is not loaded.');
     return this.loaded.htmlDocumentFor(text, kind, options);
   }

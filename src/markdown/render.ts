@@ -1,4 +1,5 @@
 import {renderMath} from './math.js';
+import {isMermaidLanguage} from '../diagrams/mermaid.js';
 import {colorEscape} from '../chroma/escape.js';
 import {colorLevel, type ColorLevel} from '../presentation/capabilities.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
@@ -36,6 +37,22 @@ export interface ImageProvider {
   slot(src: string, alt: string): ImageSlot | undefined;
 }
 
+/** One diagram fence as the renderer sees it: its drawing, or why it is not drawn (the fence then shows exactly as written). */
+export interface DiagramSlot {
+  /** Position among the document's diagrams, for the enlarged view (-1 when it has none). */
+  index: number;
+  /** The kind the library recognised ("flowchart-v2", "sequence"), once drawn. */
+  type?: string;
+  place(columns: number, maxRows: number): {lines: string[]; columns: number; rows: number} | undefined;
+  /** A few words: "drawing…", a parse error, "Mermaid is not installed…". */
+  note?: string;
+}
+
+/** What the renderer asks about a diagram fence; it never starts a renderer or reads a file itself. */
+export interface DiagramProvider {
+  slot(source: string): DiagramSlot;
+}
+
 /**
  * Rows that belong together as one block drawn by the terminal (a sized heading): the first row carries the sized form
  * and the others are blank. A viewer that has all `of` rows on screen draws the block over them; otherwise the first row's
@@ -60,6 +77,8 @@ export interface MarkdownRow {
   block?: RowBlock;
   /** Set on image rows: the image's index in the document. */
   image?: number;
+  /** Set on the rows of a drawn diagram: its index among the document's diagrams. */
+  diagram?: number;
   /** Set on the summary row of a `<details>`: the key the viewer toggles it by (summary text and which one of that text). */
   details?: string;
   /** The source line (0-based) of the block this row belongs to: the shared source-position map (blank gap rows have none). */
@@ -87,6 +106,10 @@ export interface MarkdownOptions {
   sizedHeadings?: {maxRows: number};
   /** Which `<details>` are open: the viewer's choices over each block's own `open`. Without it a block's own state shows. */
   disclosure?: {isOpen(key: string, defaultOpen: boolean): boolean};
+  /** Mermaid fences are drawn when the provider has their drawing; otherwise they stay code with the reason below them. */
+  diagrams?: DiagramProvider;
+  /** The most rows one diagram may take. */
+  maxDiagramRows?: number;
 }
 
 const RESET = '\u001b[0m';
@@ -110,6 +133,8 @@ interface Context {
   sizedHeadings?: {maxRows: number};
   disclosure?: {isOpen(key: string, defaultOpen: boolean): boolean};
   math?: boolean;
+  diagrams?: DiagramProvider;
+  maxDiagramRows: number;
   detailsSeen: Map<string, number>;
   blockIds: {next: number};
 }
@@ -282,7 +307,7 @@ function tokenSgr(kind: CodeTokenKind, context: Context): string {
 export function codeTokenStyle(kind: CodeTokenKind, options: {syntax?: SyntaxSgr; level?: ColorLevel} = {}): string {
   const level = options.level ?? colorLevel();
   return tokenSgr(kind, {level, safe: false, hyperlinks: false, ...(options.syntax ? {syntax: options.syntax} : {}),
-    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false, maxImageRows: 1, detailsSeen: new Map(), blockIds: {next: 1}});
+    fg: color => colorEscape(38, color, level), tone: UI_COLORS.primary, codeIndex: 0, html: false, maxImageRows: 1, maxDiagramRows: 1, detailsSeen: new Map(), blockIds: {next: 1}});
 }
 
 function codeRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context): MarkdownRow[] {
@@ -443,6 +468,27 @@ function mathRows(source: string, width: number, context: Context, raw?: readonl
   return rows;
 }
 
+/**
+ * A Mermaid fence: the drawing when the provider has it (left aligned, at most the width and `maxDiagramRows`), with a quiet caption;
+ * otherwise the fence exactly as written (it stays code: copy-code and search see the source) and one dim line saying why.
+ */
+function diagramRows(block: Extract<Block, {kind: 'code'}>, width: number, context: Context, provider: DiagramProvider): MarkdownRow[] {
+  const source = block.lines.join('\n');
+  const slot = block.closed ? provider.slot(source) : {index: -1, note: 'the fence is not closed yet', place: () => undefined};
+  const shown = width >= 8 ? slot.place(width, context.maxDiagramRows) : undefined;
+  const dim = context.fg(UI_COLORS.subtle);
+  if (shown) {
+    const index = context.codeIndex++;
+    const rows: MarkdownRow[] = shown.lines.map((line, offset) => ({ansi: `${line}${RESET}`, plain: offset === 0 ? `[diagram: ${slot.type ?? 'mermaid'}]` : '', kind: 'image' as const, code: index, ...(slot.index >= 0 ? {diagram: slot.index} : {})}));
+    const caption = `${glyph(context, '◇', '*')} mermaid${slot.type ? ` · ${slot.type.replace(/-v\d+$/u, '')}` : ''}`;
+    rows.push({ansi: `${dim}${truncateAnsi(caption, width)}${RESET}`, plain: caption, kind: 'text', code: index, ...(slot.index >= 0 ? {diagram: slot.index} : {})});
+    return rows;
+  }
+  const rows = codeRows(block, width, context);
+  for (const piece of wrapWords(`(diagram not drawn: ${slot.note ?? 'not available'})`, Math.max(1, width - 2))) rows.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
+  return rows;
+}
+
 /** Greedy word wrap for a sentence; a word wider than the line is cut. */
 function wrapWords(text: string, width: number): string[] {
   const out: string[] = [];
@@ -500,7 +546,8 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
             const dim = context.fg(UI_COLORS.subtle);
             for (const piece of wrapWords(`(not rendered: ${reason})`, Math.max(1, width - 2))) out.push({ansi: `${dim}  ${piece}${RESET}`, plain: `  ${piece}`, kind: 'text'});
           }
-        } else out.push(...codeRows(block, width, context));
+        } else if (context.diagrams && isMermaidLanguage(block.language)) out.push(...diagramRows(block, width, context, context.diagrams));
+        else out.push(...codeRows(block, width, context));
         break;
       case 'math':
         out.push(...mathRows(block.source, width, context, block.raw));
@@ -529,7 +576,7 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
       case 'quote': {
         const bar = `${context.fg(UI_COLORS.subtle)}${glyph(context, '▎', '|')}${RESET} `;
         const inner = renderBlocks(block.blocks, Math.max(1, width - 2), {...context, tone: UI_COLORS.secondary}, depth + 1);
-        for (const row of inner) out.push({ansi: `${bar}${row.ansi}`, plain: `${glyph(context, '▎', '|')} ${row.plain}`.trimEnd(), kind: 'quote', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
+        for (const row of inner) out.push({ansi: `${bar}${row.ansi}`, plain: `${glyph(context, '▎', '|')} ${row.plain}`.trimEnd(), kind: 'quote', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.diagram !== undefined ? {diagram: row.diagram} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
         break;
       }
       case 'table':
@@ -551,7 +598,7 @@ function renderBlocks(blocks: readonly Block[], width: number, context: Context,
           if (!inner.length) inner.push({ansi: '', plain: '', kind: 'text'});
           inner.forEach((row, line) => {
             const prefix = line === 0 ? `${markerSgr}${marker}${RESET} ` : ' '.repeat(lead);
-            out.push({ansi: `${prefix}${row.ansi}`, plain: `${line === 0 ? `${marker} ` : ' '.repeat(lead)}${row.plain}`.trimEnd(), kind: row.kind === 'blank' ? 'blank' : 'list', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
+            out.push({ansi: `${prefix}${row.ansi}`, plain: `${line === 0 ? `${marker} ` : ' '.repeat(lead)}${row.plain}`.trimEnd(), kind: row.kind === 'blank' ? 'blank' : 'list', ...(row.code !== undefined ? {code: row.code} : {}), ...(row.diagram !== undefined ? {diagram: row.diagram} : {}), ...(row.line !== undefined ? {line: row.line} : {})});
           });
         });
         break;
@@ -590,6 +637,8 @@ function renderSource(source: string, columns: number, options: MarkdownOptions,
     ...(options.sizedHeadings ? {sizedHeadings: options.sizedHeadings} : {}),
     ...(options.disclosure ? {disclosure: options.disclosure} : {}),
     ...(options.math ? {math: true} : {}),
+    ...(options.diagrams ? {diagrams: options.diagrams} : {}),
+    maxDiagramRows: Math.max(1, options.maxDiagramRows ?? 24),
     detailsSeen: new Map(),
     blockIds: {next: 1},
   };

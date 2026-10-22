@@ -1,4 +1,4 @@
-import {marked} from 'marked';
+import {Marked, marked} from 'marked';
 
 /**
  * Markdown to a complete HTML document for the preview. GFM is on and raw HTML in the source passes through untouched: the preview
@@ -9,6 +9,11 @@ import {marked} from 'marked';
 export interface MarkdownOptions {
   title: string;
   colorScheme: 'light' | 'dark';
+  /**
+   * A Mermaid fence's drawing as a `data:image/png` address (the page may show `data:` images and nothing remote), or why it is not
+   * drawn; the fence then stays code, as written, with the reason under it. Without this, Mermaid fences are ordinary code.
+   */
+  diagram?: (source: string) => {src: string; alt: string} | {note: string};
 }
 
 const LIGHT = '--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--link:#0969da;--rule:#d1d9e0;--code-bg:#f2f4f6;--quote:#59636e;--th-bg:#f6f8fa';
@@ -40,14 +45,29 @@ ul,ol{padding-left:2em}
 li+li{margin-top:.25em}
 li:has(>input[type=checkbox]){list-style:none;margin-left:-1.4em}
 li>input[type=checkbox]{margin-right:.5em}
+figure.nmsh-diagram{margin:0 0 1em}
+figure.nmsh-diagram img{display:block;max-width:100%;height:auto}
+p.nmsh-note{color:var(--muted);font-size:.875em;margin-top:-.6em}
 `;
 
 export function escapeHtml(text: string): string {
   return text.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;').replace(/"/gu, '&quot;').replace(/'/gu, '&#39;');
 }
 
+function withDiagrams(diagram: NonNullable<MarkdownOptions['diagram']>): Marked {
+  return new Marked({gfm: true, async: false, renderer: {
+    code(token) {
+      if ((token.lang ?? '').split(/[\s{,]/u)[0]?.toLowerCase() !== 'mermaid') return false;
+      const shown = diagram(token.text);
+      if ('src' in shown && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/u.test(shown.src)) return `<figure class="nmsh-diagram"><img src="${shown.src}" alt="${escapeHtml(shown.alt)}"></figure>\n`;
+      const note = 'note' in shown ? shown.note : 'not available';
+      return `<pre><code class="language-mermaid">${escapeHtml(token.text)}\n</code></pre>\n<p class="nmsh-note">(diagram not drawn: ${escapeHtml(note)})</p>\n`;
+    },
+  }});
+}
+
 export function markdownToHtml(markdown: string, options: MarkdownOptions): string {
-  const body = marked.parse(markdown, {gfm: true, async: false}) as string;
+  const body = (options.diagram ? withDiagrams(options.diagram).parse(markdown) : marked.parse(markdown, {gfm: true, async: false})) as string;
   return `<!doctype html>\n<html lang="en" data-scheme="${options.colorScheme === 'dark' ? 'dark' : 'light'}">\n<head>\n<meta charset="utf-8">\n`
     + `<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${escapeHtml(options.title)}</title>\n<style>${STYLE}</style>\n</head>\n<body>\n${body}</body>\n</html>\n`;
 }
@@ -55,5 +75,5 @@ export function markdownToHtml(markdown: string, options: MarkdownOptions): stri
 /** The one entry point for the preview: HTML is served as written, Markdown is converted. */
 export function htmlDocumentFor(source: string, kind: 'html' | 'markdown', options: Partial<MarkdownOptions> = {}): string {
   if (kind === 'html') return source;
-  return markdownToHtml(source, {title: options.title ?? 'Preview', colorScheme: options.colorScheme ?? 'light'});
+  return markdownToHtml(source, {title: options.title ?? 'Preview', colorScheme: options.colorScheme ?? 'light', ...(options.diagram ? {diagram: options.diagram} : {})});
 }

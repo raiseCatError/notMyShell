@@ -7,7 +7,7 @@ import type {GraphicsDecision} from './capabilities.js';
 import {decodeImage, readImageFile} from './decode.js';
 import {PLACEHOLDER_ID_BASE, PLACEHOLDER_ID_LIMIT, kittyDeleteImage, kittyVirtualPlacement, placeholderRows, MAX_PLACEHOLDER_SPAN} from './kittyPlaceholder.js';
 import {encodePng} from './pngEncode.js';
-import {ImageError, type ImageInfo, type Raster} from './raster.js';
+import {IMAGE_LIMITS, ImageError, type ImageInfo, type Raster} from './raster.js';
 import {fitCells, scaleBox} from './scale.js';
 import {encodeSixel} from './sixel.js';
 import {FrameStream} from './stream.js';
@@ -166,6 +166,21 @@ export class GraphicsService {
     const image: LoadedImage = {key, name: safeName(path.basename(realPath)), path: realPath, info, raster: stored, fileBytes: stat.size};
     this.remember(image);
     return image;
+  }
+
+  /**
+   * A picture NMSh produced in memory (a diagram drawn by the browser): decoded with the same bounded decoders as a file and reduced
+   * to the stored size. It is not kept in this cache; whoever made it owns it.
+   */
+  async fromPng(png: Uint8Array, name: string, key: string): Promise<LoadedImage> {
+    if (png.length > IMAGE_LIMITS.maxFileBytes) throw new ImageError('too-large', 'The picture is too large.');
+    const {info, raster} = await decodeImage(png, {scratchDir: this.host.scratchDir()});
+    if (info.format !== 'png') throw new ImageError('unsupported', 'Only PNG pictures are accepted here.');
+    const longest = Math.max(raster.width, raster.height);
+    const stored = longest > this.limits.storeLongSide
+      ? scaleBox(raster, Math.max(1, Math.round((raster.width * this.limits.storeLongSide) / longest)), Math.max(1, Math.round((raster.height * this.limits.storeLongSide) / longest)))
+      : raster;
+    return {key, name: safeName(name), path: name, info, raster: stored, fileBytes: png.length};
   }
 
   private remember(image: LoadedImage): void {

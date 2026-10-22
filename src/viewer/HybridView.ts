@@ -1,5 +1,6 @@
 import type {Block} from '../markdown/blocks.js';
 import {renderMarkdown} from '../markdown/render.js';
+import {mermaidSources} from '../diagrams/mermaid.js';
 import {renderControlRows} from '../ui/controls.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -54,6 +55,8 @@ export interface HybridState {
   /** The wheel scrolled the view on purpose: the caret is not pulled back until a key moves or edits. */
   free: boolean;
   items?: {version: number; list: HybridItem[]};
+  /** The document version and diagram state the provider was last told about (which diagrams the document shows). */
+  diagramsSeen?: string;
 }
 
 export function createHybrid(): HybridState {
@@ -142,6 +145,13 @@ function renderedOf(editor: EditorState, hybrid: HybridState, layout: Layout, in
   const item = layout.items[index]!;
   if (!item.block || item.to - item.from > MAX_RENDER_LINES) return undefined;
   const text = editor.buffer.lines.slice(item.from, item.to).join('\n');
+  // A block with a diagram is drawn fresh each time (its picture can arrive or change at any moment); never cached.
+  const diagrams = layout.look.diagrams;
+  if (diagrams && mermaidSources([item.block]).length) {
+    hybrid.stats.renders += 1;
+    const rows = renderMarkdown(text, layout.width, {...(layout.look.syntax ? {syntax: layout.look.syntax} : {}), hyperlinks: Boolean(layout.look.hyperlinks), html: true, math: true, diagrams}).map(row => row.ansi);
+    return rows.length ? rows : undefined;
+  }
   // Everything the rendered rows depend on is in the key: colour depth, glyph set, links, syntax roles and the theme's colours can all
   // change while the document is open. Only the current width is kept.
   const theme = `${foreground(UI_COLORS.primary)}${foreground(UI_COLORS.accent)}${foreground(UI_COLORS.secondary)}`;
@@ -230,6 +240,9 @@ function layoutOf(editor: EditorState, hybrid: HybridState, columns: number, loo
   const blocks = index.blocks();
   hybrid.stats.parses = index.parseCount;
   if (hybrid.items?.version !== index.version || hybrid.items.list.at(-1)?.to !== editor.buffer.lines.length) hybrid.items = {version: index.version, list: hybridItems(blocks, editor.buffer.lines.length)};
+  // The diagrams the document shows now, so the provider draws those and drops drafts typed past.
+  const seen = look.diagrams ? `${index.version}|${look.diagrams.version}` : undefined;
+  if (look.diagrams && hybrid.diagramsSeen !== seen) { hybrid.diagramsSeen = seen; look.diagrams.want(mermaidSources(blocks)); }
   const buffer = editor.buffer;
   const selection = buffer.selection;
   const first = Math.min(buffer.caret.line, selection?.start.line ?? buffer.caret.line);

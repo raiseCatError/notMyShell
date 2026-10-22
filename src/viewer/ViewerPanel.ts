@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import type {SyntaxSgr} from '../input/syntaxTheme.js';
 import {graphemes} from '../input/inputLayout.js';
-import {codeTokenStyle, renderHtml, renderMarkdown, type ImageProvider, type MarkdownRow, type RowBlock} from '../markdown/render.js';
+import {codeTokenStyle, renderHtml, renderMarkdown, type DiagramProvider, type ImageProvider, type MarkdownRow, type RowBlock} from '../markdown/render.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
 import {highlightCode, type CodeToken} from '../markdown/highlight.js';
 import {colorLevel} from '../presentation/capabilities.js';
@@ -68,6 +68,9 @@ export interface ViewerState {
 export type ViewerAction = {kind: 'close'} | {kind: 'copy'; text: string; lines: number} | {kind: 'edit'; path: string}
   /** Open image `index` of this document in the image viewer. */
   | {kind: 'image'; index: number}
+  /** Draw this document's Mermaid diagrams (they are drawn on request), or open drawn diagram `index` enlarged. */
+  | {kind: 'diagrams'}
+  | {kind: 'diagram'; index: number}
   /** The file shown, for the person's own editor (the /open bridge); line is the first line on screen, when it is one. */
   | {kind: 'open'; path: string; line?: number};
 
@@ -78,10 +81,22 @@ export interface ViewerLook {
   images?: ImageProvider & {count: number; version: number};
   /** Headings may be drawn as sized blocks (the app places them); the cache key includes this. */
   sized?: boolean;
+  /** Mermaid diagrams of the document (docs/design/diagrams.md); `version` changes whenever a drawing finishes. */
+  diagrams?: ViewerDiagrams;
   /** The viewer is the read-only side of a document workspace (Markdown/HTML): its controls name the workspace's keys. */
   workspace?: {mode: 'source' | 'preview'; dirty: boolean; browser: boolean; trusted: boolean};
   /** The viewer is the preview pane of the split view (#461): its controls name the split's keys. */
   split?: {linked: boolean; focused: boolean};
+}
+
+/** What the viewer needs from a document's diagrams: the renderer's provider, plus what the controls offer. */
+export interface ViewerDiagrams extends DiagramProvider {
+  readonly version: string;
+  /** Diagrams were found that are drawn only on request, and the person has not asked yet. */
+  readonly offer: boolean;
+  pass<T>(render: () => T): T;
+  /** The diagrams a view that renders block by block (hybrid) shows now, by their text. */
+  want(sources: readonly string[]): void;
 }
 
 export function createViewer(document: ViewDocument): ViewerState {
@@ -170,15 +185,18 @@ function gutterWidth(state: ViewerState): number {
 }
 
 function markdownRows(state: ViewerState, width: number, look: ViewerLook): MarkdownRow[] {
-  const version = `${look.images?.version ?? 0}|${look.sized ? 'sized' : 'plain'}|${[...(state.disclosure ?? [])].map(([key, open]) => `${key}=${open}`).join(',')}`;
+  const version = `${look.images?.version ?? 0}|${look.diagrams?.version ?? ''}|${look.sized ? 'sized' : 'plain'}|${[...(state.disclosure ?? [])].map(([key, open]) => `${key}=${open}`).join(',')}`;
   if (state.markdown?.width !== width || state.markdown.version !== version) {
     const options = {
       ...(look.syntax ? {syntax: look.syntax} : {}), hyperlinks: Boolean(look.hyperlinks), math: true,
       ...(look.images ? {images: look.images} : {}),
+      ...(look.diagrams && state.document.format === 'markdown' ? {diagrams: look.diagrams} : {}),
       ...(look.sized ? {sizedHeadings: {maxRows: 3}} : {}),
       ...(state.disclosure?.size ? {disclosure: {isOpen: (key: string, open: boolean) => state.disclosure!.get(key) ?? open}} : {}),
     };
-    state.markdown = {width, version, rows: state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true})};
+    const render = () => state.document.format === 'html' ? renderHtml(state.document.text, width, options) : renderMarkdown(state.document.text, width, {...options, html: true});
+    // A full render says which diagrams the document shows now; only those are drawn.
+    state.markdown = {width, version, rows: look.diagrams && state.document.format === 'markdown' ? look.diagrams.pass(render) : render()};
   }
   return state.markdown.rows;
 }
@@ -516,13 +534,16 @@ export function viewerKey(state: ViewerState, key: Key, columns: number, height:
   else if (key.kind === 'backspace' && renders(state.document)) state.note = 'No earlier position to go back to.';
   else if (text === 'n' && state.query) step(state, 1, width, body, look);
   else if (text === 'N' && state.query) step(state, -1, width, body, look);
-  else if (text === 'i' && state.rendered && look.images) {
-    if (!look.images.count) state.note = 'No images in this document.';
-    else {
-      const rows = markdownRows(state, width, look);
-      const shown = rows.slice(state.top).find(row => row.image !== undefined) ?? rows.find(row => row.image !== undefined);
-      return {kind: 'image', index: shown?.image ?? 0};
-    }
+  else if (text === 'D' && state.rendered && look.diagrams && state.document.format === 'markdown') return {kind: 'diagrams'};
+  else if (text === 'i' && state.rendered && (look.images || look.diagrams)) {
+    // The picture nearest the top of the screen: an image or a drawn diagram.
+    const rows = markdownRows(state, width, look);
+    const picture = (row: MarkdownRow) => row.image !== undefined || row.diagram !== undefined;
+    const shown = rows.slice(state.top).find(picture) ?? rows.find(picture);
+    if (shown?.diagram !== undefined) return {kind: 'diagram', index: shown.diagram};
+    if (shown?.image !== undefined) return {kind: 'image', index: shown.image};
+    if (look.images?.count) return {kind: 'image', index: 0};
+    state.note = look.diagrams?.offer ? 'No images here yet: D draws the diagrams.' : 'No images in this document.';
   }
   else if (text === 'c') return {kind: 'copy', text: state.document.text, lines: state.document.lines.length};
   else if (text === 'e' && state.document.origin.kind === 'file') return {kind: 'edit', path: state.document.origin.path};
@@ -559,6 +580,12 @@ function headerRows(state: ViewerState, columns: number, height: number, look: V
   return rows;
 }
 
+/** `i` opens the picture nearest the top: "images" when the document has images, "enlarge" when it shows a drawn diagram. */
+function pictureControl(state: ViewerState, look: ViewerLook): Array<readonly [string, string]> {
+  const diagram = Boolean(state.markdown?.rows.some(row => row.diagram !== undefined));
+  return look.images?.count ? [['i', diagram ? 'enlarge' : 'images']] : diagram ? [['i', 'enlarge']] : [];
+}
+
 function controls(state: ViewerState, columns: number, look: ViewerLook): string[] {
   const width = Math.max(1, columns - 4);
   if (state.input?.kind === 'heading') return renderControlRows([['↑↓', 'choose'], ['Enter', 'go'], ['Esc', 'cancel']], width);
@@ -569,7 +596,8 @@ function controls(state: ViewerState, columns: number, look: ViewerLook): string
     return renderControlRows([
       ['↑↓', 'scroll'], ['/', 'find'], ['#', 'headings'], ...(state.rendered && state.markdown?.rows.some(row => row.details) ? [['z', 'details'] as const] : []), ...(preview ? [] : [[':', 'line'] as const]),
       ['h', preview ? 'source' : 'preview'], ['e', 'edit'], ...(preview ? [['r', 'refresh'] as const] : []),
-      ...(preview && state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
+      ...(preview && state.rendered ? pictureControl(state, look) : []),
+      ...(preview && state.rendered && look.diagrams?.offer ? [['D', 'draw diagrams'] as const] : []),
       ['Ctrl+S', 'save'], ['R', 'reload from disk'], ['Esc', preview ? 'source' : 'close'],
     ], width);
   }
@@ -577,7 +605,8 @@ function controls(state: ViewerState, columns: number, look: ViewerLook): string
     ['↑↓', 'scroll'], ['/', 'find'], ...(renders(state.document) ? [['#', 'headings'] as const] : []), ...(state.rendered && state.markdown?.rows.some(row => row.details) ? [['z', 'details'] as const] : []), ...(state.query ? [['n/N', 'next/previous'] as const] : []), [':', 'line'],
     ...(renders(state.document) ? [['m', state.rendered ? 'source' : 'rendered'] as const] : []),
     ...(!state.rendered ? [['w', state.wrap ? 'no wrap' : 'wrap'] as const, ['l', 'numbers'] as const] : []),
-    ...(state.rendered && look.images?.count ? [['i', 'images'] as const] : []),
+    ...(state.rendered ? pictureControl(state, look) : []),
+    ...(state.rendered && look.diagrams?.offer ? [['D', 'draw diagrams'] as const] : []),
     ['c', 'copy all'], ...(state.document.origin.kind === 'file' ? [['e', 'edit'] as const, ['o', 'open in editor'] as const] : []), ['Esc', 'close'],
   ], width);
 }
