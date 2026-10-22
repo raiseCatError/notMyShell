@@ -126,4 +126,3 @@ test('a hostile page: a flood and huge messages are cut down before they are kep
     assert.ok(all.every(entry => !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮]/u.test(entry.message)));
   } finally { await closeAll(); }
 });
-
