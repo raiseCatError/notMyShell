@@ -54,6 +54,7 @@ Always character art: tmux, screen and Zellij (the real terminal is hidden, and 
   placeholders make the image behave like text, so it scrolls, clips, wraps and repaints with the rows around it; the diff renderer needs no knowledge of it. Text around images keeps `[image: alt]`
   with the reason: "(remote images are not fetched)", "(outside this folder, not shown)", "(file not found)", "(SVG is not drawn)", "(loading…)". `i` in the viewer opens the image nearest the top in the image viewer; Esc returns to the same place.
 - **Standalone (`/view image.png`):** the viewer's own frame, header and controls. Fit (aspect kept), zoom 150–400% with pan, `n`/`p` through the folder's images (regular files only, symlinks not followed, ≤500), `c` copies the path. iTerm2 and Sixel are placed as overlays by the renderer (re-drawn when their rows repaint, removed with the panel); Kitty uses placeholders.
+- **Diagrams:** a drawn Mermaid fence is an in-memory PNG (`GraphicsService.fromPng`, the same bounded decoder) placed like an inline image, owned by its document and released when it closes ([diagrams](diagrams.md)).
 - **Not images:** menus, tabs, selection bands and controls are always text.
 
 ## Security and limits

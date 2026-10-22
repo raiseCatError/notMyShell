@@ -72,6 +72,8 @@ export interface EditorState {
   problems?: ProblemsRunner;
   /** The source line of the last jump from a list (the workspace scrolls its read-only views there). */
   lastJump?: number;
+  /** The person asked to draw the document's Mermaid diagrams (F1 › Diagrams); the workspace passes it on and clears it. */
+  diagramsAsked?: boolean;
   /** The caret moved without a key press in the editor (a jump from a list): the next draw scrolls it into view. */
   revealPending?: boolean;
   /** The editor sits in a document workspace: its footer names the split key. */
@@ -120,6 +122,7 @@ const MARKDOWN_ACTIONS = [
   {id: 'Action.Code', label: 'Code', key: 'c'}, {id: 'Action.Strike', label: 'Strike', key: 's'},
   {id: 'Action.Search', label: 'Snippets…', key: '/'},
   {id: 'Action.Headings', label: 'Headings…', key: 'h'}, {id: 'Action.Back', label: 'Back', key: 'j'}, {id: 'Action.Problems', label: 'Problems…', key: 'e'},
+  {id: 'Action.Diagrams', label: 'Diagrams', key: 'g'},
 ] as const;
 
 export const isMarkdownFile = (state: EditorState) => formatForPath(state.file.path).format === 'markdown';
@@ -249,6 +252,7 @@ function runPaletteEntry(state: EditorState, entry: PaletteEntry): void {
   if (entry.run.action === 'Action.Problems') { openProblems(state); return; }
   if (entry.run.action === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return; }
   if (entry.run.action === 'Action.Back') { jumpBack(state); return; }
+  if (entry.run.action === 'Action.Diagrams') { state.diagramsAsked = true; return; }
   const result = runMarkdownAction(state, entry.run.action);
   if (result.note) state.note = {text: result.note, tone: 'info'};
 }
@@ -366,6 +370,7 @@ function dialogKey(state: EditorState, dialog: EditorDialog, key: Key): EditorAc
     if (chosen === 'Action.Problems') { openProblems(state); return undefined; }
     if (chosen === 'Action.Headings') { state.dialog = {kind: 'outline', focus: 0, query: ''}; return undefined; }
     if (chosen === 'Action.Back') { jumpBack(state); return undefined; }
+    if (chosen === 'Action.Diagrams') { state.diagramsAsked = true; return undefined; }
     const result = runMarkdownAction(state, chosen);
     if (result.note) state.note = {text: result.note, tone: 'info'};
     return undefined;
@@ -652,7 +657,7 @@ function footerRows(state: EditorState, columns: number): string[] {
   }
   if (state.dialog) {
     const dialog = state.dialog;
-    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets · h headings · j back · e problems` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
+    const message = dialog.kind === 'playground' ? 'Playground: an unsaved document to write and preview. Nothing is saved unless you Save As. Esc cancels.' : dialog.kind === 'markdown' ? `Markdown · ${dialog.table ? 'r row+ · d row− · o col+ · x col− · a align · ' : ''}t task · n renumber · l link · p image · b bold · i italic · c code · s strike · / snippets · h headings · j back · e problems · g diagrams` : dialog.kind === 'unsaved' ? `${state.file.title} has unsaved changes.` : dialog.kind === 'recover' ? recoverMessage(state, dialog)
       : dialog.reason ?? `${state.file.title} changed on disk.`;
     const accent = foreground(UI_COLORS.warning);
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;

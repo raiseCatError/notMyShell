@@ -109,6 +109,9 @@ export type DocumentSessionAction =
   | {kind: 'trust'; on: boolean}
   | {kind: 'open'; path: string}
   | {kind: 'image'; index: number}
+  /** Draw the document's Mermaid diagrams (on request), or open drawn diagram `index` enlarged. */
+  | {kind: 'diagrams'}
+  | {kind: 'diagram'; index: number}
   /** A recovered draft was restored, discarded or kept (#469): the app updates the draft store. */
   | Extract<EditorAction, {kind: 'draft' | 'draft-discard' | 'draft-keep' | 'review' | 'review-apply' | 'save-as'}>;
 
@@ -226,6 +229,8 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
       if (editor.buffer.dirty) { editor.dialog = {kind: 'conflict', focus: 0, conflict: 'changed', reason: `${editor.file.title} has unsaved changes. Reloading from disk discards them.`}; return undefined; }
       return {kind: 'reload'};
     }
+    // The browser preview's page says "press D" for diagrams drawn on request: D is the workspace's, not the page's.
+    if (text === 'D' && state.mode === 'preview' && state.preview) return {kind: 'diagrams'};
     if (text === 'T' && state.mode === 'preview') { state.trusted = !state.trusted; return {kind: 'trust', on: state.trusted}; }
     if ((text === 'q' || key.kind === 'escape' || key.kind === 'interrupt') && !state.viewer.query) {
       if (state.mode === 'preview') { setDocumentMode(state, 'source'); return undefined; }
@@ -245,6 +250,7 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   if (action.kind === 'edit') { setDocumentMode(state, 'edit'); return undefined; }
   if (action.kind === 'open') return {kind: 'open', path: action.path};
   if (action.kind === 'image') return {kind: 'image', index: action.index};
+  if (action.kind === 'diagrams' || action.kind === 'diagram') return action;
   return undefined;
 }
 
@@ -298,6 +304,7 @@ function splitKey(state: DocumentSession, key: Key, columns: number, height: num
   // Scrolling the preview by hand is the person's choice of place: it is not undone by a caret that has not moved.
   split.caretLine = editor.buffer.caret.line;
   const action = viewerKey(viewer, key, layout.narrow ? columns : layout.preview, height, splitLook(state, look));
+  if (action?.kind === 'diagrams' || action?.kind === 'diagram') return action;
   return action?.kind === 'copy' ? {kind: 'copy', text: action.text} : undefined;
 }
 
@@ -331,6 +338,7 @@ function renderSplit(state: DocumentSession, columns: number, height: number, lo
 }
 
 function fromEditor(state: DocumentSession, action: EditorAction | undefined): DocumentSessionAction | undefined {
+  if (state.editor.diagramsAsked) { state.editor.diagramsAsked = false; if (!action) return {kind: 'diagrams'}; }
   if (!action) return undefined;
   if (action.kind === 'close') return {kind: 'close'};
   if (action.kind === 'save') return {kind: 'save', ...(action.force ? {force: true} : {}), ...(action.thenClose ? {thenClose: true} : {})};

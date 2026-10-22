@@ -49,3 +49,20 @@ test('htmlDocumentFor serves HTML as written and converts Markdown', () => {
   assert.match(md, /<title>Preview<\/title>/u);
   assert.match(htmlDocumentFor('# Hi', 'markdown', {title: 'notes.md', colorScheme: 'dark'}), /<title>notes.md<\/title>[\s\S]*data-scheme="dark"|data-scheme="dark"[\s\S]*<title>notes.md<\/title>/u);
 });
+
+test('Mermaid fences in the browser preview: a drawing is a data: PNG image; otherwise the fence as written and the reason', () => {
+  const source = '# D\n\n```mermaid\nflowchart LR\n  A["<b>x</b>"] --> B\n```\n\n```js\nlet x = 1;\n```\n';
+  const asked: string[] = [];
+  const drawn = markdownToHtml(source, {title: 'D', colorScheme: 'dark', diagram: text => { asked.push(text); return {src: 'data:image/png;base64,iVBORw0KGgo=', alt: 'Mermaid flowchart-v2'}; }});
+  assert.deepEqual(asked, ['flowchart LR\n  A["<b>x</b>"] --> B']);
+  assert.match(drawn, /<figure class="nmsh-diagram"><img src="data:image\/png;base64,iVBORw0KGgo=" alt="Mermaid flowchart-v2"><\/figure>/u);
+  assert.match(drawn, /<pre><code class="language-js">/u, 'other fences are untouched');
+  const refused = markdownToHtml(source, {title: 'D', colorScheme: 'dark', diagram: () => ({note: 'Mermaid is <not> installed.'})});
+  assert.match(refused, /<code class="language-mermaid">flowchart LR\n  A\[&quot;&lt;b&gt;x&lt;\/b&gt;&quot;\] --&gt; B\n<\/code>/u);
+  assert.match(refused, /\(diagram not drawn: Mermaid is &lt;not&gt; installed\.\)/u);
+  // Anything but a base64 PNG data address is refused as a drawing (never a remote or script address in the page).
+  const odd = markdownToHtml(source, {title: 'D', colorScheme: 'dark', diagram: () => ({src: 'https://example.com/x.png', alt: 'x'})});
+  assert.doesNotMatch(odd, /example\.com/u);
+  // Without the option a mermaid fence is ordinary code.
+  assert.match(markdownToHtml(source, {title: 'D', colorScheme: 'dark'}), /<pre><code class="language-mermaid">/u);
+});

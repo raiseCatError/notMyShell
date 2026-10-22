@@ -311,6 +311,10 @@ import {decideGraphics, describeGraphics} from '../graphics/capabilities.js';
 import {GraphicsService, type GraphicsHost} from '../graphics/service.js';
 import {ImageError} from '../graphics/raster.js';
 import {DocumentImages, documentRoot} from '../viewer/documentImages.js';
+import {DiagramService} from '../diagrams/service.js';
+import {DocumentDiagrams} from '../diagrams/document.js';
+import {locateMermaid} from '../diagrams/library.js';
+import type {DiagramTheme} from '../diagrams/mermaid.js';
 import {createImageView, IMAGE_EXTENSIONS, imageViewKey, renderImageView, showImage, siblingImages, type ImageViewState} from '../viewer/ImagePanel.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
@@ -1848,6 +1852,8 @@ export class TerminalApp {
       else if (action?.kind === 'edit') { this.viewer = undefined; this.openTextEditor(action.path, '/edit', viewer); }
       else if (action?.kind === 'open') void this.openFromViewer(viewer, action);
       else if (action?.kind === 'image') void this.openDocumentImage(viewer, action.index);
+      else if (action?.kind === 'diagrams') this.requestDiagrams(text => { viewer.note = text; });
+      else if (action?.kind === 'diagram') this.openDiagramImage(viewer, action.index);
       else if (action?.kind === 'copy') {
         void this.copyText(action.text, 'Copied the document').then(note => { if (note && this.viewer === viewer) { viewer.note = note; this.render(); } });
       }
@@ -3870,7 +3876,92 @@ export class TerminalApp {
   }
 
   private viewerLook(): ViewerLook {
-    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), sized: textSizingEnabled()};
+    const diagrams = !this.docSession && this.viewer?.document.origin.kind === 'file' ? this.documentDiagrams(this.viewer, this.viewer.document.format === 'markdown') : undefined;
+    return {syntax: this.syntaxSgr, hyperlinks: this.host.capabilities.hyperlinks, ...(this.viewerImages ? {images: this.viewerImages} : {}), ...(diagrams ? {diagrams} : {}), sized: textSizingEnabled()};
+  }
+
+  // ---- Mermaid diagrams (docs/design/diagrams.md) ---------------------------------------------------------------
+
+  /** One service for every document; nothing is located, loaded or started until a document asks for a diagram to be drawn. */
+  private diagramServiceNow(): DiagramService {
+    this.diagramService ??= new DiagramService({backend: {
+      blocked: async () => {
+        if (this.promptConfiguration.graphicsMode === 'off') return 'Images are off (Settings → General → Images), so diagrams cannot be shown.';
+        if (this.promptConfiguration.browser === 'off') return 'Diagrams are drawn by the real browser, which is off (Settings → General → Real browser).';
+        const availability = await this.browserHostService().availability();
+        return availability.ok ? undefined : `${availability.reason} NMSh does not download a browser.`;
+      },
+      library: () => locateMermaid({env: process.env, home: homedir(), execPath: process.execPath}),
+      open: async library => {
+        const engine = await this.browserHostService().engine();
+        if (!engine.openDiagramRenderer) throw new Error('This browser engine cannot draw diagrams.');
+        return engine.openDiagramRenderer(library);
+      },
+      decode: (png, name, key) => this.graphicsService().fromPng(png, name, key),
+    }});
+    return this.diagramService;
+  }
+
+  /** Diagrams follow the theme: light or dark from its text colour (grey without colour), with its text, accent and line colours. */
+  private diagramTheme(): DiagramTheme {
+    const hex = (color: {red: number; green: number; blue: number}) => `#${[color.red, color.green, color.blue].map(value => Math.round(value).toString(16).padStart(2, '0')).join('')}`;
+    return {scheme: colorLevel() === 'none' ? 'mono' : this.themeColorScheme(), text: hex(resolveColor(themeRole('primary'))), accent: hex(resolveColor(themeRole('accent'))), line: hex(resolveColor(themeRole('secondary')))};
+  }
+
+  /** The diagrams of the Markdown document shown now (a document session or a read-only viewer); one document at a time. */
+  private documentDiagrams(owner: object, markdown: boolean): DocumentDiagrams | undefined {
+    if (!markdown) return undefined;
+    if (this.diagrams?.owner === owner) return this.diagrams.diagrams;
+    this.releaseDiagrams();
+    const diagrams = new DocumentDiagrams(() => this.diagramServiceNow(), {
+      mode: () => this.promptConfiguration.diagrams,
+      theme: () => this.diagramTheme(),
+      placer: {place: (image, request) => this.graphicsService().place(image, request), releaseOwner: owner => this.graphics?.releaseOwner(owner)},
+      changed: () => {
+        if (this.stopped) return;
+        // The browser preview shows drawings as images in its page: it reloads to pick up the new one.
+        const session = this.docSession;
+        if (session && this.diagrams?.owner === session && session.mode === 'preview' && session.preview) void session.preview.refresh(bufferText(session.editor));
+        this.render();
+      },
+    });
+    this.diagrams = {owner, diagrams};
+    return diagrams;
+  }
+
+  /** The document's pictures leave the terminal and the service lets go of it (its renderer page closes when no document is left). */
+  private releaseDiagrams(): void {
+    this.diagrams?.diagrams.close();
+    this.diagrams = undefined;
+  }
+
+  /** A document closed for good (not one waiting behind the image viewer or a browser tab): its diagrams go with it. */
+  private sweepDiagrams(): void {
+    const owner = this.diagrams?.owner;
+    if (!owner) return;
+    const live = [this.docSession, this.viewer, this.imageView?.returnTo, this.imageView?.returnToSession, this.browserReturn];
+    if (!live.includes(owner as never)) this.releaseDiagrams();
+  }
+
+  /** D, or F1 › Diagrams: draw this document's diagrams. */
+  private requestDiagrams(note: (text: string) => void): void {
+    const diagrams = this.diagrams?.diagrams;
+    if (!diagrams) { note('This document has no Mermaid diagrams to draw.'); return; }
+    if (this.promptConfiguration.diagrams === 'off') { note('Mermaid diagrams are off (Settings → General → Mermaid diagrams).'); return; }
+    diagrams.request();
+    note('Drawing this document\'s Mermaid diagrams (the browser starts if it is not running).');
+  }
+
+  /** `i` on a drawn diagram: the image viewer (zoom and pan) on its drawing; Esc returns to the document as it was. */
+  private openDiagramImage(viewer: ViewerState, index: number): void {
+    const image = this.diagrams?.diagrams.image(index);
+    if (!image) { viewer.note = 'That diagram is not drawn yet.'; return; }
+    const origin = viewer.document.origin.kind === 'file' ? viewer.document.origin.path : image.name;
+    const view = createImageView([{path: origin, name: image.name, alt: image.name}], 0, {returnTo: viewer});
+    if (this.docSession && this.docSession.viewer === viewer) { view.returnToSession = this.docSession; delete view.returnTo; this.docSession = undefined; }
+    this.viewer = undefined;
+    this.imageView = view;
+    showImage(view, 0, image);
   }
 
   /** Which way images are drawn right now, from the live capabilities and settings. */
@@ -4089,8 +4180,13 @@ export class TerminalApp {
       const browserSession = this.newBrowserSession(engine);
       const file = session.editor.file;
       const kind = formatForPath(file.path).format === 'html' ? 'html' : 'markdown';
+      // Mermaid fences: drawn ones become data: images in the page; a drawing that lands later reloads the preview (scroll is kept).
+      const diagrams = kind === 'markdown' ? this.documentDiagrams(session, true) : undefined;
+      const html = (text: string) => diagrams
+        ? diagrams.pass(() => host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme(), diagram: source => diagrams.html(source)}))
+        : host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme()});
       const view = await BrowserPreviewView.open({
-        session: browserSession, previews, html: text => host.html(text, kind, {title: file.title, colorScheme: this.themeColorScheme()}),
+        session: browserSession, previews, html,
         geometry: () => this.panelGeometry(browserSession.viewport().scale), openLink: url => this.openLinkInBrowser(url), dirty: () => session.editor.buffer.dirty,
       }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted});
       if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
@@ -4679,7 +4775,10 @@ export class TerminalApp {
   /** The viewer look for the session's read-only modes. */
   private documentViewerLook(): ViewerLook {
     const look = this.viewerLook();
-    return this.docSession ? documentSessionLook(this.docSession, look) : look;
+    const session = this.docSession;
+    if (!session) return look;
+    const diagrams = session.editor.file.scratch ? undefined : this.documentDiagrams(session, formatForPath(session.editor.file.path).format === 'markdown');
+    return documentSessionLook(session, diagrams ? {...look, diagrams} : look);
   }
 
   /**
@@ -4763,6 +4862,7 @@ export class TerminalApp {
     this.docSession = undefined;
     this.releaseEditor(session.editor);
     session.preview?.dispose();
+    if (this.diagrams?.owner === session) this.releaseDiagrams();
     this.releaseViewerImages();
     this.returnFromPanel();
   }
@@ -4788,6 +4888,15 @@ export class TerminalApp {
     }
     if (action.kind === 'open') { void this.openFromViewer(session.viewer, {path: action.path}); return; }
     if (action.kind === 'image') { void this.openDocumentImage(session.viewer, action.index); return; }
+    if (action.kind === 'diagrams') {
+      // The provider exists once a rendered view of this session was drawn; asking from the editor first creates it.
+      if (!editor.file.scratch) this.documentDiagrams(session, formatForPath(editor.file.path).format === 'markdown');
+      this.requestDiagrams(text => { editor.note = {text, tone: 'info'}; session.note = text; });
+      // The browser preview shows the fences as its page: rebuild it so they are requested (and drawn once ready).
+      if (session.mode === 'preview' && session.preview) void session.preview.refresh(bufferText(editor));
+      return;
+    }
+    if (action.kind === 'diagram') { this.openDiagramImage(session.viewer, action.index); return; }
     editor.busy = true;
     if (action.kind === 'reload') {
       void openForEdit(editor.file.path, this.shellCwd).then(result => {
@@ -4799,6 +4908,8 @@ export class TerminalApp {
         fresh.note = 'Reloaded from disk; your changes were discarded.';
         fresh.viewer.note = fresh.note;
         session.preview?.dispose();
+        // The same document: its diagrams (and the person's request to draw them) carry over.
+        if (this.diagrams?.owner === session) this.diagrams.owner = fresh;
         this.docSession = fresh;
         this.render();
       });
@@ -10536,6 +10647,9 @@ export class TerminalApp {
   private docSession?: DocumentSession;
   /** The real browser (an installed Chromium), reached only through this host and only when a browser surface is opened. */
   private browserHost?: BrowserHost;
+  private diagramService?: DiagramService;
+  /** The diagrams of the one Markdown document shown now, and which document (session or viewer) they belong to. */
+  private diagrams?: {owner: object; diagrams: DocumentDiagrams};
   private browserPanel?: BrowserPanelState;
   /** The document session a /browser opened from a preview link returns to. */
   private browserReturn?: DocumentSession;
@@ -11955,6 +12069,8 @@ export class TerminalApp {
   }
 
   private render(): void {
+    // A document closed for good lets go of its diagrams (pictures, and the renderer page once no document is left).
+    this.sweepDiagrams();
     this.syncTypography();
     this.scheduleSequencePoke();
     this.reconcileOutputNavigation();
@@ -13978,6 +14094,8 @@ export class TerminalApp {
     // Unsaved editor text is written before the window ends, so closing it never costs the text.
     this.draftKeeper?.dispose();
     this.textEditor?.problems?.dispose(); this.docSession?.editor.problems?.dispose();
+    this.releaseDiagrams();
+    this.diagramService?.dispose();
     void this.browserHost?.shutdown();
     this.releaseViewerImages();
     this.graphics?.releaseAll();

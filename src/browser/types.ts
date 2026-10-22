@@ -138,6 +138,42 @@ export interface BrowserEngine {
   /** Stop the process tree now (pages are closed). Safe to call repeatedly. */
   shutdown(): Promise<void>;
   stats(): BrowserStats;
+  /**
+   * A page that draws diagrams with a diagram library (Mermaid) and returns pixels. It counts as one open page of the engine (the
+   * browser's idle shutdown waits for it to close). See docs/design/diagrams.md for the isolation.
+   */
+  openDiagramRenderer?(library: DiagramLibrary): Promise<DiagramRenderer>;
+}
+
+// ---- Diagrams ----------------------------------------------------------------------------------------------------------------
+
+/** The diagram library's code, read once by NMSh (never fetched) and evaluated only inside the renderer page's isolated world. */
+export interface DiagramLibrary {
+  source: string;
+  version: string;
+}
+
+export interface DiagramRenderRequest {
+  /** The diagram's text exactly as written in the document; passed as data, never placed in HTML or code. */
+  source: string;
+  /** The library's configuration (JSON values only), chosen by NMSh. */
+  config: Record<string, unknown>;
+  /** Device pixels per CSS pixel to aim for; reduced so the result stays within the pixel limits. */
+  scale: number;
+  timeoutMs: number;
+}
+
+export type DiagramFailure = 'syntax' | 'too-large' | 'timeout' | 'crashed' | 'failed';
+
+export type DiagramRenderResult =
+  | {ok: true; png: Uint8Array; width: number; height: number; type: string}
+  | {ok: false; code: DiagramFailure; reason: string};
+
+export interface DiagramRenderer {
+  readonly closed: boolean;
+  /** One diagram at a time (calls are queued). A timeout or crash closes the renderer; open a new one for the next diagram. */
+  render(request: DiagramRenderRequest): Promise<DiagramRenderResult>;
+  close(): Promise<void>;
 }
 
 // ---- Local document preview ------------------------------------------------------------------------------------------------

@@ -86,6 +86,19 @@ jobs:
       - uses: ./.github/actions/linux-shells
         if: runner.os == 'Linux'
       - run: npm ci
+      # The Mermaid diagram tests use a real Mermaid. NMSh never downloads one; CI fetches the pinned release, checks its npm
+      # integrity and keeps only the bundle (tests/diagramsChrome.test.ts reads NMSH_TEST_MERMAID).
+      - name: Mermaid for the diagram tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/mermaid"
+          mkdir -p "$dir"
+          npm pack mermaid@12.2.0 --pack-destination "$dir" --silent > /dev/null
+          actual="sha512-$(openssl dgst -sha512 -binary "$dir/mermaid-12.2.0.tgz" | openssl base64 -A)"
+          test "$actual" = "sha512-w7nr/SFrLO7BaVTs3dQTvYSV6nYSBj0Yy9DjBhsIJtAcHqRzXSq4Pg32ujHZ/AdWsAMNEvvhbm5dt9E2tOiHzw=="
+          tar -xzf "$dir/mermaid-12.2.0.tgz" -C "$dir" package/package.json package/LICENSE package/dist/mermaid.min.js
+          echo "NMSH_TEST_MERMAID=$dir/package" >> "$GITHUB_ENV"
       # Built-launcher tests must execute rather than silently skip on fresh runners.
       - run: npm run build
       - run: npm test -- --shard=${{ matrix.shard }}/2 --test-timeout=120000

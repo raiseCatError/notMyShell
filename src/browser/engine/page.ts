@@ -198,6 +198,12 @@ export class ChromePage implements BrowserPage {
   get editable(): boolean { return this._editable; }
   get isClosed(): boolean { return this.done; }
   get target(): string { return this.targetId; }
+  get frame(): string { return this.mainFrameId; }
+
+  /** For the engine's own specialised pages (the diagram renderer): one protocol command on this page's session. */
+  protocol<T = any>(method: string, params: object = {}, timeoutMs?: number): Promise<T> {
+    return this.host.cdp.send<T>(method, params, {sessionId: this.sessionId, ...(timeoutMs !== undefined ? {timeoutMs} : {})});
+  }
 
   // ---- setup -------------------------------------------------------------------------------------------------------------
 

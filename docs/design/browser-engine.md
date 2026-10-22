@@ -13,7 +13,8 @@ to install or set and everything else keeps working.
 | Process | `engine.ts` | One lazily started process tree, idle shutdown, `shutdown()`, relaunch after a crash. |
 | Page | `page.ts` | One DevTools target plus NMSh's policy: URL rules, frames, input, find, zoom, dialogs, popups, downloads. |
 | Preview | `preview.ts` | The loopback server behind a document preview. |
-| Markdown | `markdownHtml.ts` | `markdownToHtml` and `htmlDocumentFor`. |
+| Markdown | `markdownHtml.ts` | `markdownToHtml` and `htmlDocumentFor` (Mermaid fences become `data:` PNG images when drawn). |
+| Diagrams | `diagram.ts` | The Mermaid renderer page: isolated world, page scripts off, no network, SVG drawn only as an image, PNG out ([diagrams](diagrams.md)). |
 
 ## Process
 

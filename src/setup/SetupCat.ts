@@ -269,6 +269,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('graphicsMode')},
     {row: configRow('textSizing')},
     {row: configRow('browser')},
+    {row: configRow('diagrams')},
   ]},
   // Look: the theme first, then what depends on it (text, chrome), then Chroma, the one place it is chosen, with its
   // own rows under it. Motion-wide switches (Reduced Motion, Decorative effects) are on the Motion step.
