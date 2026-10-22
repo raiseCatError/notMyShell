@@ -1,9 +1,9 @@
-import test from 'node:test';
+import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {BrowserPage, Frame} from '../src/browser/types.js';
-import {chromeSkipReason, createLab, Events, localSite, pidAlive, scratchDir, waitFor} from './support/browserFixtures.js';
+import {chromeSkipReason, createLab, disposeSharedLab, Events, localSite, pidAlive, scratchDir, sharedLab, waitFor} from './support/browserFixtures.js';
 import {createBrowserEngine} from '../src/browser/engine/index.js';
 
 /**
@@ -14,6 +14,7 @@ const skip = await chromeSkipReason();
 const view = {width: 600, height: 400, scale: 1};
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 const settled = (page: BrowserPage, url?: string): Promise<true> => waitFor(() => (url === undefined || page.url === url) && !page.loading && true, `${url ?? 'the page'} to load`);
+after(disposeSharedLab);
 
 test('launch is lazy, uses a private profile, and shutdown leaves no process behind', {skip}, async () => {
   const lab = createLab();
@@ -93,7 +94,7 @@ test('a missing browser is reported in plain words and nothing is started', asyn
 });
 
 test('web pages load from a local server; navigation, back, forward and reload work', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   const site = await localSite({'/a': '<title>Page A</title><p>a</p>', '/b': '<title>Page B</title><p>b</p>'});
   try {
     const page = await lab.engine.open({kind: 'web', viewport: view, url: `${site.origin}/a`});
@@ -122,7 +123,7 @@ test('web pages load from a local server; navigation, back, forward and reload w
 });
 
 test('addresses that are not http, https, file or about:blank are refused and never navigated', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const page = await lab.engine.open({kind: 'web', viewport: view, url: 'about:blank'});
     const events = new Events(page);
@@ -138,7 +139,7 @@ test('addresses that are not http, https, file or about:blank are refused and ne
 });
 
 test('a page that redirects or links to a refused scheme ends on about:blank with a blocked event', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   const site = await localSite({'/': '<a id=l href="blob:nope" style="position:absolute;left:0;top:0;width:300px;height:60px;display:block">x</a><title>start</title>'});
   try {
     const page = await lab.engine.open({kind: 'web', viewport: view, url: site.origin + '/'});
@@ -158,7 +159,7 @@ test('a page that redirects or links to a refused scheme ends on about:blank wit
 const animation = '<style>@keyframes a{from{transform:translateX(0)}to{transform:translateX(300px)}}div{width:80px;height:80px;background:#d33;animation:a 1s linear infinite}</style><div></div>';
 
 test('screencast frames arrive at the viewport size, advance with a CSS animation, and a slow listener skips frames', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview(animation);
     const page = await lab.engine.open({kind: 'preview', viewport: {width: 320, height: 200, scale: 1}, url: handle.url});
@@ -197,7 +198,7 @@ test('screencast frames arrive at the viewport size, advance with a CSS animatio
 });
 
 test('zoom keeps the frame size and is clamped', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview('<h1>zoom</h1>');
     const page = await lab.engine.open({kind: 'preview', viewport: {width: 300, height: 200, scale: 1}, url: handle.url});
@@ -224,7 +225,7 @@ const form = `<body style="margin:0"><input id=f style="position:absolute;left:1
 <script>f.addEventListener('input',()=>{document.title='v:'+f.value});</script></body>`;
 
 test('mouse and keys reach a trusted page: typing in a field, editable events, and a click on a link', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview(form, {trusted: true, files: {'next.html': '<title>next</title><p>second</p>'}});
     const page = await lab.engine.open({kind: 'preview', viewport: view, url: handle.url, scripts: true});
@@ -260,7 +261,7 @@ test('mouse and keys reach a trusted page: typing in a field, editable events, a
 });
 
 test('wheel events scroll the page', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview('<body style="margin:0;height:3000px"><div style="height:3000px;background:linear-gradient(#fff,#000)"></div>');
     const page = await lab.engine.open({kind: 'preview', viewport: view, url: handle.url});
@@ -276,7 +277,7 @@ test('wheel events scroll the page', {skip}, async () => {
 });
 
 test('find works on a preview with scripts off, steps and wraps, and clears', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview('<p>Needle one</p><p>nothing</p><p>second needle</p><script>document.title="scripts ran"</script><p style="display:none">needle hidden</p><p>NEEDLE last</p>');
     const page = await lab.engine.open({kind: 'preview', viewport: view, url: handle.url});
@@ -299,7 +300,7 @@ test('find works on a preview with scripts off, steps and wraps, and clears', {s
 });
 
 test('setScripts turns page scripts on and off and reloads', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview('<title>before</title><script>document.title="ran"</script>', {trusted: true});
     const page = await lab.engine.open({kind: 'preview', viewport: view, url: handle.url});
@@ -315,7 +316,7 @@ test('setScripts turns page scripts on and off and reloads', {skip}, async () =>
 });
 
 test('popups are closed and reported; dialogs are answered; downloads are refused', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   const site = await localSite({
     '/': `<body style="margin:0"><a href="/pop" target="_blank" style="position:absolute;left:0;top:0;width:300px;height:50px;display:block">pop</a>
 <a href="/file.bin" style="position:absolute;left:0;top:100px;width:300px;height:50px;display:block">get</a>
@@ -352,7 +353,7 @@ test('popups are closed and reported; dialogs are answered; downloads are refuse
 });
 
 test('a preview refuses remote resources and navigation, and no request leaves the machine', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   const remote = await localSite();
   try {
     const html = `<body style="margin:0"><img src="${remote.origin}/x.png"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
@@ -379,7 +380,7 @@ test('a preview refuses remote resources and navigation, and no request leaves t
 });
 
 test('previews share nothing with browsing: cookies set in a web page are invisible to a preview', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   const site = await localSite({'/': {type: 'text/html', body: '<title>set</title>', headers: {'Set-Cookie': 'k=v; Path=/'}}});
   try {
     const web = await lab.engine.open({kind: 'web', viewport: view, url: site.origin + '/'});
@@ -395,7 +396,7 @@ test('previews share nothing with browsing: cookies set in a web page are invisi
 });
 
 test('closing a page closes its target and a preview page disposes its context', {skip}, async () => {
-  const lab = createLab();
+  const lab = sharedLab();
   try {
     const handle = await lab.preview('<p>x</p>');
     const page = await lab.engine.open({kind: 'preview', viewport: view, url: handle.url});

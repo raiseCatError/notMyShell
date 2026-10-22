@@ -93,6 +93,29 @@ export function createLab(options: {idleMs?: number} = {}): Lab {
   return lab;
 }
 
+let shared: Lab | undefined;
+
+/**
+ * One browser for every test in a file that only needs pages: launching Chromium costs seconds on CI runners, so tests that do
+ * not exercise launch, idle shutdown or crashes share it. `dispose()` closes the pages the test left open (each test starts with
+ * none) and keeps the browser; call `disposeSharedLab()` from the file's `after` hook. Lifecycle tests keep `createLab()`.
+ */
+export function sharedLab(): Lab {
+  const lab = shared ??= createLab();
+  return {
+    ...lab,
+    async dispose() {
+      await Promise.all(lab.engine.pages().map(page => page.close().catch(() => undefined)));
+    }
+  };
+}
+
+export async function disposeSharedLab(): Promise<void> {
+  const lab = shared;
+  shared = undefined;
+  await lab?.dispose();
+}
+
 /** Collects a page's events and lets a test wait for one. */
 export class Events {
   readonly all: PageEvent[] = [];

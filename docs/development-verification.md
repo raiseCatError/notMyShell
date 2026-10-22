@@ -22,13 +22,16 @@ Local commands reuse node_modules. Clean CI/release environments use
 
 ## Canonical suite and sharding
 
-The only shard interface is `npm test -- --shard=1/2` (or `2/2`). No arguments
+The only shard interface is `npm test -- --shard=<index>/<count>` (CI uses `1/3`, `2/3`, `3/3`). No arguments
 still runs every recursively discovered `tests/**/*.test.ts` file. File selection
 lives in `scripts/test-selection.mjs`; its tests verify deterministic assignment,
 exact union, no overlap, invalid-input rejection, and curated-list existence.
 Runtime files are partitioned as whole files by deterministic greedy scheduling.
 Rounded measured weights for slow files balance PTY work; ordinary/new files
-default to one. Reprofile weights only when actual shard imbalance warrants it. `suggestionRanking.test.ts` runs
+default to one. Reprofile weights only when actual shard imbalance warrants it: the per-test durations in the
+CI logs, attributed to their files, are the source (last done 2026-10-22, when unweighted browser and live files had pushed
+shards to 8–10 minutes of a 10-minute cap). Tests that drive a real Chromium share one browser per file where they test
+pages rather than the browser's own lifecycle (`sharedLab()` in `tests/support/browserFixtures.ts`). `suggestionRanking.test.ts` runs
 separately after runtime files, only in shard one, preserving uncontested latency
 measurement. New files automatically enter the canonical suite and a shard.
 
@@ -40,8 +43,8 @@ session scenarios run fully on Node 26 on both macOS and Ubuntu.
 
 ## CI gates
 
-Code PRs run quality on Ubuntu/Node 26, two macOS/Node 26 shards, two Ubuntu/Node
-26 shards, and curated Ubuntu/Node 22 compatibility. Each shard builds because
+Code PRs run quality on Ubuntu/Node 26, three macOS/Node 26 shards, three Ubuntu/Node
+26 shards (10-minute cap each, about twice a shard's normal time), and curated Ubuntu/Node 22 compatibility. Each shard builds because
 built-launcher tests otherwise skip on a clean checkout. Each integration shard
 and smoke job checks helper-process leaks, including after a test failure.
 Existing hard latency assertions remain in the canonical tests.

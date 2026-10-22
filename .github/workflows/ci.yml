@@ -67,16 +67,18 @@ jobs:
       - run: git diff --check
 
   tests:
-    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/2)
+    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    # Three shards per OS keep each job near five minutes (two ran 8-10 minutes by October 2026). The cap stays at twice
+    # that so a hang still fails the job instead of running on; individual tests keep their own 120 s timeout.
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-24.04]
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,7 +103,7 @@ jobs:
           echo "NMSH_TEST_MERMAID=$dir/package" >> "$GITHUB_ENV"
       # Built-launcher tests must execute rather than silently skip on fresh runners.
       - run: npm run build
-      - run: npm test -- --shard=${{ matrix.shard }}/2 --test-timeout=120000
+      - run: npm test -- --shard=${{ matrix.shard }}/3 --test-timeout=120000
       - name: Process leak check
         if: always()
         run: bash scripts/check-process-leaks.sh
