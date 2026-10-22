@@ -1,4 +1,6 @@
 import {randomBytes} from 'node:crypto';
+import {homedir} from 'node:os';
+import {consoleEntry, policyEntry, type RedactContext} from '../console.js';
 import type {BrowserPage, Frame, KeyEventInput, MouseEventInput, OpenOptions, PageEvent, PageKind, Viewport} from '../types.js';
 import type {CdpClient, CdpEvent} from './cdp.js';
 import {cleanForDisplay} from './preview.js';
@@ -162,6 +164,15 @@ export class ChromePage implements BrowserPage {
   private readonly unsubscribe: () => void;
   private titleTimer: NodeJS.Timeout | undefined;
   private titlePolling = false;
+  /** Console records are made only for a preview opened with `console`; the page's own (default) worlds only, never NMSh's isolated ones. */
+  private readonly consoleName: string | undefined;
+  private readonly pageWorlds = new Set<number>();
+  /**
+   * The document starts loading inside `open()`, before anyone can listen: a Console page keeps what it reports until the first
+   * listener arrives (bounded), so errors of the first load are not lost.
+   */
+  private early: PageEvent[] | undefined;
+  private refusedNavigation = false;
 
   private constructor(private readonly host: PageHost, id: string, options: OpenOptions) {
     this.id = id;
@@ -170,6 +181,8 @@ export class ChromePage implements BrowserPage {
     this.scripts = options.scripts ?? options.kind === 'web';
     this.colorScheme = options.colorScheme;
     this.reducedMotion = options.reducedMotion;
+    this.consoleName = options.kind === 'preview' ? options.console?.documentName : undefined;
+    if (this.consoleName !== undefined) this.early = [];
     this.unsubscribe = host.cdp.onEvent(event => this.onCdpEvent(event));
     // `Target.targetInfoChanged` is not sent for every title change (a script setting document.title, a background window), so the
     // title is also read directly; one small call twice a second.
@@ -269,6 +282,10 @@ export class ChromePage implements BrowserPage {
   // ---- events ------------------------------------------------------------------------------------------------------------
 
   private emit(event: PageEvent): void {
+    if (this.early && (event.type === 'console' || event.type === 'document')) {
+      if (this.eventListeners.size === 0) { if (this.early.length < 200) this.early.push(event); return; }
+      this.early = undefined;
+    }
     for (const listener of [...this.eventListeners]) {
       try { listener(event); } catch { /* a listener's bug must not break the page */ }
     }
@@ -276,6 +293,9 @@ export class ChromePage implements BrowserPage {
 
   onEvent(listener: (event: PageEvent) => void): () => void {
     this.eventListeners.add(listener);
+    const early = this.early;
+    this.early = undefined;
+    for (const event of early ?? []) { try { listener(event); } catch { /* a listener's bug must not break the page */ } }
     return () => { this.eventListeners.delete(listener); };
   }
 
@@ -296,8 +316,26 @@ export class ChromePage implements BrowserPage {
     this.emit({type: 'navigated', url: this._url});
   }
 
-  private block(url: string, reason: string): void {
+  /** `record`: also a Console entry (false when Chrome's own log entry for the same refusal is recorded instead). */
+  private block(url: string, reason: string, record = true): void {
     this.emit({type: 'blocked', url: cleanForDisplay(url, MAX_URL_DISPLAY), reason: cleanForDisplay(reason, 120)});
+    if (record && this.consoleName !== undefined) this.emit({type: 'console', entry: policyEntry(url, reason, this.redaction())});
+  }
+
+  /** What the Console's redaction needs: the document's address (its token is never shown), its name, the home folder. */
+  private redaction(): RedactContext {
+    return {documentUrl: this._url, documentName: this.consoleName ?? 'this document', home: homedir()};
+  }
+
+  /** A DevTools event for the Console: Runtime events count only from the page's own worlds of its current document. */
+  private onConsoleEvent(method: string, params: any): void {
+    if (this.consoleName === undefined) return;
+    if (method !== 'Log.entryAdded') {
+      const context = method === 'Runtime.exceptionThrown' ? params?.exceptionDetails?.executionContextId : params?.executionContextId;
+      if (!this.pageWorlds.has(context)) return;
+    }
+    const entry = consoleEntry(method, params, this.redaction());
+    if (entry) this.emit({type: 'console', entry});
   }
 
   private onCdpEvent(event: CdpEvent): void {
@@ -350,13 +388,25 @@ export class ChromePage implements BrowserPage {
         break;
       case 'Runtime.executionContextsCleared':
         this.findWorld = undefined;
+        this.pageWorlds.clear();
         this.setEditable(false);
+        break;
+      case 'Runtime.executionContextCreated':
+        if (params.context?.auxData?.isDefault === true && typeof params.context.id === 'number') this.pageWorlds.add(params.context.id);
+        break;
+      case 'Runtime.executionContextDestroyed':
+        this.pageWorlds.delete(params.executionContextId);
+        break;
+      case 'Runtime.exceptionThrown':
+      case 'Runtime.consoleAPICalled':
+        this.onConsoleEvent(method, params);
         break;
       case 'Fetch.requestPaused':
         void this.onRequestPaused(params);
         break;
       case 'Log.entryAdded':
         this.onLogEntry(params.entry);
+        this.onConsoleEvent(method, params);
         break;
       case 'Inspector.targetCrashed':
         void this.gone(true);
@@ -387,6 +437,10 @@ export class ChromePage implements BrowserPage {
 
   private onMainFrameNavigated(frame: {id: string; url: string; unreachableUrl?: string}): void {
     this.mainFrameId = frame.id;
+    // A new document: what the previous one reported belongs to it (Page.frameNavigated is cross-document only). The blank page
+    // NMSh shows after refusing a navigation is not a new document of the person's: the refusal it explains stays.
+    if (this.refusedNavigation && frame.url === 'about:blank') this.refusedNavigation = false;
+    else this.emit({type: 'document'});
     if (frame.url.startsWith('chrome-error:')) {
       // Chrome's own page for a failed load: show the address the person asked for.
       this.setUrl(frame.unreachableUrl ?? this._url);
@@ -394,6 +448,7 @@ export class ChromePage implements BrowserPage {
       const verdict = this.kind === 'preview' ? this.checkPreviewUrl(frame.url) : checkWebUrl(frame.url);
       if (!verdict.ok) {
         this.block(frame.url, verdict.reason);
+        this.refusedNavigation = true;
         void this.send('Page.navigate', {url: 'about:blank'}).catch(() => undefined);
         return;
       }
@@ -452,7 +507,7 @@ export class ChromePage implements BrowserPage {
     const text = String(entry.text ?? '');
     if (!/Content Security Policy|violates the following/iu.test(text)) return;
     const quoted = /'((?:https?|ftp|ws|wss|data|blob):[^']*)'/iu.exec(text);
-    this.block(quoted?.[1] ?? String(entry.url ?? ''), 'a preview loads nothing from outside its own folder');
+    this.block(quoted?.[1] ?? String(entry.url ?? ''), 'a preview loads nothing from outside its own folder', false);
   }
 
   // ---- screencast --------------------------------------------------------------------------------------------------------

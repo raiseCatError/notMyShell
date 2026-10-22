@@ -15,6 +15,7 @@ TextBuffer position (line, UTF-16 column)  ⇄  Block.from / Block.to (source li
 
 ## What is built on it now
 - Heading index (`headingsOf`, `DocumentIndex.headings`): level, plain text, source line, depth (nearest shallower heading) and GitHub-style slug.
+- The browser preview's Console (#466) goes to a line only for an HTML document whose text is unchanged since the page loaded (Chrome's 0-based line and UTF-16 column are the buffer's); a Markdown page is generated, so its lines are never offered as the file's.
 - `/view file.md#heading`, the viewer's `#` heading prompt with Backspace to go back, and the editor's *Go to heading…* / *Back* (jumps are `SourceAnchor`s).
 
 ## Heading anchors: GitHub-style, and how Jekyll/Kramdown differs

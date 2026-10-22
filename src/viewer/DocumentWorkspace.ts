@@ -1,6 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
-import {createEditor, editorKey, openProblems, renderEditor, type EditorAction, type EditorState} from './EditorPanel.js';
+import {createEditor, editorKey, openConsole, openProblems, renderEditor, type EditorAction, type EditorState} from './EditorPanel.js';
+import type {ConsoleFeed} from './consoleDialog.js';
 import {formatForPath, type ViewDocument} from './document.js';
 import type {EditableFile} from './fileEdit.js';
 import {displayWidth, stripAnsi, truncateAnsi} from '../util/text.js';
@@ -75,6 +76,8 @@ export interface PreviewView {
   refresh(text: string): Promise<void>;
   /** Scripts on or off for this file (a trusted project). */
   setTrusted(trusted: boolean, text: string): Promise<void>;
+  /** The page's runtime Console (#466); undefined when this preview has none (NMSh's own renderer runs no page). */
+  console?(): ConsoleFeed | undefined;
 }
 
 export interface DocumentSession {
@@ -189,6 +192,8 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
   // A save or conflict dialog belongs to the editor, whatever mode raised it.
   if (editor.dialog || editor.review || editor.input || editor.busy) {
     const action = fromEditor(state, editorKey(editor, key, columns, height));
+    // A jump from the browser preview's Console goes to the text itself: the page is not the text, so the editor shows it.
+    if (editor.consoleJump) { editor.consoleJump = false; if (state.mode === 'preview') { editor.lastJump = undefined; setDocumentMode(state, 'edit'); return action; } }
     // A jump from Problems or the outline moved the caret: the read-only views follow it.
     const jumped = editor.lastJump;
     editor.lastJump = undefined;
@@ -216,6 +221,13 @@ export function documentSessionKey(state: DocumentSession, key: Key, columns: nu
     if (text === 'e') { setDocumentMode(state, 'edit'); return undefined; }
     if (text === 's') { setDocumentMode(state, 'split'); return undefined; }
     if (text === 'P') { openProblems(editor); return undefined; }
+    if (text === 'C' && state.mode === 'preview') {
+      // The Console only reads what the page reported; opening it changes nothing about scripts or the network.
+      const feed = state.preview?.console?.();
+      if (feed) openConsole(editor, feed);
+      else state.note = state.preview ? 'This preview has no Console.' : 'The Console belongs to the browser preview (Chromium); NMSh\'s own renderer runs no page.';
+      return undefined;
+    }
     if (text === 'H') { toggleHybrid(state); return undefined; }
     if (key.kind === 'toggleDetails' && state.mode === 'preview') { setDocumentMode(state, state.before); return undefined; }
     if (text === 'h' || key.kind === 'toggleDetails') {

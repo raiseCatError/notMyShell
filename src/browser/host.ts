@@ -26,6 +26,7 @@ export class BrowserHost {
   private browser: BrowserEngine | undefined;
   private server: PreviewServer | undefined;
   private available: Promise<BrowserAvailability> | undefined;
+  private checked: BrowserAvailability | undefined;
 
   constructor(private readonly options: BrowserHostOptions, private readonly load: () => Promise<EngineModule> = () => import('./engine/index.js')) {}
 
@@ -36,9 +37,12 @@ export class BrowserHost {
 
   /** Is a usable Chrome or Chromium installed? Remembered for the life of the host. */
   async availability(): Promise<BrowserAvailability> {
-    this.available ??= this.engineModule().then(module => module.locateBrowser(undefined, this.options.env?.NMSH_BROWSER));
+    this.available ??= this.engineModule().then(module => module.locateBrowser(undefined, this.options.env?.NMSH_BROWSER)).then(result => { this.checked = result; return result; });
     return this.available;
   }
+
+  /** The answer of `availability()` if a surface already asked this session; never starts a check (for /doctor). */
+  get checkedAvailability(): BrowserAvailability | undefined { return this.checked; }
 
   async engine(): Promise<BrowserEngine> {
     const module = await this.engineModule();

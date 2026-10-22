@@ -282,6 +282,8 @@ import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.j
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
 import {runDoctor, type DoctorCheck} from '../doctor/doctor.js';
+import {documentDoctorChecks, type DocumentRenderingFacts} from '../doctor/documents.js';
+import {findBrowserExecutable} from '../browser/engine/chrome.js';
 import {parseWatch, watchSafety, WatchTasks, type WatchSafety} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchNoticeRows, watchPanelKey, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {finalResultRows, trackBlockRows} from '../tasks/trackBlock.js';
@@ -313,7 +315,7 @@ import {ImageError} from '../graphics/raster.js';
 import {DocumentImages, documentRoot} from '../viewer/documentImages.js';
 import {DiagramService} from '../diagrams/service.js';
 import {DocumentDiagrams} from '../diagrams/document.js';
-import {locateMermaid} from '../diagrams/library.js';
+import {locateMermaid, probeMermaid} from '../diagrams/library.js';
 import type {DiagramTheme} from '../diagrams/mermaid.js';
 import {createImageView, IMAGE_EXTENSIONS, imageViewKey, renderImageView, showImage, siblingImages, type ImageViewState} from '../viewer/ImagePanel.js';
 import type {TextOverlay} from '../arcade/Canvas.js';
@@ -4188,7 +4190,7 @@ export class TerminalApp {
       const view = await BrowserPreviewView.open({
         session: browserSession, previews, html,
         geometry: () => this.panelGeometry(browserSession.viewport().scale), openLink: url => this.openLinkInBrowser(url), dirty: () => session.editor.buffer.dirty,
-      }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted});
+      }, {name: file.title, root: dirname(file.realPath), text: bufferText(session.editor), trusted: session.trusted, kind});
       if ('error' in view) { browserSession.dispose(); session.note = `${view.error} Showing NMSh's own preview.`; return; }
       if (this.docSession !== session || session.mode !== 'preview') { view.dispose(); return; }
       session.preview = view;
@@ -10206,6 +10208,19 @@ export class TerminalApp {
     ];
   }
 
+  /** Documents rows: the preview browser and Mermaid, found without launching the browser or reading the Mermaid bundle. */
+  private async documentDoctorChecks(): Promise<DoctorCheck[]> {
+    const configuration = this.promptConfiguration;
+    const checked = this.browserHost?.checkedAvailability;
+    const [found, mermaid] = await Promise.all([
+      checked ? Promise.resolve(undefined) : findBrowserExecutable(undefined, process.env.NMSH_BROWSER),
+      probeMermaid({env: process.env, home: homedir(), execPath: process.execPath}),
+    ]);
+    const chromium: DocumentRenderingFacts['chromium'] = checked ? {state: 'checked', availability: checked}
+      : found?.ok ? {state: 'found', executable: found.executable} : {state: 'missing', reason: found && !found.ok ? found.reason : 'No browser was found.'};
+    return documentDoctorChecks({diagrams: configuration.diagrams, browser: configuration.browser, images: configuration.graphicsMode !== 'off', running: Boolean(this.browserHost?.running), chromium, mermaid});
+  }
+
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
   private async openDoctor(): Promise<void> {
     this.panelOrigin = undefined;
@@ -10241,7 +10256,9 @@ export class TerminalApp {
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
         ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
-      if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks()]; panel.selected = 0; }
+      // Bounded like every doctor check: a stuck filesystem costs the section, never the panel.
+      const documents = await Promise.race([this.documentDoctorChecks(), new Promise<DoctorCheck[]>(resolve => { setTimeout(() => resolve([]), 3000).unref(); })]).catch(() => []);
+      if (this.doctorPanel === panel) { panel.checks = [...checks, ...this.graphicsDoctorChecks(), ...documents]; panel.selected = 0; }
     } finally { clock?.(); }
     this.render();
   }

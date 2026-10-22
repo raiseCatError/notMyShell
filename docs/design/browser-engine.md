@@ -86,6 +86,19 @@ clears the selection. The world is recreated after a navigation.
 also read with `Target.getTargetInfo` after each load and every 500 ms while the page is open. Titles and addresses shown to the person
 have C0, C1 and bidi controls stripped.
 
+### Console (#466)
+
+A preview opened with `console: {documentName}` (the document workspace's preview; never `/browser` tabs, never the diagram
+renderer) turns DevTools events the page already receives — `Runtime` and `Log` are enabled on every page for other reasons, so no
+domain is added — into `console` events: `Runtime.exceptionThrown`, `Runtime.consoleAPICalled` and `Log.entryAdded` (failed loads and
+HTTP errors, CSP refusals, interventions), plus NMSh's own refusals of a request. `Runtime` events count only from the page's default
+worlds (tracked from `executionContextCreated` with `isDefault`, cleared with the document), so NMSh's find world and any isolated
+world never report. Each event becomes a redacted `ConsoleEntry` (`src/browser/console.ts`) before it leaves the page object: the
+preview's address and token become the document's name or a path beside it, other addresses lose credentials, query values and
+fragments, likely secrets are replaced, controls are stripped and text is bounded before any pattern runs. Nothing is evaluated,
+no object is fetched (`description` only), scripts and network rules are untouched. A cross-document commit emits `document`; the
+page holds its first 200 console events until a listener attaches, because the first load starts inside `open()`.
+
 ### Dialogs, popups, downloads
 
 `alert` is accepted; `confirm`, `prompt` and `beforeunload` are dismissed. Each emits `dialog` with the message. A download is denied and

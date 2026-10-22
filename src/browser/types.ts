@@ -1,3 +1,5 @@
+import type {ConsoleEntry} from './console.js';
+
 /**
  * The boundary between NMSh and a real browser engine.
  *
@@ -36,6 +38,11 @@ export interface OpenOptions {
   /** Emulate prefers-color-scheme / prefers-reduced-motion so a page follows NMSh's theme and motion settings. */
   colorScheme?: 'light' | 'dark';
   reducedMotion?: boolean;
+  /**
+   * `preview` only: report what the page itself reports (exceptions, console messages, failed loads, policy refusals) as redacted
+   * `console` events for the document's Console. It changes nothing about scripts or the network; other pages never report.
+   */
+  console?: {documentName: string};
 }
 
 /** One rendered frame, PNG-encoded, at `viewport.width * scale` x `viewport.height * scale` pixels. */
@@ -64,6 +71,10 @@ export interface KeyEventInput {
 }
 
 export type PageEvent =
+  /** A redacted runtime record for the document's Console (only pages opened with `console`). */
+  | {type: 'console'; entry: ConsoleEntry}
+  /** A new document committed in the main frame (a load, reload or navigation): its Console starts again. */
+  | {type: 'document'}
   | {type: 'navigated'; url: string}
   | {type: 'title'; title: string}
   | {type: 'loading'; loading: boolean}
