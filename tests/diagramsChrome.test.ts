@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type {AddressInfo} from 'node:net';
@@ -31,10 +31,23 @@ async function skip(): Promise<string | undefined> {
   return (await chromeSkipReason()) ?? (await mermaidSkip);
 }
 
-async function lab(): Promise<{engine: BrowserEngine; dir: string; done(): Promise<void>}> {
+interface DiagramLab {engine: BrowserEngine; dir: string; done(): Promise<void>}
+
+function freshLab(): DiagramLab {
   const dir = scratchDir('nmsh-diagrams-');
   const engine = createBrowserEngine({profileDir: path.join(dir, 'profile'), idleMs: 60_000});
   return {engine, dir, done: async () => { await engine.shutdown(); fs.rmSync(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 200}); }};
+}
+
+// Launching Chromium costs seconds on CI runners: tests that only open renderer pages share one browser; each test closes the
+// pages it left open, so the next starts with none. The crash test keeps a browser of its own.
+let shared: DiagramLab | undefined;
+after(async () => { await shared?.done(); shared = undefined; });
+
+async function lab(options: {fresh?: boolean} = {}): Promise<DiagramLab> {
+  if (options.fresh) return freshLab();
+  const base = shared ??= freshLab();
+  return {...base, done: async () => { await Promise.all(base.engine.pages().map(page => page.close().catch(() => undefined))); }};
 }
 
 const request = (source: string, extra: Partial<DiagramRenderRequest> = {}): DiagramRenderRequest => ({source, config: mermaidConfig(THEME), scale: 2, timeoutMs: 10_000, ...extra});
@@ -176,7 +189,7 @@ test('a library that never finishes is stopped at the timeout; the page is throw
 test('a crashed renderer page is reported, never hangs, and the browser stops cleanly afterwards', async t => {
   const reason = await skip();
   if (reason) { t.skip(reason); return; }
-  const {engine, done} = await lab();
+  const {engine, done} = await lab({fresh: true});
   try {
     const renderer: DiagramRenderer = await engine.openDiagramRenderer!(library!);
     assert.ok((await renderer.render(request(TYPES.flowchart!))).ok);

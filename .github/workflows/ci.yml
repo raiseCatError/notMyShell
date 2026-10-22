@@ -67,16 +67,19 @@ jobs:
       - run: git diff --check
 
   tests:
-    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/2)
+    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # Three shards per OS: test steps measured 4.9-6.6 minutes and whole jobs 6-7.8 minutes on 2026-10-22 (two shards had
+    # reached 8-10 minutes against a 10-minute cap). The cap is about 1.5x the slowest job, so slow macOS runners pass and a
+    # hang still fails the job; every test keeps its own 120 s timeout.
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-24.04]
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,7 +104,7 @@ jobs:
           echo "NMSH_TEST_MERMAID=$dir/package" >> "$GITHUB_ENV"
       # Built-launcher tests must execute rather than silently skip on fresh runners.
       - run: npm run build
-      - run: npm test -- --shard=${{ matrix.shard }}/2 --test-timeout=120000
+      - run: npm test -- --shard=${{ matrix.shard }}/3 --test-timeout=120000
       - name: Process leak check
         if: always()
         run: bash scripts/check-process-leaks.sh
