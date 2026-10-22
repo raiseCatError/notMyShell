@@ -181,7 +181,7 @@ export function consoleRows(dialog: ConsoleDialog, width: number): string[] {
   }
   // One line about the focused entry: where it is, or why it has no place in the text; or the latest answer.
   const focused = items[index];
-  const detail = dialog.note ?? (focused ? detailLine(focused) : '');
+  const detail = dialog.note ?? (focused ? detailLine(focused, width) : '');
   return [truncateAnsi(header, width), ...shown.map(row => truncateAnsi(row, width)), truncateAnsi(`${subtle}${truncateText(inert(detail), Math.max(1, width))}${reset}`, width),
     ...renderControlRows([['↑↓', 'choose'], ['Enter', 'go to source'], ['Tab', 'filter'], ['Shift+↑↓', 'mark'], ['Ctrl+C', 'copy…'], ['Del', 'clear'], ['Esc', 'back']], width)];
 }
@@ -196,9 +196,11 @@ function wrapWords(text: string, width: number): string[] {
   return lines.map(item => truncateText(item, width));
 }
 
-function detailLine(record: ConsoleRecord): string {
+function detailLine(record: ConsoleRecord, width: number): string {
   const place = where(record);
   const frame = record.stack?.[0];
   const target = record.location?.target === 'document' ? '' : record.location?.target === 'local' ? ' (a file beside the document)' : record.location ? ' (outside the document)' : '';
-  return [place ? `at ${place}${target}` : 'no source location', frame && !frame.endsWith(`(${place})`) ? `from ${frame}` : ''].filter(Boolean).join(' · ');
+  // A row shows the first line of a message; a longer or multi-line one says how to read all of it.
+  const more = record.message.includes('\n') || displayWidth(record.message) > width - 40 ? 'Ctrl+C shows all of it' : '';
+  return [place ? `at ${place}${target}` : 'no source location', frame && !frame.endsWith(`(${place})`) ? `from ${frame}` : '', more].filter(Boolean).join(' · ');
 }

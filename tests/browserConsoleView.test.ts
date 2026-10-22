@@ -330,6 +330,20 @@ test('without the browser preview the Console says why; scripts off says what st
   } finally { w.cleanup(); }
 });
 
+test('a multi-line or long message shows its first line and says how to read all of it', async () => {
+  const w = await workspace();
+  try {
+    w.page.emit({type: 'console', entry: info('first line\nsecond line\nthird line')});
+    w.press('C');
+    const screen = w.screen();
+    assert.match(screen, /first line/u);
+    assert.doesNotMatch(screen, /second line/u);
+    assert.match(screen, /Ctrl\+C shows all of it/u);
+    w.press(CTRL_C);
+    assert.match(w.screen(), /second line[\s\S]*third line/u);
+  } finally { w.cleanup(); }
+});
+
 test('the preview status line counts Console errors and names the key', async () => {
   const w = await workspace();
   try {
