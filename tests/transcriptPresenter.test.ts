@@ -114,3 +114,96 @@ test('NO_COLOR reattach suppresses saved authored styles while preserving raw pr
     }
   }
 });
+
+test('presentation command metadata reads scale with records and source lines', () => {
+  const work = (count: number): number => {
+    let reads = 0;
+    const records = Array.from({length: count}, (_, index) => new Proxy(record(index * 3, index * 3 + 1, index * 3 + 3), {
+      get(target, property, receiver) {
+        if (property === 'startId' || property === 'outputStartId' || property === 'endId') reads++;
+        return Reflect.get(target, property, receiver);
+      },
+    })).reverse();
+    const lines = Array.from({length: count}, (_, index) => [`cmd${index}`, `out${index}`, `tail${index}`]).flat();
+    const source = view(lines, records, Array.from({length: count}, (_, index) => index * 3));
+    reads = 0;
+    const presented = new TranscriptPresenter().rows(source, 80);
+    assert.equal(presented.filter(row => row.lineIndex !== undefined && row.lineIndex >= 0 && !row.isHistoricalHeader).length, lines.length);
+    return reads;
+  };
+  const short = work(50);
+  const long = work(100);
+  assert.ok(long <= short * 3, `Doubling history increased command metadata reads from ${short} to ${long}`);
+});
+
+test('command index metadata keeps first matching array priority, including out-of-order records', () => {
+  const lines = ['cmd0', 'one', 'tail', 'cmd3', 'two', 'end'];
+  for (const records of [[record(3, 4, 6), record(0, 1, 3)], [record(0, 1, 3), record(3, 4, 6)]]) {
+    const rows = new TranscriptPresenter().rows(view(lines, records, [0, 3]), 80);
+    for (const row of rows) if (row.lineIndex !== undefined && row.lineIndex >= 0 && !row.isHistoricalHeader) {
+      assert.equal(row.commandIndex, records.findIndex(command => command.startId <= row.lineIndex!));
+    }
+  }
+});
+
+test('a later presentation rebuilds command indexes after new records and clear', () => {
+  const buffer = new OutputBuffer();
+  buffer.beginCommand('first', ['first']); buffer.write('one\n'); buffer.complete(0, {holdOpen: true});
+  assert.equal(buffer.wrapped(80).find(row => row.plain === 'first')?.commandIndex, 0);
+  buffer.beginCommand('second', ['second']); buffer.write('two\n'); buffer.complete(0, {holdOpen: true});
+  assert.equal(buffer.wrapped(80).find(row => row.plain === 'first')?.commandIndex, 1);
+  buffer.clearPresentation();
+  buffer.beginCommand('new', ['new']); buffer.write('three\n'); buffer.complete(0, {holdOpen: true});
+  assert.equal(buffer.wrapped(80).find(row => row.plain === 'new')?.commandIndex, 0);
+  assert.equal(buffer.wrapped(80).some(row => row.plain === 'first'), false);
+});
+
+test('duplicate output and disclosure anchors retain first-record priority', () => {
+  const lines = ['cmd', ...Array.from({length: 30}, (_, index) => `line ${index}`)];
+  const rows = new TranscriptPresenter().rows(view(lines, [record(0, 1, 31, false), record(0, 1, 31, true)], [0]), 60);
+  assert.equal(rows.find(row => row.isFoldHint)?.commandIndex, 0);
+  assert.ok(rows.length < lines.length, 'the first duplicate record remains folded');
+  const activity = {id: 'first', kind: 'tap-stream' as const, label: 'child', startedAt: 0, completedAt: 1000,
+    status: 'completed' as const, outputStartId: 1, outputEndId: 1, expanded: true};
+  const parents = [{...record(0, 1, 2), activities: [activity]}, {...record(0, 1, 2), activities: [{...activity, id: 'second'}]}];
+  const disclosed = new TranscriptPresenter().rows(view(['cmd', 'out', 'Completed'], parents, [0]), 60);
+  assert.equal(disclosed.find(row => row.lineIndex === 2)?.commandIndex, 0);
+});
+
+test('command priority advances over source rows hidden by a folded range', () => {
+  const lines = ['cmd', ...Array.from({length: 11}, (_, index) => `line ${index}`)];
+  const records = [record(3, 4, 8), record(0, 1, 10, false)];
+  const rows = new TranscriptPresenter().rows(view(lines, records, [0, 3]), 80);
+  assert.equal(rows.find(row => row.lineIndex === 10)?.commandIndex, 0);
+});
+
+test('authored color policy is sampled once per frame and changes apply on the next frame', () => {
+  const parser = new AnsiOutputParser();
+  for (let index = 0; index < 100; index++) parser.addLine(`\x1b[31mnotice ${index}\x1b[0m`);
+  parser.addLine('\x1b[32mraw program output\x1b[0m');
+  const source: TranscriptView = {lines: parser.allLines(), completed: [], visualGaps: new Set(),
+    lineTypes: new Map(Array.from({length: 100}, (_, index) => [index, 'metadata' as const])), historicalContexts: new Map(), ownerOf: () => undefined};
+  const originalEnv = process.env;
+  let reads = 0;
+  let level = 'truecolor';
+  const env = {...originalEnv};
+  Object.defineProperty(env, 'NMSH_COLOR', {enumerable: true, configurable: true, get: () => { reads++; return level; }});
+  process.env = env;
+  try {
+    const presenter = new TranscriptPresenter();
+    const colored = presenter.rows(source, 80);
+    const colorReads = reads;
+    level = 'none'; reads = 0;
+    const plain = presenter.rows(source, 80);
+    assert.match(colored[0]!.ansi, /\x1b\[31m/u);
+    assert.doesNotMatch(plain[0]!.ansi, /\x1b\[31m/u);
+    assert.match(plain.at(-1)!.ansi, /\x1b\[32m/u, 'raw PTY color remains raw');
+    assert.deepEqual(plain.map(row => row.plain), colored.map(row => row.plain));
+    assert.equal(colorReads, 1, 'one authored policy read for the colored frame');
+    assert.equal(reads, 1, 'one fresh policy read for the next frame');
+    reads = 0;
+    const raw = presenter.rows({...source, lineTypes: new Map()}, 80);
+    assert.match(raw[0]!.ansi, /\x1b\[31m/u);
+    assert.equal(reads, 0, 'raw-only output needs no authored-color policy');
+  } finally { process.env = originalEnv; }
+});

@@ -1,0 +1,152 @@
+{
+  "before": "/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/v024-qa",
+  "after": "/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/perf-history-20261025",
+  "node": "v26.12.0",
+  "notes": "Untimed full-row deep equality (ANSI/plain text and every metadata field), plus unchanged serialized transcript; same actual OutputBuffer view for both presenters",
+  "results": [
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "normal",
+      "columns": 40,
+      "level": "truecolor",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "normal",
+      "columns": 40,
+      "level": "none",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "normal",
+      "columns": 80,
+      "level": "truecolor",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "normal",
+      "columns": 80,
+      "level": "none",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "chat",
+      "columns": 40,
+      "level": "truecolor",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "chat",
+      "columns": 40,
+      "level": "none",
+      "rows": 19999,
+      "sha256": "3414e2910b22f150a1df736f6d35abeb9563c3b2e226f712bb530e78a749f825"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "chat",
+      "columns": 80,
+      "level": "truecolor",
+      "rows": 19999,
+      "sha256": "444e5521d65b6b94b24b3aafa731d6230b18c1b499a17c257d25ffa7949034de"
+    },
+    {
+      "name": "many",
+      "count": 5000,
+      "layout": "chat",
+      "columns": 80,
+      "level": "none",
+      "rows": 19999,
+      "sha256": "444e5521d65b6b94b24b3aafa731d6230b18c1b499a17c257d25ffa7949034de"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "normal",
+      "columns": 40,
+      "level": "truecolor",
+      "rows": 977,
+      "sha256": "103faa4dfa5fe512bcbd207a0516be9aec122e728f78e6233a6abedb8e7a2224"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "normal",
+      "columns": 40,
+      "level": "none",
+      "rows": 977,
+      "sha256": "9d2fe1fac34bfd2d262f460a2f672e05680c38d8e60823490af24a78b13a3aa2"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "normal",
+      "columns": 80,
+      "level": "truecolor",
+      "rows": 976,
+      "sha256": "bf30f6e2045da64e1350afe04e685e25288414369a80439c001183cd34badf8f"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "normal",
+      "columns": 80,
+      "level": "none",
+      "rows": 976,
+      "sha256": "292e1e25517d4957bd1b1fa3a279d0ba635913ba3b180b256ebea0f4b4ee5aad"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "chat",
+      "columns": 40,
+      "level": "truecolor",
+      "rows": 977,
+      "sha256": "103faa4dfa5fe512bcbd207a0516be9aec122e728f78e6233a6abedb8e7a2224"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "chat",
+      "columns": 40,
+      "level": "none",
+      "rows": 977,
+      "sha256": "9d2fe1fac34bfd2d262f460a2f672e05680c38d8e60823490af24a78b13a3aa2"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "chat",
+      "columns": 80,
+      "level": "truecolor",
+      "rows": 976,
+      "sha256": "e39dcbb866208a65de300e6412ec2b8e53f26bf3d6c373149717fd8f9a9cdf2e"
+    },
+    {
+      "name": "mixed",
+      "count": 200,
+      "layout": "chat",
+      "columns": 80,
+      "level": "none",
+      "rows": 976,
+      "sha256": "074460ba75b74ccb858f4fb364feb00ea391e930aa59555a2c5a78cd9e528eae"
+    }
+  ]
+}
