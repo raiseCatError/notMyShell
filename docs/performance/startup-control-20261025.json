@@ -1,0 +1,338 @@
+[
+  {
+    "provider": "native",
+    "i": 0,
+    "variant": "baseline",
+    "composerMs": 1111.850625,
+    "usableMs": 1150.1542920000002
+  },
+  {
+    "provider": "native",
+    "i": 0,
+    "variant": "candidate",
+    "composerMs": 689.3013329999999,
+    "usableMs": 729.049
+  },
+  {
+    "provider": "native",
+    "i": 1,
+    "variant": "candidate",
+    "composerMs": 689.21,
+    "usableMs": 727.3188329999998
+  },
+  {
+    "provider": "native",
+    "i": 1,
+    "variant": "baseline",
+    "composerMs": 691.029833,
+    "usableMs": 732.0238330000006
+  },
+  {
+    "provider": "native",
+    "i": 2,
+    "variant": "baseline",
+    "composerMs": 692.4700419999999,
+    "usableMs": 732.6643750000003
+  },
+  {
+    "provider": "native",
+    "i": 2,
+    "variant": "candidate",
+    "composerMs": 717.3229590000001,
+    "usableMs": 758.7964589999992
+  },
+  {
+    "provider": "native",
+    "i": 3,
+    "variant": "candidate",
+    "composerMs": 682.0564170000007,
+    "usableMs": 720.7867080000005
+  },
+  {
+    "provider": "native",
+    "i": 3,
+    "variant": "baseline",
+    "composerMs": 639.5002910000003,
+    "usableMs": 678.917708
+  },
+  {
+    "provider": "native",
+    "i": 4,
+    "variant": "baseline",
+    "composerMs": 684.2544580000003,
+    "usableMs": 724.2608329999994
+  },
+  {
+    "provider": "native",
+    "i": 4,
+    "variant": "candidate",
+    "composerMs": 675.0494999999992,
+    "usableMs": 717.7654999999995
+  },
+  {
+    "provider": "native",
+    "i": 5,
+    "variant": "candidate",
+    "composerMs": 657.0029169999998,
+    "usableMs": 695.1660420000007
+  },
+  {
+    "provider": "native",
+    "i": 5,
+    "variant": "baseline",
+    "composerMs": 669.1395000000011,
+    "usableMs": 709.5510840000006
+  },
+  {
+    "provider": "native",
+    "i": 6,
+    "variant": "baseline",
+    "composerMs": 677.3517920000013,
+    "usableMs": 716.9206250000007
+  },
+  {
+    "provider": "native",
+    "i": 6,
+    "variant": "candidate",
+    "composerMs": 661.177291,
+    "usableMs": 700.7053329999999
+  },
+  {
+    "provider": "native",
+    "i": 7,
+    "variant": "candidate",
+    "composerMs": 663.3913750000011,
+    "usableMs": 703.3068330000006
+  },
+  {
+    "provider": "native",
+    "i": 7,
+    "variant": "baseline",
+    "composerMs": 663.1548749999984,
+    "usableMs": 705.776249999999
+  },
+  {
+    "provider": "native",
+    "i": 8,
+    "variant": "baseline",
+    "composerMs": 671.6553750000003,
+    "usableMs": 712.8747500000009
+  },
+  {
+    "provider": "native",
+    "i": 8,
+    "variant": "candidate",
+    "composerMs": 641.903416000001,
+    "usableMs": 681.0247909999998
+  },
+  {
+    "provider": "native",
+    "i": 9,
+    "variant": "candidate",
+    "composerMs": 679.9379170000011,
+    "usableMs": 723.4719170000008
+  },
+  {
+    "provider": "native",
+    "i": 9,
+    "variant": "baseline",
+    "composerMs": 682.7790830000013,
+    "usableMs": 724.0847920000015
+  },
+  {
+    "provider": "native",
+    "i": 10,
+    "variant": "baseline",
+    "composerMs": 659.103750000002,
+    "usableMs": 700.6725420000002
+  },
+  {
+    "provider": "native",
+    "i": 10,
+    "variant": "candidate",
+    "composerMs": 667.4210830000011,
+    "usableMs": 708.390707999999
+  },
+  {
+    "provider": "native",
+    "i": 11,
+    "variant": "candidate",
+    "composerMs": 684.8339169999999,
+    "usableMs": 726.3839999999982
+  },
+  {
+    "provider": "native",
+    "i": 11,
+    "variant": "baseline",
+    "composerMs": 669.575291000001,
+    "usableMs": 710.2276659999989
+  },
+  {
+    "provider": "none",
+    "i": 0,
+    "variant": "baseline",
+    "composerMs": 663.9368749999994,
+    "usableMs": 699.364375000001
+  },
+  {
+    "provider": "none",
+    "i": 0,
+    "variant": "candidate",
+    "composerMs": 676.7955419999998,
+    "usableMs": 715.0474580000009
+  },
+  {
+    "provider": "none",
+    "i": 1,
+    "variant": "candidate",
+    "composerMs": 668.692332999999,
+    "usableMs": 706.8129169999993
+  },
+  {
+    "provider": "none",
+    "i": 1,
+    "variant": "baseline",
+    "composerMs": 657.2845830000006,
+    "usableMs": 696.1882919999989
+  },
+  {
+    "provider": "none",
+    "i": 2,
+    "variant": "baseline",
+    "composerMs": 660.5454169999975,
+    "usableMs": 701.8403749999998
+  },
+  {
+    "provider": "none",
+    "i": 2,
+    "variant": "candidate",
+    "composerMs": 645.4025409999995,
+    "usableMs": 684.6256659999999
+  },
+  {
+    "provider": "none",
+    "i": 3,
+    "variant": "candidate",
+    "composerMs": 661.2419579999987,
+    "usableMs": 705.5308330000007
+  },
+  {
+    "provider": "none",
+    "i": 3,
+    "variant": "baseline",
+    "composerMs": 656.8782500000016,
+    "usableMs": 696.1555000000008
+  },
+  {
+    "provider": "none",
+    "i": 4,
+    "variant": "baseline",
+    "composerMs": 657.9466670000002,
+    "usableMs": 710.0033330000006
+  },
+  {
+    "provider": "none",
+    "i": 4,
+    "variant": "candidate",
+    "composerMs": 664.609625000001,
+    "usableMs": 703.0458330000001
+  },
+  {
+    "provider": "none",
+    "i": 5,
+    "variant": "candidate",
+    "composerMs": 654.1872079999994,
+    "usableMs": 695.5110000000022
+  },
+  {
+    "provider": "none",
+    "i": 5,
+    "variant": "baseline",
+    "composerMs": 657.0509999999995,
+    "usableMs": 697.3227079999997
+  },
+  {
+    "provider": "none",
+    "i": 6,
+    "variant": "baseline",
+    "composerMs": 640.2921669999996,
+    "usableMs": 676.7374999999993
+  },
+  {
+    "provider": "none",
+    "i": 6,
+    "variant": "candidate",
+    "composerMs": 646.1335419999959,
+    "usableMs": 686.2642080000005
+  },
+  {
+    "provider": "none",
+    "i": 7,
+    "variant": "candidate",
+    "composerMs": 652.7839999999997,
+    "usableMs": 689.0840000000026
+  },
+  {
+    "provider": "none",
+    "i": 7,
+    "variant": "baseline",
+    "composerMs": 669.8848339999968,
+    "usableMs": 717.8167089999988
+  },
+  {
+    "provider": "none",
+    "i": 8,
+    "variant": "baseline",
+    "composerMs": 694.669249999999,
+    "usableMs": 734.9634579999984
+  },
+  {
+    "provider": "none",
+    "i": 8,
+    "variant": "candidate",
+    "composerMs": 659.5427500000005,
+    "usableMs": 699.9874589999963
+  },
+  {
+    "provider": "none",
+    "i": 9,
+    "variant": "candidate",
+    "composerMs": 652.1428330000053,
+    "usableMs": 691.7384160000001
+  },
+  {
+    "provider": "none",
+    "i": 9,
+    "variant": "baseline",
+    "composerMs": 646.4991250000021,
+    "usableMs": 682.9186669999981
+  },
+  {
+    "provider": "none",
+    "i": 10,
+    "variant": "baseline",
+    "composerMs": 669.5103329999984,
+    "usableMs": 708.7953749999942
+  },
+  {
+    "provider": "none",
+    "i": 10,
+    "variant": "candidate",
+    "composerMs": 657.5103339999987,
+    "usableMs": 694.9677920000031
+  },
+  {
+    "provider": "none",
+    "i": 11,
+    "variant": "candidate",
+    "composerMs": 662.4076249999998,
+    "usableMs": 704.7044169999936
+  },
+  {
+    "provider": "none",
+    "i": 11,
+    "variant": "baseline",
+    "composerMs": 684.440042000002,
+    "usableMs": 724.5312090000007
+  }
+]
