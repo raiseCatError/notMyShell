@@ -105,13 +105,13 @@ export class TranscriptPresenter {
 
   setHyperlinks(enabled: boolean): void { this.hyperlinks = enabled; }
 
-  private wrap(view: TranscriptView, index: number, width: number): WrappedRow[] {
+  private wrap(view: TranscriptView, index: number, width: number, authoredColorOff?: boolean): WrappedRow[] {
     const owner = view.ownerOf(index);
     const context = owner === undefined ? undefined : view.historicalContexts.get(owner);
     const stored = view.lines[index] ?? [];
     // Saved NMSh chrome belongs to the current frontend's presentation policy.
     // Program cells keep their original SGR, including across reattach.
-    const line = view.lineTypes.has(index) && colorLevel() === 'none'
+    const line = view.lineTypes.has(index) && (authoredColorOff ?? (colorLevel() === 'none'))
       ? stored.map(cell => cell ? {...cell, style: ''} : cell)
       : stored;
     // NMSh's own lines wrap at words; shell output wraps by column, as a terminal does.
@@ -145,8 +145,23 @@ export class TranscriptPresenter {
 
   rows(view: TranscriptView, width: number): WrappedRow[] {
     const {lines, completed, active, visualGaps, historicalContexts, welcome, firstRun, ownerOf, liveRows} = view;
+    const authoredColorOff = view.lineTypes.size > 0 && colorLevel() === 'none';
     const column = this.layout === 'chat' ? chatColumn(width) : undefined;
     // A chat command block is right-aligned as a whole: its widest wrapped row sets the left edge.
+    // Index each presentation once. First entries retain the array priority of the original lookups.
+    type Entry = {command: CompletedCommand; index: number};
+    const outputCommands = new Map<number, Entry>();
+    const disclosures = new Map<number, Entry>();
+    const startingCommands = new Map<number, number>();
+    completed.forEach((command, index) => {
+      const entry = {command, index};
+      if (!outputCommands.has(command.outputStartId)) outputCommands.set(command.outputStartId, entry);
+      if (command.activities?.length && command.endId !== undefined && !disclosures.has(command.endId)) disclosures.set(command.endId, entry);
+      // First integer source row satisfying startId <= row, including a retired negative start.
+      const start = Math.max(0, Math.ceil(command.startId));
+      if (!startingCommands.has(start)) startingCommands.set(start, index);
+    });
+    let firstCompletedIndex = -1;
     const blockWidths = new Map<number, number>();
     const commandBlockWidth = (line: number): number => {
       const start = ownerOf(line) ?? line;
@@ -154,7 +169,7 @@ export class TranscriptPresenter {
       if (cached !== undefined) return cached;
       let widest = 0;
       for (let index = start; view.lineTypes.get(index) === 'command' && (ownerOf(index) ?? index) === start; index += 1) {
-        for (const row of this.wrap(view, index, column!)) widest = Math.max(widest, displayWidth(row.plain));
+        for (const row of this.wrap(view, index, column!, authoredColorOff)) widest = Math.max(widest, displayWidth(row.plain));
       }
       blockWidths.set(start, widest);
       return widest;
@@ -170,6 +185,9 @@ export class TranscriptPresenter {
     ]) activitiesByStart.set(activity.outputStartId, activity);
 
     for (let i = 0; i < lines.length; i++) {
+      // Advance across folded ranges too; the first eligible array entry owns the metadata priority.
+      const startsHere = startingCommands.get(i);
+      if (startsHere !== undefined && (firstCompletedIndex < 0 || startsHere < firstCompletedIndex)) firstCompletedIndex = startsHere;
       if (i < skipUntil) continue;
 
       if (visualGaps.has(i)) {
@@ -186,10 +204,12 @@ export class TranscriptPresenter {
         result.push(header);
       }
 
-      const cmd = completed.find(c => c.outputStartId === i);
+      const outputCommand = outputCommands.get(i);
+      const cmd = outputCommand?.command;
+      const outputCommandIndex = outputCommand?.index ?? -1;
       // Semantic Output: the reading's rows come first in the block's output area; the output below is unchanged.
       const reading = cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId ? view.semantic?.(cmd) : undefined;
-      if (cmd && reading) result.push(...semanticRows(reading.result, reading.open, width, {lineIndex: cmd.outputStartId, commandIndex: completed.indexOf(cmd), startId: cmd.startId}));
+      if (cmd && reading) result.push(...semanticRows(reading.result, reading.open, width, {lineIndex: cmd.outputStartId, commandIndex: outputCommandIndex, startId: cmd.startId}));
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
         // Activity-bearing parents use their lifecycle row as the disclosure control below.
@@ -198,7 +218,7 @@ export class TranscriptPresenter {
           // A recorded Ask conversation folds whole: the /ask request line above stays as its identity.
           const turns = cmd.ask?.turns.length ?? hiddenLines;
           const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/(?:btw|ask)\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
-          const commandIndex = completed.indexOf(cmd);
+          const commandIndex = outputCommandIndex;
           if (!cmd.expanded) {
             const plain = foldHint(label, '›', width);
             result.push({ansi: `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
@@ -220,11 +240,11 @@ export class TranscriptPresenter {
             if (!cmd.expanded) {
               // Collapsed: keep the head and tail of the stored output visible
               // around the disclosure row; the full output is never altered.
-              const commandIndex = completed.indexOf(cmd);
+              const commandIndex = outputCommandIndex;
               const {head, tail} = foldWindow(hiddenLines);
               const pushLines = (from: number, to: number) => {
                 for (let line = from; line < to; line += 1) {
-                  for (const row of this.wrap(view, line, width)) result.push({...row, lineIndex: line, commandIndex});
+                  for (const row of this.wrap(view, line, width, authoredColorOff)) result.push({...row, lineIndex: line, commandIndex});
                 }
               };
               pushLines(cmd.outputStartId, cmd.outputStartId + head);
@@ -242,7 +262,7 @@ export class TranscriptPresenter {
               const plain = foldHint(`${hiddenLines} lines shown · Ctrl+O`, '⌄', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
               result.push({
-                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: completed.indexOf(cmd)
+                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: outputCommandIndex
               });
               // Don't skip, let the output render below this hint
             }
@@ -259,18 +279,20 @@ export class TranscriptPresenter {
           continue;
         } else {
           result.push(renderActivityRow(activity, width));
-          if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns));
+          if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns, authoredColorOff));
           skipUntil = Math.max(skipUntil, activity.outputEndId);
           continue;
         }
       }
 
-      const parentDisclosure = completed.find(command => command.activities?.length && command.endId === i);
+      const parentEntry = disclosures.get(i);
+      const parentDisclosure = parentEntry?.command;
+      const parentIndex = parentEntry?.index ?? -1;
       const chatCommand = column !== undefined && view.lineTypes.get(i) === 'command';
       const wrappedRows = chatCommand
-        ? this.wrap(view, i, column!).map(row => indentRow(row, width - commandBlockWidth(i)))
-        : this.wrap(view, i, parentDisclosure ? Math.max(1, width - 2) : width);
-      const cmdIndex = completed.findIndex(c => c.startId <= i);
+        ? this.wrap(view, i, column!, authoredColorOff).map(row => indentRow(row, width - commandBlockWidth(i)))
+        : this.wrap(view, i, parentDisclosure ? Math.max(1, width - 2) : width, authoredColorOff);
+      const cmdIndex = firstCompletedIndex;
       if (parentDisclosure && wrappedRows.length > 0) {
         const finalRow = wrappedRows[wrappedRows.length - 1];
         if (finalRow) {
@@ -278,12 +300,12 @@ export class TranscriptPresenter {
           finalRow.ansi = `${finalRow.ansi.replace(/\u001B\[0m$/u, '')}${foreground(UI_COLORS.secondary)} ${disclosure}\u001B[0m`;
           finalRow.plain += ` ${disclosure}`;
           finalRow.isFoldHint = true;
-          finalRow.commandIndex = completed.indexOf(parentDisclosure);
+          finalRow.commandIndex = parentIndex;
         }
       }
       for (const row of wrappedRows) {
         row.lineIndex = i;
-        if (parentDisclosure) row.commandIndex = completed.indexOf(parentDisclosure);
+        if (parentDisclosure) row.commandIndex = parentIndex;
         else if (cmdIndex !== -1) row.commandIndex = cmdIndex;
         result.push(row);
       }
@@ -293,7 +315,7 @@ export class TranscriptPresenter {
     if (active) {
       for (const activity of active.activities) {
         result.push(renderActivityRow(activity, width));
-        if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns));
+        if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns, authoredColorOff));
       }
     }
     for (const row of result) {
