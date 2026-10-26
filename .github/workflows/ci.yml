@@ -1,218 +1,70 @@
+# Diagnostic branch only: never merge this workflow replacement.
 name: CI
-
 on:
-  push:
-    branches: [master, dev]
-  pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  changes:
-    name: Detect code changes
+  reattach-diagnostic:
     runs-on: ubuntu-24.04
-    outputs:
-      code: ${{ steps.changes.outputs.code }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: changes
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          CHANGED_FILES: ${{ runner.temp }}/nmsh-changed-files
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+      - run: sudo apt-get update && sudo apt-get install -y strace
+      - run: npm ci
+      - name: Repeat original and combined native reattach
         shell: bash
-        run: |
-          # Never path-skip the workflow: the final CI check must always exist.
-          if [[ "$EVENT" == workflow_dispatch || -z "$BASE" || "$BASE" =~ ^0+$ ]]; then
-            echo 'code=true' >> "$GITHUB_OUTPUT"
-          else
-            git diff --check "$BASE" "$HEAD"
-            git diff --no-renames --name-only -z "$BASE" "$HEAD" > "$CHANGED_FILES"
-            python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
-          import os
-          from pathlib import Path
-          files = Path(os.environ['CHANGED_FILES']).read_bytes().split(b'\0')
-          docs_only = all(filename.startswith(b'docs/') or filename.endswith(b'.md') for filename in files if filename)
-          website_files = [filename for filename in files if filename.startswith(b'website/') or filename in (b'.github/workflows/website.yml', b'.github/workflows/website-deploy.yml')]
-          website_only = bool(website_files) and all(filename in website_files or filename == b'README.md' for filename in files if filename)
-          print('code=' + str(not (website_only or (os.environ['EVENT'] == 'pull_request' and docs_only))).lower())
-          PYTHON
-          fi
-
-  quality:
-    name: Quality (Node 26)
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26.x
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run typecheck:bench
-      - run: npm run test:fast
-      - run: git diff --check
-
-  tests:
-    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ${{ matrix.os }}
-    # Three shards per OS: test steps measured 4.9-6.6 minutes and whole jobs 6-7.8 minutes on 2026-10-22 (two shards had
-    # reached 8-10 minutes against a 10-minute cap). The cap is about 1.5x the slowest job, so slow macOS runners pass and a
-    # hang still fails the job; every test keeps its own 120 s timeout.
-    timeout-minutes: 12
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-24.04]
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26.x
-          cache: npm
-      - uses: ./.github/actions/linux-shells
-        if: runner.os == 'Linux'
-      - run: npm ci
-      # The Mermaid diagram tests use a real Mermaid. NMSh never downloads one; CI fetches the pinned release, checks its npm
-      # integrity and keeps only the bundle (tests/diagramsChrome.test.ts reads NMSH_TEST_MERMAID).
-      - name: Mermaid for the diagram tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          dir="$RUNNER_TEMP/mermaid"
-          mkdir -p "$dir"
-          npm pack mermaid@12.2.0 --pack-destination "$dir" --silent > /dev/null
-          actual="sha512-$(openssl dgst -sha512 -binary "$dir/mermaid-12.2.0.tgz" | openssl base64 -A)"
-          test "$actual" = "sha512-w7nr/SFrLO7BaVTs3dQTvYSV6nYSBj0Yy9DjBhsIJtAcHqRzXSq4Pg32ujHZ/AdWsAMNEvvhbm5dt9E2tOiHzw=="
-          tar -xzf "$dir/mermaid-12.2.0.tgz" -C "$dir" package/package.json package/LICENSE package/dist/mermaid.min.js
-          echo "NMSH_TEST_MERMAID=$dir/package" >> "$GITHUB_ENV"
-      # Built-launcher tests must execute rather than silently skip on fresh runners.
-      - run: npm run build
-      - run: npm test -- --shard=${{ matrix.shard }}/3 --test-timeout=120000
-      - name: Process leak check
-        if: always()
-        run: bash scripts/check-process-leaks.sh
-
-  node22:
-    name: Node 22 compatibility
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: npm
-      - uses: ./.github/actions/linux-shells
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:node22 -- --test-timeout=120000
-      - name: Process leak check
-        if: always()
-        run: bash scripts/check-process-leaks.sh
-
-  timings:
-    name: Timing smoke (${{ matrix.os }}, Node 26)
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-24.04]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26.x
-          cache: npm
-      - uses: ./.github/actions/linux-shells
-        if: runner.os == 'Linux'
-      - run: npm ci
-      - run: npm run bench:smoke
-      - name: Process leak check
-        if: always()
-        run: bash scripts/check-process-leaks.sh
-
-  fedora:
-    name: Linux portability subset (Fedora)
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    container: fedora:42
-    steps:
-      - name: Install system prerequisites
-        run: dnf install -y git zsh fish gcc-c++ make python3 which lsof procps-ng
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:fedora -- --test-timeout=120000
-      - name: Process leak check
-        if: always()
-        run: bash scripts/check-process-leaks.sh
-
-  status:
-    name: CI
-    if: always()
-    needs: [changes, quality, tests, node22, timings, fedora]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require all applicable gates
         env:
-          RESULTS: ${{ toJSON(needs) }}
+          BASELINE: be3f6abe26a112a39f3a23c800954b8981ae5b0e
+          CANDIDATE: 3173058d48668d6c3f5ba8839518a7dfb91beb15
         run: |
           python3 - <<'PYTHON'
-          import json, os
-          jobs = json.loads(os.environ['RESULTS'])
-          code = jobs['changes']['outputs'].get('code')
-          required = ['changes']
-          if code == 'true':
-              required += ['quality', 'tests', 'node22']
-          elif code != 'false':
-              raise SystemExit('Missing change classification')
-          if code == 'true' and '${{ github.event_name }}' != 'pull_request':
-              required += ['timings', 'fedora']
-          failed = [name for name in required if jobs[name]['result'] != 'success']
-          if failed:
-              raise SystemExit('Failed or skipped required gates: ' + ', '.join(failed))
-          print('All applicable CI gates passed')
+          import json, os, pathlib, subprocess, time
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'nmsh-reattach-diagnostic'
+          root.mkdir()
+          versions={name:subprocess.run(args,text=True,capture_output=True).stdout for name,args in {'node':['node','--version'],'zsh':['zsh','--version'],'less':['less','--version'],'kernel':['uname','-a']}.items()}
+          (root/'versions.json').write_text(json.dumps(versions,indent=2))
+          results=[]
+          for iteration in range(8):
+            cases=[('baseline',os.environ['BASELINE']),('combined',os.environ['CANDIDATE'])]
+            if iteration%2: cases.reverse()
+            for label,sha in cases:
+              subprocess.run(['git','restore','--','tests/helpers/fullscreenFailure.ts'],check=True)
+              subprocess.run(['git','checkout','--detach',sha],check=True)
+              subprocess.run(['npm','run','build'],check=True)
+              # Failure-only observation, identical in both source refs. No assertion/deadline changes.
+              helper=pathlib.Path('tests/helpers/fullscreenFailure.ts')
+              text=helper.read_text()
+              needle='foregroundGroup: fields[5]'
+              replacement="foregroundGroup: fields[5], sizingEnvironment: readFileSync(`/proc/${pid}/environ`, 'utf8').split('\\0').filter(item => /^(LINES|COLUMNS|LESS|TERM)=/.test(item))"
+              assert needle in text
+              helper.write_text(text.replace(needle,replacement))
+              prefix=root/f'{iteration}-{label}'
+              traced=iteration>=5
+              command=['node','--import=tsx','--test','--test-name-pattern=vim and less survive detach and repaint after reattach','tests/sessionLifecycle.test.ts']
+              if traced: command=['strace','-ff','-ttt','-e','trace=ioctl,rt_sigaction,rt_sigprocmask,rt_sigreturn,pselect6,ppoll','-e','signal=SIGWINCH','-o',str(prefix)+'.strace',*command]
+              started=time.monotonic()
+              with pathlib.Path(str(prefix)+'.log').open('w') as log:
+                result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
+              results.append({'iteration':iteration,'variant':label,'sha':sha,'traced':traced,'exit':result.returncode,'seconds':round(time.monotonic()-started,3)})
+              (root/'results.json').write_text(json.dumps(results,indent=2))
+              print(json.dumps(results[-1]),flush=True)
+          print('Diagnostic results:',json.dumps(results,indent=2))
+          raise SystemExit(int(any(row['exit'] for row in results)))
           PYTHON
-
-  # Preserve the exact check names required by the existing master ruleset.
-  required-checks:
-    name: Verify (${{ matrix.node-version }})
-    needs: status
-    if: always()
-    runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        node-version: [22.x, 26.x]
-    steps:
-      - name: Require aggregate CI success
-        env:
-          RESULT: ${{ needs.status.result }}
-        run: test "$RESULT" = success
+      - name: Process cleanup audit
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-reattach-diagnostic
+          path: ${{ runner.temp }}/nmsh-reattach-diagnostic
+          retention-days: 14
