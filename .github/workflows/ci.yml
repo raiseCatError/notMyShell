@@ -32,11 +32,11 @@ jobs:
           versions={name:subprocess.run(args,text=True,capture_output=True).stdout for name,args in {'node':['node','--version'],'zsh':['zsh','--version'],'less':['less','--version'],'kernel':['uname','-a']}.items()}
           (root/'versions.json').write_text(json.dumps(versions,indent=2))
           results=[]
-          for iteration in range(16):
+          for iteration in range(12):
             cases=[('baseline',os.environ['BASELINE']),('combined',os.environ['CANDIDATE'])]
             if iteration%2: cases.reverse()
             for label,sha in cases:
-              subprocess.run(['git','restore','--','tests/helpers/fullscreenFailure.ts'],check=True)
+              subprocess.run(['git','restore','--','tests/helpers/fullscreenFailure.ts','tests/sessionLifecycle.test.ts'],check=True)
               subprocess.run(['git','checkout','--detach',sha],check=True)
               subprocess.run(['npm','run','build'],check=True)
               # Failure-only observation, identical in both source refs. No assertion/deadline changes.
@@ -47,23 +47,28 @@ jobs:
               assert needle in text
               helper.write_text(text.replace(needle,replacement))
               prefix=root/f'{iteration}-{label}'
-              traced=iteration>=12
+              traced=True
               command=['node','--import=tsx','--test','--test-name-pattern=vim and less survive detach and repaint after reattach','tests/sessionLifecycle.test.ts']
-              if traced: command=['strace','-ff','--seccomp-bpf','-ttt','-e','trace=ioctl,rt_sigaction,rt_sigreturn','-e','signal=SIGWINCH','-o',str(prefix)+'.strace',*command]
+              testcase=pathlib.Path('tests/sessionLifecycle.test.ts')
+              originalTest=testcase.read_text()
+              needle='await first.waitFor(visible, mark);'
+              assert originalTest.count(needle)==1
+              testcase.write_text(originalTest.replace(needle,"await first.waitFor(visible, mark); if (command.startsWith('less ')) { const cp = await import('node:child_process'); const parent = (await sandbox.sessions())[0]!.pid; const children = cp.spawnSync('pgrep', ['-P', String(parent)], {encoding: 'utf8'}).stdout.trim().split(/\\s+/u); const target = children.find(pid => cp.spawnSync('ps', ['-p', pid, '-o', 'comm='], {encoding: 'utf8'}).stdout.trim() === 'less'); if (!target) throw new Error('No owned native less process to trace'); cp.spawn('sudo', ['timeout', '35s', 'strace', '-ttt', '-e', 'trace=ioctl,rt_sigaction,rt_sigreturn', '-e', 'signal=SIGWINCH', '-o', process.env.NMSH_LESS_TRACE!, '-p', target], {stdio: 'ignore'}).on('error', () => {}); }"))
+              localEnv=dict(os.environ,NMSH_LESS_TRACE=str(prefix)+'.less.strace')
               load=None
               if iteration>=5: load=subprocess.Popen(['node','-e','const until=Date.now()+45000; while(Date.now()<until) Math.sqrt(Math.random());'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
               started=time.monotonic()
               try:
                 with pathlib.Path(str(prefix)+'.log').open('w') as log:
-                  result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
+                  result=subprocess.run(command,env=localEnv,stdout=log,stderr=subprocess.STDOUT)
               finally:
                 if load is not None:
                   load.terminate(); load.wait(timeout=5)
-              results.append({'iteration':iteration,'variant':label,'sha':sha,'traced':traced,'ownedCpuLoad':iteration>=5,'exit':result.returncode,'seconds':round(time.monotonic()-started,3)})
+              results.append({'iteration':iteration,'variant':label,'sha':sha,'traced':'native-less-only','traceAvailable':pathlib.Path(str(prefix)+'.less.strace').exists(),'ownedCpuLoad':iteration>=5,'exit':result.returncode,'seconds':round(time.monotonic()-started,3)})
               (root/'results.json').write_text(json.dumps(results,indent=2))
               print(json.dumps(results[-1]),flush=True)
           print('Diagnostic results:',json.dumps(results,indent=2))
-          raise SystemExit(int(any(row['exit'] for row in results)))
+          raise SystemExit(int(any(row['exit'] or not row['traceAvailable'] for row in results)))
           PYTHON
       - name: Process cleanup audit
         if: always()
