@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
+import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
@@ -56,6 +57,8 @@ interface ManagedSession {
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
+  /** Negotiated attach awaits explicit fullscreen repaint intent; replay-driven composer resizes are ignored. */
+  pendingAttachResize?: boolean;
   seq: number;
   backlog: StreamBacklog;
   /** What the foreground program's own output says: recency, title, attention, last exit. */
@@ -267,7 +270,8 @@ export class SessionService {
             if (features.has('queue')) send(queueStateMessage(session.queue.state, {}, {timeline: features.has('queue-timeline'), history: features.has('queue-history')}));
             // Background tasks kept running while detached: their list and recent output, never started again.
             this.attachTasks(session, send, features);
-            this.redraw(session, message.columns, message.rows);
+            if (features.has('deferred-attach-resize')) session.pendingAttachResize = true;
+            else this.redraw(session, message.columns, message.rows);
             break;
           }
           case 'detach':
@@ -347,7 +351,16 @@ export class SessionService {
             break;
           }
           case 'resize':
-            if (owned) { owned.size = {columns: message.columns, rows: message.rows}; owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
+            if (owned) {
+              owned.resizes += 1;
+              const repaint = owned.pendingAttachResize && (owned.screen.ownsTerminal || (owned.running && shouldPassthrough(owned.running.command)));
+              // Historical prompts can render a composer during replay. They must
+              // not resize a fullscreen owner before the frontend suspends its renderer.
+              if (repaint && message.repaint !== 1) break;
+              owned.pendingAttachResize = false;
+              if (repaint) this.redraw(owned, message.columns, message.rows);
+              else this.resize(owned, message.columns, message.rows, send);
+            }
             break;
           case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
           case 'kill': {
@@ -374,6 +387,8 @@ export class SessionService {
   }
 
   private bind(session: ManagedSession, send: Send, features: ReadonlySet<ClientFeature>): void {
+    session.resizes += 1;
+    session.pendingAttachResize = false;
     session.controller = send;
     session.controllerFeatures = features;
     session.record.state = 'attached';
@@ -393,6 +408,8 @@ export class SessionService {
 
   private detach(session: ManagedSession, send: Send): void {
     if (session.controller !== send) return;
+    session.resizes += 1;
+    session.pendingAttachResize = false;
     session.tasks.detach(session.taskListener);
     session.taskListener = undefined;
     session.controller = undefined;
@@ -429,15 +446,22 @@ export class SessionService {
   }
 
   /**
-   * Adopt the attaching frontend's size. A fullscreen app only repaints on a
-   * real size change, so step through a neighbouring size first: each step
-   * delivers SIGWINCH and the final one lands on the new frontend's size.
+   * Repaint only after the frontend owns its screen. A changed size already
+   * gives the foreground process group a kernel SIGWINCH. Only an identical
+   * size needs the existing neighboring-size fallback; never add a signal.
    */
   private redraw(session: ManagedSession, columns: number, rows: number): void {
-    this.resize(session, columns, rows > 2 ? rows - 1 : rows + 1, session.controller);
-    const generation = session.resizes;
+    const controller = session.controller;
+    const generation = ++session.resizes;
+    if (session.size.columns !== columns || session.size.rows !== rows) {
+      this.resize(session, columns, rows, controller);
+      return;
+    }
+    this.resize(session, columns, rows > 2 ? rows - 1 : rows + 1, controller);
     setTimeout(() => {
-      if (this.sessions.has(session.record.id) && session.resizes === generation) this.resize(session, columns, rows, session.controller);
+      if (this.sessions.get(session.record.id) === session && session.controller === controller && session.resizes === generation) {
+        this.resize(session, columns, rows, controller);
+      }
     }, REDRAW_NUDGE_MS);
   }
 
@@ -450,6 +474,7 @@ export class SessionService {
   private resize(session: ManagedSession, columns: number, rows: number, send?: Send): void {
     try {
       session.shell.resize(columns, rows);
+      session.size = {columns: Math.max(2, columns), rows: Math.max(2, rows)};
     } catch (error) {
       send?.({type: 'error', code: 'resize', message: `could not resize the session: ${error instanceof Error ? error.message : String(error)}`});
     }

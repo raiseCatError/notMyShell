@@ -67,7 +67,8 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
   write(data: string): void;
   interrupt(): void;
   endInput(): void;
-  resize(columns: number, rows: number): void;
+  /** repaint is an explicit fullscreen handoff, after renderer suspension. */
+  resize(columns: number, rows: number, repaint?: boolean): void;
   /** End the managed shell. */
   kill(): void;
   /**

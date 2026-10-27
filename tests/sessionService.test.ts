@@ -336,3 +336,55 @@ test('transported queue reviews expire at manual submission and controller reatt
     rmSync(home, {recursive: true, force: true});
   }
 });
+
+
+test('negotiated reattach leaves PTY geometry untouched until the frontend is ready', async () => {
+  const root = scratch('nmsh-attach-');
+  const home = join(root, 'h'); mkdirSync(home);
+  const service = new SessionService({runtimeDir: join(root, 'r')});
+  await service.start();
+  let client: SocketSessionClient | undefined;
+  try {
+    client = await SocketSessionClient.connect({socketPath: service.socketPath, cwd: home,
+      columns: 100, rows: 30, env: {...process.env, HOME: home} as Record<string, string>});
+    const prompt = nextPrompt(client); client.start(); await prompt;
+    const id = client.sessionId;
+    const session = service['sessions'].get(id)!;
+    client.detach();
+    await until(() => session.record.state === 'detached');
+    const sizes: {columns: number; rows: number}[] = [];
+    const resize = session.shell.resize.bind(session.shell);
+    session.shell.resize = (columns, rows) => { sizes.push({columns, rows}); resize(columns, rows); };
+    // The service has observed a real ownership sequence; it must not paint before renderer suspension.
+    session.screen.push('\u001b[?1049h');
+    client = await SocketSessionClient.connect({socketPath: service.socketPath, cwd: home, env: {},
+      attach: id, columns: 110, rows: 31, deferAttachResize: true});
+    const replayed = new Promise<void>(resolve => client!.once('replayed', () => resolve()));
+    client.start(); await replayed;
+    assert.deepEqual(sizes, [], 'journal/replay completion must not apply the speculative composer size');
+    assert.deepEqual(session.size, {columns: 100, rows: 30});
+    // A historical prompt may render a composer while replay is still settling.
+    client.resize(110, 31);
+    const socket = client['socket'];
+    const decoder = new FrameDecoder();
+    let listed = false;
+    const receive = (chunk: string | Buffer) => {
+      if (decoder.push(String(chunk)).some(result => result.ok && result.message.type === 'sessions')) listed = true;
+    };
+    socket.on('data', receive);
+    try {
+      socket.write(encodeMessage({type: 'list'}));
+      // Same socket: the service has processed the preceding composer resize.
+      await until(() => listed);
+    } finally { socket.off('data', receive); }
+    assert.deepEqual(sizes, [], 'a replay-driven composer resize is not a fullscreen handoff');
+    client.resize(110, 35, true);
+    await until(() => sizes.length > 0);
+    assert.deepEqual(sizes, [{columns: 110, rows: 35}], 'one final geometry after screen ownership');
+    assert.deepEqual(session.size, {columns: 110, rows: 35});
+  } finally {
+    client?.kill();
+    await service.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});

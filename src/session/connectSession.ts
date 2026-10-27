@@ -34,7 +34,7 @@ export async function attachSession(sessionId: string, options: ConnectSessionOp
   try {
     ensurePrivateRuntimeDir(runtimeDir);
     const client = await SocketSessionClient.connect({cwd: options.cwd, columns: options.columns, rows: options.rows,
-      socketPath: socketPathFor(runtimeDir), env: {}, attach: sessionId, timeoutMs: options.timeoutMs ?? 5000});
+      socketPath: socketPathFor(runtimeDir), env: {}, attach: sessionId, deferAttachResize: true, timeoutMs: options.timeoutMs ?? 5000});
     const attached = client.attachedSession;
     let journal: TranscriptSession | undefined;
     if (attached?.journalId) {

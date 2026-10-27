@@ -17,6 +17,8 @@ export interface SocketConnectOptions extends SessionOptions {
   timeoutMs?: number;
   /** Reattach this live session instead of creating one. */
   attach?: string;
+  /** Frontends apply attachment geometry only after entering the renderer/handing over the screen. */
+  deferAttachResize?: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ interface Established<T> {
 }
 
 function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage | undefined,
-  onMessage: (message: ServerMessage) => T | undefined): Promise<Established<T>> {
+  onMessage: (message: ServerMessage) => T | undefined, deferAttachResize = false): Promise<Established<T>> {
   return new Promise((resolve, reject) => {
     // Every request, including listings and best-effort notices, crosses the
     // same ownership boundary as create/attach before any handshake is sent.
@@ -86,7 +88,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     };
     const onError = (error: NodeJS.ErrnoException) => fail(`session service unreachable (${error.code ?? 'error'})`, error.code ?? 'error');
     const onClose = () => fail('session service closed the connection', 'closed');
-    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.join(',')}));
+    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.filter(feature => feature !== 'deferred-attach-resize' || deferAttachResize).join(',')}));
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.on('data', onData);
@@ -196,7 +198,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
         return attached;
       }
       return undefined;
-    });
+    }, options.deferAttachResize);
     const client = new SocketSessionClient(socket, value.sessionId, value.pid);
     client.shell = isShellId(value.shell) ? value.shell : 'zsh';
     // Known at connect time: an older service advertises no features.
@@ -308,7 +310,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
-  resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }
+  resize(columns: number, rows: number, repaint = false): void {
+    this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows),
+      ...(repaint && this.features.has('deferred-attach-resize') ? {repaint: 1} : {})});
+  }
   private endStream(): void {
     // Before start(), discard withheld output rather than exposing it during
     // cancellation. Drain the paused readable half so peer EOF closes it.
