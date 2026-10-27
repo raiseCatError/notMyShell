@@ -1,0 +1,80 @@
+{
+  "experiment": "Matched pre-merge repeat; not final merged-head measurements",
+  "provenance": {
+    "started": 1793079392.898623,
+    "sources": {
+      "dev": {
+        "head": "be3f6abe26a112a39f3a23c800954b8981ae5b0e",
+        "dirty": "",
+        "sourceSha256": {
+          "src/app/TerminalApp.ts": "7bb69697a36c55e12d936bcdc40c97bf8a216eb87b60e5d5ca85dda4053c0e55",
+          "src/input/inputLayout.ts": "a7a49653f24606f50f5b57463dfe27b64a8709175e3418095541555c787a3bdc",
+          "src/output/TranscriptPresenter.ts": "af72acb43abe42ef17059944141272e40d1e535e1ffbc04a52e87945bb1315c8",
+          "src/session/SessionService.ts": "17b9e7211b8412cb56d1f93d3b653ecebebf9b09c7abd8360adac777503ee833"
+        }
+      },
+      "beforefix": {
+        "head": "3173058d48668d6c3f5ba8839518a7dfb91beb15",
+        "dirty": "",
+        "sourceSha256": {
+          "src/app/TerminalApp.ts": "95733774eb97784c2f4414d8faa2a8f80855061aa6df5b3f1361919e20e6c766",
+          "src/input/inputLayout.ts": "0051842e89e63fd45907dab9fd3dba4f29d841507badfc8eeeccec0c9221c58e",
+          "src/output/TranscriptPresenter.ts": "c11d2a7f566e62b3665cf12ce4c4839b48495444368ed22fe4080eb5ea09e47f",
+          "src/session/SessionService.ts": "17b9e7211b8412cb56d1f93d3b653ecebebf9b09c7abd8360adac777503ee833"
+        }
+      },
+      "fixed": {
+        "head": "bd1d7750fcb84263ba864c5e721585f6551890fb",
+        "dirty": "",
+        "sourceSha256": {
+          "src/app/TerminalApp.ts": "873ceb2b3f3af19a57d7607a292ff3b292b50ee992ad40be3e62c684659d8ffa",
+          "src/input/inputLayout.ts": "0051842e89e63fd45907dab9fd3dba4f29d841507badfc8eeeccec0c9221c58e",
+          "src/output/TranscriptPresenter.ts": "c11d2a7f566e62b3665cf12ce4c4839b48495444368ed22fe4080eb5ea09e47f",
+          "src/session/SessionService.ts": "a25e56601b5b363ee4f4c622456974be9bb63520c84765894f0a1a4e40638977"
+        }
+      }
+    },
+    "finished": 1793079816.3907971
+  },
+  "metrics": {
+    "dev": {
+      "output10000MedianMs": 47830.18291599999,
+      "output10000MinMs": 35721.096374999994,
+      "output10000MaxMs": 68374.380084,
+      "postOutputFrontendRSSMiB": 525.5625,
+      "historyPageUpMedianMs": 1077.6510830000007,
+      "historyRestoreMedianMs": 782.5793540000013,
+      "historyTypingP95Ms": 629.5231249999997,
+      "longCommandTypingP95Ms": 40.96558299999742,
+      "longCommandDeletionP95Ms": 17.737624999997934
+    },
+    "beforefix": {
+      "output10000MedianMs": 336.57037499999933,
+      "output10000MinMs": 317.42662500000006,
+      "output10000MaxMs": 341.9754159999993,
+      "postOutputFrontendRSSMiB": 327.171875,
+      "historyPageUpMedianMs": 30.822124499999518,
+      "historyRestoreMedianMs": 274.3883959999994,
+      "historyTypingP95Ms": 36.472999999999956,
+      "longCommandTypingP95Ms": 24.02929199999926,
+      "longCommandDeletionP95Ms": 4.230875000001106
+    },
+    "fixed": {
+      "output10000MedianMs": 308.7756250000002,
+      "output10000MinMs": 286.64350000000013,
+      "output10000MaxMs": 313.0427500000005,
+      "postOutputFrontendRSSMiB": 313.75,
+      "historyPageUpMedianMs": 29.890291999999135,
+      "historyRestoreMedianMs": 273.86687500000016,
+      "historyTypingP95Ms": 38.91283399999884,
+      "longCommandTypingP95Ms": 22.34649999999965,
+      "longCommandDeletionP95Ms": 4.328708999997616
+    }
+  },
+  "limitations": [
+    "PTY observations, not physical pixels",
+    "Small correlated samples; no causal attribution for minor p95 differences",
+    "No startup/idle CPU/peak-memory claim",
+    "Raw samples and unchanged harnesses retained on T7; final merged-head repeat recorded in issue handoffs"
+  ]
+}
