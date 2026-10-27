@@ -46,3 +46,7 @@ Functional built-CLI PTY stress separately verified all numbered Unicode output,
 ## Physical QA and service lifetime
 
 Ghostty/Zed physical QA is **NOT RUN**. Follow the [performance integration QA handoff](../testing/performance-integration-physical-qa.md). Keep the performance issues open until human results are recorded. Existing services retain the code with which they started until their sessions naturally end; do not terminate existing sessions to force an upgrade.
+
+## Final push stabilization
+
+The test/documentation follow-up merged as `c690de055daeb7b33ed8b5e302ef01133b3e55b4`. Its [exact dev push](https://github.com/raiseCatError/notMyShell/actions/runs/40512364215) failed the existing macOS cross-profile completion test; Fedora and both timing jobs passed. See [stabilization evidence and synchronization regression](../testing/host-profile-stabilization.md). The historical failure is not dismissed as harmless; final proposed-head CI, merged-source measurements and remaining uncertainty are recorded in the focused PR/#473 handoff. Physical Ghostty/Zed QA remains NOT RUN.

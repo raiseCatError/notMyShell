@@ -108,14 +108,37 @@ test('reattaching across profiles updates input modes while keeping the real she
         id = (await sandbox.sessions())[0]!.id;
       }
       const mark = app.mark;
-      app.pty.write('\u001b[200~printf "STATE-%s-HOST-%s\\n" "$PROFILE_STATE" "$TERM_PROGRAM"\u001b[201~\r');
+      const stateCommand = `printf "STATE-%s-HOST-%s-${TERM_PROGRAM}\\n" "$PROFILE_STATE" "$TERM_PROGRAM"`;
+      app.pty.write(`\u001b[200~${stateCommand}\u001b[201~\r`);
       await app.waitFor(/STATE-kept-HOST-ghostty/, mark);
+      // A rendered row (including restored history) is not command completion. Starting the size
+      // probe before this prompt reaches the frontend can correctly hold it for queue approval.
+      await until(async () => await app.completions(stateCommand) > 0, 15000, `${TERM_PROGRAM}: state command completed`);
+      assert.equal(await app.completions(stateCommand), 1, 'the state command completed exactly once');
+      const stateRecord = (await sandbox.transcripts().list()).flatMap(session => session.transcript.records)
+        .find(record => record.command === stateCommand);
+      assert.ok(stateRecord, `${TERM_PROGRAM}: completed state record is readable`);
+      assert.equal(stateRecord.exitCode, 0);
+      assert.ok(stateRecord.output.split('\n').includes(`STATE-kept-HOST-ghostty-${TERM_PROGRAM}`));
       app.pty.resize(50, 18);
+      let probe = 0;
       await until(async () => {
         const sizeMark = app.mark;
-        await app.run('echo SIZE-$(stty size)', /SIZE-\d+ \d+/);
+        // Retries are sequential, and each must finish. Unique command identities prevent an older
+        // journal entry or a redrawn size row from satisfying this probe's lifecycle/geometry check.
+        const tag = `${TERM_PROGRAM}:${++probe}`;
+        const sizeCommand = `echo SIZE-$(stty size) '${tag}'`;
+        await app.run(sizeCommand, /SIZE-\d+ \d+/);
         await app.waitFor(/Completed/, sizeMark);
-        return /SIZE-\d+ 50/u.test(app.output.slice(sizeMark));
+        assert.equal(await app.completions(sizeCommand), 1, 'the size probe completed exactly once');
+        const sizeRecord = (await sandbox.transcripts().list()).flatMap(session => session.transcript.records)
+          .find(record => record.command === sizeCommand);
+        assert.ok(sizeRecord, `${sizeCommand}: completed probe record is readable`);
+        assert.equal(sizeRecord.exitCode, 0);
+        const size = /^SIZE-(\d+) (\d+) ([^\n]+)$/mu.exec(sizeRecord.output);
+        assert.ok(size, `${tag}: the completed probe contains its size`);
+        assert.equal(size[3], tag, 'the size belongs to this probe');
+        return Number(size[2]) === 50;
       }, 15000, 'resize reached persistent shell');
       await app.waitFor(/Completed/, mark);
       app.pty.kill('SIGKILL');
