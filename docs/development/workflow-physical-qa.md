@@ -65,3 +65,7 @@ Repeat relevant steps at 40, 50, 80 and 120 columns, Safe glyphs and `NO_COLOR=1
 
 Keep issues open until required physical results are recorded. Report failures with the exact action sequence,
 capture and commit; do not substitute automated passage for these results.
+
+## Performance integration
+
+Use the focused [performance integration physical QA handoff](../testing/performance-integration-physical-qa.md) for output batching, composer layout, transcript indexes and fullscreen reattachment. Ghostty/Zed results remain **NOT RUN** until a person records them.
