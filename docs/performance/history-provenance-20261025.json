@@ -1,0 +1,8 @@
+{
+  "base": "be3f6abe26a112a39f3a23c800954b8981ae5b0e",
+  "candidateSourceSha256": "c11d2a7f566e62b3665cf12ce4c4839b48495444368ed22fe4080eb5ea09e47f",
+  "ui": "5 new disposable sessions per variant, first excluded; 4 warm sessions \u00d710 keys =40 correlated observations; p95 nearest rank",
+  "component": "3 warmups then12 samples; built OutputBuffer, no profiler in timed comparison",
+  "hardware": "Apple M2 / 8 GiB / macOS27.0 Darwin27.0.0 / Node26.12.0 arm64",
+  "rawControlClassification": "addHistoryLine = authored metadata; write = actual PTY rows"
+}
