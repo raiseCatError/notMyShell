@@ -26,7 +26,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result', 'deferred-attach-resize'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -34,7 +34,7 @@ export type ServiceFeature = typeof SERVICE_FEATURES[number];
  * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
  * attached to a newer service never receives a frame it would reject.
  */
-export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history'] as const;
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'deferred-attach-resize'] as const;
 export type ClientFeature = typeof CLIENT_FEATURES[number];
 
 export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
@@ -55,7 +55,7 @@ export type ClientMessage =
   | {type: 'list'}
   /** submission=1 identifies a composer submission for rejection recovery; absent for raw input. */
   | {type: 'input'; data: string; submission?: number}
-  | {type: 'resize'; columns: number; rows: number}
+  | {type: 'resize'; columns: number; rows: number; repaint?: number}
   /** Everything up to seq is durable in the frontend journal journalId. */
   | {type: 'ack'; seq: number; journalId: string}
   /** End a detached session this connection does not control (Kill Session). */
@@ -200,7 +200,7 @@ const SHAPES: Record<string, Shape> = {
   detach: {},
   list: {},
   input: {data: 'string', submission: 'int?'},
-  resize: {columns: 'int', rows: 'int'},
+  resize: {columns: 'int', rows: 'int', repaint: 'int?'},
   ack: {seq: 'int', journalId: 'string'},
   kill: {sessionId: 'string'},
   dismiss: {sessionId: 'string'},
