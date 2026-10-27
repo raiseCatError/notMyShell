@@ -57,7 +57,7 @@ interface ManagedSession {
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
-  /** Negotiated attach: the first frontend resize follows renderer entry (and fullscreen suspension). */
+  /** Negotiated attach awaits explicit fullscreen repaint intent; replay-driven composer resizes are ignored. */
   pendingAttachResize?: boolean;
   seq: number;
   backlog: StreamBacklog;

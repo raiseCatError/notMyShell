@@ -366,17 +366,17 @@ test('negotiated reattach leaves PTY geometry untouched until the frontend is re
     // A historical prompt may render a composer while replay is still settling.
     client.resize(110, 31);
     const socket = client['socket'];
-    const barrier = new Promise<void>(resolve => {
-      const decoder = new FrameDecoder();
-      const receive = (chunk: string | Buffer) => {
-        if (decoder.push(String(chunk)).some(result => result.ok && result.message.type === 'sessions')) {
-          socket.off('data', receive); resolve();
-        }
-      };
-      socket.on('data', receive);
-    });
-    socket.write(encodeMessage({type: 'list'}));
-    await barrier; // Same socket: the service has processed the preceding composer resize.
+    const decoder = new FrameDecoder();
+    let listed = false;
+    const receive = (chunk: string | Buffer) => {
+      if (decoder.push(String(chunk)).some(result => result.ok && result.message.type === 'sessions')) listed = true;
+    };
+    socket.on('data', receive);
+    try {
+      socket.write(encodeMessage({type: 'list'}));
+      // Same socket: the service has processed the preceding composer resize.
+      await until(() => listed);
+    } finally { socket.off('data', receive); }
     assert.deepEqual(sizes, [], 'a replay-driven composer resize is not a fullscreen handoff');
     client.resize(110, 35, true);
     await until(() => sizes.length > 0);
