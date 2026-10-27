@@ -24,6 +24,8 @@ jobs:
           cmp package.json "$RUNNER_TEMP/ownership-baseline/package.json"
           cmp package-lock.json "$RUNNER_TEMP/ownership-baseline/package-lock.json"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/ownership-baseline/node_modules"
+          cmp package.json "$RUNNER_TEMP/ownership-merged/package.json"
+          cmp package-lock.json "$RUNNER_TEMP/ownership-merged/package-lock.json"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/ownership-merged/node_modules"
       - name: Fixed matched two-worker natural and controlled cells
         shell: bash
