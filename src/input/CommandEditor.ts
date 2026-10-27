@@ -1,4 +1,4 @@
-import {graphemes, layoutInput} from './inputLayout.js';
+import {graphemes, inputCaretPositions} from './inputLayout.js';
 
 export const PASTE_ATOM_MIN_LINES = 4;
 export const PASTE_ATOM_MIN_CHARACTERS = 512;
@@ -420,18 +420,28 @@ export class CommandEditor {
   }
 
   private moveVertical(columns: number, direction: -1 | 1, firstLinePrefix?: string): boolean {
-    const current = layoutInput(this.displayText, this.displayCursorIndex, columns, Number.POSITIVE_INFINITY, firstLinePrefix);
-    const targetRow = current.caretRow + direction;
-    if (targetRow < 0 || targetRow >= current.allRows.length) return false;
+    const carets = inputCaretPositions(this.displayText, columns, firstLinePrefix);
+    // Clusters can join across separately inserted tokens; preserve layoutInput's end clamping.
+    const current = carets[Math.min(carets.length - 1, this.displayCursorIndex)]!;
+    const targetRow = current.row + direction;
+    if (targetRow < 0 || targetRow > carets[carets.length - 1]!.row) return false;
     let bestIndex = this.cursor;
     let bestDistance = Number.POSITIVE_INFINITY;
+    let displayIndex = 0;
+    let atomNumber = 0;
     for (let index = 0; index <= this.characters.length; index += 1) {
-      const candidate = layoutInput(this.displayText, this.displayIndexForTokenIndex(index), columns, Number.POSITIVE_INFINITY, firstLinePrefix);
-      if (candidate.caretRow !== targetRow) continue;
-      const distance = Math.abs(candidate.caretColumn - current.caretColumn);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestIndex = index;
+      const candidate = carets[Math.min(carets.length - 1, displayIndex)]!;
+      if (candidate.row === targetRow) {
+        const distance = Math.abs(candidate.column - current.column);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+      const token = this.characters[index];
+      if (token !== undefined) {
+        const display = typeof token === 'string' ? token : atomLabel(token, ++atomNumber);
+        displayIndex += graphemes(display).length;
       }
     }
     this.cursor = bestIndex;
