@@ -22,7 +22,7 @@ for label,sha in variants.items():
         entry.write_text("import {open} from 'node:fs/promises';\nimport {TranscriptStore} from '../../src/sessions/TranscriptStore.js';\nconst load=TranscriptStore.prototype.load;\nTranscriptStore.prototype.load=async function(...args) {const result=await load.apply(this,args);const pipe=await open("+json.dumps(str(frontend))+",'r');try{await pipe.read(Buffer.alloc(1),0,1,null);}finally{await pipe.close();}return result;};\nawait import('../../src/index.js');\n")
         needle="const second = sandbox.launch(['--attach', id], attachmentSize);"
         assert needle in changed
-        changed=changed.replace(needle,"const second = sandbox.launch(['--attach', id], attachmentSize, {}, "+json.dumps(str(entry))+");")
+        changed=changed.replace(needle,"const second = sandbox.launch(['--attach', id], attachmentSize, {}, command.startsWith('LD_PRELOAD=') ? "+json.dumps(str(entry))+" : ENTRY);")
     (path/'tests/sessionLifecycle.test.ts').write_text(changed)
     events=[];stopped=threading.Event()
     def coordinate():
