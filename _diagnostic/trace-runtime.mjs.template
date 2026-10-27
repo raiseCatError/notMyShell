@@ -1,0 +1,28 @@
+import {appendFileSync,existsSync} from 'node:fs';
+const repo='@REPO@';
+const path=new URL('./trace.jsonl',import.meta.url);
+const released=new URL('./release',import.meta.url);
+let seq=0;
+export function trace(event,detail={}) {if(seq>=12000)return;appendFileSync(path,JSON.stringify({ns:process.hrtime.bigint().toString(),pid:process.pid,seq:++seq,event,...detail})+'\n');}
+function kind(s){return typeof s!=='string'?undefined:s.startsWith('read -r QA_REPLY;')?'qa-read':s==='echo READY'?'ready':'other';}
+function state(a){return {run:kind(a.running?.command),start:a.running?.startId,awaitingExec:a.running?.awaitingExec,done:a.running?.done,editorLength:a.editor?.text.length,request:a.inputState?.request?{mode:a.inputState.request.mode,confidence:a.inputState.request.confidence}:undefined,held:a.ownershipLook?{count:a.ownershipLook.keys.length,kinds:a.ownershipLook.keys.map(k=>k.kind),slow:a.ownershipLook.slow,uncertain:a.ownershipLook.uncertain}:undefined,draft:a.runningDraft?{answering:a.runningDraft.answering,typeAhead:a.runningDraft.typeAhead,afterDone:a.runningDraft.afterDone}:undefined};}
+function wrap(p,n,before,after){const f=p[n];if(!f)throw Error(n);p[n]=function(...args){before?.call(this,args);const r=f.apply(this,args);after?.call(this,r,args);return r;};}
+const {TerminalApp}=await import(repo+'/src/app/TerminalApp.ts');
+for(const n of ['submit','onShellExec','onShellPrompt','onInputState','routeComposer','enqueue','answerSent'])wrap(TerminalApp.prototype,n,function(args){trace('app.'+n,{...state(this),arg:n==='onShellExec'?kind(args[0]):n==='onInputState'?{done:args[0].done,terminalOwner:args[0].terminalOwner,request:args[0].request?{mode:args[0].request.mode,confidence:args[0].request.confidence}:undefined}:n==='routeComposer'?args[0]:undefined});if(n==='enqueue'&&kind(this.running?.command)==='qa-read'){trace('approval.enqueued');appendFileSync(released,'release');}},function(){trace('app.'+n+'.after',state(this));});
+wrap(TerminalApp.prototype,'holdForOwnershipLook',function(args){trace('hold.begin',{...state(this),key:args[0].kind});},function(){const h=this.ownershipLook;if(h&&!h.traced){h.traced=true;const settle=h.settle;h.settle=(how)=>{trace('hold.settle',{how,...state(this)});return settle(how);};}});
+wrap(TerminalApp.prototype,'lookWhenStarted',function(){trace('look.begin',state(this));},function(r){r.then(result=>trace('look.result',{result,...state(this)}));});
+const {SocketSessionClient}=await import(repo+'/src/session/SocketSessionClient.ts');
+wrap(SocketSessionClient.prototype,'lookInput',function(){trace('client.look.request');},function(r){r.then(result=>trace('client.look.response',{result}));});
+wrap(SocketSessionClient.prototype,'submit',function(a){trace('client.submit',{kind:kind(a[0])});});
+const {ShellSession}=await import(repo+'/src/shell/ShellSession.ts');
+wrap(ShellSession.prototype,'write',function(a){trace('shell.write',{bytes:Buffer.byteLength(a[0]),submission:a[1],atPrompt:this.atPrompt,done:this.done});});
+const {QueryOrder}=await import(repo+'/src/shell/QueryOrder.ts');
+wrap(QueryOrder.prototype,'input',function(){if(this.traced)return;this.traced=true;const f=this.write;this.write=function(bytes){trace('pty.write',{bytes:Buffer.byteLength(bytes)});return f(bytes);};});
+const {ShellProtocolDecoder}=await import(repo+'/src/shell/ShellProtocol.ts');
+wrap(ShellProtocolDecoder.prototype,'push',undefined,function(events){for(const e of events)if(e.kind!=='data')trace('shell.'+e.kind,{kind:kind(e.command)});});
+const {InputWatch}=await import(repo+'/src/session/InputWatch.ts');
+wrap(InputWatch.prototype,'look',function(a){trace('probe.begin',{onDemand:a[0],generation:this.generation,run:kind(this.running?.command)});},function(r){r.then(()=>trace('probe.end',{generation:this.generation,followUp:this.followUp,request:this.state.request?{mode:this.state.request.mode,confidence:this.state.request.confidence}:undefined}));});
+wrap(InputWatch.prototype,'apply',function(args){const sample=args[0];trace('probe.sample',{run:kind(this.running?.command),generation:this.generation,modes:sample.modes,foreground:sample.foreground.map(p=>({pid:p.pid,state:p.state,cpuMs:p.cpuMs})),readingTerminal:sample.readingTerminal});if(existsSync(new URL('./control',import.meta.url)) && kind(this.running?.command)==='qa-read'&&!existsSync(released)){args[0]={...sample,foreground:sample.foreground.map(p=>({...p,state:'R'+p.state.replaceAll('R','')}))};trace('controlled.runnable-observation');}},function(){trace('probe.applied',{followUp:this.followUp,request:this.state.request?{mode:this.state.request.mode,confidence:this.state.request.confidence}:undefined});});
+trace('loaded');
+
+wrap(TerminalApp.prototype,'handleKey',function(a){if(this.running&&kind(this.running.command)==='qa-read')trace('key.route',{key:a[0].kind,replayingHeld:this.replayingHeld,...state(this)});});
