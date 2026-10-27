@@ -20,12 +20,15 @@ jobs:
         shell: bash
         run: |
           git worktree add --detach "$RUNNER_TEMP/ownership-baseline" be3f6abe26a112a39f3a23c800954b8981ae5b0e
+          git worktree add --detach "$RUNNER_TEMP/ownership-merged" c690de055daeb7b33ed8b5e302ef01133b3e55b4
+          cmp package.json "$RUNNER_TEMP/ownership-baseline/package.json"
           cmp package-lock.json "$RUNNER_TEMP/ownership-baseline/package-lock.json"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/ownership-baseline/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/ownership-merged/node_modules"
       - name: Fixed matched two-worker natural and controlled cells
         shell: bash
         run: |
-          python3 _diagnostic/run.py "{\"baseline\":\"$RUNNER_TEMP/ownership-baseline\",\"merged\":\"$GITHUB_WORKSPACE\"}"
+          python3 _diagnostic/run.py "{\"baseline\":\"$RUNNER_TEMP/ownership-baseline\",\"merged\":\"$RUNNER_TEMP/ownership-merged\"}"
       - name: Process leak check
         if: always()
         run: bash scripts/check-process-leaks.sh
