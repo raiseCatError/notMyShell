@@ -299,3 +299,46 @@ test('raw protocol: a client cannot attach while controlling another session', a
     await sandbox.dispose();
   }
 });
+
+
+test('native fullscreen programs repaint after same-size reattach and successive window resizes', async () => {
+  const sandbox = new LiveSandbox();
+  try {
+    writeFileSync(join(sandbox.home, 'geometry.txt'), Array.from({length: 200}, (_, i) => `GEOMETRY-LINE-${i}`).join('\n'));
+    for (const program of ['less -PNMSH-GEOMETRY-READY', 'less -X -PNMSH-GEOMETRY-READY', 'vim -u NONE -N'] as const) {
+      let frontend = sandbox.launch([], {cols: 100, rows: 30});
+      await frontend.waitFor(/❯/);
+      await frontend.run(`cd ${sandbox.home}`, /❯/);
+      const start = frontend.mark;
+      frontend.pty.write(`${program} geometry.txt\r`);
+      await frontend.waitFor(/GEOMETRY-LINE-0/, start);
+      const {id} = (await sandbox.sessions())[0]!;
+      const frame = (rows: number) => program.startsWith('less')
+        ? new RegExp(`GEOMETRY-LINE-0[\\s\\S]*GEOMETRY-LINE-${rows - 2}[\\r\\n]+NMSH-GEOMETRY-READY`)
+        : /GEOMETRY-LINE-0/;
+      for (const size of [{cols: 110, rows: 35}, {cols: 110, rows: 35}, {cols: 100, rows: 30}]) {
+        frontend.pty.kill('SIGKILL');
+        await waitState(sandbox, 'detached');
+        frontend = sandbox.launch(['--attach', id], size);
+        await until(() => {
+          const clear = frontend.output.lastIndexOf('\u001b[2J');
+          return clear >= 0 && frame(size.rows).test(strip(frontend.output.slice(clear)));
+        }, 15000, `${program} repaint after frontend handoff`);
+        // Every attachment must contain genuine application output after NMSh's last screen clear.
+        const clear = frontend.output.lastIndexOf('\u001b[2J');
+        assert.ok(clear >= 0, 'frontend entered and handed over the screen');
+        assert.match(strip(frontend.output.slice(clear)), frame(size.rows));
+      }
+      const resized = frontend.mark;
+      frontend.pty.resize(80, 24);
+      frontend.pty.resize(120, 40);
+      frontend.pty.resize(90, 32);
+      await frontend.waitFor(frame(32), resized);
+      frontend.pty.write(program.startsWith('less') ? 'q' : '\u001b:q!\r');
+      await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, 'native program quit');
+      await frontend.run('echo GEOMETRY-QUIT-OK', /GEOMETRY-QUIT-OK/);
+      frontend.pty.write('exit\r'); await frontend.waitExit();
+      await until(async () => (await sandbox.sessions()).length === 0, 15000, 'session end');
+    }
+  } finally { await sandbox.dispose(); }
+});

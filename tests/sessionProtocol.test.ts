@@ -11,6 +11,7 @@ const samples: ProtocolMessage[] = [
   {type: 'list'},
   {type: 'input', data: 'ls\r\u0003\u001a\u0004'},
   {type: 'resize', columns: 120, rows: 40},
+  {type: 'resize', columns: 110, rows: 35, repaint: 1},
   {type: 'terminate'},
   {type: 'welcome', version: PROTOCOL_VERSION, service: 'nmshd'},
   {type: 'error', code: 'version', message: 'nope'},

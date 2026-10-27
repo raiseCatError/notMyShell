@@ -1339,7 +1339,7 @@ export class TerminalApp {
     }
     this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
-    this.session.resize(dimensions.columns, dimensions.rows);
+    this.session.resize(dimensions.columns, dimensions.rows, true);
     this.startupPassthroughReady?.();
   }
 
