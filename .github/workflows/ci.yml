@@ -18,3 +18,29 @@ jobs:
           name: less-window
           path: ${{ runner.temp }}/less-window
           retention-days: 30
+
+  nmsh-gated-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+      - run: npm ci
+      - run: python3 scripts/diagnostics/nmsh-less-window.py "${{ runner.temp }}/nmsh-less-window"
+      - name: Process leak audit
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nmsh-less-window
+          path: |
+            ${{ runner.temp }}/nmsh-less-window/*.json
+            ${{ runner.temp }}/nmsh-less-window/*.log
+          retention-days: 30

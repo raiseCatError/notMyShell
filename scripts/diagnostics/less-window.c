@@ -7,9 +7,14 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 static volatile sig_atomic_t armed, gated;
 static void (*original_winch)(int);
-static int notify_fd(void) { return atoi(getenv("PROBE_NOTIFY")); }
+static int notify_fd(void) {
+    static int fd = -1;
+    if (fd < 0) fd = getenv("PROBE_NOTIFY_PATH") ? open(getenv("PROBE_NOTIFY_PATH"), O_RDWR) : atoi(getenv("PROBE_NOTIFY"));
+    return fd;
+}
 static void notify(char c) { syscall(1, notify_fd(), &c, 1); }
 static void wrapped_winch(int sig) {
     original_winch(sig);
@@ -43,7 +48,7 @@ ssize_t write(int fd, const void *buffer, size_t bytes) {
         gated = 1;
         notify('G'); // less is flushing its intermediate repaint, before iread sets reading=1.
         char release;
-        int input = atoi(getenv("PROBE_RELEASE"));
+        int input = getenv("PROBE_RELEASE_PATH") ? open(getenv("PROBE_RELEASE_PATH"), O_RDWR) : atoi(getenv("PROBE_RELEASE"));
         while (read(input, &release, 1) < 0 && errno == EINTR) {}
     }
     return real_write(fd, buffer, bytes);
