@@ -1,77 +1,20 @@
-# Diagnostic branch only. NEVER MERGE this workflow replacement.
+# Diagnostic branch only. NEVER MERGE.
 name: CI
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  native-controls:
+  less-window:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26.x
-          cache: npm
-      - uses: ./.github/actions/linux-shells
-      - run: npm ci
-      - name: Alternate baseline and integrated geometry controls
-        shell: bash
-        run: |
-          python3 - <<'PYTHON'
-          import json, os, pathlib, subprocess, time
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'reattach-controls'
-          root.mkdir()
-          snapshots={'dev':'be3f6abe26a112a39f3a23c800954b8981ae5b0e', 'combined':'3173058d48668d6c3f5ba8839518a7dfb91beb15', 'dev-fixed':'0b60d625b7aa17e84ce2e505bec07b0300baed26', 'combined-fixed':'bd1d7750'}
-          versions={key:subprocess.run(command,text=True,capture_output=True).stdout for key,command in {'node':['node','--version'],'less':['less','--version'],'vim':['vim','--version'],'kernel':['uname','-a']}.items()}
-          (root/'versions.json').write_text(json.dumps(versions,indent=2))
-          tests=pathlib.Path('tests/sessionLifecycle.test.ts').read_text()
-          deps=pathlib.Path('node_modules').resolve()
-          worktrees={}
-          for label,sha in snapshots.items():
-              path=root/label
-              subprocess.run(['git','worktree','add','--detach',str(path),sha],check=True)
-              (path/'node_modules').symlink_to(deps,target_is_directory=True)
-              # Identical native assertions/oracles/deadlines for all four application snapshots.
-              (path/'tests/sessionLifecycle.test.ts').write_text(tests)
-              subprocess.run(['npm','run','build'],cwd=path,check=True)
-              worktrees[label]=path
-          results=[]
-          for iteration in range(12):
-              labels=list(snapshots)
-              if iteration%2: labels.reverse()
-              for label in labels:
-                  prefix=root/f'{iteration}-{label}'
-                  command=['node','--import=tsx','--test','--test-name-pattern=vim and less survive|native fullscreen programs','tests/sessionLifecycle.test.ts']
-                  load=None
-                  if iteration>=6: load=subprocess.Popen(['node','-e','const end=Date.now()+60000;while(Date.now()<end)Math.sqrt(Math.random())'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-                  started=time.monotonic()
-                  try:
-                      with pathlib.Path(str(prefix)+'.log').open('w') as log:
-                          result=subprocess.run(command,cwd=worktrees[label],stdout=log,stderr=subprocess.STDOUT,timeout=120)
-                      code=result.returncode
-                  except subprocess.TimeoutExpired: code=124
-                  finally:
-                      if load is not None: load.terminate();load.wait(timeout=5)
-                  results.append({'iteration':iteration,'variant':label,'sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=worktrees[label],text=True).strip(),'cpuLoad':iteration>=6,'exit':code,'seconds':round(time.monotonic()-started,3)})
-                  (root/'results.json').write_text(json.dumps(results,indent=2))
-                  print(json.dumps(results[-1]),flush=True)
-          PYTHON
-      - name: Process leak audit
-        if: always()
-        run: bash scripts/check-process-leaks.sh
+      - run: less --version && uname -a
+      - run: python3 scripts/diagnostics/less-window.py "${{ runner.temp }}/less-window"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-reattach-controls
-          path: ${{ runner.temp }}/reattach-controls/*.json
-          retention-days: 30
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: native-reattach-control-logs
-          path: ${{ runner.temp }}/reattach-controls/*.log
+          name: less-window
+          path: ${{ runner.temp }}/less-window
           retention-days: 30
