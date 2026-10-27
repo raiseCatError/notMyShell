@@ -939,7 +939,8 @@ export class TerminalApp {
   private presentationStarted = false;
   private presentationSubscription?: () => void;
   private readonly effects = new EffectState();
-  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
+  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number;
+    transcript: {rows: WrappedRow[]; offsets: number[]; start: number; generation: number; sticky?: StickyHeader}};
   private activityAnimationNow = Date.now();
   /** The running command's input state, as the session's InputWatch reports it; never guessed here. */
   private inputState?: InputState;
@@ -2385,21 +2386,24 @@ export class TerminalApp {
     // Any other key or click ends a finished selection (its text is already on the clipboard).
     if (this.selection && !this.selection.dragging && key.kind !== 'wheelUp' && key.kind !== 'wheelDown' && key.kind !== 'mouseMove') {
       this.selection = undefined;
-      this.render();
+      // A click still targets the displayed rows; clearing its old selection must not scroll underneath it.
+      if (key.kind !== 'mouseClick' || !this.outputRenderTimer) this.render();
     }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       // Hit-test against the same plan render paints; Shift+mouse never reaches here (native selection).
-      const plan = this.planFrame(columns, rows);
+      const pending = this.pendingTranscriptFrame(columns);
+      if (pending === null) { this.render(); return; }
+      const plan = pending?.plan ?? this.planFrame(columns, rows);
       const hit = key.y ? regionAt(plan, screenRowFromTerminal(key.y)) : undefined;
       if (hit?.region.kind === 'transcript') {
         const outputHeight = plan.viewportRows;
         const wrapped = this.output.wrapped(columns);
-        const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
+        const viewStart = pending?.transcript.start ?? this.historyViewport.resolve(wrapped.length, outputHeight);
         const localVisibleIndex = hit.localRow;
 
         // The sticky header paints over the transcript region's first row.
-        const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
+        const sticky = localVisibleIndex === 0 ? (pending ? pending.transcript.sticky : this.stickyHeader(wrapped, viewStart)) : undefined;
         if (sticky) {
           // The sticky overlay owns the top row: its controls act on that block; elsewhere a click jumps to its header.
           const controls = key.kind === 'mouseClick' ? this.stickyControls(sticky.startId, columns)?.controls : undefined;
@@ -2407,7 +2411,8 @@ export class TerminalApp {
           if (controls?.copy && x >= controls.copy.column && x <= controls.copy.end) { void this.copyBlock(sticky.startId); return; }
           if (controls && x >= controls.column) { this.openBlockPalette(sticky.startId); this.render(); return; }
           if (key.kind === 'mouseClick') {
-            this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - viewStart);
+            const currentStart = pending ? this.historyViewport.resolve(wrapped.length, outputHeight) : viewStart;
+            this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - currentStart);
             this.hoveredLineIndex = undefined;
             this.render();
           } else if (this.hoveredLineIndex !== undefined) {
@@ -2415,9 +2420,15 @@ export class TerminalApp {
             this.render();
           }
         } else if (localVisibleIndex >= 0) {
-          const row = wrapped[viewStart + localVisibleIndex];
+          const row = pending ? pending.transcript.rows[localVisibleIndex] : wrapped[viewStart + localVisibleIndex];
           // A press may start a drag selection; a plain click still acts exactly as before.
-          if (key.kind === 'mouseClick' && row && key.y) this.selection = beginSelection(viewStart + localVisibleIndex, key.y);
+          if (key.kind === 'mouseClick' && row && key.y) {
+            const index = pending ? this.presentedRowIndex(wrapped, pending.transcript, localVisibleIndex) : viewStart + localVisibleIndex;
+            if (index !== undefined) {
+              this.selection = beginSelection(index, key.y);
+              if (pending) this.render();
+            }
+          }
           if (row) {
             const affordance = blockAffordance(row, columns, this.controlOptions(row.blockStartId));
             if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex && affordance && row.blockStartId !== undefined) {
@@ -5436,6 +5447,24 @@ export class TerminalApp {
     this.render();
   }
 
+  private outputRenderTimer?: ReturnType<typeof setTimeout>;
+
+  /** Parse every chunk now; coalesce only output-triggered frames within one display tick. */
+  private scheduleOutputRender(): void {
+    // While selecting, retain the original synchronous paint semantics: release must never copy an unseen redraw.
+    if (this.selection?.dragging) { this.render(); return; }
+    if (this.outputRenderTimer || this.stopped) return;
+    this.outputRenderTimer = setTimeout(() => {
+      this.outputRenderTimer = undefined;
+      this.render();
+    }, 16);
+  }
+
+  private cancelOutputRender(): void {
+    if (this.outputRenderTimer) clearTimeout(this.outputRenderTimer);
+    this.outputRenderTimer = undefined;
+  }
+
   private onShellData(data: string): void {
     // New output is activity: it ends idle visuals and restarts the inactivity timer.
     this.noteActivity();
@@ -5463,7 +5492,7 @@ export class TerminalApp {
         const queries = this.running ? this.queryExtractor.push(data) : '';
         if (queries) { process.stdout.write(queries); this.replyRouter.expect(Date.now()); }
         // Behind the Arcade the output is recorded as always but nothing visible changed: a chunk repaints it at most four times a second.
-        if ((!this.arcade && !this.arcadeClosing) || (this.arcade && performance.now() - this.arcadePaintedAt > 250)) this.render();
+        if ((!this.arcade && !this.arcadeClosing) || (this.arcade && performance.now() - this.arcadePaintedAt > 250)) this.scheduleOutputRender();
       }
     }
   }
@@ -12086,6 +12115,9 @@ export class TerminalApp {
   }
 
   private render(): void {
+    // Keys, prompts, resizing and ownership changes still paint immediately and
+    // include any output already parsed; the pending output frame is redundant.
+    this.cancelOutputRender();
     // A document closed for good lets go of its diagrams (pictures, and the renderer page once no document is left).
     this.sweepDiagrams();
     this.syncTypography();
@@ -12151,14 +12183,24 @@ export class TerminalApp {
     if (this.findState) this.findState.results.forEach((result, index) => {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
-    this.visibleBlocks = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.blockStartId);
+    // Keep only the displayed rows for hit testing while newer output waits to paint.
+    // Never retain the full wrapped transcript: that would turn this into a history cache.
+    const transcriptRows = wrapped.slice(viewStart, viewStart + outputHeight);
+    let sourceOffset = 0;
+    const firstRow = transcriptRows[0];
+    if (firstRow) for (let index = viewStart - 1; index >= 0 && this.sameTranscriptSource(wrapped[index], firstRow); index--) sourceOffset++;
+    const transcriptOffsets = transcriptRows.map((row, index) => {
+      if (index > 0) sourceOffset = this.sameTranscriptSource(transcriptRows[index - 1], row) ? sourceOffset + 1 : 0;
+      return sourceOffset;
+    });
+    this.visibleBlocks = transcriptRows.map(row => row.blockStartId);
     const transcriptTop = plan.regions.find(region => region.kind === 'transcript')?.top ?? 0;
     this.welcomeFrameRows = new Map();
-    wrapped.slice(viewStart, viewStart + outputHeight).forEach((row, offset) => { if (row.firstRunLine !== undefined) this.welcomeFrameRows.set(transcriptTop + offset, row.firstRunLine); });
+    transcriptRows.forEach((row, offset) => { if (row.firstRunLine !== undefined) this.welcomeFrameRows.set(transcriptTop + offset, row.firstRunLine); });
     const sticky = this.stickyHeader(wrapped, viewStart);
     // While the block's header is scrolled away, its controls ride on the sticky row instead: never both.
     const stickyControls = sticky ? this.stickyControls(sticky.startId, columns) : undefined;
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
+    const visible = transcriptRows.map((row, offset) => {
       // Selected output rows: the selection background, or reverse video without color, so they never vanish.
       if (isRowSelected(this.selection, viewStart + offset)) return colorLevel() === 'none' ? `\u001b[7m${row.plain}${RESET}` : `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
@@ -12304,7 +12346,8 @@ export class TerminalApp {
     };
     this.renderer.setImageOverlay(this.aboutOverlay(plan, columns) ?? this.imageOverlay(plan, panelRegion));
     this.renderer.setTextBlocks(this.panelTextBlocks(plan, panelRegion));
-    this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
+    this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {}),
+      transcript: {rows: transcriptRows, offsets: transcriptOffsets, start: viewStart, generation: this.output.presentationGeneration, sticky}};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
     this.syncPresentationClock();
@@ -14001,14 +14044,46 @@ export class TerminalApp {
   }
 
   /** Transcript row under a terminal row, clamped to the transcript region so a drag past its edge keeps selecting. */
-  private transcriptRowAt(y: number): number | undefined {
+  private pendingTranscriptFrame(columns: number) {
+    if (!this.outputRenderTimer) return undefined;
+    const painted = this.presentationFrame;
+    // A clear or changed geometry retires the displayed IDs. Never act on their replacements.
+    if (!painted || painted.frame.columns !== columns || painted.transcript.generation !== this.output.presentationGeneration) return null;
+    return painted;
+  }
+
+  private sameTranscriptSource(left: WrappedRow | undefined, right: WrappedRow): boolean {
+    return Boolean(left && left.lineIndex === right.lineIndex && left.blockStartId === right.blockStartId
+      && left.isHistoricalHeader === right.isHistoricalHeader && left.isFoldHint === right.isFoldHint
+      && left.derived === right.derived && left.activityId === right.activityId
+      && left.isFilterHint === right.isFilterHint && left.firstRunLine === right.firstRunLine);
+  }
+
+  /** Resolve a displayed wrap fragment by stable source ID, not by the newly scrolled viewport. */
+  private presentedRowIndex(wrapped: WrappedRow[], shown: NonNullable<TerminalApp['presentationFrame']>['transcript'], local: number): number | undefined {
+    const row = shown.rows[local];
+    if (!row) return undefined;
+    if (row.lineIndex === undefined || row.lineIndex < 0) {
+      const index = shown.start + local;
+      return this.sameTranscriptSource(wrapped[index], row) ? index : undefined;
+    }
+    const first = wrapped.findIndex(candidate => this.sameTranscriptSource(candidate, row));
+    if (first < 0) return undefined;
+    const index = first + shown.offsets[local]!;
+    return this.sameTranscriptSource(wrapped[index], row) ? index : undefined;
+  }
+
+  private transcriptRowAt(y: number, displayed = true): number | undefined {
     const {columns, rows} = this.dimensions();
-    const plan = this.planFrame(columns, rows);
+    const pending = displayed ? this.pendingTranscriptFrame(columns) : undefined;
+    if (pending === null) return undefined;
+    const plan = pending?.plan ?? this.planFrame(columns, rows);
     const wrapped = this.output.wrapped(columns);
     if (!wrapped.length) return undefined;
-    const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
     const top = plan.transcript.top;
     const local = Math.max(0, Math.min(plan.transcript.height - 1, screenRowFromTerminal(y) - top));
+    if (pending) return this.presentedRowIndex(wrapped, pending.transcript, Math.min(local, pending.transcript.rows.length - 1));
+    const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
     return Math.min(wrapped.length - 1, viewStart + local);
   }
 
@@ -14034,7 +14109,7 @@ export class TerminalApp {
   private followSelectionPointer(): void {
     const selection = this.selection;
     if (!selection?.dragging || selection.pointerY === undefined) return;
-    const row = this.transcriptRowAt(selection.pointerY);
+    const row = this.transcriptRowAt(selection.pointerY, false);
     if (row !== undefined) extendSelection(selection, row);
     this.render();
   }
@@ -14103,6 +14178,7 @@ export class TerminalApp {
     this.firstRunWindow?.restoreNow();
     this.hostTitle.end();
     this.stopped = true;
+    this.cancelOutputRender();
     this.endOutputNavigation(false);
     this.blockPaletteContext = undefined;
     this.closeArcade(false);
