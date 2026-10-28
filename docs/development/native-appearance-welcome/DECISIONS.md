@@ -1,6 +1,6 @@
 # Architecture findings and recommended direction
 
-No product architecture has been implemented or approved. Recommendations below follow the user's explicit specification and inspected code; implementation remains gated.
+The human explicitly approved this implementation direction and waived the design-document approval gate. Recommendations below guide implementation; meaningful trade-offs are recorded here.
 
 - Reuse PromptConfiguration and current canonical editors. AppearanceHub launches canonical editors, not copies. Extend cursor/native and existing host integration rather than create contradictory persistence.
 - First repair existing Ghostty appearance: readGhosttySettings returns fabricated constants, saveGhosttySettings silently appends an include and overwrites a fragment. These cannot be reused unchanged for the requested safety contract. Reuse inspected Theme Bridge ownership/verified-edit patterns where applicable; further audit required.
@@ -14,3 +14,9 @@ No product architecture has been implemented or approved. Recommendations below 
 - New fields may use only explicit typed facts/static text, no automatic shell commands. Sensitive hostname/path/Git facts opt-in; presets omit private asset bytes/paths unless explicitly exported. Original assets are immutable.
 - Proposed implementation bounds (builder decisions, not agreed): <=8MiB welcome asset input, <=2MP source, <=320x240 animation canvas, <=75frames, <=15fps, <=5seconds per startup playback, <=32MiB decoded animation data, bounded cache within existing GraphicsService budget. Validate both frame count and total bytes before allocating; unsupported/over-budget assets get deterministic still fallback or actionable refusal. Existing general viewer limits remain unchanged. No AI segmentation claims or new dependency without justified need.
 - Independent PR slices required. Do not combine whole program into one feature PR. All required features remain in scope; unsupported native semantic targeting has production Portable fallback as explicitly requested.
+
+Ruling: Ghostty version-tagged source loads legacy config before preferred config.ghostty, then all recursive includes via a global appended queue after every default root; documentation overview is ambiguous. Implement source order and simulate proposed fragments, refusing a later nested-include conflict. Treat unresolved theme-derived fields as unknown rather than defaults. Dynamic includes and external/symlinked config roots are conservatively blocked in this slice.
+
+Ruling: preserve the existing Theme Bridge ledger design concept but isolate host ownership records; Theme Bridge targets and current write primitives do not provide this transaction/dependency contract. Use exclusive staging, captured file identity/content, checks before staging and immediately before rename, and rollback of only unchanged task writes. POSIX rename is not atomic compare-and-swap; do not claim protection against arbitrary concurrent malicious directory swaps. Group/world-writable paths are refused.
+
+Ruling: preserve valid unchanged numeric blur above the normal UI range during unrelated saves. Require nonnegative safe integers in generated data; UI normally caps increases at50 but can decrease a larger existing value incrementally. Display bars clamp without changing stored values.

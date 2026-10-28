@@ -19,7 +19,8 @@ test('host profiles advertise passive capabilities; optional protocols use share
       assert.equal(capabilities[key], true);
     assert.equal(capabilities.textSelectionInteraction, 'shift');
     assert.equal(capabilities.synchronizedOutput, false);
-    assert.equal(detectTerminalHost(env).integration, undefined);
+    assert.equal(Boolean(detectTerminalHost(env).integration), TERM_PROGRAM === 'kitty');
+    assert.equal(capabilities.appearanceIntegration, TERM_PROGRAM === 'kitty');
     assert.equal(colorLevel({...env, NO_COLOR: '1'}), 'none');
     assert.equal(colorLevel({...env, NMSH_COLOR: '16'}), 'ansi16');
     const evidence = resolveProbeReplies('early\u001b[?0u\u001b[?2026;2$y', capabilities);

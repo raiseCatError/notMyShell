@@ -14,6 +14,14 @@ test('configuration adapter selection is passive and unavailable outside its hos
   assert.match(detectTerminalHost({TERM_PROGRAM: 'vscode'}).keyboardGuidance!, /sendSequence/u);
 });
 
+test('Kitty gets the appearance adapter but no Ghostty keyboard installer; /keyboard keeps its guidance', () => {
+  const kitty = detectTerminalHost({TERM_PROGRAM: 'kitty'});
+  assert.ok(kitty.integration?.planAppearance);
+  assert.equal(kitty.integration?.installKeyboard, undefined);
+  assert.match(kitty.keyboardGuidance!, /Ctrl\+J/u);
+  assert.ok(detectTerminalHost({TERM_PROGRAM: 'ghostty'}).integration?.installKeyboard);
+});
+
 test('general frontend, renderer, decoder and shell do not branch on host products', () => {
   for (const file of ['app/TerminalApp.ts', 'terminal/TerminalRenderer.ts', 'shell/ShellSession.ts', 'help/markdown.ts']) {
     const text = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');

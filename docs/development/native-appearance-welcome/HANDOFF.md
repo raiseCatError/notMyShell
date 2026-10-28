@@ -14,12 +14,11 @@ All visual systems need investigation and justified integration: prompt, Chroma,
 
 ## Exact state
 
-Read progress.md and reconcile with git. Worktree branch starts at c690de055daeb7b33ed8b5e302ef01133b3e55b4 (origin/dev). No product changes/tests/PR yet. Only checkpoint docs are pending at initial write. Initial branch tracked origin/dev; upstream may become its feature branch after push. No dependency install/build/test attempted.
+Read progress.md and CHECKPOINT.json, then reconcile with Git. The explicit human design-gate waiver is granted. Slice1 product changes are uncommitted on pushed research HEAD a7bbfb33f515ad5c7f0359a3f7baa0eb92b2a13c. Baseline source c690de055daeb7b33ed8b5e302ef01133b3e55b4 is unchanged remotely. No feature PR yet. Do not discard the dirty files: they contain the safe host appearance implementation and tests. Dependencies installed in this isolated worktree.
 
-Evidence: /Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028
-Tracked snapshots: docs/development/native-appearance-welcome/. These are synchronized checkpoint snapshots of the same files, not a separate status system. Update both from one content set at every checkpoint; unique raw evidence stays under evidence root. Read actual Git HEAD for the checkpoint commit.
+Evidence: /Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028. Tracked synchronized snapshots: docs/development/native-appearance-welcome/. The JSON receipt is the current local event record; tracked documents travel with Git. Preserve raw logs and source manifest.
 
-Primary checkout was feature/status-strip-2 ahead 1 with package.json/package-lock.json edits; preserve it and shared stashes. Never switch/reset it. #513 head a57568be5e8b11cf927a00371c1b4783cadde53d and draft #514 head416bc51a4f6151236d959ef6a62d2d1653772287 are OPEN, unrelated and unmerged, comprehensive CI failure unresolved.
+Primary checkout remains separate and must not be switched/reset. Preserve shared stashes and active sessions. #513 head a57568be5e8b11cf927a00371c1b4783cadde53d and draft #514 head416bc51a4f6151236d959ef6a62d2d1653772287 remain unrelated/open/unmerged with failed comprehensive gates. No stabilization source was imported.
 
 ## Environment
 
@@ -29,7 +28,12 @@ Installed Kitty reports0.49.2. Installed Ghostty remains1.3.1. User authorized u
 
 ## Next exact action
 
-Resolve pending brainstorming opt-out/design approval; do not turn absent answer into approval. Then read relevant implementation skills, prepare a reviewable sliced plan, install dependencies on T7 and run baseline verification. First product slice: issue399 safe host discovery and effective reads plus verified owned fragments and explicit preview/apply/remove. Audit existing Theme Bridge ownership primitives before introducing new ones. Confirm newest dev still matches base before implementation; never pull stabilization heads. Research scope is preliminary, not a finished design or implementation.
+**Claude continuation (2026-10-28):** newline-removal fix and Kitty `/keyboard` fix are in the working tree with regressions (see progress.md). Next: canonical verify on frozen source, independent review, commit/push Slice 1, then Slice 2 (Kitty native shaders). The Codex text below is historical.
+
+
+Finish stable Slice1 canonical verification; source/test contents are frozen and captured in slice1-source-manifest.json. Full first attempt overlapped edits and failed configuredCompletion.test.ts4096-record capture (actual0), so it is not baseline proof. Final focused32/32 and typecheck passed. Read logs and inspect every failure, without weakening tests or expanding into unrelated stabilization fixes. Complete independent re-review, preserve a coherent commit and focused draft PR targeting dev when safe; report physical QA pending. Never merge. Then continue PLAN.md Slice2 actual capability/catalog/native backends, not more design approval.
+
+Known limits of Slice1: static in-home non-symlink config graph only; unresolved themes/dynamic includes report unknown, not fabricated effective values. CLI overrides are not visible. Nested include conflicts can block setup intentionally. File identity is rechecked after staging, but POSIX pathname rename is not atomic compare-and-swap against arbitrary hostile races. No GPU support is claimed from this slice. Host installed/staged apps remain untouched.
 
 ## Restrictions
 
@@ -41,5 +45,5 @@ No merges, master edits, release/tag/deploy/Homebrew actions. No production host
 2. Read AGENTS.md, RTK/storage policy and these checkpoint files, plus the referenced ownership report when local; tracked snapshots preserve portable continuation context.
 3. cd /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/appearance-welcome-20261028; run git status --short --branch, git rev-parse HEAD, git remote -v, git log -5 --oneline and git ls-remote origin refs/heads/dev refs/heads/feature/appearance-welcome-20261028.
 4. Reconcile repository truth with progress.md/HANDOFF/TEST_RESULTS. Preserve all user edits/sessions/stashes and this existing branch. Do not create a duplicate feature branch or repeat completed functionality without evidence.
-5. Resolve outstanding process approval if still pending, then continue the next incomplete slice. Independently review existing changes before integration. Do not merge.
+5. The human explicitly approved implementation and waived the design gate; continue the next incomplete slice without repeating that gate. Independently review existing changes before integration. Do not merge.
 6. Update the SAME checkpoint files after every slice/meaningful validation and before costly tests/CI/compaction/end. Record exact HEAD, dirty state, committed/pushed changes, commands/results, PR/CI, decisions/risks and precise next task. Keep repository snapshots synchronized and push coherent checkpoints when safe.

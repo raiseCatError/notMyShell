@@ -15,3 +15,23 @@ Initial source HEAD: c690de055daeb7b33ed8b5e302ef01133b3e55b4. No source modific
 - diskutil image attach --readOnly --nobrowse --mountPoint taskT7path verifiedDMG: PASSED. ditto to taskT7downloads app then codesign --verify --deep --strict: PASSED. Staged app --version:1.4.0. hdiutil detach /dev/disk17: PASSED, disk17 ejected. No GUI host rendering performed.
 
 NOT RUN: dependency setup, baseline tests, canonical build/typecheck/tests, feature tests, performance, shader compilation/rendering, independent product review, feature exact-head CI, physical Kitty/Ghostty/Zed QA. No passing claim applies to these.
+
+Implementation validation on dirty a7bbfb33: npm ci passed; focused node --import=tsx --test tests/hostAppearance.test.ts tests/appearanceHub.test.ts tests/hostIntegration.test.ts passed16/16 before additional review regressions; npm run typecheck passed. Independent reviewer identified seven concrete issues; source verified for queue behavior, new regression run failed6 cases as expected, then23/24 passed (compact Esc label clipped). Fix applied; revalidation pending. First canonical verify still running and overlapped edits, NOT exact-baseline proof. All tests use private T7 homes; no production config mutation.
+
+First canonical attempt completed exit1 in928206ms: configuredCompletion.test.ts real configured candidate capture bounded to4096 reported0 instead of4096; Arcade disposed-game lifecycle is an existing TODO, not the suite failure. Thirteen skips/one TODO were reported. This run overlapped source edits and is NOT exact-source baseline/final proof. Baseline log retained. Focused retained slice1-focused.log31/31 passed. Staged Ghostty1.4 CLI attempt with generic config flags exited1 with no selected fields; +show-config --help accepts only default/changes-only/docs/no-pager, so this did NOT validate host parsing or GPU output. Failure retained ghostty-config-cli.json.
+
+Final focused retained log slice1-focused-final.log32/32 passed in2020ms; npm run typecheck and git diff --check exit0. Final independent review no material blocker, source review only. Project item-list failed for missing read:project, best-effort access only. Stable canonical verification remains active; no passing claim.
+
+Extra private-file newline-boundary diagnostic FAILED as expected: actual background-opacity0.8font-size17 joined; expected separate lines. Current canonical source unchanged; fix pending.
+
+## Claude continuation (2026-10-28)
+
+- `t7run --check`: PASSED (/Volumes/T7Tmp/ai-dev on /dev/disk10s1). No Codex test/build process alive at resume.
+- Codex canonical log `slice1-canonical-verify.log` ends mid-suite (last write 10:54, no summary): run incomplete, exit status unknown. Not a pass or a baseline.
+- New regression `removal keeps a line break between a no-final-newline original and later user lines (LF and CRLF)`: FAILED before the fix (`background-opacity = 0.8font-size = 17\n`), PASSED after.
+- New regression `Kitty gets the appearance adapter but no Ghostty keyboard installer`: added with the fix.
+- Focused (hostAppearance, appearanceHub, hostIntegration, hostProfiles): 36/36 PASSED. `npm run typecheck`: PASSED. `git diff --check`: PASSED.
+- Canonical `npm run verify` on source manifest e894b2b5 (after the newline and Kitty /keyboard fixes), 11:00:57–11:23:04, log `slice1-canonical-verify-claude.log`: exit 1; 4608 tests, 4592 pass, 2 fail, 13 skipped, 1 todo (existing Arcade dispose TODO). Build and typecheck inside verify passed.
+  - Failures: `absolutePathLive` (live fish) and `ansiLiveRegion` (live 40-column frontend). Both: frontend wrote 0 bytes in 20 s (startup timeout); load averages 12–14 during the run. Neither touches appearance code. Codex's three earlier failures (executionTimelineLive zsh/bash, flowComposer fullscreen) PASSED in this run.
+  - Each failing file rerun alone once (`slice1-live-reruns-claude.log`): absolutePathLive 3/3 pass, ansiLiveRegion 16/16 pass. Classified as load-induced startup timeouts; no comparison against dev needed since both pass alone. Not a clean canonical pass.
+- After verify, review fixes (Kitty first-existing config dir incl. macOS Library/Preferences; removal when the hook is already absent) added with regressions that failed first. Focused hostAppearance, appearanceHub, hostIntegration, hostProfiles, ghosttyKeyboard: 39/39 pass (`slice1-focused-claude.log`); typecheck 0 errors; diff --check pass. These three files are imported only by host appearance code, so the canonical run covers the rest of the tree. CI on the pushed head is the next independent check.
