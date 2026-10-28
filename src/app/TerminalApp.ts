@@ -339,6 +339,7 @@ import {type KittyShaderSettings, reloadKitty, applyKittyShaderPlan, inspectKitt
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
+import type {HostReloadResult} from '../appearance/hostReload.js';
 import {includeLine, installedNativeHost, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
 import {createCursorPanel, cursorPanelKey, openCursorEditor, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
@@ -3821,16 +3822,19 @@ export class TerminalApp {
       const pending = hub.confirmation?.plan;
       hub.confirmation = undefined;
       if (!pending) return;
+      const previous = (await integration.readAppearance()).settings?.opacity;
+      if (this.stopped || this.appearanceHub !== hub) return;
       const result = integration.applyAppearance(pending);
       hub.hostMessage = result.ok ? pending.guidance : result.error;
       if (result.ok) {
         hub.hostDirty = false;
         const inspected = await integration.readAppearance();
         if (this.stopped || this.appearanceHub !== hub) return;
+        hub.hostMessage = integration.reloadAfterAppearance(previous, inspected.settings?.opacity);
         const settings = inspected.settings;
         hub.host = settings ? {opacity: settings.opacity, blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)), blurStrength: settings.blurStrength,
           ...(settings.background ? {background: settings.background} : {}), allowedBlurModes: ['Off', 'Numeric'], selectedIndex: 0} : undefined;
-        if (inspected.problems.length) hub.hostMessage = `${inspected.problems.join(' ')} ${pending.guidance}`;
+        if (inspected.problems.length) hub.hostMessage = `${inspected.problems.join(' ')} ${hub.hostMessage}`;
       }
     } else {
       const planned = remove ? integration.planAppearanceRemoval() : integration.planAppearance({
@@ -10676,14 +10680,22 @@ export class TerminalApp {
       }
       this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value), () => writtenKittyTrail({env: process.env, platform: process.platform}), () => this.glslStudio.trailFacts());
       void written;
-      state.message = this.cursorHost.integrated
-        ? (reloadInstruction(native.host, {changed: ['fragment']}) ?? `Set up. Renderer Auto now uses ${nativeHostLabel(native.host)} native.`)
-        : 'Setup did not verify; Portable stays in use.';
+      const reload = this.cursorHost.integrated ? this.reloadNativeHost(native.host) : undefined;
+      state.message = !reload ? 'Setup did not verify; Portable stays in use.'
+        : reload.reloaded ? `Set up. Renderer Auto now uses ${nativeHostLabel(native.host)} native. ${reload.message}` : reload.message;
     }
   }
 
   /** The reload line for the latest managed-file refresh, until the next one (shown in /cursor and after Setup applies). */
   private cursorReload?: string;
+
+  /** Ask the verified terminal NMSh runs in to reload its configuration after NMSh rewrote its own files there. */
+  private reloadNativeHost(host: Parameters<typeof nativeHostLabel>[0]): HostReloadResult {
+    const result = this.glslStudio.reloadNativeHost(host);
+    // A reloaded host no longer draws anything NMSh stopped writing: re-read the cursor facts.
+    if (result.reloaded) this.cursorHost = undefined;
+    return result;
+  }
 
   /**
    * Keep NMSh's own native files in step with the cursor settings and the theme
@@ -10698,7 +10710,8 @@ export class TerminalApp {
     if (!host) { this.cursorReload = undefined; return; }
     try {
       const written = this.glslStudio.writeCursorFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
-      this.cursorReload = reloadInstruction(host, written);
+      // The host loads NMSh's rewritten cursor files only after a reload: ask the verified terminal, else say how.
+      this.cursorReload = written.changed.length && !this.reloadNativeHost(host).reloaded ? reloadInstruction(host, written) : undefined;
       // A native shader that stopped being written stays loaded until the host reloads: Portable waits rather than draw a second trail.
       if (written.trailChanged) this.cursorHost = undefined;
       // Kitty's cursor_trail decides whether a Kitty trail shader draws at all; re-read the facts after it changes.

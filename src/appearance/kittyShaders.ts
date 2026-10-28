@@ -317,7 +317,10 @@ export interface KittyReloadDeps {rows?: () => readonly ProcessRow[] | undefined
 export function reloadKitty(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, deps: KittyReloadDeps = {}): {reloaded: true; message: string} | {reloaded: false; message: string} {
   const target = kittyReloadTarget(env.KITTY_PID, (deps.rows ?? readProcessTable)(), deps.selfPid ?? process.pid);
   if (target === undefined) return {reloaded: false, message: `Reload Kitty to load it (${kittyReloadKeys(platform)}): NMSh could not confirm which Kitty it runs in.`};
-  try { (deps.signal ?? (pid => process.kill(pid, 'SIGUSR1')))(target); }
+  // Under the test runner nothing is signalled unless a test injects its own signal: a developer's real Kitty is never touched.
+  const signal = deps.signal ?? (process.env.NODE_TEST_CONTEXT ? undefined : (pid: number) => process.kill(pid, 'SIGUSR1'));
+  if (!signal) return {reloaded: false, message: `Reload Kitty to load it (${kittyReloadKeys(platform)}): signals are disabled here.`};
+  try { signal(target); }
   catch { return {reloaded: false, message: `Reload Kitty to load it (${kittyReloadKeys(platform)}): asking Kitty to reload failed.`}; }
   return {reloaded: true, message: 'Kitty was asked to reload its configuration (its documented SIGUSR1), so the change is loaded now.'};
 }

@@ -1,6 +1,7 @@
-import {applyHostAppearance, planHostAppearance, planHostRemoval, readHostAppearance, appearanceGuidance, type AppearanceRead, type AppearancePlanResult, type HostAppearancePlan, type HostAppearanceSettings} from '../appearance/hostAppearance.js';
+import {applyHostAppearance, planHostAppearance, planHostRemoval, readHostAppearance, appearanceGuidance, appearanceAppliedMessage, type AppearanceRead, type AppearancePlanResult, type HostAppearancePlan, type HostAppearanceSettings} from '../appearance/hostAppearance.js';
 import {terminalProfile} from './capabilities.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
+import {reloadHost} from '../appearance/hostReload.js';
 import {resolveHostCapabilities} from './capabilities.js';
 
 /** Explicit panel actions only. Constructing an adapter never reads or writes preferences. */
@@ -9,6 +10,8 @@ export interface HostIntegration {
   planAppearance(settings: HostAppearanceSettings): AppearancePlanResult;
   planAppearanceRemoval(): AppearancePlanResult;
   applyAppearance(plan: HostAppearancePlan): ReturnType<typeof applyHostAppearance>;
+  /** Ask the verified terminal NMSh runs in to reload, and say what happened (opacity before/after shape the note). */
+  reloadAfterAppearance(before: number | undefined, after: number | undefined): string;
   /** Present only where NMSh can install a host key binding (Ghostty); other hosts show guidance. */
   installKeyboard?(): Promise<{success: boolean; error?: string}>;
   keyboardReload?: string;
@@ -25,6 +28,7 @@ export function hostIntegration(env: NodeJS.ProcessEnv = process.env): HostInteg
     planAppearance: settings => planHostAppearance(profile, settings, context),
     planAppearanceRemoval: () => planHostRemoval(profile, context),
     applyAppearance: applyHostAppearance,
+    reloadAfterAppearance: (before, after) => appearanceAppliedMessage(profile, reloadHost(profile, env, process.platform), before, after),
     ...(profile === 'ghostty' ? {installKeyboard: installGhosttyKeybinding, keyboardReload: 'Reload Ghostty config (Cmd+Shift+,) for changes to take effect.'} : {}),
     appearanceRestart: appearanceGuidance(profile, process.platform),
   };

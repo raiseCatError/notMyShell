@@ -47,8 +47,18 @@ export function readHostAppearance(host: AppearanceHost, context = appearanceCon
 
 export function appearanceGuidance(host: AppearanceHost, platform: NodeJS.Platform): string {
   return host === 'ghostty'
-    ? `Configuration saved, not proof of loaded GPU output. Reload Ghostty (${platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+,). Opacity on macOS requires quitting and reopening Ghostty; NMSh will not restart it.`
-    : 'Configuration saved, not proof of loaded GPU output. Reload Kitty with its reload_config action (normally Ctrl+Shift+F5). Opacity changes may require a new OS window unless dynamic_background_opacity was already enabled; NMSh does not enable it.';
+    ? `After writing, NMSh asks the Ghostty it runs in to reload (Ghostty 1.3 or newer), so the change shows at once; otherwise reload Ghostty (${platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+,). NMSh never restarts Ghostty.`
+    : `After writing, NMSh asks the Kitty it runs in to reload, so the change shows at once; otherwise reload Kitty (${platform === 'darwin' ? '⌃⌘,' : 'Ctrl+Shift+F5'}). A Kitty window that opened fully opaque stays opaque until Kitty is restarted once; NMSh never restarts it.`;
+}
+
+/**
+ * What to say after a written appearance change, given whether the terminal reloaded. Observed with Kitty 0.49.2: a window that
+ * opened at opacity 1 stays opaque after a reload, while one that opened transparent follows every later change. Ghostty 1.3.1
+ * applied opacity and blur on reload in the same test, even from an opaque start.
+ */
+export function appearanceAppliedMessage(host: AppearanceHost, reload: {reloaded: boolean; message: string}, before: number | undefined, after: number | undefined): string {
+  const opaqueStart = host === 'kitty' && after !== undefined && after < 1 && (before === undefined || before >= 1);
+  return [reload.message, opaqueStart ? 'If this Kitty window opened fully opaque, quit and reopen Kitty once to see transparency; after that, opacity and blur change live.' : ''].filter(Boolean).join(' ');
 }
 
 function render(host: AppearanceHost, settings: HostAppearanceSettings): string {
