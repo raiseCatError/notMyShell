@@ -97,7 +97,7 @@ test('replies later than the probe never become typing and still count as eviden
   assert.equal(late.capabilities?.graphicsProtocol, 'kitty', 'a late OK still turns native images on');
   assert.equal(late.done, true);
   assert.doesNotMatch(late.input, /Gi=31|OK/, 'the reply is not typed');
-  assert.ok(late.input.startsWith('ls'), 'keys around it are kept');
+  assert.equal(late.input, 'ls', 'keys around it are kept; DA1 is removed too');
   const error = takeLateProbeReplies(`\u001b_Gi=31;ENOTSUPPORTED:x\u001b\\`, {...BASELINE_CAPABILITIES, graphicsProtocol: 'kitty'});
   assert.equal(error.input, ''); assert.equal(error.capabilities, undefined); assert.equal(error.done, false);
 });

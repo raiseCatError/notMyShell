@@ -120,6 +120,9 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
 ];
 
+/** The start of a Kitty graphics reply split across reads (short: replies are), held until the rest arrives. */
+const HELD_GRAPHICS_REPLY = /^\u001B_G[^\u001B]{0,64}$/u;
+
 export function decodeKeys(input: string): Key[] {
   const keys: Key[] = [];
   let index = 0;
@@ -221,7 +224,8 @@ export class KeyDecoder {
    * delivered only with the next keystroke (ESC then → became Escape + Right).
    */
   get pendingEscape(): boolean {
-    return this.pasteBuffer === undefined && this.keyBuffer === '\u001B';
+    // A held start of a graphics reply is flushed the same way, so it can never swallow the keys typed after it.
+    return this.pasteBuffer === undefined && (this.keyBuffer === '\u001B' || HELD_GRAPHICS_REPLY.test(this.keyBuffer));
   }
 
   /** Decodes whatever is held as complete keys (a held lone ESC becomes Escape). */
@@ -256,7 +260,7 @@ export class KeyDecoder {
           const suffix = remaining.slice(escape);
           const known = [...SEQUENCES.map(([sequence]) => sequence), '\u001B[200~'];
           // Held only while it can still become a key; an endless parameter run is not held (bounded memory).
-          if (suffix.length <= 256 && ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix) || /^\u001B_G[^\u001B]*$/.test(suffix))) {
+          if (suffix.length <= 256 && ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix) || HELD_GRAPHICS_REPLY.test(suffix))) {
             this.keyBuffer = suffix;
             remaining = remaining.slice(0, escape);
           }

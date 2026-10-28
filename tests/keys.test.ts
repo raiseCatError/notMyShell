@@ -51,3 +51,11 @@ test('a Kitty graphics reply is never decoded as Escape plus typed text, even sp
   assert.deepEqual(decoder.push('\u001b_Gi=31;O'), []);
   assert.deepEqual(decoder.push('K\u001b\\x'), [{kind: 'text', value: 'x'}]);
 });
+
+test('a held start of a graphics reply is flushed like a lone Escape and never swallows later keys', () => {
+  const decoder = new KeyDecoder();
+  assert.deepEqual(decoder.push('\u001b_Gi=31'), []);
+  assert.equal(decoder.pendingEscape, true, 'the owner flushes it after the Escape pause');
+  assert.ok(decoder.flush().length > 0);
+  assert.deepEqual(decoder.push('ls'), [{kind: 'text', value: 'l'}, {kind: 'text', value: 's'}]);
+});

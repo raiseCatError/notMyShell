@@ -145,6 +145,7 @@ export function takeLateProbeReplies(input: string, capabilities: Readonly<Termi
   const rest = input.replace(LATE_GRAPHICS_REPLY, (_match, message: string) => {
     if (message === 'OK' && capabilities.graphicsProtocol !== 'kitty') next = {...(next ?? capabilities), graphicsProtocol: 'kitty'};
     return '';
-  });
+  // DA1 and the pixel-size reports are never keys; removed, they cannot reach a program that has the screen by now.
+  }).replace(/\u001b\[\?[\d;]{1,64}c|\u001b\[[46];\d{1,5};\d{1,5}t/gu, '');
   return {input: rest, ...(next ? {capabilities: next} : {}), done};
 }

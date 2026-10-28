@@ -220,3 +220,18 @@ test('cropRaster clamps and copies exactly the region', () => {
   assert.ok(clamped.width >= 1 && clamped.height >= 1 && clamped.width <= 4);
   void BASELINE_CAPABILITIES;
 });
+
+test('an upload the terminal never received is sent again by the next paint', () => {
+  const sent: string[] = []; let open = false;
+  const decision: GraphicsDecision = {backend: 'kitty', evidence: 'query', inline: 'placeholder', unicode: 'half', cell: {width: 8, height: 16, source: 'estimated'}, reason: 'Kitty.'};
+  const service = new GraphicsService({decision: () => decision, send: data => { if (!open) return false; sent.push(data); return true; }, scratchDir: () => '.', color: () => 'truecolor', safeGlyphs: () => false});
+  const raster = {width: 16, height: 16, data: new Uint8ClampedArray(16 * 16 * 4).fill(200)};
+  const image = {key: 'undelivered', name: 'x', path: '/x.png', info: {format: 'png' as const, width: 16, height: 16, animated: false, alpha: true, bytes: 1}, raster, fileBytes: 1};
+  const box = {columns: 4, rows: 2, owner: 'o', surface: 'inline' as const};
+  service.place(image, box);
+  assert.equal(service.stats().uploads, 0, 'not remembered while the screen is not ours');
+  open = true;
+  service.place(image, box);
+  assert.equal(service.stats().uploads, 1);
+  assert.equal(sent.filter(d => d.includes('a=T') || d.includes('a=t')).length, 1, 'transmitted once the screen is ours');
+});
