@@ -36,7 +36,7 @@ test('history requires a shown review and a separate confirmation for later edit
  assert.equal(readFileSync(f.path,'utf8'),'before');assert.equal(state.view,'result');
 });
 test('reset cannot write without selected areas, impact, backup and exact typed word',t=>{
- const f=fixture(t);const state=createResetPanel({env:f.env,platform:'linux'},f.journal);
+ const f=fixture(t);let state=createResetPanel({env:f.env,platform:'linux'},f.journal);
  assert.equal(state.selected.size,0);resetKey(state,enter);assert.equal(state.step,'choose');
  const settings=state.areas.findIndex(x=>x.id==='settings');state.index=settings;resetKey(state,{kind:'text',value:' '});
  resetKey(state,enter);assert.equal(state.step,'impact');
@@ -45,8 +45,9 @@ test('reset cannot write without selected areas, impact, backup and exact typed 
  renderResetPanel(state,80,24);resetKey(state,enter);assert.equal(state.step,'confirm');
  renderResetPanel(state,80,24);resetKey(state,{kind:'text',value:'RESET'});resetKey(state,enter);
  assert.equal(existsSync(join(f.home,'.config/nmsh/config.json')),false);
- assert.equal(state.step,'confirm');
- for(let i=0;i<5;i++)resetKey(state,{kind:'backspace'});
+ assert.equal(state.step,'result');
+ state=createResetPanel({env:f.env,platform:'linux'},f.journal);state.index=settings;resetKey(state,{kind:'text',value:' '});resetKey(state,enter);
+ renderResetPanel(state,80,24);resetKey(state,enter);renderResetPanel(state,80,24);resetKey(state,enter);renderResetPanel(state,80,24);
  resetKey(state,{kind:'text',value:'reset'});resetKey(state,enter);
  assert.equal(state.step,'result');assert.match(state.message,/Undo: \/changes/u);
  assert.equal(existsSync(join(f.home,'.config/nmsh/config.json')),true);

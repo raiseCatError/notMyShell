@@ -36,7 +36,8 @@ export function resetKey(state:ResetPanel,key:Key):{close?:true;paths?:string[]}
           state.message=`Backup ${result.entry.id}. Undo: /changes → ${result.entry.id}. Terminal configuration may need a reload.`;state.step='result';state.review=resultReview(state);
           return {paths:result.paths};
         }
-        state.message='Type reset exactly (lowercase), then Enter. Nothing written.';
+        state.message='Cancelled: the word did not match reset exactly. Nothing was written.';
+        state.step='result';state.results=[state.message];state.review=resultReview(state);return {close:true};
       }else return {close:true};
     }else {
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));

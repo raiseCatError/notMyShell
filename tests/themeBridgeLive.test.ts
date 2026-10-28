@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, readdirSync, writeFileSync} from 'node:fs';
+import {copyFileSync,existsSync,mkdirSync,readdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
@@ -16,10 +16,21 @@ const bash = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/usr/bin/bash', 
   .find(path => existsSync(path) && /version (?:4\.[4-9]|[5-9]\.)/u.test(spawnSync(path, ['--version'], {encoding: 'utf8'}).stdout ?? ''));
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 
+/** These config-write tests keep the selected XDG config inside the declared private HOME. */
+function homeSandbox(config:Record<string,unknown>,env:Record<string,string>={}):LiveSandbox {
+  const sandbox=new LiveSandbox(config,env);
+  const original=join(sandbox.config,'nmsh','config.json');
+  Object.defineProperty(sandbox,'config',{value:join(sandbox.home,'.config')});
+  mkdirSync(join(sandbox.config,'nmsh'),{recursive:true});
+  copyFileSync(original,join(sandbox.config,'nmsh','config.json'));
+  if(config.shellBackend==='fish'){mkdirSync(join(sandbox.config,'fish'),{recursive:true});writeFileSync(join(sandbox.config,'fish/config.fish'),'# Personal Fish config: keep unchanged\n');}
+  return sandbox;
+}
+
 for (const shell of ['zsh', 'bash', 'fish'] as const) {
   const available = shell === 'zsh' || (shell === 'bash' ? bash : fish);
   test(`live ${shell}: Prompt None executes normally; Theme Bridge pager values reach the shell; no rc file is touched`, {skip: available ? false : `${shell} not installed`, timeout: 90_000}, async () => {
-    const sandbox = new LiveSandbox({provider: 'none', shellBackend: shell, themeBridge: {enabled: true, targets: {pager: {mode: 'follow'}}}},
+    const sandbox = homeSandbox({provider: 'none', shellBackend: shell, themeBridge: {enabled: true, targets: {pager: {mode: 'follow'}}}},
       shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
     try {
       const frontend = sandbox.launch();
@@ -35,14 +46,16 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       assert.equal(records[0]!.historicalContext?.promptless, true);
       const home = readdirSync(sandbox.home).filter(name => /^\.(?:zshrc|zshenv|zprofile|bashrc|bash_profile|profile|vimrc|tmux\.conf)$/u.test(name));
       assert.deepEqual(home, [], 'no shell rc or tool config was created');
-      assert.equal(existsSync(join(sandbox.home, '.config', 'fish', 'config.fish')), false);
+      const fishConfig=join(sandbox.home,'.config/fish/config.fish');
+      if(shell==='fish')assert.equal(readFileSync(fishConfig,'utf8'),'# Personal Fish config: keep unchanged\n');
+      else assert.equal(existsSync(fishConfig),false);
     } finally { await sandbox.dispose(); }
   });
 }
 
 test('live bash: with ls aliased in ~/.bashrc (as Ubuntu ships it) and File listing colors on, the managed shell parses its bootstrap and becomes ready',
   {skip: bash ? false : 'bash not installed', timeout: 90_000}, async () => {
-    const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'bash', themeBridge: {enabled: true, targets: {lsColors: {mode: 'follow'}}}},
+    const sandbox = homeSandbox({provider: 'none', shellBackend: 'bash', themeBridge: {enabled: true, targets: {lsColors: {mode: 'follow'}}}},
       {PATH: `${bash!.replace(/\/bash$/u, '')}:${process.env.PATH}`});
     try {
       writeFileSync(join(sandbox.home, '.bashrc'), "alias ls='ls -F'\nalias gls='gls -F'\n");
