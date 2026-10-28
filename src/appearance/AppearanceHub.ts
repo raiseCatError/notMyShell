@@ -23,7 +23,7 @@ import {BRIDGE_TARGETS, BRIDGE_TARGET_LABELS, effectiveMode} from '../themeBridg
  * opacity/blur editing where the host supports it, and say who controls them
  * where it does not, so the hub is useful in every terminal.
  */
-export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge';
+export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge' | 'kittyShaders';
 
 export interface AppearanceHubState {
   view: 'hub' | 'motion' | 'motionAdvanced';
@@ -40,15 +40,20 @@ export interface AppearanceHubState {
   canRestoreHost?: boolean;
   /** When the Motion preview last started (row selected, value changed, R); one run, never a loop. */
   previewStart?: number;
+  /** Present in Kitty: the Kitty shaders row's summary (the row exists only there). */
+  kittyShaders?: string;
 }
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'} | {kind: 'confirmHost'} | {kind: 'restoreHost'};
 
 /** Compact launcher: each row opens its canonical editor (/theme, /prompt, /cursor, UI chrome, /chroma, Motion, /theme-bridge). */
-const NMSH_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
+const BASE_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
   {id: 'theme', label: 'Theme Studio'}, {id: 'prompt', label: 'Prompt'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'},
   {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'},
 ];
+/** The launcher rows for this host: Kitty adds its shader studio after Cursor & effects. */
+const hubRows = (state: AppearanceHubState) => state.kittyShaders === undefined ? BASE_ROWS
+  : [...BASE_ROWS.slice(0, 3), {id: 'kittyShaders' as const, label: 'Kitty shaders'}, ...BASE_ROWS.slice(3)];
 
 export function createAppearanceHub(hostName: string, host?: AppearanceState, hostGuidance?: string): AppearanceHubState {
   return {view: 'hub', selected: 0, ...(host ? {host} : {}), hostName, ...(hostGuidance ? {hostGuidance} : {}), hostDirty: false};
@@ -61,6 +66,7 @@ function hostRowCount(state: AppearanceHubState): number {
 }
 
 export function appearanceHubKey(state: AppearanceHubState, key: Key, configuration: PromptConfiguration, now = Date.now()): HubAction | undefined {
+  const NMSH_ROWS = hubRows(state);
   if (state.confirmation) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.confirmation = undefined; return undefined; }
     if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min(state.confirmation.plan.preview.length - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
@@ -136,6 +142,7 @@ export function hubMotionPreview(state: AppearanceHubState, configuration: Promp
 
 export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string,
   preview?: {gate: MotionGate; now: number}, height?: number): string[] {
+  const NMSH_ROWS = hubRows(state);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -188,6 +195,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     cursor: `${cursorLabel(cursor.shape)} · ${cursor.motion === 'off' ? 'no motion' : cursorLabel(cursor.motion)}${cursor.effect !== 'none' ? ` · ${cursorLabel(cursor.effect)}` : ''} · ${cursorBackend}`,
     chrome: configuration.uiChrome.source === 'theme' ? 'Follow theme' : 'Custom',
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,
+    kittyShaders: state.kittyShaders ?? '',
     motion: anyMotion ? `${motion.rendering === 'rich' ? 'Rich' : 'Clean'} · Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
   };
   const rows = [`${primary}  Appearance${reset}`, `  ${subtle}Everything visual in one place; each row opens its own editor.${reset}`, '', `  ${subtle}NMSh${reset}`];

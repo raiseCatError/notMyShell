@@ -20,10 +20,10 @@ Interfaces: readHostAppearance(host,context) returns true values/origins/problem
 
 ## Slice2: real native shader backends
 Files: cursor/backends.ts/native.ts, new appearance shader catalog and host-specific pipeline generators; deterministic backend/config tests.
-- [ ] Test version detection, installed catalog checks, controls, ordering/texture/event validation, opacity conflicts and no duplicate trail.
-- [ ] Implement Kitty Slang/pipeline and Ghostty GLSL as distinct generators, referencing installed shipped sources when safe; original/community sources require provenance/individual license review.
-- [ ] Add curated controls/persistence and safe ownership-based configuration plans; unknown/unconfigured hosts and Portable choice remain truthful.
-- [ ] Verify host compilation in private configs where possible; distinguish files/compilation from physical rendered output. Review and open separate PR.
+- [x] Test version detection, installed catalog checks, controls, ordering/texture/event validation, opacity conflicts and no duplicate trail. (Kitty)
+- [x] Kitty Slang/pipeline generator referencing installed shipped shaders by name (kittyShaderCatalog.ts, kittyShaders.ts). [ ] Ghostty GLSL enhancements: next Ghostty slice (separate PR).
+- [x] Curated controls/persistence and safe ownership-based plans for Kitty (KittyShaderPanel.ts, /appearance row, /cursor link); Portable/unsupported states truthful.
+- [x] Kitty headless compile in private config (tests/kittyShadersLive.test.ts); NOT GPU rendering. Review and stacked PR: see TEST_RESULTS/HANDOFF.
 
 ## Slice3: semantic animation integration
 Files: motion/transitions.ts, existing Chroma/motion/cursor/queue/prompt/notification/idle call sites and tests.

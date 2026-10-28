@@ -3,13 +3,16 @@ import {dirname, isAbsolute, resolve} from 'node:path';
 import {snapshot, type FileSnapshot} from './hostFiles.js';
 import {appearancePaths, type AppearanceContext, type AppearanceHost} from './hostPaths.js';
 
-export interface Definition {value: string; path: string; line: number}
-export interface ConfigurationRead {hostPath: string; values: Map<string, Definition>; files: FileSnapshot[]; problems: string[]}
+/** `raw` is the trimmed value exactly as written (before outer-quote removal), for values with their own quoting rules. */
+export interface Definition {value: string; raw: string; path: string; line: number}
+/** `definitions` lists every non-include definition in load order (later ones win), for disclosing shadowed lines. */
+export interface ConfigurationRead {hostPath: string; values: Map<string, Definition>; definitions: Array<Definition & {key: string}>; files: FileSnapshot[]; problems: string[]}
 /** Overrides simulate a reviewed integration; they never change files or the captured preconditions. */
 export function readHostConfiguration(host: AppearanceHost, context: AppearanceContext, overrides?: ReadonlyMap<string, string>): ConfigurationRead {
   const paths = appearancePaths(host, context);
   const files = new Map<string, FileSnapshot>();
   const values = new Map<string, Definition>();
+  const definitions: Array<Definition & {key: string}> = [];
   const problems: string[] = [];
   const queue: Array<{path: string; stack: readonly string[]; optional: boolean}> = [];
   let totalBytes = 0;
@@ -48,7 +51,9 @@ export function readHostConfiguration(host: AppearanceHost, context: AppearanceC
       if (/[\u0000-\u001f\u007f-\u009f]/u.test(raw!)) throw new Error('A configuration value contains terminal controls.');
       if (host === 'kitty' && ['geninclude', 'envinclude', 'globinclude'].includes(key!)) throw new Error('Dynamic Kitty includes cannot be evaluated safely.');
       if (key === (host === 'ghostty' ? 'config-file' : 'include')) { follow(raw!); return; }
-      values.set(key!, {value: unquote(raw!.trim()), path, line: index + 1});
+      const definition = {value: unquote(raw!.trim()), raw: raw!.trim(), path, line: index + 1};
+      values.set(key!, definition);
+      if (definitions.length < 4096) definitions.push({...definition, key: key!});
     });
   };
   let hostPath = paths.fallback;
@@ -70,5 +75,5 @@ export function readHostConfiguration(host: AppearanceHost, context: AppearanceC
       loaded.add(entry.path); walk(entry.path, entry.stack, entry.optional);
     }
   } catch (error) { problems.push(error instanceof Error ? error.message : String(error)); }
-  return {hostPath, values, files: [...files.values()], problems};
+  return {hostPath, values, definitions, files: [...files.values()], problems};
 }

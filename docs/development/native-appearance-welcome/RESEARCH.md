@@ -1,5 +1,18 @@
 # Preliminary verified research (2026-10-28)
 
+## Slice 2 — Kitty 0.49.2 custom shaders (verified 2026-10-28)
+
+Sources: installed Kitty 0.49.2 (headless `kitty +runpy`, private HOME/config/cache under the T7 evidence folder `slice2-probe/`), official https://sw.kovidgoyal.net/kitty/custom-shaders/, and `kitty/shaders/slang.py` at tag v0.49.2 (saved as `slice2-probe/src/kitty_shaders_slang.py`).
+
+- Catalog: `list_kitty_resources('kitty.shaders.custom')` + `read_kitty_resource(name, 'kitty.shaders.custom')` return every shipped `.pipeline` and `.slang` (no loose files on disk). 0.49.2 ships pipelines crt-blue, cursor-trail-{blaze,default,lightning,motion-blur}, dim-inactive-windows, fireworks, fireworks-rockets, focus-highlight, inside-the-matrix, northern-lights, pond-ripple, spotlight, tab-change; extra shaders bloom, crt, negative, sample, tft, underwater, water; modules types/pipeline.
+- `custom_shaders` is ONE value split with POSIX shlex; a later line replaces earlier ones (confirmed with Kitty's own `load_config` through an include). Names are loaded in order and their groups concatenated (`merge_pipelines`), at most 16 groups in total.
+- Lookup: absolute path (`~` expanded) → `<config_dir>/shaders/<name>.pipeline` → shipped pipeline → a shader of that name with a default one-group pipeline. Shaders in a group: `<pipeline_dir>/<name>.slang` → `<config_dir>/<name>.slang` → shipped. A same-named user `.slang` therefore replaces a shipped shader.
+- Grammar (`parse_pipeline_definition`): top level `slot end`, `textures a|b|persist`, `var`, `startgroup`; group `viewport_pos/size`, `output_texture`, `shaders`, `var`, `animation_start` (events joined with `|`), `animation_stop` (events, ms, `never`), `animation_curve` (CSS names, cubic-bezier/linear/steps), `animation_step` (ms ≥ 0), `attach`, `endgroup`. First group cannot attach; final group outputs default with no viewport. Events: pointer-left-button-press, os-window-focus-in/out, window-focus-in/out, tab-change, bell-in-window, user-activity, user-idle, cursor-trail-move, cursor-trail-stop.
+- `var <type> <name> [=] <value>`: types int/uint/float/double/bool and 2–4 vectors. It replaces only `static const <SAME type> <name> = …` lines (regex); a type mismatch silently does nothing. Pipeline-level vars of ALL chained pipelines merge into one dict applied to every group (group vars win) — they leak across pipelines. Named textures are shared by name across pipelines.
+- A group subscribing to `cursor-trail-move` suppresses Kitty's built-in trail; trail shaders draw only while `cursor_trail` > 0.
+- Validation capability: Kitty bundles `slangc` (`/Applications/kitty.app/Contents/MacOS/slangc`). `parse_pipeline` + `merge_pipelines` + `build_custom_shader_pipeline_glsl` compile a configuration headlessly (~1–3 s) in a private cache. This proves parse + Slang→GLSL compilation only, NOT GPU rendering. Kitty logs build errors itself at load. No documented reload-on-command without remote control; `auto_reload_config` defaults to reloading changed config files.
+- Licensing: shipped shaders are Kitty's (GPLv3; CRT's original is CC BY-NC-SA 3.0; Blaze ports a third-party gist). NMSh references them BY NAME from the installed Kitty and never copies their source into the repository or the user's files; tests use synthetic stand-ins with the same structure.
+
 This is not completed implementation research. Pin exact upstream revisions and per-preset variables/licenses before vendoring or generating production pipelines.
 
 ## Kitty

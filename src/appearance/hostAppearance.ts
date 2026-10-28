@@ -127,7 +127,7 @@ export function planHostAppearance(host: AppearanceHost, settings: HostAppearanc
  * that missing line break, so lines the user appended later need one back; with nothing
  * after the hook the original bytes return unchanged.
  */
-function withoutHook(content: string, hook: string): string {
+export function withoutHook(content: string, hook: string): string {
   const at = content.indexOf(hook);
   const prefix = content.slice(0, at);
   const suffix = content.slice(at + hook.length);

@@ -2,6 +2,7 @@ import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, modul
 export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
 import {COLOR_PRESET_IDS, COLOR_PRESET_LABELS} from '../chroma/colorPresets.js';
+import {DEFAULT_HOST_SHADERS, normalizeHostShaders, type HostShaderSettings} from '../appearance/kittyShaderSettings.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -680,6 +681,8 @@ export interface PromptConfiguration {
   /** Opt-in Theme Bridge: one independent mode per external tool target; all Independent by default. */
   themeBridge: ThemeBridgeSettings;
   cursor: CursorSettings;
+  /** Host-native GPU shader choices NMSh manages after a reviewed setup (Kitty 0.49+ pipelines); decorative and opt-in. */
+  hostShaders: HostShaderSettings;
   statusStrip: StatusStripSettings;
   /** How an active Keep Awake shows in NMSh chrome (placement, display, idle reminder, screensaver). Off shows nothing. */
   keepAwake: KeepAwakePresentation;
@@ -921,6 +924,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   // Cursor effects start Off; choosing Fire starts on the Classic flame (the default particle model).
   cursor: {...structuredClone(DEFAULT_CURSOR), color: {source: 'theme'}},
+  hostShaders: structuredClone(DEFAULT_HOST_SHADERS),
   statusStrip: {...DEFAULT_STATUS_STRIP},
   keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
@@ -1052,7 +1056,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+  const tooling = {introSeen: value.introSeen !== false, motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), hostShaders: normalizeHostShaders(value.hostShaders), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
     sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, queueFailurePolicy: value.queueFailurePolicy === 'continue' ? 'continue' as const : 'pause' as const, queue: normalizeQueuePresentation(value.queue), workspacePanels: value.workspacePanels === true, askRecord: value.askRecord !== false, askCommandSuggestions: value.askCommandSuggestions === 'local' ? 'local' as const : 'off' as const, graphicsMode: GRAPHICS_MODES.includes(value.graphicsMode as GraphicsMode) ? value.graphicsMode as GraphicsMode : 'auto', textSizing: TEXT_SIZING_SETTINGS.includes(value.textSizing as TextSizingSetting) ? value.textSizing as TextSizingSetting : 'auto', browser: BROWSER_SETTINGS.includes(value.browser as BrowserSetting) ? value.browser as BrowserSetting : 'auto', diagrams: DIAGRAM_SETTINGS.includes(value.diagrams as DiagramSetting) ? value.diagrams as DiagramSetting : 'manual', askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',

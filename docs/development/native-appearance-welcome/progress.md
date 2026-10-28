@@ -1,5 +1,14 @@
 # Native appearance / welcome progress
 
+## Slice 2 — Kitty native shaders (fresh Claude session, 2026-10-28)
+
+Branch `feature/kitty-native-shaders-20261028` from 4abd014d in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/kitty-native-shaders-20261028`. Slice 1 (PR #515, branch feature/appearance-welcome-20261028) is untouched; its one uncommitted progress.md line stays in its own worktree.
+
+- Verified: PR #515 open/draft at 4abd014d; CI run 40640910786 success at that SHA (not re-run). #513 (a57568be) and draft #514 (416bc51a) untouched.
+- Implemented (see DECISIONS Slice 2): catalog discovery through Kitty's packaged-resource API; Kitty-parity pipeline parser; shader-constant extraction; curated presets; settings persistence (`hostShaders.kitty`); composition preserving the user's effective custom_shaders verbatim; refusal matrix; ownership ledger + snapshot transaction (Slice 1 primitives); removal restoring exact bytes; gate sync; launch-override inspection; `/appearance › Kitty shaders` studio (toggle, tune, order, placement, exact review, remove); /cursor integration (Kitty trail shader owns the trail; Portable fix).
+- Tests: tests/kittyShaders.test.ts, tests/kittyShaderPanel.test.ts, tests/kittyShadersLive.test.ts (installed Kitty: own load_config parity + slangc compile, private HOME; skipped without Kitty 0.49+). See TEST_RESULTS.
+- NOT done in this slice (remain in scope, PLAN slices 2–6): Ghostty GLSL backend enhancements, GPU prompt/Chroma/Clean-Rich/completion feedback, full Shader Studio, animated fetch logos, Welcome Studio, full-terminal welcome preview, performance and physical QA. Physical Kitty/Ghostty/Zed QA NOT RUN; GPU rendering NOT verified.
+
 ## Claude continuation — 2026-10-28 (supersedes the Codex state below)
 
 Codex hit its usage limit mid-checkpoint; Claude Code resumed in the same worktree and branch. Nothing was reset or discarded.

@@ -17,3 +17,16 @@ No blocker. Both new fixes verified correct by reading (`withoutHook` LF/CRLF/em
 - should-fix 2 (plausible): Kitty on macOS also reads `~/Library/Preferences/kitty/kitty.conf`; Kitty uses the FIRST existing config directory, unlike Ghostty's all-roots load. Verify against installed Kitty 0.49.2 (`kitty.constants.config_dir` logic) before changing hostPaths/readHostConfiguration.
 - minor: removal preview omits a restored line break; hub guidance not re-rendered after async read when hub closed; tiny window after apply where hub shows pre-write values; rename drops hardlinks/xattrs; stale XDG path blocks removal (fails closed). Recorded, not fixed in Slice 1.
 - Resolution: should-fix 1 FIXED (removal with the hook already absent deletes only the hash-verified fragment and ledger; the host file is a dependency, not changed). should-fix 2 CONFIRMED by probing installed Kitty (kitty-config-dir-evidence.md) and FIXED (worse than reported: Kitty would have loaded a new hook-only XDG file instead of the user's Preferences config). Minor items remain documented.
+
+## Slice 2 review (2026-10-28, separate read-only Sonnet reviewer, uncommitted diff on 4abd014d)
+
+Reviewer read the diff against Kitty v0.49.2 `slang.py`, ran tsc and the two focused files (pass). No blocker.
+
+Should-fix, all FIXED with regressions:
+1. Removal refused when an owned fragment/pipeline was missing or hand-edited; and sync refused (drift, launch, inspection problems) even when the gates left no NMSh effect, so Reduced Motion could not turn effects off. → removal is lenient (deletes intact owned files, keeps an edited one unreferenced, skips a missing one, removes hook + ledger); taking every NMSh effect out writes NMSh-owned files directly, regardless of drift or launch state; adding reviewed groups back skips the launch re-check but still refuses on drift.
+2. A written Kitty trail with cursor_trail 0 made Portable stop drawing while Kitty drew nothing. → `writtenKittyTrail` requires the recorded hook present, an active fragment, a trail group AND effective cursor_trail > 0; cursor facts are refreshed when NMSh's Kitty cursor fragment changes.
+3. A failed/unsupported catalog read was cached for the process (and a rejection could leave the panel stuck). → only supported catalogs are cached; failures retry; rejections become an unsupported catalog.
+4. One failing build disables the whole shared `end` slot (user shaders too). → disclosed in the review guidance; leaked vars that NMSh cannot pin (multi-line or repeated declarations) now refuse instead of being missed.
+
+Minor, handled: `~user/` entries refuse (not guessed); R works on unsupported Kitty; confirmation re-plans and refuses if gates/files changed since the review; opening the studio applies gate changes made while NMSh was not running.
+Minor, documented only: symlinked user pipelines refuse (safe, by design of Slice 1 reads); `ps` launch check can block up to 2 s on open/review/sync; Unicode-space splitting in `shellWords` differs from shlex (resolution only; raw value preserved); `unitPair` accepts hex numbers Kitty rejects (user pipelines only; NMSh never emits them).
