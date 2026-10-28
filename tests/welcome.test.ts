@@ -16,7 +16,7 @@ import {displayWidth} from '../src/util/text.js';
 
 const identity = {version: '0.2.0', commit: 'abcdef0', branch: 'dev'};
 
-test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and one divider', () => {
+test('fresh native welcome snapshots identity and cwd, shows safe facts and one divider', () => {
   // A controlled cwd under the private test home keeps this identity test independent of checkout-path truncation.
   const previousCwd = process.cwd();
   const directory = mkdtempSync(join(homedir(), 'welcome-'));
@@ -29,13 +29,13 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
     assert.equal(transcript.welcome?.shell, 'zsh');
     assert.equal(transcript.lines.length, 0, 'welcome is not raw PTY output');
     const rows = app['output'].wrapped(80);
-    assert.equal(rows.length, 5);
+    assert.equal(rows.length, 6);
     const version = readBuildIdentity().version;
-    assert.ok(rows[0]!.plain.includes(`notMyShell ${/^\d/u.test(version) ? 'v' : ''}${version}`));
-    assert.match(rows[1]!.plain, /build /u);
+    assert.ok(rows[0]!.plain.includes('notMyShell'));
+    assert.ok(rows.some(row => row.plain.includes(`NMSh: ${version}`)));
     assert.match(rows[3]!.plain, /zsh/u);
-    assert.ok(rows[2]!.plain.includes(basename(process.cwd())), 'welcome shows the checkout directory whatever its name');
-    assert.equal(rows[4]!.plain, '─'.repeat(80));
+    assert.ok(!rows.some(row => row.plain.includes(basename(process.cwd()))), 'path is opt in');
+    assert.equal(rows[5]!.plain, '-'.repeat(80));
     assert.ok(rows.every(row => row.lineIndex === undefined && !row.isLiveActivity));
   } finally {
     app['stop'](0);
@@ -141,7 +141,7 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
     Object.defineProperty(app, 'render', {value: () => {}});
     await app['resumeSelectedSession']();
     assert.deepEqual(app['output'].transcript().welcome, first);
-    assert.equal(app['output'].wrapped(80).filter(row => row.plain.includes('notMyShell ')).length, 1);
+    assert.equal(app['output'].wrapped(80).filter(row => row.plain.includes('notMyShell')).length, 1);
     assert.equal((await new TranscriptStore(directory).list()).length, 2, 'welcome-only current session is archived before resume');
   } finally {
     app['stop'](0);
@@ -182,6 +182,8 @@ test('cat blinks are occasional and deterministic, and the frame is never persis
 test('welcome blink timer is owned by the app and disposed on stop', () => {
   const app = new TerminalApp();
   try {
+    app['promptConfiguration'].welcomeStudio.customized = false;
+    app['startWelcome'](process.cwd());
     app['scheduleWelcomeBlink']();
     assert.ok(app['welcomeBlinkTimer'], 'one pending blink');
   } finally {

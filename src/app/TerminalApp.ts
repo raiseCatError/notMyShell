@@ -1,3 +1,7 @@
+import {WelcomeStudioController} from '../welcome/studio.js';
+import {NativeWelcomePresentation} from '../welcome/startup.js';
+import {collectWelcomeFacts} from '../welcome/facts.js';
+import {idleStops} from '../idle/IdleVisuals.js';
 import {failurePolicyNote} from '../status/queueText.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {renderQueueActivitySummary} from '../status/executionTimeline.js';
@@ -672,8 +676,10 @@ export class TerminalApp {
   private ohMyPoshRender?: AbortController;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
-  /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
+  /** The shared provider gallery for families without a bespoke panel (Suggestions, History, Picker). */
   private providerPanelState?: ProviderPanelState;
+  private welcomeStudio?: WelcomeStudioController;
+  private nativeWelcome?: NativeWelcomePresentation;
   private toolConfiguration?: ConfigurationPanel;
   private presetPanel?: PresetPanel;
   private readonly presetStore = new SessionPresetStore();
@@ -1351,6 +1357,8 @@ export class TerminalApp {
    */
   private handOverTerminal(restore = ''): void {
     // Images uploaded to the terminal are deleted before a program takes the screen.
+    this.welcomeStudio?.dispose(); this.welcomeStudio = undefined;
+    this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined;
     this.graphics?.releaseAll();
     this.browserPanel?.session.forgetPictures();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
@@ -1656,6 +1664,7 @@ export class TerminalApp {
   }
 
   private readonly onResize = (): void => {
+    this.nativeWelcome?.cancelMotion();
     this.stopStartupEnding();
     this.effects.cancel();
     if (this.idle) this.dismissIdle(false);
@@ -1720,6 +1729,7 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    this.nativeWelcome?.cancelMotion();
     // Any real input finishes the ending at once (focus changes and pointer movement are not input); the key is then handled normally.
     if (this.startupEnding && key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.finishStartupEnding();
     const navigating = Boolean(this.outputNavigation);
@@ -2035,6 +2045,7 @@ export class TerminalApp {
       } else if (handleSyntaxPanelKey(key, this.syntaxPanelState)) this.render();
       return;
     }
+    if (this.welcomeStudio) { void this.welcomeStudio.key(key); return; }
     if (this.providerPanelState) {
       void this.handleProviderPanelKey(key, this.providerPanelState);
       return;
@@ -2525,6 +2536,7 @@ export class TerminalApp {
         else if (action.destination === 'cursor') { this.panelOrigin = undefined; this.openCursorPanel(); }
         else if (action.destination === 'kittyShaders') void this.openKittyShaders();
         else if (action.destination === 'glslShaders') this.glslStudio.open();
+        else if (action.destination === 'welcome') this.openWelcomeStudio();
         else if (action.destination === 'chroma') this.startChromaSettings();
         else this.focusConfigRow('uiChrome');
       }
@@ -4220,12 +4232,12 @@ export class TerminalApp {
 
   /** The image viewer's overlay (iTerm2, Sixel) at its screen cells, or none. */
   private imageOverlay(plan: ScreenPlan, region: {top: number; height: number} | undefined): ImageOverlay | undefined {
-    const placed = this.imageView?.overlay;
+    const placed = this.welcomeStudio?.overlay ?? this.imageView?.overlay;
     if (!placed || !region || !plan.panelActive) return undefined;
     const row = region.top + placed.y + (plan.panelPosition === 'top' ? -1 : 0);
     if (row < region.top || row + placed.placement.size.rows > region.top + region.height) return undefined;
     const column = placed.x + (this.workspace.open ? this.workspaceColumns().center.x : 0);
-    return {key: placed.placement.key, row, column, size: placed.placement.size, transmit: placed.placement.transmit, place: placed.placement.place, cleanup: placed.placement.cleanup};
+    return {key: `${placed.placement.key}@${row},${column}`, row, column, size: placed.placement.size, transmit: placed.placement.transmit, place: placed.placement.place, cleanup: placed.placement.cleanup};
   }
 
   /** Apply the Text sizing setting and the probe's evidence to the typography module whenever either changes. */
@@ -6512,7 +6524,7 @@ export class TerminalApp {
   private get settingsPanelActive(): boolean { return this.hasModalInput(); }
 
   private hasModalInput(ignorePalette = false): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.welcomeStudio || this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.kittyShaderPanel || this.glslStudio.panel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -6564,6 +6576,7 @@ export class TerminalApp {
       return view.rows;
     }
     if (this.docSession) { const rows = renderDocumentSession(this.docSession, columns, this.dimensions().rows - 4, this.documentViewerLook()); this.panelBlocks = this.docSession.overlays; return rows; }
+    if (this.welcomeStudio) return this.welcomeStudio.render(columns, this.dimensions().rows - 4);
     if (this.imageView) return renderImageView(this.imageView, columns, this.dimensions().rows - 4, this.graphicsService());
     if (this.viewer) { const rows = renderViewer(this.viewer, columns, this.dimensions().rows - 4, this.viewerLook()); this.panelBlocks = this.viewer.overlays ?? []; return rows; }
     if (this.textEditor) return renderEditor(this.textEditor, columns, this.dimensions().rows - 4);
@@ -8862,7 +8875,7 @@ export class TerminalApp {
     setIconStyle(next.glyphStyle);
     if (next.idleVisuals.timeout !== this.idleArmedFor) { this.idleArmedFor = next.idleVisuals.timeout; this.armIdle(); }
     this.output.setWelcomeVisible(next.welcome !== 'none');
-    if (next.welcome === 'none') this.welcomeGeneration++;
+    if (next.welcome === 'none') { this.welcomeGeneration++; this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined; }
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
@@ -8878,9 +8891,25 @@ export class TerminalApp {
    */
   private startWelcome(cwd: string): void {
     const generation = ++this.welcomeGeneration;
+    this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined;
     const provider = this.promptConfiguration.welcome;
     this.output.setWelcomeVisible(provider !== 'none');
-    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId, this.welcomeUnderstanding()));
+    const vespyr = () => {
+      const snapshot = createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId, this.welcomeUnderstanding());
+      const model = this.promptConfiguration.welcomeStudio;
+      if (model.customized) {
+        snapshot.studio = structuredClone(model);
+        snapshot.facts = collectWelcomeFacts(model, {shell: this.shellId, version: this.buildIdentity.version, terminal: this.host.name ?? 'Unknown', cwd, git: this.context.cwd === cwd ? this.context.branch : undefined});
+        const native = this.nativeWelcome = new NativeWelcomePresentation(snapshot, this.graphicsService(), () => this.welcomeCapabilities(), () => UI_COLORS.cwdBackground, () => { if (!this.stopped) this.render(); });
+        this.output.presenter.welcomePainter = (saved, width) => native.rows(saved, width, this.graphicsDecision().inline === 'placeholder' ? undefined : this.graphicsDecision().reason);
+        const scratch = join(defaultRuntimeDir(), 'images');
+        if (model.assetPath) {
+          try { ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(scratch, {recursive: true, mode: 0o700}); } catch { /* the bounded loader reports unavailable converter storage */ }
+          void native.load(cwd, scratch).then(() => { if (!this.stopped && generation === this.welcomeGeneration) this.render(); });
+        }
+      }
+      this.output.setWelcome(snapshot);
+    };
     if (provider === 'none') return;
     if (provider === 'vespyr') { vespyr(); return; }
     void captureWelcome(provider, cwd).then(result => {
@@ -8978,11 +9007,34 @@ export class TerminalApp {
     });
   }
 
+  private openWelcomeStudio(): void {
+    this.welcomeStudio?.dispose();
+    const scratch = () => {
+      const directory = join(defaultRuntimeDir(), 'images');
+      ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(directory, {recursive: true, mode: 0o700});
+      return directory;
+    };
+    const studio = new WelcomeStudioController({
+      config: () => this.promptConfiguration, cwd: () => this.shellCwd, scratch,
+      graphics: () => this.graphicsService(), decision: () => this.graphicsDecision(),
+      facts: model => collectWelcomeFacts(model, {shell: this.shellId, version: this.buildIdentity.version, terminal: this.host.name ?? 'Unknown', cwd: this.shellCwd, git: this.context.branch}),
+      capabilities: () => this.welcomeCapabilities(), background: () => UI_COLORS.cwdBackground,
+      save: config => this.applySettingsConfiguration(config), render: () => { if (!this.stopped) this.render(); },
+      close: () => { this.welcomeStudio = undefined; this.returnFromPanel(); this.render(); },
+    });
+    this.welcomeStudio = studio;
+    void studio.start();
+  }
+
+  private welcomeCapabilities() {
+    return {color: colorLevel() !== 'none', level: colorLevel(), home: homedir(), safeGlyphs: getCurrentGlyphMode() === 'safe', reducedMotion: this.promptConfiguration.presentation.reducedMotion || isReducedMotion(),
+      effectsOff: this.promptConfiguration.presentation.effectsOff, legacy: createWelcomeSnapshot(this.buildIdentity, this.shellCwd, this.shellId, this.welcomeUnderstanding()), accent: idleStops(this.promptConfiguration, 'theme')[0], chroma: idleStops(this.promptConfiguration, 'appearance')[0]};
+  }
+
   private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor'): void {
+    if (family === 'welcome') { this.openWelcomeStudio(); return; }
     const state: ProviderPanelState = family === 'editor'
       ? createProviderPanel(family, 'Terminal editor', TERMINAL_EDITORS, this.promptConfiguration.terminalEditor)
-      : family === 'welcome'
-      ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
       : family === 'navigation' ? createProviderPanel(family, 'Directory navigation', NAVIGATION_PROVIDERS, this.promptConfiguration.navigation)
       : family === 'picker' ? createProviderPanel(family, 'Picker', PICKER_PROVIDERS, this.promptConfiguration.picker)
       : family === 'history' ? createProviderPanel(family, 'Command history', HISTORY_PROVIDERS, this.promptConfiguration.history)
@@ -9114,7 +9166,7 @@ export class TerminalApp {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setWelcomeVisible(next.welcome !== 'none');
-      if (next.welcome === 'none') this.welcomeGeneration++;
+      if (next.welcome === 'none') { this.welcomeGeneration++; this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined; }
       this.output.setTranscriptAppearance(next.transcript);
       this.output.setOutputFolding(next.outputFolding);
     this.output.setSemanticOutput(next.semanticOutput);
@@ -9315,7 +9367,7 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped || !this.decorativeMotionAllowed() || !this.output.hasWelcome) return;
+    if (this.stopped || !this.decorativeMotionAllowed() || !this.output.hasWelcome || this.output.view().welcome?.studio?.customized) return;
     this.welcomeBlinkTimer = presentationClock.after(() => {
       this.welcomeBlinkTimer = undefined;
       if (this.stopped || !this.decorativeMotionAllowed()) return;
@@ -9345,6 +9397,7 @@ export class TerminalApp {
   }
 
   private scroll(direction: -1 | 1): void {
+    this.nativeWelcome?.cancelMotion();
     const {columns} = this.dimensions();
     const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
@@ -9353,6 +9406,7 @@ export class TerminalApp {
   }
 
   private scrollLines(amount: number): void {
+    this.nativeWelcome?.cancelMotion();
     const {columns} = this.dimensions();
     const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
@@ -14381,6 +14435,8 @@ export class TerminalApp {
     this.diagramService?.dispose();
     void this.browserHost?.shutdown();
     this.releaseViewerImages();
+    this.welcomeStudio?.dispose(); this.welcomeStudio = undefined;
+    this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined;
     this.graphics?.releaseAll();
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;

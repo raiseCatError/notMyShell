@@ -24,7 +24,7 @@ import {BRIDGE_TARGETS, BRIDGE_TARGET_LABELS, effectiveMode} from '../themeBridg
  * opacity/blur editing where the host supports it, and say who controls them
  * where it does not, so the hub is useful in every terminal.
  */
-export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge' | 'kittyShaders' | 'glslShaders';
+export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge' | 'kittyShaders' | 'glslShaders' | 'welcome';
 
 export interface AppearanceHubState {
   view: 'hub' | 'motion' | 'motionAdvanced' | 'routing';
@@ -54,7 +54,7 @@ export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestina
 /** Compact launcher: each row opens its canonical editor (/theme, /prompt, /cursor, UI chrome, /chroma, Motion, /theme-bridge). */
 const BASE_ROWS: Array<{id: HubDestination | 'motion' | 'routing'; label: string}> = [
   {id: 'theme', label: 'Theme Studio'}, {id: 'prompt', label: 'Prompt'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'},
-  {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'}, {id: 'routing', label: 'Effects routing'},
+  {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'}, {id: 'routing', label: 'Effects routing'}, {id: 'welcome', label: 'Welcome'},
 ];
 /** The launcher rows for this host: Kitty or Ghostty adds its shader studio after Cursor & effects. */
 const hubRows = (state: AppearanceHubState) => state.kittyShaders !== undefined
@@ -217,6 +217,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     cursor: `${cursorLabel(cursor.shape)} · ${cursor.motion === 'off' ? 'no motion' : cursorLabel(cursor.motion)}${cursor.effect !== 'none' ? ` · ${cursorLabel(cursor.effect)}` : ''} · ${cursorBackend}`,
     chrome: configuration.uiChrome.source === 'theme' ? 'Follow theme' : 'Custom',
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,
+    welcome: configuration.welcome,
     kittyShaders: state.kittyShaders ?? '',
     glslShaders: state.ghosttyShaders ?? '',
     routing: (() => { const routes = state.routes ?? []; const count = (value: string) => routes.filter(route => route.route === value).length;

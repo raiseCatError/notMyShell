@@ -1,0 +1,203 @@
+import {stripTerminalControls} from '../util/terminalControls.js';
+import {homedir} from 'node:os';
+import {colorLevel, type ColorLevel} from '../presentation/capabilities.js';
+import {colorEscape} from '../chroma/escape.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import type {BuildIdentity} from '../buildInfo.js';
+import type {WelcomeProviderId} from '../prompt/configuration.js';
+import {background, foreground, UI_COLORS} from '../ui/palette.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import type {WrappedRow} from '../output/viewport.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+
+const RESET = '\u001B[0m';
+const BODY = {red: 172, green: 150, blue: 230};
+const EYE = {red: 22, green: 18, blue: 32};
+const WHISKER = {red: 150, green: 142, blue: 172};
+const BRAND_ACCENT = {red: 166, green: 124, blue: 243};
+const DIVIDER = {red: 105, green: 98, blue: 130};
+const BOLD = '\u001B[1m';
+const NORMAL_WEIGHT = '\u001B[22m';
+
+export interface WelcomeSnapshot {
+  studio?: import('./model.js').WelcomeStudio;
+  facts?: import('./compose.js').WelcomeFacts;
+  identity: BuildIdentity;
+  /** Recording identity is presentation only; version reporting stays factual. */
+  demo?: boolean;
+  cwd: string;
+  /** The backend NMSh manages for this presentation (never $SHELL). */
+  shell: ShellId;
+  /**
+   * Local understanding as it was when this presentation began (e.g. "Off",
+   * "Auto · model idle · Ask"). Snapshotted: later model loads never rewrite it.
+   */
+  understanding?: string;
+  /** External welcome captured once at session start; absent means Vespyr. */
+  provider?: Exclude<WelcomeProviderId, 'vespyr' | 'none'>;
+  /** SGR-only rows the external provider printed. */
+  captured?: string[];
+}
+
+export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh', understanding?: string): WelcomeSnapshot {
+  return {identity: {...identity}, demo: process.env.NMSH_DEMO === '1', cwd, shell, ...(understanding ? {understanding} : {})};
+}
+
+function safe(value: string): string {
+  return stripTerminalControls(value);
+}
+
+function shortCwd(cwd: string, homePath = homedir()): string {
+  const home = homePath.replace(/\/$/u, '');
+  const path = safe(cwd);
+  if (!home) return path;
+  return path === home ? '~' : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
+/**
+ * The mascot is an 8x14 pixel grid drawn with half blocks, so each terminal
+ * row carries two pixel rows: L lavender body, E dark eye, . empty. Standing
+ * side-on with its face toward the viewer: ears, square eyes, back, four legs
+ * and a raised tail. Whiskers are glyphs in otherwise empty cells.
+ */
+const CAT_PIXELS = [
+  '.L...L........',
+  '.LLLLL........',
+  '.LELEL.......L',
+  '.LELEL......L.',
+  '.LLLLLLLLLLL..',
+  '..LLLLLLLLLL..',
+  '..LLLLLLLLLL..',
+  '..L.L....L.L..',
+];
+const CAT_WHISKERS: Record<number, Record<number, string>> = {1: {0: '=', 6: '='}};
+const CAT_WIDTH = CAT_PIXELS[0]!.length;
+const CAT_ROWS = CAT_PIXELS.length / 2;
+const PIXEL_COLORS: Record<string, typeof BODY> = {L: BODY, E: EYE};
+
+/** `blink` draws each eye as a closed lid: a dark slit on the lavender face. */
+export type WelcomeCatFrame = 'open' | 'blink';
+
+/** Calm, occasional blinks: deterministic gaps between blinks and a short closed frame. */
+export const WELCOME_BLINK_GAPS_MS = [6200, 8400, 5600, 9800] as const;
+export const WELCOME_BLINK_CLOSED_MS = 150;
+
+export function welcomeBlinkDelay(blinkCount: number): number {
+  const gaps = WELCOME_BLINK_GAPS_MS;
+  return gaps[((Math.trunc(blinkCount) % gaps.length) + gaps.length) % gaps.length]!;
+}
+
+function catRow(row: number, frame: WelcomeCatFrame = 'open', level?: ColorLevel): {ansi: string; plain: string} {
+  const fg = (color: typeof BODY) => level === undefined ? foreground(color) : colorEscape(38, color, level);
+  const bg = (color: typeof BODY) => level === undefined ? background(color) : colorEscape(48, color, level);
+  const top = CAT_PIXELS[row * 2]!;
+  const bottom = CAT_PIXELS[row * 2 + 1]!;
+  let ansi = '';
+  let plain = '';
+  for (let column = 0; column < CAT_WIDTH; column += 1) {
+    const upper = PIXEL_COLORS[top[column]!];
+    const lower = PIXEL_COLORS[bottom[column]!];
+    let glyph: string;
+    if (frame === 'blink' && upper === EYE && lower === EYE) {
+      glyph = '▂';
+      ansi += `${fg(EYE)}${bg(BODY)}${glyph}${RESET}`;
+    } else if (!upper && !lower) {
+      glyph = CAT_WHISKERS[row]?.[column] ?? ' ';
+      ansi += glyph === ' ' ? ' ' : `${fg(WHISKER)}${glyph}${RESET}`;
+    } else if (upper === lower || !lower || !upper) {
+      glyph = upper === lower ? '█' : upper ? '▀' : '▄';
+      ansi += `${fg((upper ?? lower)!)}${glyph}${RESET}`;
+    } else {
+      glyph = '▀';
+      ansi += `${fg(upper)}${bg(lower)}${glyph}${RESET}`;
+    }
+    plain += glyph;
+  }
+  return {ansi, plain};
+}
+
+/** The approved Vespyr sprite alone (four rows), for places that show the mascot without the Welcome card. */
+export function vespyrSprite(frame: WelcomeCatFrame = 'open'): string[] {
+  return Array.from({length: CAT_ROWS}, (_, row) => catRow(row, frame).ansi);
+}
+
+interface Span {
+  text: string;
+  color: typeof BODY;
+  /** Only the product wordmark is bold; metadata stays quiet. */
+  bold?: boolean;
+}
+
+/** Truncate styled spans to a cell budget while keeping per-span color. */
+function renderSpans(spans: readonly Span[], width: number, level?: ColorLevel): {ansi: string; plain: string} {
+  const plain = truncateText(spans.map(span => span.text).join(''), width);
+  let remaining = plain;
+  let ansi = '';
+  for (const span of spans) {
+    if (!remaining) break;
+    const part = remaining.startsWith(span.text) ? span.text : remaining;
+    remaining = remaining.slice(part.length);
+    ansi += `${span.bold ? BOLD : NORMAL_WEIGHT}${level === undefined ? foreground(span.color) : colorEscape(38, span.color, level)}${part}`;
+  }
+  return {ansi: `${ansi}${RESET}`, plain};
+}
+
+function versionLabel(version: string): string {
+  return /^\d/u.test(version) ? `v${version}` : version;
+}
+
+/** Presentation-only rows, generated from a semantic snapshot on every width change. */
+export function renderLegacyWelcome(snapshot: WelcomeSnapshot, width: number, frame: WelcomeCatFrame = 'open', options?: {level: ColorLevel; home: string; safeGlyphs: boolean}): WrappedRow[] {
+  if (width <= 0) return [];
+  if (snapshot.captured) return renderCapturedWelcome(snapshot.captured, width);
+  const identity = snapshot.identity;
+  const metadata: Span[][] = [
+    [
+      {text: 'not', color: UI_COLORS.primary, bold: true},
+      {text: 'My', color: BRAND_ACCENT, bold: true},
+      {text: 'Shell', color: UI_COLORS.primary, bold: true},
+      {text: ` ${snapshot.demo ? 'demo' : safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
+    ],
+    [
+      {text: snapshot.demo ? 'A real shell. A livelier terminal.' : `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
+      ...(!snapshot.demo && identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
+      ...(!snapshot.demo && identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
+    ],
+    [{text: shortCwd(snapshot.cwd, options?.home), color: UI_COLORS.secondary}],
+    [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}},
+      ...(snapshot.understanding ? [{text: ` · Local understanding ${safe(snapshot.understanding)}`, color: UI_COLORS.subtle}] : [])],
+  ];
+  const gutter = 2;
+  const cat = width >= 42;
+  const metadataWidth = cat ? Math.max(1, width - CAT_WIDTH - gutter) : width;
+  const rows: WrappedRow[] = [];
+  for (let index = 0; index < Math.max(metadata.length, cat ? CAT_ROWS : 0); index += 1) {
+    const text = renderSpans(metadata[index] ?? [], metadataWidth, options?.level);
+    if (!cat) {
+      rows.push(text);
+      continue;
+    }
+    const prefix = catRow(index, frame, options?.level);
+    const spacer = ' '.repeat(gutter);
+    rows.push({plain: `${prefix.plain}${spacer}${text.plain}`, ansi: `${prefix.ansi}${spacer}${text.ansi}`});
+  }
+  const line = repeatToWidth((options ? options.safeGlyphs : getCurrentGlyphMode() === 'safe') ? '-' : '─', width);
+  rows.push({plain: line, ansi: `${options ? colorEscape(38, DIVIDER, options.level) : foreground(DIVIDER)}${line}${RESET}`});
+  // All rows belong to ordinary scrollback; none have a PTY line index.
+  return rows.filter(row => displayWidth(row.plain) <= width);
+}
+
+/** Below this width an external welcome is hidden rather than clipped into noise. */
+export const MIN_CAPTURED_WELCOME_WIDTH = 24;
+
+/** Captured fetch-tool rows are clipped, never wrapped, and end with the welcome divider. */
+function renderCapturedWelcome(captured: readonly string[], width: number): WrappedRow[] {
+  if (width < MIN_CAPTURED_WELCOME_WIDTH) return [];
+  const rows = captured.map(line => {
+    const ansi = truncateAnsi(colorLevel() === 'none' ? stripAnsi(line) : line, width);
+    return {ansi: `${ansi}${RESET}`, plain: stripAnsi(ansi)};
+  });
+  const line = repeatToWidth('─', width);
+  rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
+  return rows;
+}

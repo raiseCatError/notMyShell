@@ -94,6 +94,9 @@ export interface PlaceRequest {
   crop?: {x: number; y: number; width: number; height: number};
   /** Allow the image to be shown larger than its own pixel size. */
   upscale?: boolean;
+  treatment?: {brightness?: number; opacity?: number; shimmer?: number; parallax?: number};
+  /** Explicit welcome compositing; preserve alpha when absent. */
+  background?: {red: number; green: number; blue: number};
 }
 
 interface Upload {
@@ -199,7 +202,12 @@ export class GraphicsService {
 
   place(image: LoadedImage, request: PlaceRequest): Placement {
     const decision = this.host.decision();
-    const source = request.crop ? cropRaster(image.raster, request.crop) : image.raster;
+    const cropped = request.crop ? cropRaster(image.raster, request.crop) : image.raster;
+    const region = request.treatment ? treatRaster(cropped, request.treatment) : cropped;
+    if (request.treatment) image = {...image, key: `${image.key}|treatment:${JSON.stringify(request.treatment)}`};
+    const source = request.background ? flattenAlpha(region, request.background) : region;
+    // Alpha treatments need distinct upload keys, while the source asset remains immutable.
+    if (request.background) image = {...image, key: `${image.key}|bg:${request.background.red},${request.background.green},${request.background.blue}`};
     const cell = decision.cell;
     const natural = {columns: Math.max(1, Math.ceil(source.width / cell.width)), rows: Math.max(1, Math.ceil(source.height / cell.height))};
     const limit = {
@@ -382,3 +390,49 @@ export function cropRaster(source: Raster, crop: NonNullable<PlaceRequest['crop'
 }
 
 export { kittyDelete };
+
+/** Composite a derived raster only; originals and cached decoded pixels are never changed. */
+function flattenAlpha(source: Raster, background: {red: number; green: number; blue: number}): Raster {
+  const data = source.data.slice();
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3]! / 255;
+    data[i] = Math.round(data[i]! * alpha + background.red * (1 - alpha));
+    data[i + 1] = Math.round(data[i + 1]! * alpha + background.green * (1 - alpha));
+    data[i + 2] = Math.round(data[i + 2]! * alpha + background.blue * (1 - alpha));
+    data[i + 3] = 255;
+  }
+  return {...source, data};
+}
+
+/** Bounded still-image light/alpha treatment, before scaling/upload, within the existing image budget. */
+function treatRaster(source: Raster, effect: NonNullable<PlaceRequest['treatment']>): Raster {
+  const bound = (value: number | undefined, low: number, high: number, fallback: number) => value === undefined || !Number.isFinite(value) ? fallback : Math.max(low, Math.min(high, value));
+  const opacity = bound(effect.opacity, 0, 1, 1), brightness = bound(effect.brightness, 0, 1.5, 1);
+  const shimmer = effect.shimmer === undefined ? undefined : bound(effect.shimmer, 0, 1, 0);
+  const data = effect.parallax === undefined ? source.data.slice() : parallaxLayers(source, bound(effect.parallax, -1, 1, 0));
+  for (let i = 0; i < data.length; i += 4) {
+    const x = ((i / 4) % source.width) / Math.max(1, source.width - 1);
+    const lift = shimmer === undefined ? 0 : Math.max(0, 1 - Math.abs(x - shimmer) / 0.16) * 0.35;
+    for (let c = 0; c < 3; c++) data[i + c] = Math.min(255, Math.round(data[i + c]! * brightness + (255 - data[i + c]!) * lift));
+    data[i + 3] = Math.round(data[i + 3]! * opacity);
+  }
+  return {...source, data};
+}
+
+/** Two flat copies move in opposite directions. No segmentation or invented motion inside the source image. */
+function parallaxLayers(source: Raster, phase: number): Uint8ClampedArray {
+  const data = new Uint8ClampedArray(source.data.length);
+  const shiftX = Math.round(phase * Math.min(4, source.width / 8));
+  const shiftY = Math.round(phase * Math.min(2, source.height / 8));
+  for (const layer of [{dx: -shiftX, dy: -shiftY, opacity: 0.3}, {dx: shiftX, dy: shiftY, opacity: 1}]) {
+    for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) {
+      const sx = x - layer.dx, sy = y - layer.dy;
+      if (sx < 0 || sy < 0 || sx >= source.width || sy >= source.height) continue;
+      const src = (sy * source.width + sx) * 4, dst = (y * source.width + x) * 4;
+      const a = source.data[src + 3]! / 255 * layer.opacity, b = data[dst + 3]! / 255 * (1 - a), alpha = a + b;
+      for (let c = 0; c < 3; c++) data[dst + c] = alpha ? Math.round((source.data[src + c]! * a + data[dst + c]! * b) / alpha) : 0;
+      data[dst + 3] = Math.round(alpha * 255);
+    }
+  }
+  return data;
+}
