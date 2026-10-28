@@ -8,9 +8,6 @@ import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.
 import {MOTION_ITEMS, MOTION_LABELS, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {renderValueControl} from '../ui/controls.js';
 import {renderStudioLayout, renderStudioReview, studioLabel, studioMuted, studioWrap, type StudioEntry} from '../ui/StudioLayout.js';
-import {GLYPHS} from '../ui/glyphs.js';
-import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
-import {padCells, truncateAnsi} from '../util/text.js';
 import {BLUR_MODES, handleAppearanceKey, type AppearanceState} from './AppearancePanel.js';
 import {cursorLabel} from '../cursor/CursorPanel.js';
 import {renderMotionPreview, type MotionPreview} from '../motion/MotionPreview.js';
@@ -49,6 +46,7 @@ export interface AppearanceHubState {
   ghosttyShaders?: string;
   /** Who draws each animated surface now (read-only; refreshed by the app whenever the hub renders). */
   routes?: SurfaceRoute[];
+  routeSelected?: number;
 }
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'} | {kind: 'confirmHost'} | {kind: 'restoreHost'};
@@ -93,6 +91,7 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     return undefined;
   }
   if (state.view === 'routing') {
+    if (key.kind === 'up' || key.kind === 'down') state.routeSelected = Math.max(0, Math.min((state.routes?.length ?? 1) - 1, (state.routeSelected ?? 0) + (key.kind === 'up' ? -1 : 1)));
     if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'enter') { state.view = 'hub'; state.selected = NMSH_ROWS.findIndex(row => row.id === 'routing'); }
     return undefined;
   }
@@ -159,9 +158,10 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   if (state.confirmation) return renderStudioReview(state.confirmation, 'Review host configuration', columns, height);
   if (state.view === 'routing') {
     const routes = state.routes ?? [];
-    return renderStudioLayout({title: 'Appearance › Effects routing', subtitle: 'Who draws each effect · configuration snapshot',
-      entries: routes.length ? routes.map(route => ({group: route.route === 'native' ? 'Host GPU · written, unverified' : route.route === 'portable' ? 'Portable · NMSh rows' : 'Off', label: route.label, render: () => `${route.label} · ${stripTerminalControls(route.reason)}`})) : [{group: 'Routing', label: 'No routes available'}],
-      selected: -1, controls: [['Enter', 'back'], ['Esc', 'back']],
+    return renderStudioLayout({title: 'Appearance › Effects routing', subtitle: 'Who draws each effect · configuration snapshot', stacked: height === undefined,
+      entries: routes.length ? routes.map(route => ({group: 'Surfaces', label: route.label, value: route.route === 'native' ? 'Host GPU · written, unverified' : route.route === 'portable' ? 'Portable' : 'Off'})) : [{group: 'Routing', label: 'No routes available'}],
+      selected: state.routeSelected ?? 0, controls: [['↑↓', 'select'], ['Enter', 'back'], ['Esc', 'back']],
+      details: width => [studioLabel(routes[state.routeSelected ?? 0]?.label ?? 'Routing'), ...studioWrap(routes[state.routeSelected ?? 0]?.reason ?? 'No routes available.', width).map(studioMuted)],
     }, columns, height);
   }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {

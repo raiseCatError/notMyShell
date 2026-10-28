@@ -17,7 +17,11 @@ export function studioWrap(text: string, width: number): string[] {
   const rows: string[] = [];
   let row = '';
   for (const char of stripTerminalControls(text)) {
-    if (displayWidth(row + char) > Math.max(1, width) && row) { rows.push(row); row = ''; }
+    if (displayWidth(row + char) > Math.max(1, width) && row) {
+      const space = row.lastIndexOf(' ');
+      if (space > 0) { rows.push(row.slice(0, space + 1)); row = row.slice(space + 1); }
+      else { rows.push(row); row = ''; }
+    }
     row += char;
   }
   rows.push(row);
@@ -45,17 +49,20 @@ export interface StudioLayout {
 /** One responsive shell for studio browsers and editors; footer space is allocated first. */
 export function renderStudioLayout(model: StudioLayout, columns: number, height = 48): string[] {
   if (height <= 0 || columns <= 0) return [];
-  if (height < 7 || columns < 24) return framePanel([
-    truncateAnsi(model.title, columns), 'Resize to edit',
-    ...renderControlRows(model.controls.filter(([key]) => key === 'Esc' || key === 'Enter'), columns),
-  ], columns).slice(0, height);
+  if (height < 10 || columns < 24) {
+    const controls = renderControlRows(model.controls.filter(([key]) => key === 'Esc' || key === 'Enter'), columns);
+    const entry = model.entries[model.selected];
+    const row = entry ? `${GLYPHS.selection} ${entry.render?.(Math.max(1, columns - 2)) ?? `${entry.label} ${entry.value ?? ''}`}` : 'Resize to edit';
+    if (height < 4) return [truncateAnsi(model.title, columns), ...controls].slice(-height);
+    return framePanel([truncateAnsi(model.title, columns), truncateAnsi(row, columns), ...controls], columns).slice(0, height);
+  }
   const footer = renderControlRows(model.controls, columns);
   const head = [studioLabel(model.title),
     ...(model.subtitle && height >= 12 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : []),
     ...(model.tabs ? [renderTabStrip(model.tabs.labels, model.tabs.selected, columns)] : [])];
   const notices = model.notice ? studioWrap(model.notice, columns).slice(0, height >= 24 ? 2 : 1).map(studioMuted) : [];
   const budget = Math.max(1, height - 1 - head.length - notices.length - footer.length - 1);
-  const widths = model.stacked ? {list: columns, detail: columns} : studioColumns(columns, height);
+  const widths = model.stacked || !model.details ? {list: columns, detail: columns} : studioColumns(columns, height);
   const wide = widths.list !== columns && Boolean(model.details);
   const detailBudget = model.details && !wide && columns >= 60 && height >= 24 && budget >= 12 ? Math.min(model.stacked ? 30 : 10, budget - 5) : 0;
   const listBudget = wide ? budget : budget - detailBudget;
@@ -89,7 +96,7 @@ export interface StudioReview {plan: {preview: string[]; guidance: string}; offs
 /** Exact-plan review, shared by host appearance and shader transactions. Only callers handle keys/writes. */
 export function renderStudioReview(review: StudioReview, title: string, columns: number, height = 24): string[] {
   const width = Math.max(1, columns - 4);
-  const document = review.plan.preview.flatMap(line => studioWrap(line, width));
+  const document = [...review.plan.preview, '', 'Apply & reload', review.plan.guidance].flatMap(line => studioWrap(line, width));
   review.rowCount = document.length;
   const controls = renderControlRows([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']], columns);
   if (height < 8 || columns < 24) return framePanel(['Resize to review', ...controls], columns).slice(0, height);

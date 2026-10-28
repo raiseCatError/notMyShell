@@ -99,6 +99,20 @@ test('a dropped preview shows no replay hint and restarts when it can be seen; v
   assert.doesNotMatch(renderGhosttyShaderPanel(state, 20, undefined, studioPreviewContext(6000, false, true)).map(stripAnsi).join('\n'), /Preview ·/u);
 });
 
+test('preview at a footer wrap boundary never advertises replay or keeps a clock for a hidden sample', () => {
+  for (const columns of [60, 80, 100, 120]) for (let height = 14; height <= 40; height++) {
+    const state = createGhosttyShaderPanel(structuredClone(DEFAULT_HOST_SHADERS.ghostty), {reducedMotion: false, effectsOff: false, cursorRenderer: 'auto', cursorMotion: 'tail'});
+    state.catalog = buildGhosttyCatalog('1.3.1');
+    const rows = renderGhosttyShaderPanel(state, columns, height, studioPreviewContext(1000, false, true)).map(stripAnsi);
+    if (!rows.some(row => row.includes('Preview ·'))) {
+      assert.ok(!rows.some(row => row.includes('P replay')), `${columns}x${height}`);
+      assert.equal(state.previewBusy, false);
+    }
+    assert.ok(rows.length <= height);
+    assert.match(rows.at(-1)!, /Esc/);
+  }
+});
+
 test('trail styles differ in shape, not only in color: Lightning is never drawn like Blaze', () => {
   // The same colors for every style, so only the drawing can tell them apart.
   const values = {HEAD: [1, 0.8, 0.6], TAIL: [0.8, 0.1, 0.1]};

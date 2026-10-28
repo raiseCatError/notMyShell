@@ -11,8 +11,8 @@ import type {Key} from '../terminal/keys.js';
 import {renderValueControl} from '../ui/controls.js';
 import {framePanel, tabCycleDelta} from '../ui/PanelShell.js';
 import {renderStudioLayout, renderStudioReview, studioLabel, studioMuted, studioWrap, type StudioEntry} from '../ui/StudioLayout.js';
-import {checkMark, GLYPHS} from '../ui/glyphs.js';
-import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
+import {checkMark} from '../ui/glyphs.js';
+import {UI_COLORS} from '../ui/palette.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import {CATEGORY_LABELS, type OfferedParam, type PresetCategory, type ShaderValue} from './kittyShaderCatalog.js';
@@ -76,6 +76,18 @@ export type StudioAction = {kind: 'back'} | {kind: 'review'} | {kind: 'remove'} 
 type Row = {kind: 'placement'} | {kind: 'preset'; preset: StudioPreset} | {kind: 'param'; preset: StudioPreset; param: OfferedParam};
 type AnyState = ShaderStudioState<StudioCatalog, StudioInspection, StudioPlan, unknown, StudioDraft>;
 const CATEGORY_ORDER: readonly PresetCategory[] = ['cursor', 'ambient', 'interaction', 'focus', 'display'];
+const PREVIEW_DESCRIPTIONS: Record<string, string> = {
+  trail: 'A fading smear follows the cursor between positions.',
+  comet: 'A bright head pulls a soft tail behind the cursor.',
+  blaze: 'A flame-shaped trail burns behind the moving cursor.',
+  lightning: 'A brief jagged bolt connects cursor positions.',
+  'motion-blur': 'A soft streak connects recent cursor positions.',
+  aurora: 'Slow color bands tint the background behind your text.',
+  dim: 'The terminal dims when its window loses focus.',
+  vignette: 'The edges darken to draw attention toward the center.',
+  scanlines: 'Fine horizontal lines give the display a CRT texture.',
+  glow: 'Bright text gains a soft halo.',
+};
 
 export function createShaderStudio<C extends StudioCatalog, I extends StudioInspection, P extends StudioPlan, G, D extends StudioDraft>(saved: D, gates: G): ShaderStudioState<C, I, P, G, D> {
   return {draft: structuredClone(saved), dirty: false, selected: 0, gates};
@@ -246,7 +258,8 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
       return {group, label: row.preset.definition.label, render: width => {
         const label = `${checkMark(on)} ${row.preset.definition.label}${position}`;
         const status = `${on ? 'on' : 'off'} · ${passState(row.preset.definition.id)}`;
-        return width >= 50 ? `${padCells(label, Math.max(26, width - status.length - 1), 0)} ${status}` : `${label} · ${on ? 'on' : 'off'}`;
+        const shown = width >= 50 ? status : `${on ? 'on' : 'off'} · ${inspection?.activePresets.includes(row.preset.definition.id) ? 'written' : 'unwritten'}`;
+        return `${padCells(label, Math.max(1, width - shown.length - 1), 0)} ${shown}`;
       }};
     }
     const value = studioParamValue(any, row.preset, row.param);
@@ -258,6 +271,7 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
   });
   const kind = preset ? previewKind(preset.definition.id, preset.definition.category) : undefined;
   let previewShown = false;
+  let previewAllowed = true;
   const reload = state.reloadPending ? `Reload pending: press L after reloading ${host.name}. Portable motion waits. The host may still draw NMSh’s previous trail.` : undefined;
   const details = (width: number, room: number): string[] => {
     const out: string[] = [];
@@ -266,13 +280,14 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
       out.push(studioLabel(preset.definition.label));
       text(`${enabled(any, preset.definition.id) ? 'Enabled in draft' : 'Disabled in draft'} · ${passState(preset.definition.id)}`);
       if (preset.definition.exclusive) text(`Choose one ${CATEGORY_LABELS[preset.definition.category].toLowerCase()} effect at a time.`);
+      text(kind ? PREVIEW_DESCRIPTIONS[kind] ?? 'A host shader changes the whole terminal surface.' : preset.definition.note ?? 'A host-wide effect; no faithful cell approximation is available.');
     }
     const note = current?.kind === 'placement' ? host.placementNote : preset?.definition.note || (preset && !preset.params.length ? host.noParams : '');
     if (note) text(note);
     if (current?.kind === 'param' && current.param.kind === 'color') text('Enter types an RGB color.');
     if (preset?.missing.length) text(`Not offered here: ${preset.missing.join(', ')} (the installed shader does not declare them as NMSh expects).`);
     const sample: string[] = [];
-    if (preview && preset && columns >= 22) {
+    if (previewAllowed && preview && preset && columns >= 22) {
       const values = Object.fromEntries(preset.params.map(param => [param.name, studioParamValue(any, preset, param)]));
       const key = `${preset.definition.id}:${JSON.stringify(values)}`;
       if (state.previewKey !== key) { state.previewKey = key; state.previewStart = preview.now; }
@@ -316,6 +331,11 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
     controls.splice(controls.length - 1, 0, ['P', 'replay']);
     state.previewBusy = false; previewShown = false;
     result = renderStudioLayout(model, columns, limit);
+    if (!previewShown) {
+      controls.splice(controls.findIndex(([key]) => key === 'P'), 1);
+      previewAllowed = false;
+      result = renderStudioLayout(model, columns, limit);
+    }
   }
   if (!previewShown) { state.previewBusy = false; state.previewKey = undefined; state.previewStart = undefined; }
   return result;

@@ -4,7 +4,6 @@ import {WELCOME_PROVIDERS} from '../output/WelcomeProviders.js';
 import {tabCycleDelta} from '../ui/PanelShell.js';
 import {renderStudioLayout, studioLabel, studioMuted, studioWrap, type StudioEntry} from '../ui/StudioLayout.js';
 import {renderControlRows, renderValueControl} from '../ui/controls.js';
-import {truncateAnsi} from '../util/text.js';
 import {composeWelcome, type WelcomeCapabilities, type WelcomeFacts, type WelcomeComposition} from './compose.js';
 import {ALPHAS, DEFAULT_WELCOME_STUDIO, EFFECTS, FACTS, FITS, LAYOUTS, LOGOS, PALETTES, WELCOME_PRESETS, normalizeWelcomeStudio, welcomeText, type SavedWelcomePreset, type WelcomeStudio} from './model.js';
 import type {AssetEntry} from './assets.js';
@@ -219,7 +218,7 @@ export function renderWelcomeEditor(s: WelcomeEditor, columns: number, height: n
       const label = `Live preview · ${s.before ? 'before' : 'draft'} · ${s.paused ? 'paused' : now - s.started >= 5000 ? 'settled' : 'playing'}${s.reduced ? ' · still' : ''}`;
       const result = [studioLabel(label)];
       const frame = composeWelcome(model, facts, {columns: s.narrow ? Math.min(40, width) : width, rows: Math.max(0, room - 1)},
-        {...caps, ...(model.assetPath !== s.draft.assetPath ? {asset: undefined} : {}), reducedMotion: caps.reducedMotion || s.reduced, ...(s.theme ? {accent: {red: 90, green: 180, blue: 210}, chroma: {red: 230, green: 150, blue: 70}} : {})}, s.paused ? s.elapsed : now - s.started);
+        {...caps, ...(gallery && model.assetPath !== s.draft.assetPath ? {asset: undefined} : {}), reducedMotion: caps.reducedMotion || s.reduced, ...(s.theme ? {accent: {red: 90, green: 180, blue: 210}, chroma: {red: 230, green: 150, blue: 70}} : {})}, s.paused ? s.elapsed : now - s.started);
       s.preview = frame; s.previewTop = origin.y + 1; s.previewLeft = origin.x;
       const preview = s.provider === 'none' ? ['No startup welcome.'] : s.provider !== 'vespyr'
         ? s.captured?.map(row => caps.color ? row : row.replace(/\x1b\[[0-9;]*m/gu, '')) ?? ['External provider preview loading…']
