@@ -24,3 +24,12 @@ export function renderControlRows(controls: ReadonlyArray<readonly [key: string,
   }
   return groups.filter(group => group.length).map(group => renderControls(group));
 }
+
+/** Compact settings affordances; values remain readable in monochrome and Safe Glyphs. */
+export function renderValueControl(kind: 'number' | 'bool' | 'color' | 'choice', label: string, fraction = 0, color?: {red: number; green: number; blue: number}): string {
+  if (kind === 'bool') return `${label === 'On' ? '(*)' : '( )'} ${label}`;
+  if (kind === 'color') return `${color ? foreground(color) : ''}##${RESET} ${label}`;
+  if (kind === 'choice') return `‹ ${label} ›`;
+  const fill = Math.round(Math.max(0, Math.min(1, fraction)) * 8);
+  return `${'='.repeat(fill)}${'-'.repeat(8 - fill)} ${label}`;
+}

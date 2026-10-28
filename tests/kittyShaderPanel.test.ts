@@ -85,7 +85,7 @@ test('panel: Shift+↑↓ reorders enabled effects; S, R and Enter map to review
 test('panel: honest states — unsupported Kitty, gates, missing parameters, installed-but-not-offered; fits narrow and short windows', () => {
   const unsupported = createKittyShaderPanel(DEFAULT_HOST_SHADERS.kitty, gates);
   unsupported.catalog = buildKittyCatalog('0.48.0', {});
-  assert.match(plain(renderKittyShaderPanel(unsupported, 100)).join('\n'), /need Kitty 0\.49 or newer[\s\S]*Cursor effects stay with \/cursor/u);
+  assert.match(plain(renderKittyShaderPanel(unsupported, 100)).join('\n'), /need Kitty 0\.49 or newer[\s\S]*Cursor effects stay\s+with\s+\/cursor/u);
   assert.equal(kittyShaderKey(unsupported, key('text', 's')), undefined, 'nothing to review without support');
   assert.deepEqual(kittyShaderKey(unsupported, key('text', 'r')), {kind: 'remove'}, 'removal still works on an unsupported Kitty');
   const reduced = panel();

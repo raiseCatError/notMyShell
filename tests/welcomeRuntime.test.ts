@@ -27,6 +27,31 @@ function host(directory: string, studio = {}): StudioHost {
 const enter = {kind: 'enter'} as const;
 const escape = {kind: 'escape'} as const;
 
+test('full preview puts its exit hint in free space and returning preserves unsaved gallery edits', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'welcome-preview-ui-'));
+  const h = host(dir, {customized: true, title: 'Unsaved title'});
+  const controller = new WelcomeStudioController(h);
+  h.capabilities = () => ({color: true, reducedMotion: true});
+  try {
+    controller.state.selected = 24;
+    const draft = structuredClone(controller.state.draft);
+    await controller.key({kind: 'text', value: 'g'});
+    await controller.key({kind: 'text', value: 'p'});
+    assert.equal(controller.fullPreview, false, 'gallery owns P');
+    await controller.key(escape);
+    for (const [width, height] of [[120, 40], [80, 24], [60, 20], [40, 14]] as const) {
+      await controller.key({kind: 'text', value: 'p'});
+      const rows = controller.renderPreview(width, height);
+      assert.match(rows.join(''), /Any key.*return to Welcome Studio/);
+      assert.ok(rows.length <= height && rows.every(row => displayWidth(row) <= width));
+      await controller.key(enter);
+      assert.equal(controller.fullPreview, false);
+      assert.deepEqual(controller.state.draft, draft);
+      assert.equal(controller.state.selected, 24);
+    }
+  } finally { controller.dispose(); await rm(dir, {recursive: true, force: true}); }
+});
+
 test('late import respects Esc; before/after retains the original asset; disposing unsubscribes preview', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'welcome-runtime-'));
   const h = host(dir, {customized: true, logo: 'image', assetPath: 'red.png', effect: 'float'});

@@ -6,10 +6,8 @@ import {chromaPreviewNote} from './chromaNotes.js';
 import type {Key} from '../terminal/keys.js';
 import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
 import {MOTION_ITEMS, MOTION_LABELS, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
-import {renderControls} from '../ui/controls.js';
-import {GLYPHS} from '../ui/glyphs.js';
-import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
-import {padCells, truncateAnsi} from '../util/text.js';
+import {renderValueControl} from '../ui/controls.js';
+import {renderStudioLayout, renderStudioReview, studioLabel, studioMuted, studioWrap, type StudioEntry} from '../ui/StudioLayout.js';
 import {BLUR_MODES, handleAppearanceKey, type AppearanceState} from './AppearancePanel.js';
 import {cursorLabel} from '../cursor/CursorPanel.js';
 import {renderMotionPreview, type MotionPreview} from '../motion/MotionPreview.js';
@@ -36,7 +34,7 @@ export interface AppearanceHubState {
   hostGuidance?: string;
   /** Host values were changed and not saved yet. */
   hostDirty: boolean;
-  confirmation?: {plan: HostAppearancePlan; offset: number};
+  confirmation?: {plan: HostAppearancePlan; offset: number; rowCount?: number; shown?: boolean};
   backgroundInput?: string;
   hostMessage?: string;
   canRestoreHost?: boolean;
@@ -48,6 +46,7 @@ export interface AppearanceHubState {
   ghosttyShaders?: string;
   /** Who draws each animated surface now (read-only; refreshed by the app whenever the hub renders). */
   routes?: SurfaceRoute[];
+  routeSelected?: number;
 }
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'} | {kind: 'confirmHost'} | {kind: 'restoreHost'};
@@ -76,8 +75,9 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
   const NMSH_ROWS = hubRows(state);
   if (state.confirmation) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.confirmation = undefined; return undefined; }
-    if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min(state.confirmation.plan.preview.length - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
-    return key.kind === 'enter' ? {kind: 'confirmHost'} : undefined;
+    if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min((state.confirmation.rowCount ?? state.confirmation.plan.preview.length) - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
+    // Enter confirms only a plan the person could see (not the 'Resize to review' stub).
+    return key.kind === 'enter' && state.confirmation.shown !== false ? {kind: 'confirmHost'} : undefined;
   }
   if (state.backgroundInput !== undefined) {
     if (key.kind === 'escape' || key.kind === 'interrupt') state.backgroundInput = undefined;
@@ -92,6 +92,7 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     return undefined;
   }
   if (state.view === 'routing') {
+    if (key.kind === 'up' || key.kind === 'down') state.routeSelected = Math.max(0, Math.min((state.routes?.length ?? 1) - 1, (state.routeSelected ?? 0) + (key.kind === 'up' ? -1 : 1)));
     if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'enter') { state.view = 'hub'; state.selected = NMSH_ROWS.findIndex(row => row.id === 'routing'); }
     return undefined;
   }
@@ -155,57 +156,31 @@ export function hubMotionPreview(state: AppearanceHubState, configuration: Promp
 export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string,
   preview?: {gate: MotionGate; now: number}, height?: number): string[] {
   const NMSH_ROWS = hubRows(state);
-  const primary = foreground(UI_COLORS.primary);
-  const secondary = foreground(UI_COLORS.secondary);
-  const subtle = foreground(UI_COLORS.subtle);
-  const accent = foreground(UI_COLORS.accent);
-  const reset = '\u001b[0m';
-  const mark = (selected: boolean) => selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
-  if (state.confirmation) {
-    const review = state.confirmation;
-    const available = Math.max(1, (height ?? 24) - 7);
-    const lines = review.plan.preview.slice(review.offset, review.offset + available);
-    return [`${primary}  Review host configuration${reset}`, '  Enter confirms exactly this plan; Esc keeps every file unchanged.',
-      ...lines.map(line => `  ${stripTerminalControls(line)}`), '', `  ${stripTerminalControls(review.plan.guidance)}`,
-      renderControls([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']])].map(row => truncateAnsi(row, columns));
-  }
+  if (state.confirmation) return renderStudioReview(state.confirmation, 'Review host configuration', columns, height);
   if (state.view === 'routing') {
     const routes = state.routes ?? [];
-    const routeLabel = {native: `${accent}Host GPU${reset}`, portable: `${secondary}Portable${reset}`, off: `${subtle}Off${reset}`} as const;
-    const head = [`${primary}  Appearance › Effects routing${reset}`,
-      `  ${subtle}Who draws each animated surface now. Host GPU shaders only draw what the host can target (the cursor, whole-window focus and display); NMSh draws its own rows.${reset}`, ''];
-    const list = routes.flatMap(route => [`    ${padCells(route.label, 20)}${routeLabel[route.route]}`, `      ${subtle}${stripTerminalControls(route.reason)}${reset}`]);
-    const controls = ['', renderControls([['Esc', 'back']])];
-    const all = [...head, ...list, ...controls];
-    const rows = height === undefined || all.length <= height ? all : [head[0]!, ...list.slice(0, Math.max(0, height - 3)), ...controls];
-    return rows.map(row => truncateAnsi(row, columns));
+    return renderStudioLayout({title: 'Appearance › Effects routing', subtitle: 'Who draws each effect · configuration snapshot', stacked: height === undefined,
+      entries: routes.length ? routes.map(route => ({group: 'Surfaces', label: route.label, value: route.route === 'native' ? 'Host GPU · written, unverified' : route.route === 'portable' ? 'Portable' : 'Off'})) : [{group: 'Routing', label: 'No routes available'}],
+      selected: state.routeSelected ?? 0, controls: [['↑↓', 'select'], ['Enter', 'back'], ['Esc', 'back']],
+      details: width => [studioLabel(routes[state.routeSelected ?? 0]?.label ?? 'Routing'), ...studioWrap(routes[state.routeSelected ?? 0]?.reason ?? 'No routes available.', width).map(studioMuted)],
+    }, columns, height);
   }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {
     const advanced = state.view === 'motionAdvanced';
     const rendering = configuration.motion.rendering === 'rich' ? 'Rich' : 'Clean';
     const items: readonly MotionItem[] = advanced ? MOTION_TUNING_ITEMS : MOTION_ITEMS;
-    const head = [`${primary}  Appearance › Motion${advanced ? ` › Advanced (${rendering})` : ''}${reset}`, `  ${subtle}${advanced
-      ? `Tuning for ${rendering} rendering only; ${rendering === 'Rich' ? 'Clean' : 'Rich'} keeps its own values.`
-      : 'General NMSh motion. Cursor motion lives in /cursor; Chroma color motion in /chroma. Reduced Motion and Decorative Effects Off stop all of it.'}${reset}`, ''];
-    const list: string[] = [];
-    items.forEach((item, index) => {
-      const selected = index === state.selected;
-      const value = item.labelOf(item.get(configuration.motion));
-      list.push(`${mark(selected)} ${focusForeground(selected)}${padCells(item.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
-    });
-    if (!advanced) {
-      const selected = state.selected === items.length;
-      list.push(`${mark(selected)} ${focusForeground(selected)}${padCells('Advanced', 24)}${reset}${selected ? accent : secondary}${rendering} tuning ›${reset}`);
-    }
-    const noteText = items[state.selected]?.note ?? `Intensity and speed for ${rendering} rendering; Enter opens them`;
-    const note = ['', `  ${subtle}${noteText}${reset}`];
-    const shown = preview ? hubMotionPreview(state, configuration, columns, preview.gate, preview.now) : undefined;
-    const controls = ['', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(!advanced && state.selected === items.length ? [['Enter', 'open'] as [string, string]] : []), ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']])];
-    // The preview is always the same size; a short terminal gives up the intro, then the preview, never the controls or the list.
-    const block = shown ? ['', `  ${subtle}Preview · ${rendering}${reset}`, ...shown.rows] : [];
-    const layouts = [[...head, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...controls], [head[0]!, ...list, ...controls], [...list, ...controls]];
-    const rows = height === undefined ? layouts[0]! : layouts.find(layout => layout.length <= height) ?? layouts[layouts.length - 1]!;
-    return rows.map(row => truncateAnsi(row, columns));
+    const entries: StudioEntry[] = items.map(item => ({group: advanced ? `${rendering} tuning` : 'General motion', label: item.label, value: `‹ ${item.labelOf(item.get(configuration.motion))} ›`}));
+    if (!advanced) entries.push({group: 'Tuning', label: 'Advanced', value: `${rendering} tuning ›`});
+    return renderStudioLayout({title: `Appearance › Motion${advanced ? ` › Advanced (${rendering})` : ''}`,
+      subtitle: 'NMSh rows · Reduced Motion and Effects Off stop animation', entries, selected: state.selected,
+      controls: [['↑↓', 'select'], ['←→', 'change'], ['Enter', 'open'], ['R', 'replay'], ['Esc', 'back']],
+      details: (width, room) => {
+        const shown = preview ? hubMotionPreview(state, configuration, width, preview.gate, preview.now) : undefined;
+        const note = studioWrap(items[state.selected]?.note ?? `Intensity and speed for ${rendering} rendering; Enter opens them`, width).map(studioMuted);
+        const sample = shown ? [studioLabel(`Preview · ${rendering}`), ...shown.rows] : [];
+        return note.length + sample.length <= room ? [...note, ...sample] : note;
+      },
+    }, columns, height);
   }
   const cursor = configuration.cursor;
   const motion = configuration.motion;
@@ -225,36 +200,31 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
       return routes.length ? [count('native') ? `${count('native')} on host GPU` : '', `${count('portable')} Portable`, count('off') ? `${count('off')} off` : ''].filter(Boolean).join(' · ') : 'Who draws each effect'; })(),
     motion: anyMotion ? `${motion.rendering === 'rich' ? 'Rich' : 'Clean'} · Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
   };
-  const rows = [`${primary}  Appearance${reset}`, `  ${subtle}Everything visual in one place; each row opens its own editor.${reset}`, '', `  ${subtle}NMSh${reset}`];
-  NMSH_ROWS.forEach((row, index) => {
-    const selected = index === state.selected;
-    rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(row.label, 20)}${reset}${subtle}${summaries[row.id]}${reset}  ${selected ? `${accent}›${reset}` : ''}`);
-  });
-  rows.push(`  ${subtle}Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}${reset}`);
-  rows.push('', `  ${subtle}Host window · configuration snapshot (CLI overrides are not visible)${reset}`, `    ${secondary}${padCells('Host', 20)}${reset}${primary}${stripTerminalControls(state.hostName)}${reset}`);
+  const entries: StudioEntry[] = NMSH_ROWS.map(row => ({
+    group: ['theme', 'prompt'].includes(row.id) ? 'Identity' : ['cursor', 'kittyShaders', 'glslShaders'].includes(row.id) ? 'Cursor & host effects' : row.id === 'welcome' ? 'Startup' : 'Interface & motion',
+    label: row.label, value: summaries[row.id],
+  }));
   if (state.host) {
-    const bar = (fraction: number) => { const filled = Math.max(0, Math.min(10, Math.round(fraction * 10))); return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`; };
-    const hostRows = [['Opacity', `${bar(state.host.opacity)}  ${Math.round(state.host.opacity * 100)}%`], ['Blur mode', BLUR_MODES[state.host.blurModeIndex]!]];
-    if (BLUR_MODES[state.host.blurModeIndex] === 'Numeric') hostRows.push(['Blur', `${bar(state.host.blurStrength / 50)}  ${state.host.blurStrength}`]);
-    hostRows.push(['Background', state.backgroundInput !== undefined ? `RGB: ${state.backgroundInput}_` : stripTerminalControls(state.host.background ?? 'Inherit host color')]);
-    hostRows.forEach(([label, value], index) => {
-      const selected = NMSH_ROWS.length + index === state.selected;
-      rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(label!, 20)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
-    });
-    if (state.hostDirty) rows.push(`    ${subtle}S reviews pending host changes before writing${reset}`);
-    rows.push(`    ${subtle}R reviews removal of NMSh-owned appearance overrides${reset}`);
-  } else rows.push(`    ${subtle}${stripTerminalControls(state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`)}${reset}`);
-  if (!state.host && state.canRestoreHost) rows.push(`  ${subtle}R reviews removal of NMSh-owned appearance overrides${reset}`);
-  if (state.hostMessage) rows.push(`  ${subtle}${stripTerminalControls(state.hostMessage)}${reset}`);
-  rows.push('', renderControls([['↑↓', 'select'], ['Enter', 'open'], ...(state.host ? [['←→', 'adjust host'] as [string, string]] : []), ['Esc', 'close']]));
-  if (height !== undefined && rows.length > height) {
-    const limit = Math.max(1, Math.floor(height));
-    const controls = columns < 60 ? renderControls([['Esc', 'close'], ['↑↓', 'select'], ['←→', 'edit'], ['S', 'review']]) : rows.at(-1)!;
-    if (limit <= 2) return [rows[0]!, controls].slice(0, limit).map(row => truncateAnsi(row, columns));
-    const count = limit - 2;
-    const selectedRow = Math.max(1, rows.findIndex(row => row.startsWith(mark(true))));
-    const start = Math.max(1, Math.min(rows.length - 1 - count, selectedRow - Math.floor(count / 2)));
-    return [rows[0]!, ...rows.slice(start, start + count), controls].map(row => truncateAnsi(row, columns));
+    const host = state.host;
+    const hostRows: Array<[string, string]> = [
+      ['Opacity', `${'█'.repeat(Math.max(0, Math.min(10, Math.round(host.opacity * 10))))}${'░'.repeat(10 - Math.max(0, Math.min(10, Math.round(host.opacity * 10))))}  ${Math.round(host.opacity * 100)}%`],
+      ['Blur mode', BLUR_MODES[host.blurModeIndex]!],
+    ];
+    if (BLUR_MODES[host.blurModeIndex] === 'Numeric') hostRows.push(['Blur', renderValueControl('number', String(host.blurStrength), host.blurStrength / 50)]);
+    hostRows.push(['Background', state.backgroundInput !== undefined ? `RGB: ${state.backgroundInput}_` : stripTerminalControls(host.background ?? 'Inherit host color')]);
+    entries.push(...hostRows.map(([label, value]) => ({group: `Host window · ${stripTerminalControls(state.hostName)}`, label, value})));
   }
-  return rows.map(row => truncateAnsi(row, columns));
+  const selectedEntry = entries[state.selected];
+  return renderStudioLayout({title: 'Appearance', stacked: height === undefined, subtitle: 'Your terminal, composed · select an editor to shape it',
+    entries, selected: state.selected,
+    notice: state.hostMessage ?? (state.hostDirty ? 'Unsaved host changes · S reviews before writing' : undefined),
+    controls: state.backgroundInput !== undefined ? [['Enter', 'apply RGB'], ['Esc', 'cancel']] : [
+      ['↑↓', 'select'], ['Enter', 'open'], ...(state.host ? [['←→', 'adjust'], ['S', 'review']] as const : []),
+      ...(state.host || state.canRestoreHost ? [['R', 'restore']] as const : []), ['Esc', 'close']],
+    details: width => [studioLabel(selectedEntry?.label ?? 'Appearance'),
+      ...studioWrap(selectedEntry?.value ?? '', width), '', studioMuted('Host window · configuration snapshot'),
+      ...studioWrap(`Host  ${stripTerminalControls(state.hostName)} · CLI overrides are not visible`, width).map(studioMuted),
+      ...studioWrap(state.host ? 'Changes are reviewed before writing. R reviews removal of NMSh-owned appearance overrides.' : state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`, width).map(studioMuted), '',
+      ...studioWrap(`Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}`, width).map(studioMuted)],
+  }, columns, height ?? 72);
 }
