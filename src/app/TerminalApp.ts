@@ -128,7 +128,7 @@ import {
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {accessSync, appendFileSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {shouldProbeGraphics} from '../host/capabilities.js';
+import {shouldProbeGraphics, terminalProfile} from '../host/capabilities.js';
 import {basename, delimiter, dirname, extname, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
@@ -323,6 +323,10 @@ import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} 
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
 import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
+import {createKittyShaderPanel, kittyShaderKey, renderKittyShaderPanel, type KittyShaderPanelState} from '../appearance/KittyShaderPanel.js';
+import {discoverKittyCatalog, kittyBinary, type KittyCatalog} from '../appearance/kittyShaderCatalog.js';
+import {applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, planKittyShaderRemoval, planKittyShaders, readProcessCommand, syncKittyShaders, writtenKittyTrail,
+  type KittyShaderContext, type ShaderGates} from '../appearance/kittyShaders.js';
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
@@ -635,6 +639,8 @@ export class TerminalApp {
       this.renderer.setCursorStyle(cursorStyleSequence(next.cursor.shape, next.cursor.blink));
       if (JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor) || previous.nmsh.palette !== next.nmsh.palette || previous.nmsh.accent !== next.nmsh.accent
         || JSON.stringify(previous.customTheme) !== JSON.stringify(next.customTheme)) this.syncCursorNative(next);
+      if (previous.cursor.renderer !== next.cursor.renderer || previous.presentation.reducedMotion !== next.presentation.reducedMotion
+        || previous.presentation.effectsOff !== next.presentation.effectsOff) void this.syncKittyShaderFiles(next);
     }
     // Off: no model use from this window, and the shared service is told to unload.
     if (turnedOff) this.understanding?.modeChanged();
@@ -1036,6 +1042,10 @@ export class TerminalApp {
   private welcomeBlinkCount = 0;
   private contextGeneration = 0;
   private appearanceHub?: AppearanceHubState;
+  /** /appearance › Kitty shaders (Kitty 0.49+ pipelines); opened from the hub, Esc returns there. */
+  private kittyShaderPanel?: KittyShaderPanelState;
+  /** The installed Kitty catalog, read once per process through Kitty's own resource API. */
+  private kittyCatalogRead?: Promise<KittyCatalog>;
   private keyboardState?: KeyboardState;
   /**
    * Where the currently-open top-level panel (prompt/transcript/appearance/
@@ -2467,6 +2477,11 @@ export class TerminalApp {
       }
       return;
     }
+    if (this.kittyShaderPanel) {
+      this.handleKittyShaderKey(key, this.kittyShaderPanel);
+      this.render();
+      return;
+    }
     if (this.appearanceHub) {
       const action = appearanceHubKey(this.appearanceHub, key, this.promptConfiguration);
       if (action?.kind === 'close') { this.appearanceHub = undefined; this.returnFromPanel(); }
@@ -2481,6 +2496,7 @@ export class TerminalApp {
         else if (action.destination === 'theme') this.openThemeStudio();
         else if (action.destination === 'themeBridge') void this.openThemeBridge();
         else if (action.destination === 'cursor') { this.panelOrigin = undefined; this.openCursorPanel(); }
+        else if (action.destination === 'kittyShaders') void this.openKittyShaders();
         else if (action.destination === 'chroma') this.startChromaSettings();
         else this.focusConfigRow('uiChrome');
       }
@@ -3818,12 +3834,109 @@ export class TerminalApp {
       if (inspected.problems.length) {
         this.appearanceHub = createAppearanceHub(this.host.name, undefined, inspected.problems.join(' '));
         this.appearanceHub.canRestoreHost = true;
+        this.addKittyShaderRow(this.appearanceHub);
         this.render(); return;
       }
     }
     this.appearanceHub = createAppearanceHub(this.host.name, host, this.host.appearanceGuidance);
     this.appearanceHub.canRestoreHost = Boolean(this.host.integration);
+    this.addKittyShaderRow(this.appearanceHub);
     this.render();
+  }
+
+  /** In Kitty the hub gains its shader row; the summary says what is chosen, never that it is loaded. */
+  private addKittyShaderRow(hub: AppearanceHubState): void {
+    if (terminalProfile(process.env) !== 'kitty') return;
+    const chosen = this.promptConfiguration.hostShaders.kitty.effects.filter(effect => effect.enabled).length;
+    hub.kittyShaders = chosen ? `${chosen} effect${chosen === 1 ? '' : 's'} chosen · Kitty 0.49+` : 'Off · Kitty 0.49+ GPU effects';
+  }
+
+  /** A supported catalog is kept for the process; a failed or unsupported read is retried next time (a cold Kitty can time out). */
+  private kittyCatalog(): Promise<KittyCatalog> {
+    const read = this.kittyCatalogRead ??= discoverKittyCatalog(kittyBinary()).catch(() => discoverKittyCatalog(undefined));
+    void read.then(catalog => { if (!catalog.supported && this.kittyCatalogRead === read) this.kittyCatalogRead = undefined; });
+    return read;
+  }
+
+  /** Reduced Motion, Effects Off and the cursor renderer decide what NMSh's Kitty pipeline may contain. */
+  private shaderGates(config: PromptConfiguration = this.promptConfiguration): ShaderGates {
+    return {reducedMotion: isReducedMotion() || config.presentation.reducedMotion, effectsOff: config.presentation.effectsOff, cursorRenderer: config.cursor.renderer};
+  }
+
+  private kittyShaderContext(catalog: KittyCatalog, config: PromptConfiguration = this.promptConfiguration): KittyShaderContext {
+    const base = {env: process.env, platform: process.platform};
+    return {...base, catalog, gates: this.shaderGates(config), launch: inspectKittyLaunch(base, readProcessCommand)};
+  }
+
+  private async openKittyShaders(): Promise<void> {
+    const panel = createKittyShaderPanel(this.promptConfiguration.hostShaders.kitty, this.shaderGates());
+    this.kittyShaderPanel = panel;
+    this.render();
+    const catalog = await this.kittyCatalog();
+    if (this.stopped || this.kittyShaderPanel !== panel) return;
+    panel.catalog = catalog;
+    // Opening the studio applies gate changes made while NMSh was not running (OS Reduced Motion, an edited config).
+    await this.syncKittyShaderFiles(this.promptConfiguration);
+    if (this.stopped || this.kittyShaderPanel !== panel) return;
+    try { panel.inspection = inspectKittyShaders(this.kittyShaderContext(catalog)); } catch (error) { panel.message = error instanceof Error ? error.message : String(error); }
+    this.render();
+  }
+
+  private handleKittyShaderKey(key: Key, panel: KittyShaderPanelState): void {
+    const action = kittyShaderKey(panel, key);
+    if (!action) return;
+    if (action.kind === 'back') {
+      // Esc discards the unconfirmed draft and returns to /appearance.
+      this.kittyShaderPanel = undefined;
+      void this.startAppearance();
+      return;
+    }
+    const catalog = panel.catalog;
+    if (!catalog) return;
+    if (action.kind === 'review' || action.kind === 'remove') {
+      const planned = action.kind === 'review' ? planKittyShaders(panel.draft, this.kittyShaderContext(catalog)) : planKittyShaderRemoval({env: process.env, platform: process.platform});
+      if (planned.ok) panel.confirmation = {plan: planned.plan, offset: 0};
+      else panel.message = planned.error;
+      return;
+    }
+    const reviewed = panel.confirmation?.plan;
+    panel.confirmation = undefined;
+    if (!reviewed) return;
+    // Gates or files may have changed while the review was open: confirm only the plan that would be made now.
+    const plan = reviewed.operation === 'remove' ? reviewed : (() => {
+      const again = planKittyShaders(panel.draft, this.kittyShaderContext(catalog));
+      return again.ok && again.plan.pipelineText === reviewed.pipelineText && JSON.stringify(again.plan.effectiveShaders) === JSON.stringify(reviewed.effectiveShaders) ? reviewed : undefined;
+    })();
+    if (!plan) { panel.message = 'Something changed since the review (Reduced Motion, the cursor renderer or Kitty’s configuration); nothing was written. Press S to review again.'; return; }
+    const applied = applyKittyShaderPlan(plan);
+    if (!applied.ok) { panel.message = applied.error; return; }
+    this.cursorHost = undefined; // the Kitty trail shader decides what Portable may draw
+    const saved = plan.operation === 'remove'
+      ? {...panel.draft, effects: panel.draft.effects.map(effect => ({...effect, enabled: false}))} : structuredClone(panel.draft);
+    this.updateConfiguration(configuration => { configuration.hostShaders.kitty = saved; });
+    panel.draft = structuredClone(saved);
+    panel.dirty = false;
+    try { panel.inspection = inspectKittyShaders(this.kittyShaderContext(catalog)); } catch { /* the message below still applies */ }
+    panel.message = plan.operation === 'remove' ? `Removed NMSh's Kitty shaders. ${plan.guidance}` : plan.guidance;
+  }
+
+  /**
+   * After a reviewed setup, keep NMSh's own Kitty pipeline in step with Reduced Motion, Effects Off and the cursor renderer.
+   * Only NMSh-owned files are rewritten; anything needing a new review is said, not written.
+   */
+  private async syncKittyShaderFiles(next: PromptConfiguration): Promise<void> {
+    const context = {env: process.env, platform: process.platform};
+    try { if (!existsSync(kittyShaderPaths(context).ledger)) return; } catch { return; }
+    const catalog = await this.kittyCatalog();
+    if (this.stopped) return;
+    const result = syncKittyShaders(next.hostShaders.kitty, this.kittyShaderContext(catalog, next));
+    if (result.kind === 'written') this.cursorHost = undefined;
+    if (result.kind === 'written' || result.kind === 'review') {
+      const message = result.kind === 'review' ? `Kitty shaders were not updated: ${result.message}` : result.message!;
+      if (this.kittyShaderPanel) this.kittyShaderPanel.message = message;
+      else this.output.addFrontendInteraction('/appearance', message, result.kind === 'review' ? ERROR : INFO);
+      this.render();
+    }
   }
 
   /** Whether a block's Copy control currently confirms a copy. */
@@ -6370,7 +6483,7 @@ export class TerminalApp {
 
   private hasModalInput(ignorePalette = false): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.kittyShaderPanel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -6563,6 +6676,7 @@ export class TerminalApp {
       }
       return framePanel(rows, columns);
     }
+    if (this.kittyShaderPanel) return framePanel(renderKittyShaderPanel(this.kittyShaderPanel, columns, this.dimensions().rows - 4), columns);
     if (this.appearanceHub) {
       const theme = themeLabel(this.promptConfiguration.nmsh.palette);
       const now = Date.now();
@@ -10317,7 +10431,7 @@ export class TerminalApp {
   }
 
   private cursorFacts(): HostCursorFacts {
-    this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host));
+    this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host), () => writtenKittyTrail({env: process.env, platform: process.platform}));
     return this.cursorHost;
   }
 
@@ -10361,6 +10475,13 @@ export class TerminalApp {
     const host = facts.host === 'other' ? undefined : facts.host;
     if (action.kind === 'native') {
       if (!host || !nativeBackendFor(facts)) { state.message = 'This terminal has no native cursor effects NMSh can use; Portable works here.'; return; }
+      if (host === 'kitty' && (facts.integrated || facts.kittyTrail)) {
+        // Kitty 0.49+ trail styles live in the one Kitty shader studio; /cursor keeps whether there is a trail and its color.
+        this.closeCursorPanel();
+        this.appearanceHub = undefined;
+        void this.openKittyShaders();
+        return;
+      }
       if (facts.integrated) { state.message = `${nativeHostLabel(host)} native is already set up; changes here update NMSh's managed files.`; return; }
       const setup = setupPlan(host);
       const blocked = setup.plan.kind === 'refuse' ? setup.plan.reason : undefined;
@@ -10378,7 +10499,7 @@ export class TerminalApp {
         const applied = applyPlan(setup.plan.plan);
         if (!applied.ok) { state.message = applied.reason; return; }
       }
-      this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value));
+      this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value), () => writtenKittyTrail({env: process.env, platform: process.platform}));
       void written;
       state.message = this.cursorHost.integrated
         ? (reloadInstruction(native.host, {changed: ['fragment']}) ?? `Set up. Renderer Auto now uses ${nativeHostLabel(native.host)} native.`)
@@ -10403,6 +10524,8 @@ export class TerminalApp {
     try {
       const written = writeManagedFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
       this.cursorReload = reloadInstruction(host, written);
+      // Kitty's cursor_trail decides whether a Kitty trail shader draws at all; re-read the facts after it changes.
+      if (host === 'kitty' && written.changed.length) this.cursorHost = undefined;
     } catch { this.cursorReload = 'Could not update the managed cursor files.'; }
   }
   private understandingPanel?: UnderstandingPanelState;

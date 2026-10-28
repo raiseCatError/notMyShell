@@ -1,5 +1,13 @@
 # Native appearance and Welcome Studio handoff
 
+## Slice 2 state (Kitty native shaders) — read first
+
+- Slice 2 branch `feature/kitty-native-shaders-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/kitty-native-shaders-20261028`) is stacked on Slice 1 `feature/appearance-welcome-20261028` @ 4abd014d (PR #515, draft, unmerged). Its PR targets the Slice 1 branch so the diff is Slice 2 only; after #515 merges, rebase/retarget to `dev` only after review — never automatically.
+- Code map: `src/appearance/kittyShaderCatalog.ts` (Kitty-parity parser, constants, curated presets, `kitty +runpy` discovery), `src/appearance/kittyShaders.ts` (inspection, composition, refusals, ledger, plan/apply/remove, sync, launch inspection, `writtenKittyTrail`), `src/appearance/kittyShaderSettings.ts` (persisted `hostShaders.kitty`), `src/appearance/KittyShaderPanel.ts` (studio UI), wiring in `TerminalApp.ts` (`openKittyShaders`, `handleKittyShaderKey`, `syncKittyShaderFiles`, `addKittyShaderRow`), hub row in `AppearanceHub.ts`, cursor ownership in `cursor/backends.ts` (`kittyTrail`, `KITTY_LIGHTNING_BACKEND`) and the Portable `cursor_trail` fix in `cursor/native.ts`.
+- Owned files (macOS default): `~/Library/Application Support/notMyShell/host-appearance/kitty-shaders.{conf,pipeline,json}` plus one recorded hook `# NMSh Kitty shaders …` / `include …kitty-shaders.conf` at the end of the effective kitty.conf.
+- Next slices (all still required): Ghostty GLSL backend enhancements; GPU-enhanced prompt/Chroma/Clean-Rich/completion feedback (only where documented targeting exists); full Shader Studio (remaining catalog: crt-blue, fireworks-rockets, bloom/tft/water/underwater/negative shaders, per-preset viewport); animated Fastfetch/Neofetch and imported logos; Welcome Studio; real full-terminal animated welcome preview; integration, performance and physical QA.
+- Physical Kitty/Ghostty/Zed QA: NOT RUN. GPU rendering: NOT verified (headless compile only).
+
 ## Objective and required scope
 
 Implement native GPU Shader Studio and host appearance, plus a comprehensive Welcome Studio under /appearance. /cursor and /welcome must open canonical editors. Preserve persistent zsh/Bash/Fish PTY, input ownership, raw output, copy, viewport and existing settings. No duplicate engines or contradictory Clean/Rich, Chroma, cursor or welcome settings.

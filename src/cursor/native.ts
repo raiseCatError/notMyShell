@@ -95,7 +95,8 @@ export function fragmentContent(host: NativeHost, settings: CursorSettings, env:
   }
   const palette = effectPalette(settings);
   const decay = {low: '0.15 0.5', medium: '0.1 0.4', high: '0.05 0.25'}[settings.speed];
-  const trail = settings.motion === 'off' ? 0 : 3;
+  // Portable means NMSh draws the trail itself, so Kitty's own trail (and any trail shader) stays off: never two trails.
+  const trail = settings.motion === 'off' || settings.renderer === 'portable' ? 0 : 3;
   return `${header}cursor_trail ${trail}\ncursor_trail_decay ${decay}\ncursor_trail_start_threshold ${Math.max(1, Math.round(settings.advanced.moveThreshold + 1))}\n`
     + (settings.trail.source !== 'cursor' || settings.color.source !== 'host' ? `cursor_trail_color ${hex(palette.trail[0] ?? palette.caret)}\n` : '');
 }

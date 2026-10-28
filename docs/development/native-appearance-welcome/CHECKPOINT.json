@@ -1,0 +1,14 @@
+{
+  "phase": "Slice 2 (Kitty native shaders) implemented, reviewed, canonically verified (1 load-induced live timeout, passes alone); committed on feature/kitty-native-shaders-20261028",
+  "updated": "2026-10-28",
+  "slice1": {"branch": "feature/appearance-welcome-20261028", "head": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474", "pr": 515, "ci": "run 40640910786 success (not re-run)", "state": "draft, unmerged, unchanged"},
+  "slice2": {"branch": "feature/kitty-native-shaders-20261028", "base": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474", "pr": "stacked draft PR targeting feature/appearance-welcome-20261028 (see HANDOFF/progress for number)",
+    "source_manifest_sha256": "a658e9704941d4588014f137d22fc2129f3c72d9650e27e9e5ab113db6620519",
+    "tests": "canonical 4621/4636 pass, 1 fail (outputSelectionLive fish startup timeout; 3/3 alone), 13 skipped, 1 todo; Kitty focused 26/26; tsc clean; diff --check pass",
+    "review": "independent Sonnet review: no blocker; 4 should-fix fixed with regressions"},
+  "evidence": "/Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028 (CHECKPOINT.json, slice2-probe/, slice2-canonical-verify.log, slice2-live-rerun.log)",
+  "physical_qa": "NOT RUN",
+  "gpu_validation": "NOT RUN (headless Kitty parse + slangc compile only)",
+  "unrelated_prs_untouched": [513, 514],
+  "next": "Human: physical Kitty QA of /appearance › Kitty shaders (enable Blaze/Lightning trail with /cursor Motion Tail, Northern Lights, CRT; check user custom_shaders still run; R restores). Agents: Ghostty GLSL slice next (separate stacked PR); never merge automatically; after #515 merges, rebase/retarget only after review."
+}
