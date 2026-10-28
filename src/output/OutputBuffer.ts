@@ -218,9 +218,19 @@ export class OutputBuffer {
 
   private readonly historicalContexts = new Map<number, HistoricalContextSnapshot>();
 
+  private savedWelcome(): WelcomeSnapshot {
+    // Runtime layout includes a private asset path; only the final portable still is durable.
+    const {studio, ...snapshot} = this.welcome!;
+    // Never a private asset path. A customized card that was never painted keeps its layout (without the path) so the
+    // archive does not fall back to the historical card.
+    if (snapshot.still || !studio?.customized) return structuredClone(snapshot);
+    const {assetPath: _path, ...layout} = studio;
+    return structuredClone({...snapshot, studio: layout as typeof studio});
+  }
+
   transcript(): OutputTranscript {
     return {
-      ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
+      ...(this.welcome ? {welcome: this.savedWelcome()} : {}),
       ...(this.firstRun ? {firstRun: {...this.firstRun}} : {}),
       records: this.completed.map(record => ({
         ...record,

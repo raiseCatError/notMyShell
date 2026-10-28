@@ -99,7 +99,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && (transcript.welcome.identity.branch === undefined || typeof transcript.welcome.identity.branch === 'string')
     && (transcript.welcome.identity.dirty === undefined || typeof transcript.welcome.identity.dirty === 'boolean')
     && (transcript.welcome.understanding === undefined || typeof transcript.welcome.understanding === 'string')
-    && (transcript.welcome.provider === undefined || transcript.welcome.provider === 'fastfetch' || transcript.welcome.provider === 'neofetch')
+    && (transcript.welcome.provider === undefined || transcript.welcome.provider === 'fastfetch' || transcript.welcome.provider === 'neofetch' || transcript.welcome.provider === 'macchina' || transcript.welcome.provider === 'zigfetch')
     && (transcript.welcome.captured === undefined
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)

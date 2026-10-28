@@ -80,3 +80,22 @@ NOT RUN: physical Ghostty/Kitty QA, GPU rendering.
 - Focused: shaderPreview, ghosttyShaderPanel, kittyShaderPanel, ghosttyShaders, kittyShaders, appearanceHub, hostIntegration, renderRouting, cursor* — 121/121 after review fixes (slice5-focused-3.log); tsc clean.
 - Live installed Kitty 0.49.2 (private HOME, headless): composed list + compile of the original trio, and each new preset (crt-blue, fireworks-rockets, bloom, tft, water, underwater, negative) compiles; tuned values change the compiled shader versus defaults (slice5-kitty-live.log). Compile only; GPU output NOT verified.
 - Full suite left to CI (user policy 2026-10-28).
+## Slice 6 — Welcome Studio (2026-10-28/29)
+
+- Delegate focused runs: 6a 223/223, 6b 237/237 (welcome/config/graphics/startup editor surfaces; socket-dependent live tests could not run in the delegate sandbox).
+- Lead, socket-capable, under the T7 guard: after 6a, welcome*, startup*, appearanceHub, configuration*, hostIntegration, graphics*, transcript*, vespyrCompositing — 323/323 (2 skipped) (slice6a-lead-focused.log). After 6b + lead fixes: see slice6b-lead-focused.log (recorded in progress.md).
+- `tests/viewImages.test.ts` hung only when run with bare `node --test` (no per-file teardown, real HOME); through the repository runner it passes. Earlier bare runs used the real HOME; real NMSh/Ghostty/Kitty config directories were verified unchanged.
+- Independent Sonnet reviews of 6a and 6b: no blocker; findings fixed (6a by the delegate from REVIEW-6a-FIXES.md; 6b by the lead with regressions).
+
+NOT RUN: physical terminal QA of image/animation playback and P; GPU/graphics protocol output on real hosts.
+
+## Slice 7 — integration, performance (Claude, 2026-10-29)
+
+- Integration branch = Slice 5 (#520) + Slice 6 (#521): source merged without conflicts; typecheck clean.
+- Combined related tests for every slice through the repository runner's isolation (58 files: ghostty*, kittyShader*, shaderPreview, renderRouting, appearanceHub, hostIntegration, hostAppearance*, hostProfiles, cursor*, welcome*, startup*, configuration*, graphics*, transcript*, vespyrCompositing, outputBuffer, imageSurface, viewImages, idleVisuals, motionTransitions), with the staged Ghostty 1.4.0 added to the live checks: 533 tests, 531 pass, 0 fail, 2 skipped (slice7-integration-focused.log).
+- Performance (micro-measurements, Apple silicon MacBook Air, evidence slice7/bench-*.log; scripts slice7/bench-shaders.ts, bench-welcome.mts):
+  - Studio preview frame 13–44 µs; full studio render with preview 0.19 ms (≈0.6% of one core at 30 fps while a run plays; zero once settled — no idle clock).
+  - Written-pass reads (routing, cursor facts) 0.08–0.3 ms, only when the hub/routing view opens or cursor facts are invalidated; Ghostty plan simulation 0.9 ms (on review only).
+  - Welcome startup frame (compose + paint, 120 columns) 0.14–0.19 ms; at ≤30 repaints/s for ≤5 s that is under 30 ms CPU in total; asset admission (64×64 PNG 0.45 ms, 12-frame GIF 3.6 ms) runs off the readiness path.
+- CI recorded once per PR (2026-10-29 ~00:35): #517, #519, #520 all checks pass; #521 pending; #518 failed one live test on Ubuntu (`/resume shows LIVE and ARCHIVED…` timed out waiting for `sleep` to run; Verify jobs fail as its dependants) — a live session test unrelated to the graphics-only change, not rerun (policy).
+- NOT RUN: physical QA (QA_CHECKLIST.md), GPU output, whole-app idle RSS/CPU on real hosts.

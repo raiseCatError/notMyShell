@@ -1,3 +1,4 @@
+import {DEFAULT_WELCOME_STUDIO, normalizeWelcomeStudio, normalizeWelcomePresets, type WelcomeStudio, type SavedWelcomePreset} from '../welcome/model.js';
 import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, moduleDefinition, type ContextModuleId} from '../context/modules.js';
 export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
@@ -648,6 +649,8 @@ export interface PromptConfiguration {
   semanticOutput: boolean;
   /** What new presentation sessions show at the top; archived sessions keep theirs. */
   welcome: WelcomeProviderId;
+  welcomeStudio: WelcomeStudio;
+  welcomePresets: SavedWelcomePreset[];
   /** Ghost-text suggestion provider; external providers fall back to Native. */
   suggestions: SuggestionProviderId;
   /** Native default; Atuin is an explicit local read-only source. */
@@ -913,6 +916,9 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   outputFolding: 'smart',
   semanticOutput: true,
   welcome: 'vespyr',
+  // A missing or unreadable configuration keeps the historical card; only a Studio save selects the native layout.
+  welcomeStudio: {...structuredClone(DEFAULT_WELCOME_STUDIO), customized: false},
+  welcomePresets: [],
   suggestions: 'nmsh',
   history: 'native',
   picker: 'native',
@@ -1125,7 +1131,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, welcomeStudio: normalizeWelcomeStudio(value.welcomeStudio), welcomePresets: normalizeWelcomePresets(value.welcomePresets), suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -1185,7 +1191,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, welcomeStudio: normalizeWelcomeStudio(value.welcomeStudio), welcomePresets: normalizeWelcomePresets(value.welcomePresets), suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 
