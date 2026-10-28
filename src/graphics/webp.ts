@@ -9,7 +9,7 @@ import {IMAGE_LIMITS, ImageError, type Raster} from './raster.js';
 import {guardAsync, identify, malformed} from './formats.js';
 import {decodePng} from './png.js';
 
-interface Converter {
+export interface WebpConverter {
   name: string;
   probe: {file: string; args: string[]} | 'file-exists';
   file: string;
@@ -17,7 +17,7 @@ interface Converter {
   args: string[];
 }
 
-const CONVERTERS: Converter[] = [
+const CONVERTERS: WebpConverter[] = [
   ...(process.platform === 'darwin' ? [{name: 'sips', probe: 'file-exists' as const, file: '/usr/bin/sips', args: ['-s', 'format', 'png', 'in.webp', '--out', 'out.png']}] : []),
   {name: 'dwebp', probe: {file: 'dwebp', args: ['-version']}, file: 'dwebp', args: ['in.webp', '-o', 'out.png']},
   {name: 'magick', probe: {file: 'magick', args: ['-version']}, file: 'magick', args: ['in.webp', 'png:out.png']},
@@ -26,7 +26,7 @@ const CONVERTERS: Converter[] = [
 ];
 
 const TIMEOUT_MS = 8000;
-let probed: Promise<Converter[]> | undefined;
+let probed: Promise<WebpConverter[]> | undefined;
 
 function toolEnv(): NodeJS.ProcessEnv {
   return {PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', LANG: 'C', LC_ALL: 'C'};
@@ -40,9 +40,9 @@ function run(file: string, args: string[], options: {cwd?: string; signal?: Abor
   });
 }
 
-async function available(): Promise<Converter[]> {
+async function available(): Promise<WebpConverter[]> {
   probed ??= (async () => {
-    const found: Converter[] = [];
+    const found: WebpConverter[] = [];
     for (const converter of CONVERTERS) {
       if (converter.probe === 'file-exists') {
         if (await fs.access(converter.file).then(() => true, () => false)) found.push(converter);
@@ -55,6 +55,14 @@ async function available(): Promise<Converter[]> {
     return found;
   })();
   return probed;
+}
+
+/**
+ * Tests only: use exactly these converters instead of probing the machine, so both the "converter present" and
+ * "no converter" paths run on every platform. `undefined` restores real probing.
+ */
+export function setWebpConvertersForTests(converters: readonly WebpConverter[] | undefined): void {
+  probed = converters ? Promise.resolve([...converters]) : undefined;
 }
 
 export async function webpDecoderAvailable(): Promise<{available: boolean; tool?: string}> {
@@ -70,7 +78,7 @@ export function decodeWebp(bytes: Uint8Array, options: {scratchDir: string; sign
     if (converters.length === 0) {
       throw new ImageError('unavailable', process.platform === 'darwin'
         ? 'WebP images need a converter: sips ships with macOS, so it should be present; otherwise install libwebp (brew install webp) or ImageMagick.'
-        : 'WebP images need a converter: install dwebp (libwebp) or ImageMagick.');
+        : 'WebP images need a converter: install dwebp (libwebp), ImageMagick or ffmpeg.');
     }
     await fs.mkdir(options.scratchDir, {recursive: true, mode: 0o700});
     const dir = await fs.mkdtemp(path.join(options.scratchDir, 'webp-'));
