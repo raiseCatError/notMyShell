@@ -1,5 +1,6 @@
 import {foreground, UI_COLORS} from './palette.js';
 import {displayWidth} from '../util/text.js';
+import {checkMark} from './glyphs.js';
 
 const RESET = '\u001B[0m';
 
@@ -27,7 +28,8 @@ export function renderControlRows(controls: ReadonlyArray<readonly [key: string,
 
 /** Compact settings affordances; values remain readable in monochrome and Safe Glyphs. */
 export function renderValueControl(kind: 'number' | 'bool' | 'color' | 'choice', label: string, fraction = 0, color?: {red: number; green: number; blue: number}): string {
-  if (kind === 'bool') return `${label === 'On' ? '(*)' : '( )'} ${label}`;
+  // The shared mark (✔ / · and [x] / [ ] under Safe Glyphs), as renderToggle draws it: never a radio-style (*) toggle.
+  if (kind === 'bool') return `${checkMark(label === 'On')} ${label}`;
   if (kind === 'color') return `${color ? foreground(color) : ''}##${RESET} ${label}`;
   if (kind === 'choice') return `‹ ${label} ›`;
   const fill = Math.round(Math.max(0, Math.min(1, fraction)) * 8);
