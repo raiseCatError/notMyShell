@@ -61,3 +61,12 @@ test('undoing a managed artifact update restores its ownership ledger too',async
  restore(journal,planRestore(journal,journal.list()[0].id),{reviewed:true,overwrite:false});
  assert.equal(ownership('vim',loadLedger(env),env),'owned');
 });
+
+test('a prepared settings checkpoint does not suppress the daily applied checkpoint',t=>{
+ const f=fixture(t);const path=join(f.home,'config.json');writeFileSync(path,'old');
+ const journal=new Journal({home:f.home,directory:join(f.home,'backups')});
+ journal.record([{before:snapshot(path,f.home),after:'failed'}],'settings','Interrupted');
+ const complete=dailySettingsCheckpoint(path,'saved',new Date(),{HOME:f.home});
+ writeFileSync(path,'saved');chmodSync(path,0o600);complete();
+ assert.equal(journal.list().filter(entry=>entry.source==='settings'&&entry.outcome==='applied').length,1);
+});

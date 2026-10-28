@@ -61,12 +61,19 @@ export class Journal {
     });
     return value;
   }
-  list(): JournalEntry[] {
+  readonly unreadable: string[] = [];
+  list(options: {strict?: boolean} = {}): JournalEntry[] {
+    this.unreadable.length = 0;
     this.checked(this.directory);
     let names: string[];
     try { names = readdirSync(this.directory); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
     if (names.length > 4096) throw new Error('Backup directory exceeds the safe entry limit.');
-    return names.filter(name => /^\d{8}T/u.test(name)).sort().reverse().map(name => this.read(name));
+    const entries: JournalEntry[] = [];
+    for (const name of names.filter(name => /^\d{8}T/u.test(name)).sort().reverse()) {
+      try { entries.push(this.read(name)); }
+      catch (error) { if (options.strict) throw error; this.unreadable.push(name); }
+    }
+    return entries;
   }
   content(entry: JournalEntry, index: number): string | undefined {
     const verified = this.read(entry.id);
@@ -87,9 +94,16 @@ export class Journal {
   private prunedKeys():Set<string> {
     const text=snapshot(join(this.directory,'.pruned.json'),this.options.home).content;
     if(text===undefined)return new Set();
-    const keys:unknown=JSON.parse(text);
+    const record = JSON.parse(text);
+    const keys:unknown=Array.isArray(record)?record:record.keys;
     if(!Array.isArray(keys)||keys.length>24000||keys.some(key=>typeof key!=='string'||!/^[a-f0-9]{64}$/u.test(key)))throw new Error('Backup pruning record needs review.');
     return new Set(keys as string[]);
+  }
+  prunedCount(): number {
+    const text = snapshot(join(this.directory, '.pruned.json'), this.options.home).content;
+    if (text === undefined) return 0;
+    const record = JSON.parse(text);
+    return Number.isSafeInteger(record.count) && record.count >= 0 ? record.count : 0;
   }
   provenanceComplete(source:string,path:string):boolean {
     return !this.prunedKeys().has(digest(`${source}:${path}`));
@@ -109,7 +123,11 @@ export class Journal {
       if(lock.owner!=='nmsh-journal'||lock.version!==1||!Number.isSafeInteger(lock.pid)||lock.pid!<=0)throw new Error('Backup lock is invalid; configuration was not changed.');
       let gone=false;try{process.kill(lock.pid!,0);}catch(probe){gone=(probe as NodeJS.ErrnoException).code==='ESRCH';}
       if(!gone)throw new Error('Another NMSh configuration backup is in progress; retry after it finishes.');
-      unchanged(before,this.options.home);rmSync(path);fd=acquire();
+      // A unique quarantine name prevents another stale-lock reclaimer from deleting our new lock.
+      unchanged(before,this.options.home);
+      const stale = `${path}.stale-${randomUUID()}`;
+      renameSync(path, stale);
+      try { fd=acquire(); } finally { rmSync(stale); }
     }
     try {writeFileSync(fd,content);fsyncSync(fd);return this.recordLocked(changes,source,label);}
     finally {closeSync(fd);try{if(this.file(path)===content)rmSync(path);}catch{/* preserve an unexpected replacement */}}
@@ -123,7 +141,25 @@ export class Journal {
       if(!stat.isDirectory()||depth>3)throw new Error('Incomplete backup storage needs review.');
       return readdirSync(path).reduce((sum,name)=>sum+size(join(path,name),depth+1),0);
     };
-    return {bytes:pending.reduce((sum,name)=>sum+size(join(this.directory,name),0),0),count:pending.length};
+    let bytes=0,count=0;
+    for (const name of pending) {
+      const path=join(this.directory,name);const usage=size(path,0);
+      if (Date.now()-lstatSync(path).mtimeMs > 24*60*60*1000) {
+        // The exclusive journal lock also proves legacy staging without an owner has no active writer.
+        const owner=snapshot(join(path,'owner.json'),this.options.home).content;
+        let dead=owner===undefined;
+        if(owner!==undefined) {
+          let lock: {owner?:string;version?:number;pid?:number};
+          try {lock=JSON.parse(owner);} catch {lock={};}
+          if(lock.owner==='nmsh-journal'&&lock.version===1&&Number.isSafeInteger(lock.pid)&&lock.pid!>0) {
+            try {process.kill(lock.pid!,0);} catch(error) {dead=(error as NodeJS.ErrnoException).code==='ESRCH';}
+          }
+        }
+        if(dead) {this.checked(path,true);rmSync(path,{recursive:true});continue;}
+      }
+      bytes+=usage;count++;
+    }
+    return {bytes,count};
   }
   private recordLocked(changes: readonly FileChange[], source: string, label: string): JournalEntry {
     if(!/^[a-z][a-z0-9-]{0,63}$/u.test(source)||label.length>512)throw new Error('Backup source or label is invalid.');
@@ -140,37 +176,49 @@ export class Journal {
       ...(change.after===undefined?{}:{afterBytes:Buffer.byteLength(change.after),afterMode:change.afterMode??change.before.mode}),
     }))};
     const serialized = `${JSON.stringify(entry, null, 2)}\n`;
-    const size = Buffer.byteLength(serialized) + entry.files.reduce((sum, file) => sum + (file.bytes + (file.afterBytes ?? 0)), 0);
+    const ownerContent=JSON.stringify({owner:'nmsh-journal',version:1,pid:process.pid});
+    const size = Buffer.byteLength(ownerContent) + Buffer.byteLength(serialized) + entry.files.reduce((sum, file) => sum + (file.bytes + (file.afterBytes ?? 0)), 0);
     const maxBytes = this.options.maxBytes ?? 64 * 1024 * 1024;
     const maxEntries = this.options.maxEntries ?? 200;
     if (size > maxBytes || maxEntries < 1) throw new Error('Backup capacity limit reached; configuration was not changed.');
     this.checked(this.directory, true);
-    const existing = this.list();
-    const cost = (item: JournalEntry) => Buffer.byteLength(this.file(join(this.directory,item.id,'manifest.json'))) + item.files.reduce((n,f)=>n+f.bytes+(f.afterBytes??0),0);
+    const existing = this.list({strict:true});
+    const cost = (item: JournalEntry) => Buffer.byteLength(snapshot(join(this.directory,item.id,'owner.json'),this.options.home).content??'') + Buffer.byteLength(this.file(join(this.directory,item.id,'manifest.json'))) + item.files.reduce((n,f)=>n+f.bytes+(f.afterBytes??0),0);
     const incomplete=this.incompleteUsage();
     const pruned=this.prunedKeys();
-    const oldMarker=pruned.size?Buffer.byteLength(JSON.stringify([...pruned])):0;
+    const oldMarker=Buffer.byteLength(snapshot(join(this.directory,'.pruned.json'),this.options.home).content??'');
+    const previousCount=this.prunedCount();
     let used = oldMarker + incomplete.bytes + existing.reduce((sum, item) => sum + cost(item), 0);
     let count = existing.length + incomplete.count;
     const victims: JournalEntry[] = [];
-    for (const old of [...existing].reverse()) {
-      if (used + size <= maxBytes && count + 1 <= maxEntries) break;
-      if (protectedSource(old.source) || old.outcome!=='applied') continue;
-      used -= cost(old); count--; victims.push(old);
+    const keep = new Set(existing.filter(item=>protectedSource(item.source)).slice(0,protectedSource(source)?19:20).map(item=>item.id));
+    // The incoming entry anchors its source/paths; retain the newest anchor for every other pair.
+    const anchored = new Set(changes.map(change=>`${source}:${change.before.path}`));
+    for (const item of existing) for(const file of item.files) {
+      const key=`${item.source}:${file.path}`;
+      if(!anchored.has(key)){keep.add(item.id);anchored.add(key);}
     }
-    if (used + size > maxBytes || count + 1 > maxEntries) throw new Error('Backup capacity limit reached; reset, restore and manual entries are kept. Review backups before retrying.');
-    for(const old of victims)for(const file of old.files)pruned.add(digest(`${old.source}:${file.path}`));
-    const marker=JSON.stringify([...pruned]);
-    if(pruned.size>24000||used+size+Buffer.byteLength(marker)-oldMarker>maxBytes)throw new Error('Backup pruning metadata capacity reached; configuration was not changed.');
+    const markerText = () => JSON.stringify({keys:[...pruned],count:previousCount+victims.length});
+    const fits = () => used + size + (victims.length ? Buffer.byteLength(markerText()) - oldMarker : 0) <= maxBytes && count + 1 <= maxEntries;
+    for (const old of [...existing].reverse()) {
+      if (fits()) break;
+      if (keep.has(old.id)) continue;
+      used -= cost(old); count--; victims.push(old);
+      for(const file of old.files)pruned.add(digest(`${old.source}:${file.path}`));
+    }
+    if (!fits()) throw new Error('Backup capacity limit reached after pruning; recent protected checkpoints and source/path anchors are kept. Review backups before retrying.');
+    const marker=markerText();
+    if(pruned.size>24000)throw new Error('Backup pruning metadata capacity reached; configuration was not changed.');
     if(victims.length){this.atomic(join(this.directory,'.pruned.json'),marker);if(this.file(join(this.directory,'.pruned.json'))!==marker)throw new Error('Backup pruning record failed verification.');}
     // Only verified journal entries selected above are eligible; no user paths are ever pruned.
     for (const old of victims) { const path = join(this.directory, old.id); this.checked(path, true); rmSync(path, {recursive: true}); }
     mkdirSync(this.directory, {recursive:true, mode:0o700});
     this.checked(this.directory, true);
     if ((lstatSync(this.directory).mode & 0o077) !== 0) throw new Error('Backup directory must be private (0700); configuration was not changed.');
-    // Publish only a complete verified entry. Interrupted staging is retained for inspection and ignored by history.
+    // Publish only a complete verified entry. Interrupted staging is ignored by history and expires after a day.
     const base = join(this.directory, `.pending-${id}`);
     mkdirSync(base, {mode:0o700}); mkdirSync(join(base,'files'), {mode:0o700}); mkdirSync(join(base,'after'), {mode:0o700});
+    this.atomic(join(base,'owner.json'),ownerContent);
     changes.forEach((change,index) => {
       this.atomic(join(base,'files',String(index)),change.before.content ?? '');
       if(change.after!==undefined)this.atomic(join(base,'after',String(index)),change.after);

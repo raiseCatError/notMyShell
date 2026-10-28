@@ -1,10 +1,12 @@
+import {fragmentPath} from '../src/cursor/native.js';
+import {kittyShaderPaths} from '../src/appearance/kittyShaders.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {planReset,applyReset,type ResetArea} from '../src/backups/reset.js';
+import {planReset,applyReset,discoverResetAreas,ownedSnapshotPaths,type ResetArea} from '../src/backups/reset.js';
 import {Journal} from '../src/backups/journal.js';
 import {snapshot,transact} from '../src/appearance/hostFiles.js';
 import {createChangesPanel,changesKey,renderChangesPanel} from '../src/backups/ChangesPanel.js';
@@ -111,4 +113,44 @@ for(const [columns,height] of [[120,40],[80,24],[60,20],[40,14]])test(`all revie
  capture('history',renderChangesPanel(history,columns,height));changesKey(history,enter);capture('restore-review',renderChangesPanel(history,columns,height));changesKey(history,enter);capture('restore-result',renderChangesPanel(history,columns,height));
  reset.selected.add('settings');capture('reset-choose',renderResetPanel(reset,columns,height));resetKey(reset,enter);capture('reset-impact',renderResetPanel(reset,columns,height));resetKey(reset,enter);capture('reset-backup',renderResetPanel(reset,columns,height));resetKey(reset,enter);capture('reset-confirm',renderResetPanel(reset,columns,height));resetKey(reset,{kind:'text',value:'reset'});resetKey(reset,enter);capture('reset-result',renderResetPanel(reset,columns,height));
  if(process.env.NMSH_BACKUP_SNAPSHOTS){mkdirSync(process.env.NMSH_BACKUP_SNAPSHOTS,{recursive:true});for(const [name,rows]of frames)writeFileSync(join(process.env.NMSH_BACKUP_SNAPSHOTS,`${name}-${columns}x${height}.txt`),rows.map(stripAnsi).join('\n')+'\n');}
+});
+
+test('empty reset writes no journal entry and reports nothing to reset',t=>{
+ const f=fixture(t);const context={env:f.env,platform:'linux' as const};const before=f.journal.list().length;
+ const area:ResetArea={id:'empty',label:'Empty',status:'nothing to reset',changes:[],dependencies:[]};
+ const plan=planReset([area],new Set(['empty']),context);assert.deepEqual(plan.changes,[]);
+ const result=applyReset(plan,f.journal);assert.match(result.results.join(' '),/Nothing to reset/u);assert.equal(f.journal.list().length,before);
+});
+for(const source of ['cursor','keyboard','starship'])test(`second ${source} reset is a no-op`,t=>{
+ const f=fixture(t);const context={env:f.env,platform:'linux' as const};
+ const path=source==='cursor'?fragmentPath('kitty',f.env):join(f.home,`${source}.conf`);
+ const id=source==='cursor'?'kitty-cursor':source;
+ mkdirSync(join(path,'..'),{recursive:true});
+ writeFileSync(path,'original');transact([{before:snapshot(path,f.home),after:'nmsh'}],[],f.home,{source,label:'Set',directory:f.journal.directory});
+ let areas=discoverResetAreas(context,f.journal);applyReset(planReset(areas,new Set([id]),context),f.journal);
+ areas=discoverResetAreas(context,f.journal);assert.equal(areas.find(area=>area.id===id)?.status,'nothing to reset');
+});
+test('outer reset checkpoint excludes unchanged settings',t=>{
+ const f=fixture(t);const before=snapshot(f.path,f.home);const item:ResetArea={id:'test',label:'Test',status:'set up',dependencies:[],changes:[{before,after:'before'}]};
+ const result=applyReset(planReset([item],new Set(['test']),{env:f.env,platform:'linux'}),f.journal);
+ assert.deepEqual(result.entry!.files.map(file=>file.path),[f.path]);
+});
+test('unreadable history remains visible as a notice and other entries are browsable',t=>{
+ const f=fixture(t);const entry=f.journal.list()[0];writeFileSync(join(f.journal.directory,entry.id,'files/0'),'corrupt');
+ const state=createChangesPanel(f.journal,[]);assert.match(renderChangesPanel(state,100,30).map(stripAnsi).join(' '),/unreadable/iu);
+ assert.ok(discoverResetAreas({env:f.env,platform:'linux'},f.journal).length);
+});
+test('manual snapshot discovery includes Kitty slang files even with a refused removal',t=>{
+ const f=fixture(t);const context={env:f.env,platform:'linux' as const};
+ const shader=join(f.home,'owned.slang');writeFileSync(shader,'shader');
+ const paths=kittyShaderPaths(context);mkdirSync(paths.directory,{recursive:true});
+ writeFileSync(paths.ledger,JSON.stringify({shaders:[{path:shader}]}));
+ assert.ok(ownedSnapshotPaths(context,f.journal).includes(shader));
+});
+
+test('changes reports the number of old checkpoints pruned',t=>{
+ const f=fixture(t);const journal=new Journal({home:f.home,directory:f.journal.directory,maxEntries:2});
+ const changes=[{before:snapshot(f.path,f.home),after:'after'}];
+ for(let n=0;n<3;n++){const entry=journal.record(changes,'keyboard',`Keyboard ${n}`);journal.complete(entry);}
+ assert.match(createChangesPanel(journal,[]).message,/2 old backup entries pruned/u);
 });

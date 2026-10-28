@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync, statSync, symlinkSync, mkdirSync} from 'node:fs';
+import {mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync, statSync, symlinkSync, mkdirSync, utimesSync, readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Journal} from '../src/backups/journal.js';
@@ -71,4 +73,71 @@ test('another live journal writer blocks a checkpoint without replacing its lock
  const path=join(f.directory,'.write-lock');const content=JSON.stringify({owner:'nmsh-journal',version:1,pid:process.pid,token:'live'});writeFileSync(path,content,{mode:0o600});
  assert.throws(()=>f.journal.record([{before:snapshot(f.path,f.home),after:'after'}],'cursor','Concurrent'),/in progress/iu);
  assert.equal(readFileSync(path,'utf8'),content);assert.equal(readFileSync(f.path,'utf8'),'before\r\n');
+});
+
+test('old protected checkpoints are bounded while newest twenty and path anchors survive', t => {
+ const f=fixture(t);const journal=new Journal({home:f.home,directory:f.directory,maxEntries:23});
+ const changes=[{before:snapshot(f.path,f.home),after:readFileSync(f.path,'utf8')}];
+ const anchor=journal.record(changes,'cursor','Ownership anchor');journal.complete(anchor);
+ const ids:string[]=[];
+ for(let n=0;n<30;n++){const entry=journal.record(changes,['manual','reset','restore'][n%3],`Snapshot ${n}`);journal.complete(entry);ids.push(entry.id);}
+ const kept=new Set(journal.list().map(entry=>entry.id));
+ assert.equal(kept.size,23);assert.ok(kept.has(anchor.id));
+ for(const id of ids.slice(-20))assert.ok(kept.has(id));
+});
+test('expired pending staging is reclaimed only with a dead recorded owner', t => {
+ const f=fixture(t);mkdirSync(f.directory,{recursive:true,mode:0o700});
+ const stage=(name:string,pid:number)=>{const path=join(f.directory,name);mkdirSync(path,{mode:0o700});writeFileSync(join(path,'owner.json'),JSON.stringify({owner:'nmsh-journal',version:1,pid}),{mode:0o600});utimesSync(path,1,1);return path;};
+ const dead=stage('.pending-dead',2147483647);const live=stage('.pending-live',process.pid);
+ f.journal.record([{before:snapshot(f.path,f.home),after:'after'}],'cursor','Retry');
+ assert.ok(!readdirSync(f.directory).includes('.pending-dead'));assert.ok(readdirSync(f.directory).includes('.pending-live'));
+});
+test('history skips corrupt entries but a dependent checkpoint still refuses', t => {
+ const f=fixture(t);const entry=f.journal.record([{before:snapshot(f.path,f.home),after:'next'}],'cursor','Corrupt');
+ writeFileSync(join(f.directory,entry.id,'files/0'),'damaged');
+ assert.deepEqual(f.journal.list(),[]);
+ assert.throws(()=>f.journal.record([{before:snapshot(f.path,f.home),after:'next'}],'cursor','Blocked'),/hash|verify/iu);
+});
+test('a dead writer lock is recovered without leaving a reusable stale lock name', t => {
+ const f=fixture(t);mkdirSync(f.directory,{recursive:true,mode:0o700});
+ writeFileSync(join(f.directory,'.write-lock'),JSON.stringify({owner:'nmsh-journal',version:1,pid:2147483647}),{mode:0o600});
+ f.journal.record([{before:snapshot(f.path,f.home),after:'next'}],'cursor','Recovered');
+ assert.ok(!readdirSync(f.directory).some(name=>name.includes('lock')));
+});
+
+test('byte cap accounts for pruning metadata before deciding how many entries to remove',t=>{
+ const f=fixture(t);const changes=[{before:snapshot(f.path,f.home),after:readFileSync(f.path,'utf8')}];
+ for(let n=0;n<3;n++){const entry=f.journal.record(changes,'appearance',`Old ${n}`);f.journal.complete(entry);}
+ const total=readdirSync(f.directory,{recursive:true}).reduce((sum,name)=>{const stat=statSync(join(f.directory,String(name)));return sum+(stat.isFile()?stat.size:0);},0);
+ const journal=new Journal({home:f.home,directory:f.directory,maxBytes:total+30});
+ journal.record(changes,'appearance','Next');
+ assert.ok(journal.list().length<4);assert.ok(journal.prunedCount()>0);
+});
+
+test('stale recovery never unlinks a competing writer that wins exclusive acquisition',t=>{
+ const f=fixture(t);mkdirSync(f.directory,{recursive:true,mode:0o700});
+ const lock=join(f.directory,'.write-lock');
+ writeFileSync(lock,JSON.stringify({owner:'nmsh-journal',version:1,pid:2147483647}),{mode:0o600});
+ const live=JSON.stringify({owner:'nmsh-journal',version:1,pid:process.pid,token:'winner'});
+ const rename=fs.renameSync;let quarantined=false;
+ const mocked=t.mock.method(fs,'renameSync',((from,to)=>{
+  rename(from,to);
+  if(String(from)===lock){quarantined=true;assert.match(String(to),/\.stale-/u);writeFileSync(lock,live,{mode:0o600,flag:'wx'});}
+ }) as typeof fs.renameSync);
+ syncBuiltinESMExports();
+ try {
+  assert.throws(()=>f.journal.record([{before:snapshot(f.path,f.home),after:'next'}],'cursor','Race'),/EEXIST/u);
+  assert.ok(quarantined);assert.equal(readFileSync(lock,'utf8'),live);
+  assert.equal(readFileSync(f.path,'utf8'),'before\r\n');
+ }finally{mocked.mock.restore();syncBuiltinESMExports();}
+});
+
+test('the newest source/path anchor is retained even if its write was interrupted',t=>{
+ const f=fixture(t);const changes=[{before:snapshot(f.path,f.home),after:readFileSync(f.path,'utf8')}];
+ const old=f.journal.record(changes,'cursor','Old applied');f.journal.complete(old);
+ const newest=f.journal.record(changes,'cursor','Interrupted');
+ const journal=new Journal({home:f.home,directory:f.directory,maxEntries:2});
+ journal.record(changes,'appearance','Different source');
+ assert.ok(journal.list().some(entry=>entry.id===newest.id));assert.throws(()=>journal.read(old.id));
+ assert.equal(journal.provenanceComplete('cursor',f.path),false);
 });

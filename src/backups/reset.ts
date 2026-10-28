@@ -33,12 +33,16 @@ function area(id: string,label: string,build:()=>{changes: readonly FileChange[]
 }
 /** A legacy adapter without a ledger can be reset only with an applied journal record and an exact after hash. */
 function fromJournal(journal: Journal, source: string, accept: (path: string)=>boolean): FileChange[] {
-  const entries=journal.list().filter(entry=>entry.source===source && entry.outcome==='applied');
+  const entries=journal.list({strict:true}).filter(entry=>entry.source===source && entry.outcome==='applied');
   const current=new Map<string,FileSnapshot>();const reverted=new Map<string,string|undefined>();
+  // A reset can already have restored the earliest before-image for a path.
+  const originals=new Map<string,string|undefined>();
+  for(const entry of [...entries].reverse())entry.files.forEach((file,index)=>{if(accept(file.path)&&!originals.has(file.path))originals.set(file.path,journal.content(entry,index));});
   for(const entry of entries)entry.files.forEach((file,index)=>{
     if(!accept(file.path))return;
     if(!journal.provenanceComplete(source,file.path))throw new Error(`${file.path}: older automatic backups were pruned; ownership-only reset is skipped. Use /changes to review an available snapshot.`);
     const before=current.get(file.path)??snapshot(file.path,journal.options.home,true);current.set(file.path,before);
+    if(before.content===originals.get(file.path)){reverted.set(file.path,before.content);return;}
     const text=reverted.has(file.path)?reverted.get(file.path):before.content;
     const original=journal.content(entry,index),written=journal.writtenContent(entry,index);
     reverted.set(file.path,reverseOwnedEdit(original,written,text,file.path));
@@ -142,12 +146,10 @@ export function planReset(areas: ResetArea[], selected: ReadonlySet<string>, con
     steps.push({area:item,changes:stepChanges});preview.push(item.label,...stepChanges.flatMap(change=>changeDiff(change).lines));
   }
   const changes=[...byPath].map(([path,value])=>({before:value.before,after:virtual.get(path),afterMode:value.mode}));
-  const config=join(nmshConfigDirectory(context.env),'config.json');
-  // config.json is always part of the safety checkpoint, even when settings were not selected.
-  if(!byPath.has(config)){const before=snapshot(config,homeOf(context));changes.push({before,after:before.content,afterMode:before.mode});}
   return {areas:chosen,changes,dependencies:chosen.flatMap(item=>item.dependencies),preview,steps};
 }
-export function applyReset(plan:ResetPlan,journal:Journal):{entry:JournalEntry;results:string[];paths:string[]} {
+export function applyReset(plan:ResetPlan,journal:Journal):{entry?:JournalEntry;results:string[];paths:string[]} {
+  if(!plan.steps.length||!plan.changes.length)return {results:['Nothing to reset'],paths:[]};
   for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
   const entry=journal.record(plan.changes,'reset',`Reset ${plan.steps.map(step=>step.area.label).join(', ')}`);
   for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
@@ -180,9 +182,9 @@ export function ownedSnapshotPaths(context:AppearanceContext,journal:Journal):st
     }
     for(const recordPath of [appearance.ledger,shaders.ledger]){
       const file=snapshot(recordPath,home);if(file.content===undefined)continue;
-      let record:{hostPath?:unknown;passes?:Array<{path?:unknown}>};try{record=JSON.parse(file.content);}catch{continue;}
+      let record:{hostPath?:unknown;passes?:Array<{path?:unknown}>;shaders?:Array<{path?:unknown}>};try{record=JSON.parse(file.content);}catch{continue;}
       if(typeof record.hostPath==='string'&&appearance.candidates.includes(record.hostPath))paths.add(record.hostPath);
-      for(const pass of Array.isArray(record.passes)?record.passes:[])if(typeof pass.path==='string'){
+      for(const pass of [...(Array.isArray(record.passes)?record.passes:[]),...(Array.isArray(record.shaders)?record.shaders:[])])if(typeof pass.path==='string'){
         // The checked snapshot refuses paths outside HOME and symbolic links; ledger data is never executed.
         snapshot(pass.path,home);paths.add(pass.path);
       }

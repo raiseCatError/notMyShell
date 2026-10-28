@@ -1,3 +1,5 @@
+import {Journal} from '../src/backups/journal.js';
+import {createChangesPanel} from '../src/backups/ChangesPanel.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
@@ -85,4 +87,23 @@ test('mkdir of missing parent still works', () => {
     assert.equal(existsSync(nested), true);
     mkdirSync(join(box.dir, 'y'));
   } finally { box.done(); }
+});
+
+test('settings save survives a rejected checkpoint under a group writable HOME', () => {
+ const box=sandbox();box.path=join(box.dir,'.config/nmsh/config.json');const previous=process.env.HOME;process.env.HOME=box.dir;
+ try {chmodSync(box.dir,0o775);savePromptConfiguration({...loadPromptConfiguration(box.path),glyphStyle:'safe'},box.path);assert.equal(loadPromptConfiguration(box.path).glyphStyle,'safe');
+ const journal=new Journal({home:box.dir,directory:join(box.dir,'.config/nmsh/backups')});
+ assert.match(createChangesPanel(journal,[]).message,/Settings backup unavailable/u);
+ savePromptConfiguration({...loadPromptConfiguration(box.path),glyphStyle:'safe'},box.path);
+ assert.doesNotMatch(createChangesPanel(journal,[]).message,/Settings backup unavailable/u);
+ }
+ finally {if(previous===undefined)delete process.env.HOME;else process.env.HOME=previous;box.done();}
+});
+
+test('settings still save when checkpoint completion fails',t=>{
+ const box=sandbox();t.after(box.done);
+ t.mock.method(Journal.prototype,'complete',()=>{throw new Error('completion unavailable');});
+ savePromptConfiguration({...loadPromptConfiguration(box.path),glyphStyle:'safe'},box.path);
+ assert.equal(loadPromptConfiguration(box.path).glyphStyle,'safe');
+ assert.match(createChangesPanel(new Journal({home:box.dir,directory:join(box.dir,'backups')}),[]).message,/completion unavailable/u);
 });

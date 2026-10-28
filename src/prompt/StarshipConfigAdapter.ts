@@ -1,5 +1,5 @@
 import {snapshot, transact} from '../appearance/hostFiles.js';
-import {Journal, journalDirectory} from '../backups/journal.js';
+import {journalDirectory} from '../backups/journal.js';
 import {homedir} from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -122,9 +122,8 @@ export class StarshipConfigAdapter {
     if (proposal.proposed === proposal.original) return undefined;
     const home = this.env.HOME || homedir();
     const directory = journalDirectory(home, this.env);
-    transact([{before: snapshot(proposal.path, home, true), after: proposal.proposed}], [], home,
+    const entry = transact([{before: snapshot(proposal.path, home, true), after: proposal.proposed}], [], home,
       {source: 'starship', label: `${proposal.module}.disabled = ${proposal.disabled}`, directory});
-    const entry = new Journal({home, directory}).list()[0]!;
-    return current.exists ? join(directory, entry.id, 'files', '0') : undefined;
+    return current.exists && entry ? join(directory, entry.id, 'files', '0') : undefined;
   }
 }

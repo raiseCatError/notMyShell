@@ -22,7 +22,7 @@ export function resetKey(state:ResetPanel,key:Key):{close?:true;paths?:string[]}
       }
     }else if(state.step==='impact'){
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));
-      if(key.kind==='enter'&&state.review?.shown){state.step='backup';state.shown=false;state.review={offset:0,plan:{preview:[`Backup directory: ${state.journal.directory}`, 'Includes all affected files, their ownership records and config.json.',
+      if(key.kind==='enter'&&state.review?.shown){state.step='backup';state.shown=false;state.review={offset:0,plan:{preview:[`Backup directory: ${state.journal.directory}`, 'Includes files changed by the reset and their ownership records.',
         ...state.plan!.changes.map(change=>change.before.path)],guidance:'Backup must be written, read back and hash verified before any reset. Enter advances to final typed confirmation.'}};}
     }else if(state.step==='backup'){
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));
@@ -33,7 +33,7 @@ export function resetKey(state:ResetPanel,key:Key):{close?:true;paths?:string[]}
       else if(key.kind==='enter'){
         if(state.typed==='reset'&&state.shown){
           const result=applyReset(state.plan!,state.journal);state.results=result.results;
-          state.message=`Backup ${result.entry.id}. Undo: /changes → ${result.entry.id}. Terminal configuration may need a reload.`;state.step='result';state.review=resultReview(state);
+          state.message=result.entry?`Backup ${result.entry.id}. Undo: /changes → ${result.entry.id}. Terminal configuration may need a reload.`:'Nothing to reset';state.step='result';state.review=resultReview(state);
           return {paths:result.paths};
         }
         state.message='Cancelled: the word did not match reset exactly. Nothing was written.';

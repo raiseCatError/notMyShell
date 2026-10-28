@@ -1,3 +1,4 @@
+import {takeSettingsCheckpointFailure} from './settings.js';
 import {dirname,join} from 'node:path';
 import type {Key} from '../terminal/keys.js';
 import {renderStudioLayout, renderStudioReview, studioWrap, type StudioReview} from '../ui/StudioLayout.js';
@@ -8,11 +9,16 @@ export interface ChangesPanel {
   selected:number;view:'list'|'review'|'confirm'|'result';review?:StudioReview;restore?:RestorePlan;message:string;shown:boolean;
 }
 export function createChangesPanel(journal:Journal,ownershipPaths:readonly string[]):ChangesPanel {
-  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),selected:0,view:'list',message:'Automatic entries are pruned at 200 entries / 64 MiB. Reset, restore and manual checkpoints are kept.',shown:false};
+  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),selected:0,view:'list',message:'History is capped at 200 entries / 64 MiB; newest 20 protected checkpoints and source/path anchors are kept.',shown:false};
   refresh(state);return state;
 }
 function refresh(state:ChangesPanel):void {
   state.entries=state.journal.list();state.statuses.clear();
+  const notices:string[]=[];
+  if(state.journal.unreadable.length)notices.push(`${state.journal.unreadable.length} unreadable backup entries skipped.`);
+  try {const count=state.journal.prunedCount();if(count)notices.push(`${count} old backup entries pruned.`);}catch{notices.push('Backup pruning record unreadable.');}
+  const failure=takeSettingsCheckpointFailure(state.journal.directory);if(failure)notices.push(failure);
+  if(notices.length)state.message=notices.join(' ');
   for(const entry of state.entries)for(const file of entry.files){try{state.statuses.set(`${entry.id}:${file.path}`,state.journal.status(file));}catch{state.statuses.set(`${entry.id}:${file.path}`,'unreadable / unsafe path');}}
   state.selected=Math.max(0,Math.min(state.selected,state.entries.length-1));
 }
