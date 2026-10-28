@@ -69,7 +69,7 @@ const READS: Record<Shell, Read[]> = {
 
 for (const shell of ['zsh', 'bash', 'fish'] as const) {
   const available = supported && (shell === 'zsh' || (shell === 'bash' ? bash : fish));
-  test(`live ${shell}: a waiting read gets the answer typed at once or after a pause; nothing is queued, run or drawn`, {skip: available ? false : `${shell} not installed`, timeout: 240_000}, async () => {
+  test(`live ${shell}: a waiting read gets immediate or delayed input, with explicit recovery when ambiguous; nothing is queued, run or drawn`, {skip: available ? false : `${shell} not installed`, timeout: 240_000}, async () => {
     const {sandbox, frontend} = await start(shell);
     try {
       for (const reactionMs of [0, 300]) {
@@ -82,7 +82,14 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
           await pause(reactionMs);
           await type(frontend, read.keys);
           if (read.enter) frontend.pty.write('\r');
-          await frontend.waitFor(read.answered, mark, 10_000);
+          const replyDeadline = Date.now() + 10_000;
+          await until(() => read.answered.test(strip(frontend.output.slice(mark)))
+            || /Can.t tell whether \S+ is reading your typing/u.test(strip(frontend.output.slice(mark))), 10_000, `${what}: answer or explicit ownership choice`);
+          if (!read.answered.test(strip(frontend.output.slice(mark)))) {
+            assert.equal(await queued(sandbox), 0, `${what}: ambiguous input is not command approval`);
+            frontend.pty.write('\u0013');
+          }
+          await frontend.waitFor(read.answered, mark, Math.max(1, replyDeadline - Date.now()));
           // The answered command completes (its record is journaled after the screen, later on a slower host; Fish's
           // reader has the terminal, so its output is not journaled) and the shell is back at its prompt. Until then
           // the program's output can be on screen while the command still runs, and an Enter then queues, as designed.
@@ -106,7 +113,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
   });
 }
 
-test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during sleep or a loop holds the line for approval, never run by itself', {skip: supported ? false : 'unsupported platform', timeout: 180_000}, async () => {
+test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during sleep or a loop stays in ownership quarantine and never runs by itself', {skip: supported ? false : 'unsupported platform', timeout: 180_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     // Ctrl+Q composes a queue entry; the reader never sees it. Enter then answers the reader.
@@ -132,15 +139,14 @@ test('live zsh: Ctrl+Q queues while a read waits, Enter answers it; Enter during
       await pause(entry.endsWith('LOOP') ? 1300 : 0);
       await type(frontend, entry);
       frontend.pty.write('\r');
-      await until(async () => await queued(sandbox) === 1, 5000, `${entry} to be held`);
+      await frontend.waitFor(/Can.t tell whether (?:sleep|for) is reading your typing|Typed while (?:sleep|for) ran[^\n]*held, not run/u, mark, 5000);
+      assert.equal(await queued(sandbox), 0, 'ownership uncertainty never becomes command approval');
       await until(async () => (await records(sandbox)).some(record => record.command === command), 15_000, `${command} to complete`);
       await pause(1500);
       assert.equal((await records(sandbox)).filter(record => record.command === entry).length, 0, `${entry} did not run by itself`);
-      const review = frontend.mark;
-      frontend.pty.write('\r');
-      await frontend.waitFor(/Approve and run this command\?/u, review);
-      frontend.pty.write('\r');
-      await until(async () => (await records(sandbox)).filter(record => record.command === entry).length === 1, 15_000, `${entry} to run once, approved`);
+      assert.match(strip(frontend.output.slice(mark)), /held, not run/u, 'completion invalidates delivery but preserves review');
+      frontend.pty.write('\u001b[27u');
+      await frontend.run('echo AFTER-QUARANTINE', /AFTER-QUARANTINE/u);
     }
   } finally { await sandbox.dispose(); }
 });
@@ -159,13 +165,18 @@ test('live zsh: a command typed right after a read returns, or right after Ctrl+
     await frontend.waitFor(/got:y/u, mark, 10_000);
     // Entered before the shell's prompt was back, the line was typed while the command ran, so it is held for approval
     // (#426); entered after, it runs. Either way it runs exactly once, never by itself while unverified.
-    await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`) || /typed while read ran/u.test(strip(frontend.output.slice(mark))),
+    await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`) || /[Tt]yped while read ran/u.test(strip(frontend.output.slice(mark))),
       15_000, 'the typed command to run, or to be held');
     if (!(await records(sandbox)).some(record => record.command === `echo X >> ${marker}`)) {
       await until(async () => (await records(sandbox)).some(record => record.command.startsWith('read -k 1')), 15_000, 'the read to complete');
       const review = frontend.mark;
-      frontend.pty.write('\r');
-      await frontend.waitFor(/Approve and run this command\?/u, review);
+      if (await queued(sandbox)) {
+        frontend.pty.write('\r');
+        await frontend.waitFor(/Approve and run this command\?/u, review);
+      } else {
+        frontend.pty.write('\t');
+        await frontend.waitFor(/echo X >>/u, review);
+      }
       frontend.pty.write('\r');
       await until(async () => (await records(sandbox)).some(record => record.command === `echo X >> ${marker}`), 15_000, 'the approved command to run');
     }

@@ -42,9 +42,9 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       frontend.pty.write('\r');
       await frontend.waitFor(/❯ line one/u, mark);
       await pause(500);
-      // Enter holds it for approval: a note in the transcript and a queue row.
+      // Enter moves the draft into ownership quarantine; this chrome must not resize the PTY.
       frontend.pty.write('\r');
-      await frontend.waitFor(/never runs by itself|waits for your approval/u, mark);
+      await frontend.waitFor(/Can.t tell whether sh is reading your typing/u, mark);
       await pause(500);
       assert.equal(count(), 0, 'no signal from NMSh\'s own chrome');
       frontend.pty.resize(100, 40);

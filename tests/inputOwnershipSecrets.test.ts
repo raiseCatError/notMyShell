@@ -201,73 +201,43 @@ test('a second hidden question NMSh sees while the reply is held gets it, never 
   } finally { f.dispose(); }
 });
 
-test('an ordinary command typed after a hidden answer, once the terminal echoes again: drawn, never discarded; Enter holds it for approval, Ctrl+Q runs it after', async t => {
+test('an ordinary command after a hidden answer: echo permits editing, ambiguous Enter needs a choice, Ctrl+Q explicitly queues', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('sudo -k make install', 'Password:');
-    f.answerHidden('pw');
-    f.state();
-    f.tick(300);
-    f.type('make test');
-    f.answer('visible');
-    await settled();
-    assert.equal(f.text(), 'make test', 'drawn as the next command');
-    f.enter();
-    f.answer('visible');
-    await settled();
-    assert.deepEqual(f.adds(), ['make test'], 'kept in the queue, not discarded');
-    assert.equal(f.owner.state.entries[0]?.condition, 'approve', 'a plain Enter while sudo runs holds it for approval');
-    f.type('make lint');
-    f.answer('visible');
-    await settled();
+    f.answerHidden('pw'); f.state(); f.tick(300);
+    f.type('make test'); f.answer('visible'); await settled();
+    assert.equal(f.text(), 'make test');
+    f.enter(); f.answer('visible'); await settled();
+    assert.deepEqual(f.adds(), [], 'ownership hold, not approval queue');
     f.key('\u0011');
-    f.complete(0);
-    await settled();
-    assert.deepEqual(f.dispatched, [], 'the held line is first, so nothing runs before the person approves it');
+    assert.equal(f.text(), 'make test', 'Ctrl+Q reviews the held text without submitting');
     f.enter();
-    f.tick(1000);
-    f.enter();
-    await settled();
-    assert.deepEqual(f.dispatched, ['make test'], 'approved, it runs once');
-    f.begin('make test');
-    f.complete(0);
-    await settled();
-    assert.deepEqual(f.dispatched, ['make test', 'make lint'], 'and the Ctrl+Q command after it, in order, with no approval');
-    assert.doesNotMatch(f.screen(), HELD);
+    assert.deepEqual(f.adds(), ['make test']);
+    f.type('make lint'); f.answer('visible'); await settled(); f.key('\u0011');
+    f.complete(0); await settled();
+    assert.deepEqual(f.dispatched, ['make test']);
+    f.begin('make test'); f.complete(0); await settled();
+    assert.deepEqual(f.dispatched, ['make test', 'make lint']);
   } finally { f.dispose(); }
 });
 
-test('a reply typed before a later hidden question with no prompt is queued (NMSh could not know), then waits for approval, never running by itself', async t => {
+test('a reply entered before a later hidden question stays private and needs explicit send, never runs by itself', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('read -s a; sleep 2; read -s b');
-    f.answerHidden('first');
-    // The read returned; the command works with the terminal echoing; nothing asks.
-    f.state();
-    f.tick(1500);
-    f.type(SECRET);
-    f.answer('visible');
-    await settled();
-    f.enter();
-    f.answer('visible');
-    await settled();
-    assert.deepEqual(f.adds(), [SECRET], 'queued like any command typed while one runs (documented limit)');
-    // The second question, with no prompt: from now on that entry may be its reply.
-    f.tick(500);
-    f.hidden();
-    await settled();
-    const entry = f.owner.state.entries.find(item => item.text === SECRET);
-    assert.equal(entry?.condition, 'approve', 'it waits for approval');
-    assert.match(f.transcript(), /hidden input/u, 'a note says why, without the text');
-    assert.equal(f.transcript().includes(SECRET), false);
-    // The person answers the question again; the command succeeds: the entry still does not run.
-    f.type('second');
-    f.enter();
-    f.complete(0);
-    await settled();
-    f.neverRun(SECRET, 'after the command succeeded');
+    f.answerHidden('first'); f.state(); f.tick(1500);
+    f.type(SECRET); f.answer('visible'); await settled();
+    f.enter(); f.answer('visible'); await settled();
+    assert.deepEqual(f.adds(), []);
+    f.tick(500); f.hidden(); await settled();
+    assert.equal(f.written.join(''), 'first\r', 'even later hidden evidence cannot approve ambiguous Enter');
+    f.nowhere(SECRET, 'late hidden question');
+    f.key('\u0013');
+    assert.equal(f.written.join(''), `first\r${SECRET}\r`);
+    f.complete(0); await settled(); f.neverRun(SECRET, 'after');
   } finally { f.dispose(); }
 });
 
@@ -417,27 +387,19 @@ test('gate: a password and Enter typed before the program asks: not run, not lef
   } finally { f.dispose(); }
 });
 
-test('gate: a visible reply queued before NMSh saw the read waits for approval once the question is seen; never run after it', async t => {
+test('gate: echo-only Enter stays held after a late likely read; explicit send recovers it without approval queueing', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin(`read -r QA_REPLY; printf 'ANSWER=%s\\n' "$QA_REPLY"`);
-    // A loaded machine: the look cannot yet tell that the shell's builtin reads, so the Enter queues the reply.
-    f.type('hello');
-    f.answer('visible'); await settled();
-    f.enter();
-    f.answer('visible'); await settled();
-    assert.deepEqual(f.adds(), ['hello'], 'queued (documented limit under load)');
-    f.tick(1500);
-    f.state({since: Date.now() - 1400, confidence: 'likely', mode: 'line'});
-    await settled();
-    assert.equal(f.owner.state.entries.find(item => item.text === 'hello')?.condition, 'approve', 'it waits for approval');
-    assert.match(f.transcript(), /asked for input/u);
-    // The person answers again; the command succeeds; the reply is never run as a command.
-    f.type('hello');
-    f.enter();
-    f.complete(0); await settled();
-    assert.deepEqual(f.dispatched, [], 'never run after the command');
+    f.type('hello'); f.answer('visible'); await settled();
+    f.enter(); f.answer('visible'); await settled();
+    assert.deepEqual(f.adds(), []);
+    f.tick(1500); f.state({since: Date.now() - 1400, confidence: 'likely', mode: 'line'}); await settled();
+    assert.deepEqual(f.written, [], 'likely inference cannot release the Enter');
+    f.key('\u0013');
+    assert.equal(f.written.join(''), 'hello\r');
+    f.complete(0); await settled(); assert.deepEqual(f.dispatched, []);
   } finally { f.dispose(); }
 });
 
@@ -458,10 +420,9 @@ test('#426 residual: a reply queued before a timed prompt-less read NMSh never s
     f.answer('visible'); await settled();
     f.enter();
     f.answer('visible'); await settled();
-    assert.deepEqual(f.adds(), [SECRET], 'queued (NMSh could not know)');
-    const entry = f.owner.state.entries.find(item => item.text === SECRET);
-    assert.equal(entry?.condition, 'approve', 'it waits for approval');
-    assert.match(f.transcript(), /never runs by itself/u, 'a note says why');
+    assert.deepEqual(f.adds(), [], 'the ambiguous answer stays in the ownership hold');
+    assert.equal(f.text(), '', 'no future command draft');
+    assert.match(f.screen(), /Can.t tell whether sleep is reading/u);
     assert.equal(f.transcript().includes(SECRET), false, 'the note never repeats the text');
     // No question was ever reported: the read gave up unseen, and the command succeeded.
     f.tick(1500);
