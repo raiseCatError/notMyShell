@@ -62,7 +62,7 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
       ? {command: 'osascript', args: [...GHOSTTY_NEW_WINDOW_SCRIPT.flatMap(line => ['-e', line]), ...argv]}
       : {command: 'ghostty', args: ['-e', ...argv]}};
   }
-  if (profile === 'kitty' || (profile === 'baseline' && env.KITTY_WINDOW_ID)) {
+  if (profile === 'kitty') {
     // Needs kitty remote control (allow_remote_control); failure falls back like any unsupported host.
     return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
@@ -82,6 +82,10 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
   if (env.WT_SESSION && !env.TERM_PROGRAM) {
     // Reachable from WSL when Windows Terminal forwards WT_SESSION; NMSh does not drive Windows from Linux.
     return {capabilities, integration, keyboardGuidance: guidance, name: 'Windows Terminal'};
+  }
+  if (profile === 'baseline' && env.KITTY_WINDOW_ID) {
+    // Inside tmux the outer Kitty is named by KITTY_WINDOW_ID, after the hosts TERM_PROGRAM names (as before).
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
   if (program === 'vscode') return {capabilities, integration, keyboardGuidance: guidance, name: 'VS Code'};
   // Zed exposes no documented way to open a command in a new integrated

@@ -1061,6 +1061,8 @@ export class TerminalApp {
   private appearanceHub?: AppearanceHubState;
   /** /appearance › Kitty shaders (Kitty 0.49+ pipelines); opened from the hub, Esc returns there. */
   private kittyShaderPanel?: KittyShaderPanelState;
+  /** /cursor › Host native is reading Kitty's catalog to choose the studio or the older setup; a second Enter waits for it. */
+  private kittyRouteChecking = false;
   /** The GLSL shader studio (NMSh's own custom-shader passes); host detection and writes live in the appearance layer. */
   private readonly glslStudio = new GlslShaderStudio({
     configuration: () => this.promptConfiguration,
@@ -3963,7 +3965,10 @@ export class TerminalApp {
     // Gates or files may have changed while the review was open: confirm only the plan that would be made now.
     const plan = reviewed.operation === 'remove' ? reviewed : (() => {
       const again = planKittyShaders(panel.draft, this.kittyShaderContext(catalog, trail.config));
-      return again.ok && again.plan.pipelineText === reviewed.pipelineText && JSON.stringify(again.plan.effectiveShaders) === JSON.stringify(reviewed.effectiveShaders) ? reviewed : undefined;
+      // The /cursor changes shown in the review must be the ones applied now (Motion or the renderer may have changed meanwhile).
+      const shown = reviewed.preview.filter(line => line.startsWith('Also changes '));
+      return again.ok && again.plan.pipelineText === reviewed.pipelineText && JSON.stringify(again.plan.effectiveShaders) === JSON.stringify(reviewed.effectiveShaders)
+        && JSON.stringify(shown) === JSON.stringify(trail.changes.map(change => `Also changes ${change}`)) ? reviewed : undefined;
     })();
     if (!plan) { panel.message = 'Something changed since the review (Reduced Motion, the cursor renderer or Kitty’s configuration); nothing was written. Press S to review again.'; return; }
     const applied = applyKittyShaderPlan(plan);
@@ -3989,7 +3994,9 @@ export class TerminalApp {
    */
   private kittyTrailFollowUp(draft: KittyShaderSettings, catalog: KittyCatalog, config: PromptConfiguration = this.promptConfiguration): {config: PromptConfiguration; changes: string[]} {
     const trail = draft.effects.some(effect => effect.enabled && catalog.offered.some(item => item.definition.id === effect.id && item.definition.category === 'cursor'));
-    if (!trail || (config.cursor.motion !== 'off' && config.cursor.renderer !== 'portable')) return {config, changes: []};
+    // Under Reduced Motion or Effects Off the pipeline has no trail, so /cursor is left alone.
+    const gates = this.shaderGates(config);
+    if (!trail || gates.reducedMotion || gates.effectsOff || (config.cursor.motion !== 'off' && config.cursor.renderer !== 'portable')) return {config, changes: []};
     const changes: string[] = [];
     const cursor = {...config.cursor};
     if (cursor.motion === 'off') { cursor.motion = 'tail'; changes.push('/cursor Motion: Off → Tail, so there is a trail for Kitty to draw.'); }
@@ -10642,8 +10649,10 @@ export class TerminalApp {
       if (host === 'kitty') {
         // First time: a Kitty with the shader catalog (0.49+) goes straight to the studio, which sets the trail up itself.
         // An older Kitty keeps the built-in cursor_trail setup.
+        if (this.kittyRouteChecking) return;
+        this.kittyRouteChecking = true;
         state.message = 'Checking Kitty’s shader support…';
-        void this.kittyCatalog().then(catalog => {
+        void this.kittyCatalog().finally(() => { this.kittyRouteChecking = false; }).then(catalog => {
           if (this.stopped || (this.cursorPanel ?? this.setupState?.cursorPanel) !== state) return;
           state.message = undefined;
           if (catalog.supported) openKittyStudio();

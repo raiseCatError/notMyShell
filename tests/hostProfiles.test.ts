@@ -181,6 +181,8 @@ test('host identity: the terminal’s own TERM wins over an inherited TERM_PROGR
   assert.equal(terminalProfile({TERM: 'xterm-256color', TERM_PROGRAM: 'zed', KITTY_WINDOW_ID: '1'}), 'zed');
   assert.equal(detectTerminalHost({TERM: 'tmux-256color', TERM_PROGRAM: 'tmux', TMUX: '/t,1,0', GHOSTTY_RESOURCES_DIR: '/g'}, 'darwin').name, 'Ghostty');
   assert.equal(detectTerminalHost({TERM: 'tmux-256color', TERM_PROGRAM: 'tmux', TMUX: '/t,1,0', KITTY_WINDOW_ID: '1'}, 'darwin').name, 'kitty');
+  // A stale KITTY_WINDOW_ID does not outrank a host TERM_PROGRAM names (Terminal.app started from a Kitty shell).
+  assert.equal(detectTerminalHost({TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal', KITTY_WINDOW_ID: '1'}, 'darwin').name, 'Terminal');
 });
 
 test('cursor host facts use the same identity: Kitty with an inherited Ghostty TERM_PROGRAM is Kitty', async () => {
