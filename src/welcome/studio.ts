@@ -31,24 +31,30 @@ export class WelcomeStudioController {
   private sequence = new WelcomeSequencer();
   private closed = false;
   private pending = 0;
+  private assetQueue: Promise<void> = Promise.resolve();
   private captures = new Map<string, string[]>();
   constructor(private host: StudioHost) { this.state = createWelcomeEditor(host.config()); }
   async start(): Promise<void> { await Promise.all([this.assetChanged(), this.providerChanged()]); }
   private async assetChanged(selectLogo = false): Promise<void> {
     const generation = ++this.pending;
+    const assetPath = this.state.draft.assetPath;
     this.asset = undefined;
     this.host.graphics().releaseOwner(this.owner);
-    if (!this.state.draft.assetPath) return;
-    try {
-      const asset = await loadWelcomeAsset(this.state.draft.assetPath, this.host.cwd(), this.host.scratch());
-      if (this.closed || generation !== this.pending) return;
-      this.asset = asset;
-      if (this.state.original.assetPath === this.state.draft.assetPath) this.beforeAsset = asset;
-      if (selectLogo) this.state.draft.logo = asset.kind;
-      const m = asset.metadata;
-      this.state.message = `${m.format} · ${m.bytes} bytes · ${m.width}×${m.height} · ${m.frames} frames${m.note ? ` · ${m.note}` : ''}`;
-    } catch (error) { if (!this.closed && generation === this.pending) this.state.message = error instanceof Error ? error.message : 'Asset unavailable.'; }
-    if (!this.closed) this.host.render();
+    // Rapid navigation may replace the request, but never starts another read/decode concurrently.
+    this.assetQueue = this.assetQueue.then(async () => {
+      if (this.closed || generation !== this.pending || !assetPath) return;
+      try {
+        const asset = await loadWelcomeAsset(assetPath, this.host.cwd(), this.host.scratch());
+        if (this.closed || generation !== this.pending) return;
+        this.asset = asset;
+        if (this.state.original.assetPath === assetPath) this.beforeAsset = asset;
+        if (selectLogo) this.state.draft.logo = asset.kind;
+        const m = asset.metadata;
+        this.state.message = `${m.format} · ${m.bytes} bytes · ${m.width}×${m.height} · ${m.frames} frames${m.note ? ` · ${m.note}` : ''}`;
+      } catch (error) { if (!this.closed && generation === this.pending) this.state.message = error instanceof Error ? error.message : 'Asset unavailable.'; }
+      if (!this.closed) this.host.render();
+    });
+    await this.assetQueue;
   }
   private async providerChanged(): Promise<void> {
     const provider = this.state.provider;
