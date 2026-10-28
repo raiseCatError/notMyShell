@@ -198,4 +198,6 @@ test('app: first-time Kitty (inherited Ghostty TERM_PROGRAM, no NMSh setup, Moti
   assert.match(readFileSync(join(home, '.config/nmsh/host-appearance/kitty-shaders.conf'), 'utf8'), /^cursor_trail 3$/mu);
   // Kitty draws the trail now; Portable does not draw a second one.
   assert.equal(app['cursorFacts']().kittyTrail, 'cursor-trail-blaze');
+  // KITTY_PID here is the test process (node), not a kitty parent: nothing is signalled and the reload keys are given.
+  assert.match(state.message ?? '', /Reload Kitty to load it/u);
 });

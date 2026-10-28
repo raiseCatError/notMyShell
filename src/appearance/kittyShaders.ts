@@ -21,6 +21,7 @@ import {appearancePaths, type AppearanceContext} from './hostPaths.js';
 import {readHostConfiguration} from './hostConfiguration.js';
 import {digest, snapshot, transact, type FileChange, type FileSnapshot} from './hostFiles.js';
 import {withoutHook} from './hostAppearance.js';
+import {readProcessTable, type ProcessRow} from './ghosttyShaders.js';
 import {CATEGORY_LABELS, defaultPipeline, emitKittyPipeline, formatShaderValue, KITTY_MAX_GROUPS, mergeVars, parseKittyPipeline, pipelineTextures,
   subscribesToCursorTrail, type KittyCatalog, type KittyGroup, type KittyPipeline, type KittyVar, type OfferedParam, type OfferedPreset, type ShaderValue} from './kittyShaderCatalog.js';
 import type {CursorMotion, CursorRenderer} from '../prompt/configuration.js';
@@ -284,8 +285,41 @@ export interface KittyShaderPlan {
 export type KittyShaderPlanResult = {ok: true; plan: KittyShaderPlan} | {ok: false; error: string};
 
 export function kittyShaderGuidance(platform: NodeJS.Platform): string {
-  return `Configuration saved, not proof of GPU output. Kitty reloads its config automatically unless auto_reload_config is 0; otherwise reload with ${platform === 'darwin' ? '⌃⌘,' : 'Ctrl+Shift+F5'}. `
+  return `Configuration saved, not proof of GPU output. Kitty watches only kitty.conf, not the files it includes, so a changed effect loads when Kitty reloads (${kittyReloadKeys(platform)}). `
     + 'Kitty builds all custom shaders (yours and NMSh’s) as one program: if any part fails to build, Kitty turns all of them off and logs why; R here removes NMSh’s part.';
+}
+
+const kittyReloadKeys = (platform: NodeJS.Platform) => platform === 'darwin' ? '⌃⌘,' : 'Ctrl+Shift+F5';
+
+/**
+ * The Kitty process NMSh may ask to reload: KITTY_PID only when it is one of NMSh's own parent processes and its program is
+ * kitty. A stale or inherited KITTY_PID (tmux, ssh, a session service, a reused number) gives undefined, never a guess.
+ */
+export function kittyReloadTarget(kittyPid: string | undefined, rows: readonly ProcessRow[] | undefined, selfPid: number): number | undefined {
+  const pid = Number(kittyPid);
+  if (!Number.isSafeInteger(pid) || pid <= 1 || !rows) return undefined;
+  const byPid = new Map(rows.map(row => [row.pid, row]));
+  let current = byPid.get(selfPid);
+  for (let depth = 0; current && depth < 32; depth++) {
+    if (current.pid === pid) return /(^|\/)kitty$/u.test(current.command.split(/\s+/u)[0] ?? '') ? pid : undefined;
+    current = current.ppid > 1 ? byPid.get(current.ppid) : undefined;
+  }
+  return undefined;
+}
+
+export interface KittyReloadDeps {rows?: () => readonly ProcessRow[] | undefined; selfPid?: number; signal?: (pid: number) => void}
+
+/**
+ * Kitty does not watch included files, so after NMSh rewrites its fragment or pipeline (switching Lightning to Blaze changes only
+ * the pipeline) Kitty keeps drawing the old effect until it reloads; observed with Kitty 0.49.2. Kitty documents SIGUSR1 as
+ * "reload the config" (the same as its reload shortcut). NMSh sends it only to the verified Kitty it runs in.
+ */
+export function reloadKitty(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, deps: KittyReloadDeps = {}): {reloaded: true; message: string} | {reloaded: false; message: string} {
+  const target = kittyReloadTarget(env.KITTY_PID, (deps.rows ?? readProcessTable)(), deps.selfPid ?? process.pid);
+  if (target === undefined) return {reloaded: false, message: `Reload Kitty to load it (${kittyReloadKeys(platform)}): NMSh could not confirm which Kitty it runs in.`};
+  try { (deps.signal ?? (pid => process.kill(pid, 'SIGUSR1')))(target); }
+  catch { return {reloaded: false, message: `Reload Kitty to load it (${kittyReloadKeys(platform)}): asking Kitty to reload failed.`}; }
+  return {reloaded: true, message: 'Kitty was asked to reload its configuration (its documented SIGUSR1), so the change is loaded now.'};
 }
 
 const decimals = (value: number) => (value.toString().split('.')[1] ?? '').length;
@@ -415,6 +449,7 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     const ledgerText = `${JSON.stringify(record, null, 2)}\n`;
     const changes: FileChange[] = [{before: state.pipeline, after: pipelineText}, {before: state.fragment, after: fragmentText},
       ...(state.record ? [] : [{before: hostFile, after: hostAfter}]), {before: state.ledger, after: ledgerText}];
+    if (mode === 'save') notes.push('After writing, NMSh asks the Kitty it runs in to reload its configuration: Kitty does not watch included files, so it would keep drawing the previous effect.');
     const kept = inspection.userEntries.length ? `Kept, in order: ${inspection.userEntries.join(' · ')}` : 'You have no custom_shaders of your own.';
     const shadowedNote = inspection.shadowed.length ? [`Kitty already ignores earlier custom_shaders lines at ${inspection.shadowed.join(', ')} (a later line replaces them); they are unchanged.`] : [];
     const preview = [kept, ...shadowedNote, `Effective after this change: ${effectiveWords.length ? effectiveWords.join(' · ') : '(none)'}`, '',

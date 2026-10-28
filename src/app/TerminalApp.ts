@@ -334,7 +334,7 @@ import {discoverKittyCatalog, kittyBinary, type KittyCatalog} from '../appearanc
 import {GlslShaderStudio} from '../appearance/glslStudio.js';
 import {writtenNativePasses} from '../appearance/nativePasses.js';
 import {renderRoutes} from '../motion/renderRouting.js';
-import {type KittyShaderSettings, applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, planKittyShaderRemoval, planKittyShaders, readProcessCommand, syncKittyShaders, writtenKittyTrail,
+import {type KittyShaderSettings, reloadKitty, applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, planKittyShaderRemoval, planKittyShaders, readProcessCommand, syncKittyShaders, writtenKittyTrail,
   type KittyShaderContext, type ShaderGates} from '../appearance/kittyShaders.js';
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
@@ -3978,7 +3978,9 @@ export class TerminalApp {
     panel.draft = structuredClone(saved);
     panel.dirty = false;
     try { panel.inspection = inspectKittyShaders(this.kittyShaderContext(catalog)); } catch { /* the message below still applies */ }
-    panel.message = plan.operation === 'remove' ? `Removed NMSh's Kitty shaders. ${plan.guidance}` : plan.guidance;
+    // Kitty does not watch included files: without a reload it keeps drawing the previous effect (Lightning switched to Blaze stayed Lightning).
+    const reload = reloadKitty(process.env, process.platform);
+    panel.message = `${plan.operation === 'remove' ? 'Removed NMSh\'s Kitty shaders. ' : ''}${reload.message} ${plan.guidance}`;
   }
 
   /**
@@ -4006,8 +4008,10 @@ export class TerminalApp {
     if (this.stopped) return;
     const result = syncKittyShaders(next.hostShaders.kitty, this.kittyShaderContext(catalog, next));
     if (result.kind === 'written') this.cursorHost = undefined;
+    // A gate change (Portable, Motion off, Reduced Motion) must reach the loaded pipeline too, or Kitty and Portable would both draw a trail.
+    const reload = result.kind === 'written' ? reloadKitty(process.env, process.platform) : undefined;
     if (result.kind === 'written' || result.kind === 'review') {
-      const message = result.kind === 'review' ? `Kitty shaders were not updated: ${result.message}` : result.message!;
+      const message = result.kind === 'review' ? `Kitty shaders were not updated: ${result.message}` : `${reload!.message} ${result.message!}`;
       if (this.kittyShaderPanel) this.kittyShaderPanel.message = message;
       else this.output.addFrontendInteraction('/appearance', message, result.kind === 'review' ? ERROR : INFO);
       this.render();

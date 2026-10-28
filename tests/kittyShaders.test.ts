@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {buildKittyCatalog, discoverKittyCatalog, emitKittyPipeline, formatShaderValue, parseKittyPipeline, parseShaderConstants, type KittyCatalog} from '../src/appearance/kittyShaderCatalog.js';
 import {applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, launchOverrideReason, normalizeHostShaders, planKittyShaderRemoval, planKittyShaders,
-  shellWords, syncKittyShaders, validateEffects, type KittyShaderContext, type KittyShaderSettings, type ShaderGates} from '../src/appearance/kittyShaders.js';
+  kittyReloadTarget, reloadKitty, shellWords, syncKittyShaders, validateEffects, type KittyShaderContext, type KittyShaderSettings, type ShaderGates} from '../src/appearance/kittyShaders.js';
 import {readHostConfiguration} from '../src/appearance/hostConfiguration.js';
 
 // Synthetic stand-ins with the SAME structure as Kitty 0.49.2's shipped resources (not copies of them).
@@ -522,4 +522,34 @@ test('switching trail styles replaces the one trail group; Lightning and Blaze r
   assert.deepEqual([...lightning.matchAll(/^\s*shaders (.+)$/gmu)].map(match => match[1]), ['cursor-trail-lightning']);
   assert.deepEqual([...blaze.matchAll(/^\s*shaders (.+)$/gmu)].map(match => match[1]), ['cursor-trail-blaze'], 'one trail, never both');
   assert.equal((blaze.match(/animation_start cursor-trail-move/gu) ?? []).length, 1);
+});
+
+test('reload: Kitty ignores changed included files, so NMSh asks only the verified Kitty among its parents to reload', t => {
+  const rows = [
+    {pid: 10, ppid: 1, elapsedSeconds: 50, command: '/Applications/kitty.app/Contents/MacOS/kitty'},
+    {pid: 20, ppid: 10, elapsedSeconds: 40, command: '/bin/zsh -l'},
+    {pid: 30, ppid: 20, elapsedSeconds: 30, command: 'node /x/bin/nmsh'},
+    {pid: 40, ppid: 1, elapsedSeconds: 30, command: '/usr/bin/kitty'},
+  ];
+  assert.equal(kittyReloadTarget('10', rows, 30), 10);
+  assert.equal(kittyReloadTarget('40', rows, 30), undefined, 'a Kitty that is not NMSh’s parent (stale or inherited KITTY_PID)');
+  assert.equal(kittyReloadTarget('20', rows, 30), undefined, 'a parent that is not kitty (a reused number)');
+  assert.equal(kittyReloadTarget(undefined, rows, 30), undefined);
+  assert.equal(kittyReloadTarget('10', undefined, 30), undefined, 'no process table: never a guess');
+  const sent: number[] = [];
+  const signal = (pid: number) => { sent.push(pid); };
+  assert.equal(reloadKitty({KITTY_PID: '10'}, 'darwin', {rows: () => rows, selfPid: 30, signal}).reloaded, true);
+  assert.deepEqual(sent, [10]);
+  const refused = reloadKitty({KITTY_PID: '40'}, 'darwin', {rows: () => rows, selfPid: 30, signal});
+  assert.deepEqual([refused.reloaded, sent], [false, [10]]);
+  assert.match(refused.message, /Reload Kitty to load it \(⌃⌘,\)/u);
+  const failed = reloadKitty({KITTY_PID: '10'}, 'linux', {rows: () => rows, selfPid: 30, signal: () => { throw new Error('EPERM'); }});
+  assert.equal(failed.reloaded, false);
+  assert.match(failed.message, /Ctrl\+Shift\+F5/u);
+  // The review says so before anything is written.
+  const f = fixture(t);
+  f.put(f.kitty, 'cursor_trail 3\n');
+  const plan = planKittyShaders(settingsOf(['cursor-trail-blaze']), f.context);
+  assert.ok(plan.ok && plan.plan.preview.some(line => /NMSh asks the Kitty it runs in to reload its configuration/u.test(line)));
+  assert.ok(plan.ok && /Kitty watches only kitty\.conf, not the files it includes/u.test(plan.plan.guidance));
 });
