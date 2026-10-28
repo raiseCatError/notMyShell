@@ -9,7 +9,7 @@ import type {Key} from '../terminal/keys.js';
 import type {KittyCatalog, OfferedParam, OfferedPreset, ShaderValue} from './kittyShaderCatalog.js';
 import type {KittyShaderInspection, KittyShaderPlan, ShaderGates} from './kittyShaders.js';
 import type {KittyShaderSettings} from './kittyShaderSettings.js';
-import {createShaderStudio, renderShaderStudio, shaderStudioKey, studioParamValue, type ShaderStudioState, type StudioAction, type StudioHost} from './ShaderStudioPanel.js';
+import {createShaderStudio, renderShaderStudio, shaderStudioKey, studioParamValue, type ShaderStudioState, type StudioAction, type StudioHost, type StudioPreviewContext} from './ShaderStudioPanel.js';
 
 export type KittyShaderPanelState = ShaderStudioState<KittyCatalog, KittyShaderInspection, KittyShaderPlan, ShaderGates, KittyShaderSettings>;
 export type KittyShaderAction = Exclude<StudioAction, {kind: 'reloaded'}>;
@@ -43,6 +43,6 @@ export function kittyShaderKey(state: KittyShaderPanelState, key: Key): KittySha
   return action?.kind === 'reloaded' ? undefined : action;
 }
 
-export function renderKittyShaderPanel(state: KittyShaderPanelState, columns: number, height?: number): string[] {
-  return renderShaderStudio(state, KITTY_STUDIO, columns, height);
+export function renderKittyShaderPanel(state: KittyShaderPanelState, columns: number, height?: number, preview?: StudioPreviewContext): string[] {
+  return renderShaderStudio(state, KITTY_STUDIO, columns, height, preview);
 }

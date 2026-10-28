@@ -112,7 +112,7 @@ test('catalog: Kitty below 0.49 is unsupported; 0.49+ offers only installed pres
   // The shipped pipeline's own value is the starting value; pipeline-level vars move into groups.
   assert.equal(c.offered.find(preset => preset.definition.id === 'dim-inactive-windows')!.params.find(param => param.name === 'INACTIVE_DIM')!.default, 0.3);
   assert.deepEqual(c.offered.find(preset => preset.definition.id === 'cursor-trail-default')!.params, []);
-  assert.ok(c.notOffered.includes('crt-blue'));
+  assert.ok(!c.notOffered.includes('crt-blue') && ids.includes('crt-blue'), 'CRT (blue) is now a curated preset');
 });
 
 test('discovery reads Kitty’s packaged resources through a bounded helper and never guesses', async () => {

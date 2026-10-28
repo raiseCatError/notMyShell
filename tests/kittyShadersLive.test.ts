@@ -77,3 +77,37 @@ test('installed Kitty loads NMSh’s composed custom_shaders exactly and compile
   assert.match(result.frag ?? '', /0\.2/u);
   if (process.platform === 'darwin') assert.match(paths.pipeline, / /u);
 });
+
+test('installed Kitty compiles each newer curated preset with its tuned values (headless, private HOME)', {skip: !supported && 'Kitty 0.49+ is not installed', timeout: 300_000}, async t => {
+  const presets: Array<[string, Record<string, unknown>]> = [['crt-blue', {WARP: 0.15}], ['fireworks-rockets', {CYCLE_TIME: 4.5}], ['bloom', {BLOOM_STRENGTH: 0.35}],
+    ['tft', {STRENGTH: 0.65}], ['water', {CAUSTIC_INTEN: 0.007, WATER_COLOR: [0.2, 0.4, 0.6]}], ['underwater', {}], ['negative', {}]];
+  const compile = async (id: string, values: Record<string, unknown>) => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-klive2-')));
+    t.after(() => rmSync(home, {recursive: true, force: true}));
+    const env = {HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin'};
+    const kittyDir = join(home, '.config/kitty');
+    mkdirSync(kittyDir, {recursive: true, mode: 0o700});
+    writeFileSync(join(kittyDir, 'kitty.conf'), 'font_size 13\n', {mode: 0o600});
+    const runEnv = {...env, PYTHONDONTWRITEBYTECODE: '1', KITTY_CACHE_DIRECTORY: join(home, 'cache')};
+    const catalog = await discoverKittyCatalog(binary, (bin, args, timeout) => new Promise(resolve => {
+      const result = spawnSync(bin, [...args], {encoding: 'utf8', timeout, env: runEnv});
+      resolve({code: result.status, stdout: result.stdout ?? ''});
+    }));
+    const offered = catalog.offered.find(preset => preset.definition.id === id);
+    assert.ok(offered, `${id} offered by installed Kitty`);
+    assert.deepEqual(offered.missing, [], `${id}: every curated parameter is declared by the installed shader`);
+    const context: KittyShaderContext = {env, platform: process.platform, catalog, gates: {reducedMotion: false, effectsOff: false, cursorRenderer: 'auto'}, launch: {}};
+    const planned = planKittyShaders(normalizeHostShaders({kitty: {effects: [{id, enabled: true, values}]}}).kitty, context);
+    assert.ok(planned.ok, planned.ok ? '' : `${id}: ${planned.error}`);
+    assert.ok(applyKittyShaderPlan(planned.plan).ok);
+    const run = spawnSync(binary!, ['+runpy', CHECK], {encoding: 'utf8', timeout: 100_000, env: runEnv});
+    const result = JSON.parse(run.stdout) as {compiled: boolean; error?: string; frag?: string};
+    assert.equal(result.compiled, true, `${id}: ${result.error}`);
+    return result.frag ?? '';
+  };
+  for (const [id, values] of presets) {
+    const tuned = await compile(id, values);
+    // Values are constant-folded by the compiler, so compare against the shipped defaults rather than searching for literals.
+    if (Object.keys(values).length) assert.notEqual(tuned, await compile(id, {}), `${id}: the tuned values change the compiled shader`);
+  }
+});

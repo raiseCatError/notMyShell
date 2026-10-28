@@ -1,5 +1,9 @@
 # Native appearance / welcome progress
 
+## Slice 5 — Shader Studio UX and previews (Claude, 2026-10-28)
+
+Branch `feature/shader-studio-previews-20261028` from 5f317aa7 (Slice 4, PR #519). Approximate cell previews in the shared studio (P replays, frame clock only while animating), seven more Kitty presets with an installed-Kitty compile test. Independent Sonnet review: no blocker; 4 should-fix (color level, Kitty parameter mapping, dropped-preview run, CRT exclusivity) + minors fixed with regressions. Focused 121/121 incl. live Kitty. Slice 6 (Welcome Studio) runs in parallel by Codex in `welcome-studio-20261028` (Slice 4 + #518 merged).
+
 ## Slice 4 — render routing and Chroma-driven native colors (Claude, 2026-10-28)
 
 Branch `feature/render-routing-20261028` from 87277285 (Slice 3, PR #517) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/render-routing-20261028`.

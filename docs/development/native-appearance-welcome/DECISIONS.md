@@ -53,3 +53,10 @@ Ruling: preserve valid unchanged numeric blur above the normal UI range during u
 - Written ≠ loaded: native focus/display routes say "written; the host loads it on its next config reload".
 - `/appearance › Effects routing` shows the routes (refreshed on entering the hub or the view; no polling). The host-specific reads live in `src/appearance/nativePasses.ts`; TerminalApp stays host-neutral.
 - Chroma: Ghostty Aurora gains Colors = Follow Chroma (default) / Custom. Follow Chroma uses the idle visuals' resolver (`idleStops(config, 'appearance')`: Chroma palette, or the theme while Chroma is off), its first and last stops. A Chroma or theme settings change re-syncs NMSh's Ghostty passes (only NMSh-owned files, only when the generated source differs); never per event; Ghostty applies it on its next reload. Aurora settings saved before the choice existed and carrying their own colors keep them (Custom).
+
+## Slice 5 rulings (Shader Studio UX and previews, 2026-10-28)
+
+- The shared studio (Kitty and Ghostty) shows a preview of the selected preset: a small sample terminal drawn by NMSh in cells (`src/appearance/shaderPreview.ts`), labelled "approximate, drawn by NMSh; <host>’s GPU shader is the real effect". It is never presented as host output.
+- Families with a faithful approximation: cursor trails, aurora/northern lights, focus dim, vignette/spotlight, scanlines/CRT/TFT, glow/bloom. Others (fireworks, rockets, matrix, water, underwater, negative, ripple, tab change) say there is no preview instead of guessing.
+- A run plays once on selection or value change and P replays; the app subscribes the shared presentation clock only while a run animates (`previewBusy`), never an idle loop. Reduced Motion / Effects Off draw one still frame; without color there is no preview. Short windows drop the preview rather than cutting the list or controls.
+- Kitty catalog completed with the remaining shipped effects: CRT (blue), Rockets, Bloom, TFT pixels, Water, Underwater, Negative. Parameters only where the shipped shader declares them (verified against Kitty 0.49.2 sources and by the installed-Kitty live test); Underwater/Negative have none.
