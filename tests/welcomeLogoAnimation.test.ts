@@ -13,6 +13,7 @@ import {assetCapabilities, motionAsset} from '../src/welcome/render.js';
 import {NativeWelcomePresentation} from '../src/welcome/startup.js';
 import type {WelcomeAsset} from '../src/welcome/assets.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {presentationClock} from '../src/motion/PresentationClock.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 const PRESETS = LOGO_ANIMATIONS.filter((p): p is Exclude<LogoAnimation, 'off'> => p !== 'off');
@@ -130,6 +131,7 @@ test('startup plays the generated frames, settles on the still, and a gate shows
     assert.equal(first.active, true);
     const done = native.frame(80, 40, 4000);
     assert.equal(done.active, false, `${preset} once ends`);
+    assert.equal(presentationClock.subscriberCount, 0, `${preset}: no frame timer after Once ends`);
     native.dispose();
     const gated = new NativeWelcomePresentation(snapshot(model({logoAnimation: preset})), service(), () => ({color: true, reducedMotion: true}), () => ({red: 0, green: 0, blue: 0}), () => {}, still);
     const frame = gated.frame(80, 40, 0);
