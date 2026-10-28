@@ -13,6 +13,7 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
+import {kittyShaderName, NMSH_EFFECTS, nmshKittyGroups, nmshKittySource, type NmshEffectId} from './nmshShaders.js';
 
 export const KITTY_SHADER_MIN_VERSION = [0, 49] as const;
 /** Kitty's MAX_CUSTOM_SHADER_GROUPS: the limit for one pipeline and for all chained pipelines together. */
@@ -233,8 +234,11 @@ export function formatShaderValue(type: string, value: ShaderValue): string {
 
 // ---- Curated presets ---------------------------------------------------------------------------------------------
 
-export type PresetCategory = 'cursor' | 'ambient' | 'interaction' | 'focus' | 'display';
-export const CATEGORY_LABELS: Record<PresetCategory, string> = {cursor: 'Cursor trail', ambient: 'Ambient', interaction: 'Pointer', focus: 'Focus & tabs', display: 'Display'};
+export type PresetCategory = 'cursor' | 'typing' | 'welcome' | 'ambient' | 'interaction' | 'focus' | 'display';
+export const CATEGORY_LABELS: Record<PresetCategory, string> = {cursor: 'Cursor trail', typing: 'Cursor & typing', welcome: 'Welcome & images', ambient: 'Ambient',
+  interaction: 'Pointer', focus: 'Focus & tabs', display: 'Display'};
+/** Categories that draw at the cursor: one at a time, and only while /cursor wants a native trail (never two trails). */
+export const drawsCursor = (category: PresetCategory) => category === 'cursor' || category === 'typing';
 export interface PresetParam {
   name: string; label: string; kind: 'number' | 'bool' | 'color' | 'choice';
   /** Kitty's declared type this control expects; a different declaration means the parameter is not offered. */
@@ -244,8 +248,8 @@ export interface PresetParam {
 }
 export interface PresetDefinition {
   id: string; label: string; category: PresetCategory;
-  /** A shipped pipeline (its group structure is reused) or a shipped shader with Kitty's default pipeline. */
-  source: {pipeline: string} | {shader: string};
+  /** A shipped pipeline (its group structure is reused), a shipped shader with Kitty's default pipeline, or NMSh's own shader (written by NMSh). */
+  source: {pipeline: string} | {shader: string} | {nmsh: NmshEffectId};
   params: readonly PresetParam[];
   /** Presets sharing a key cannot be enabled together. */
   exclusive?: string;
@@ -308,7 +312,16 @@ export const KITTY_PRESETS: readonly PresetDefinition[] = [
     note: 'Light rays from above. Kitty’s settings for it are internal, so NMSh offers it as is. Runs every frame.'},
   {id: 'negative', label: 'Negative', category: 'display', source: {shader: 'negative'}, params: [],
     note: 'Inverts every color in the window.'},
+  // NMSh's own effects: NMSh writes their .slang next to its pipeline (Kitty looks there first).
+  ...NMSH_EFFECTS.map((effect): PresetDefinition => ({id: effect.id, label: effect.label, category: effect.category, source: {nmsh: effect.id}, params: effect.params,
+    ...(effect.category === 'typing' ? {exclusive: 'cursor', requires: 'cursor_trail' as const,
+      note: 'Runs while Kitty’s cursor trail moves; NMSh starts it on one-cell moves too, so typing shows it.'} : {}),
+    ...(effect.id === 'shine-sweep' ? {note: 'On focus only starts when the window gains focus; the timed cadences redraw continuously.'} : {})})),
 ];
+
+/** The constants each NMSh Kitty shader declares (what its pipeline vars may replace). */
+const NMSH_CONSTANTS = new Map(NMSH_EFFECTS.map(effect => [kittyShaderName(effect.id), parseShaderConstants(nmshKittySource(effect.id))]));
+export const nmshShaderConstants = (name: string) => NMSH_CONSTANTS.get(name);
 
 // ---- Installed catalog -------------------------------------------------------------------------------------------
 
@@ -376,6 +389,20 @@ export function buildKittyCatalog(version: string, resources: Readonly<Record<st
 }
 
 function offerPreset(catalog: KittyCatalog, definition: PresetDefinition): OfferedPreset | string {
+  if ('nmsh' in definition.source) {
+    const id = definition.source.nmsh;
+    const name = kittyShaderName(id);
+    const constants = NMSH_CONSTANTS.get(name)!;
+    const defaults = NMSH_EFFECTS.find(effect => effect.id === id)!.defaults;
+    const params: OfferedParam[] = [];
+    const missing: string[] = [];
+    for (const param of definition.params) {
+      if (constants.get(param.name)?.type === param.type && defaults[param.name] !== undefined) params.push({...param, default: defaults[param.name]!});
+      else missing.push(param.name);
+    }
+    return {definition, groups: nmshKittyGroups(id, defaults), textures: [], params, missing,
+      origin: {kittyVersion: catalog.version, resources: [{name: `${name}.slang`, sha256: sha(nmshKittySource(id))}]}};
+  }
   const source = 'pipeline' in definition.source ? catalog.pipelines.get(definition.source.pipeline) : undefined;
   if ('pipeline' in definition.source && !source) return 'not installed in this Kitty';
   const pipeline = source?.pipeline ?? defaultPipeline((definition.source as {shader: string}).shader);

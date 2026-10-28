@@ -16,6 +16,7 @@
  */
 import {createHash} from 'node:crypto';
 import type {OfferedParam, PresetCategory, PresetParam, ShaderValue} from './kittyShaderCatalog.js';
+import {NMSH_EFFECTS, nmshGhosttyBody, type NmshEffectId} from './nmshShaders.js';
 
 export type GhosttyVersion = readonly [number, number, number];
 
@@ -120,6 +121,8 @@ export interface GenerationContext {
   cursorColors: {head: readonly number[]; tail: readonly number[]};
   /** The Chroma palette's ends (0–1 RGB; the theme's colors while Chroma is off), for effects that follow Chroma. */
   chroma: {a: readonly number[]; b: readonly number[]};
+  /** Where Ghostty runs (its fragment y axis points down under Metal on macOS); defaults to this process's platform. */
+  platform?: NodeJS.Platform;
 }
 
 /** Ambient colors: follow Chroma (rewritten when the Chroma palette or theme changes; Ghostty applies it on reload) or the studio's own. */
@@ -158,7 +161,11 @@ export const GHOSTTY_PRESETS: readonly GhosttyPresetDefinition[] = [
   {id: 'glow', label: 'Text glow', category: 'display', animated: false,
     params: [n('INTENSITY', 'Intensity', 0, 1.5, 0.05), n('RADIUS', 'Radius (px)', 1, 6, 0.5)],
     defaults: {INTENSITY: 0.45, RADIUS: 2},
-    note: 'A soft bloom around bright text. Samples 16 neighbours per pixel: the most expensive NMSh effect.'},
+    note: 'A soft bloom around bright text. Samples 16 neighbours per pixel.'},
+  // NMSh's own effects (shared with Kitty, see nmshShaders.ts). Cursor & typing effects are the one cursor effect.
+  ...NMSH_EFFECTS.map((effect): GhosttyPresetDefinition => ({id: effect.id, label: effect.label, category: effect.category, params: effect.params, defaults: effect.defaults,
+    animated: effect.animated, ...(effect.category === 'typing' ? {exclusive: 'cursor', trail: true as const} : {}),
+    ...(effect.id === 'halo-bloom' ? {note: 'Samples 48 neighbours per pixel: the most expensive NMSh effect.'} : {})})),
 ];
 
 export const GHOSTTY_MAX_EFFECTS = 6;
@@ -213,7 +220,9 @@ function trailColors(values: Record<string, ShaderValue>, context: GenerationCon
   return `vec3 headColor() { return ${vec3(head)}; }\nvec3 tailColor() { return ${vec3(tail)}; }`;
 }
 
+const nmshBody = (id: NmshEffectId) => (_values: Record<string, ShaderValue>, context: GenerationContext) => nmshGhosttyBody(id, context.platform ?? process.platform);
 const BODIES: Record<string, (values: Record<string, ShaderValue>, context: GenerationContext) => string> = {
+  ...Object.fromEntries(NMSH_EFFECTS.map(effect => [effect.id, nmshBody(effect.id)])),
   smear: (values, context) => `${TRAIL_HELPERS}
 ${trailColors(values, context)}
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {

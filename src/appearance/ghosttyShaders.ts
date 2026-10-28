@@ -306,7 +306,7 @@ function compose(settings: GhosttyShaderSettings, context: GhosttyShaderContext,
       if (unknown) throw new Error(`NMSh cannot read your shader ${unknown.path} (${unknown.reason}), so it cannot rule out a second cursor trail.`);
     }
     if (inspection.entries.some(entry => entry.path.startsWith(`${paths.shaderDirectory}/`))) throw new Error('Your configuration already names a file in NMSh’s Ghostty shader folder; remove that line first.');
-    const shaders = active.map(({preset, effect}) => ({id: preset.definition.id, path: passPath(paths, preset.definition.id), source: generateGhosttyShader(preset.definition, effect.values, context.colors).source}));
+    const shaders = active.map(({preset, effect}) => ({id: preset.definition.id, path: passPath(paths, preset.definition.id), source: generateGhosttyShader(preset.definition, effect.values, {...context.colors, platform: context.platform}).source}));
     for (const shader of shaders) if (!state.passes.has(shader.id)) {
       const file = snapshot(shader.path, paths.home, true);
       if (file.content !== undefined) throw new Error(`${shader.path} exists but is not recorded as NMSh’s; it was preserved.`);

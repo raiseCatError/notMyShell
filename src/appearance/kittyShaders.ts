@@ -22,9 +22,10 @@ import {readHostConfiguration} from './hostConfiguration.js';
 import {digest, snapshot, transact, type FileChange, type FileSnapshot} from './hostFiles.js';
 import {withoutHook} from './hostAppearance.js';
 import {readProcessTable, type ProcessRow} from './ghosttyShaders.js';
-import {CATEGORY_LABELS, defaultPipeline, emitKittyPipeline, formatShaderValue, KITTY_MAX_GROUPS, mergeVars, parseKittyPipeline, pipelineTextures,
+import {CATEGORY_LABELS, defaultPipeline, drawsCursor, emitKittyPipeline, formatShaderValue, KITTY_MAX_GROUPS, mergeVars, nmshShaderConstants, parseKittyPipeline, pipelineTextures,
   subscribesToCursorTrail, type KittyCatalog, type KittyGroup, type KittyPipeline, type KittyVar, type OfferedParam, type OfferedPreset, type ShaderValue} from './kittyShaderCatalog.js';
 import type {CursorMotion, CursorRenderer} from '../prompt/configuration.js';
+import {kittyShaderName, NMSH_KITTY_CURSOR_SHADERS, NMSH_KITTY_SHADERS, nmshKittyGroups, nmshKittySource} from './nmshShaders.js';
 
 // ---- Settings ----------------------------------------------------------------------------------------------------
 
@@ -39,13 +40,15 @@ export interface ShaderGates {reducedMotion: boolean; effectsOff: boolean; curso
  * or /cursor's own file with Motion off), NMSh's fragment sets this value, the one /cursor's Kitty file uses for a trail.
  */
 export const KITTY_TRAIL_ON = 3;
+/** Kitty trail settings NMSh's fragment adds while a cursor & typing effect is written (see compose). */
+export const TYPING_TRAIL: ReadonlyArray<readonly [string, string]> = [['cursor_trail_start_threshold', '0'], ['cursor_trail_decay', '6 12']];
 
 /** What NMSh's pipeline may contain right now: nothing under Reduced Motion or Effects Off, no Kitty trail when the cursor renderer is Portable or Motion is Off. */
 export function gatedEffects(settings: KittyShaderSettings, catalog: KittyCatalog, gates: ShaderGates): Array<{preset: OfferedPreset; effect: KittyShaderEffect}> {
   if (gates.reducedMotion || gates.effectsOff) return [];
   return settings.effects.filter(effect => effect.enabled).flatMap(effect => {
     const preset = catalog.offered.find(item => item.definition.id === effect.id);
-    if (!preset || (preset.definition.category === 'cursor' && (gates.cursorRenderer === 'portable' || gates.cursorMotion === 'off'))) return [];
+    if (!preset || (drawsCursor(preset.definition.category) && (gates.cursorRenderer === 'portable' || gates.cursorMotion === 'off'))) return [];
     return [{preset, effect}];
   });
 }
@@ -130,7 +133,12 @@ interface ShaderLedger {
   placement: 'after' | 'before';
   kittyVersion: string;
   presets: Array<{id: string; resources: Array<{name: string; sha256: string}>}>;
+  /** NMSh's own .slang files written next to its pipeline (absent in records from before NMSh wrote shaders). */
+  shaders?: Array<{name: string; path: string; sha256: string}>;
 }
+
+/** Where NMSh writes one of its own Kitty shaders: beside its pipeline, where Kitty looks first. */
+const nmshShaderPath = (paths: ReturnType<typeof kittyShaderPaths>, name: string) => join(paths.directory, `${name}.slang`);
 
 /** Strict by default; `lenient` (removal only) reports damaged owned files instead of refusing, so a broken integration can still be removed. */
 function owned(context: AppearanceContext, lenient = false) {
@@ -145,13 +153,22 @@ function owned(context: AppearanceContext, lenient = false) {
     const hash = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
     if (parsed?.version !== 1 || parsed.feature !== 'kitty-shaders' || typeof parsed.created !== 'boolean' || !paths.candidates.includes(parsed.hostPath ?? '')
       || typeof parsed.hook !== 'string' || !hash(parsed.fragmentHash) || !hash(parsed.pipelineHash) || typeof parsed.preserved !== 'string'
-      || (parsed.placement !== 'after' && parsed.placement !== 'before') || !Array.isArray(parsed.presets)) throw new Error('The Kitty shader ownership record is invalid.');
+      || (parsed.placement !== 'after' && parsed.placement !== 'before') || !Array.isArray(parsed.presets)
+      || (parsed.shaders !== undefined && (!Array.isArray(parsed.shaders) || !parsed.shaders.every(item => item && NMSH_KITTY_SHADERS.has(item.name)
+        && item.path === nmshShaderPath(paths, item.name) && hash(item.sha256))))) throw new Error('The Kitty shader ownership record is invalid.');
     record = parsed as ShaderLedger;
     const newline = record.hook.includes('\r\n') ? '\r\n' : '\n';
     if (record.hook.replace(/\r\n/gu, '\n').trim() !== `${HOOK_COMMENT}\ninclude ${paths.fragment}` || !record.hook.endsWith(`include ${paths.fragment}${newline}`)) throw new Error('The recorded include does not match NMSh’s own Kitty shader hook.');
   }
-  const damaged = new Map<'fragment' | 'pipeline', 'edited' | 'missing'>();
-  for (const [file, expected, label] of [[fragment, record?.fragmentHash, 'fragment'], [pipeline, record?.pipelineHash, 'pipeline']] as const) {
+  const damaged = new Map<string, 'edited' | 'missing'>();
+  const shaderFiles = new Map<string, FileSnapshot>();
+  const files: Array<readonly [FileSnapshot, string | undefined, string]> = [[fragment, record?.fragmentHash, 'fragment'], [pipeline, record?.pipelineHash, 'pipeline']];
+  for (const item of record?.shaders ?? []) {
+    const file = snapshot(item.path, paths.home, true);
+    shaderFiles.set(item.name, file);
+    files.push([file, item.sha256, `${item.name}.slang`]);
+  }
+  for (const [file, expected, label] of files) {
     if (file.content !== undefined && (!record || digest(file.content) !== expected)) {
       if (lenient && record) { damaged.set(label, 'edited'); continue; }
       throw new Error(`The Kitty shader ${label} is unowned or was edited outside NMSh; it was preserved.`);
@@ -161,7 +178,7 @@ function owned(context: AppearanceContext, lenient = false) {
       throw new Error(`The recorded Kitty shader ${label} is missing; R in /appearance › Kitty shaders removes the integration.`);
     }
   }
-  return {paths, fragment, pipeline, ledger, record, damaged};
+  return {paths, fragment, pipeline, ledger, record, damaged, shaderFiles};
 }
 
 // ---- Reading the person's shaders ----------------------------------------------------------------------------------
@@ -339,8 +356,11 @@ export function buildNmshPipeline(active: ReadonlyArray<{preset: OfferedPreset; 
       if (textures.includes(texture)) throw new Error(`${preset.definition.label} needs Kitty's shared texture “${texture}”, which another NMSh effect already uses.`);
       textures.push(texture);
     }
-    for (const group of preset.groups) {
-      const constants = group.shaders.map(name => catalog.shaders.get(name)?.constants);
+    const own = 'nmsh' in preset.definition.source ? preset.definition.source.nmsh : undefined;
+    // NMSh's own effects choose their groups from the values (Shine Sweep's cadence decides when it runs).
+    const presetGroups = own ? nmshKittyGroups(own, Object.fromEntries(preset.params.map(param => [param.name, effect.values[param.name] ?? param.default]))) : preset.groups;
+    for (const group of presetGroups) {
+      const constants = group.shaders.map(name => catalog.shaders.get(name)?.constants ?? nmshShaderConstants(name));
       const declared = (name: string, type: string) => constants.find(map => map?.get(name)?.type === type)?.get(name);
       const pinned: KittyVar[] = leaked.flatMap(variable => {
         const constant = declared(variable.name, variable.type);
@@ -392,7 +412,9 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     for (const {preset} of active) {
       const texture = preset.textures.find(name => userTextures.has(name));
       if (texture) throw new Error(`${preset.definition.label} needs Kitty's shared texture “${texture}”, which one of your shaders already uses.`);
-      if (preset.definition.category === 'cursor' && userGroups.some(subscribesToCursorTrail)) throw new Error(`Your custom_shaders already draws a cursor trail; NMSh will not add a second one (${preset.definition.label}).`);
+      if (drawsCursor(preset.definition.category) && userGroups.some(subscribesToCursorTrail)) throw new Error(`Your custom_shaders already draws a cursor trail; NMSh will not add a second one (${preset.definition.label}).`);
+      // NMSh's own shaders are written beside its pipeline (checked as owned files below), so nothing of Kitty's is replaced.
+      if ('nmsh' in preset.definition.source) continue;
       for (const shader of new Set(preset.groups.flatMap(group => group.shaders))) {
         // Kitty looks in NMSh's pipeline folder, then the kitty config folder, before its shipped shaders.
         for (const candidate of [join(paths.directory, `${shader}.slang`), join(inspection.configDirectory, `${shader}.slang`)]) {
@@ -404,6 +426,17 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
       if (preset.definition.requires === 'opaque' && inspection.backgroundOpacity < 1) notes.push(`${preset.definition.label} does not work with background_opacity ${inspection.backgroundOpacity} (Kitty's own note).`);
     }
     const pipeline = buildNmshPipeline(active, catalog, leaked);
+    // NMSh's own shader files: written when used, removed when no longer used; a same-named file NMSh did not record is never touched.
+    const ownShaders = [...new Set(active.flatMap(({preset}) => 'nmsh' in preset.definition.source ? [preset.definition.source.nmsh] : []))]
+      .map(id => ({name: kittyShaderName(id), path: nmshShaderPath(paths, kittyShaderName(id)), source: nmshKittySource(id)}));
+    const shaderChanges: FileChange[] = [];
+    for (const shader of ownShaders) {
+      const before = state.shaderFiles.get(shader.name) ?? snapshot(shader.path, paths.home, true);
+      if (!state.shaderFiles.has(shader.name) && before.content !== undefined) throw new Error(`${shader.path} exists but is not recorded as NMSh’s; it was preserved.`);
+      if (before.content !== shader.source) shaderChanges.push({before, after: shader.source});
+      else dependencies.push(before);
+    }
+    for (const [name, before] of state.shaderFiles) if (!ownShaders.some(shader => shader.name === name) && before.content !== undefined) shaderChanges.push({before});
     if (userGroups.length + pipeline.groups.length > KITTY_MAX_GROUPS) throw new Error(`Kitty allows ${KITTY_MAX_GROUPS} shader groups in total; your shaders use ${userGroups.length} and these effects need ${pipeline.groups.length}.`);
     const header = ['Managed by NMSh (/appearance › Kitty shaders). Edits here are replaced; remove with R there.',
       ...active.map(({preset}) => `${preset.definition.label}: Kitty ${preset.origin.kittyVersion} shipped ${preset.origin.resources.map(item => `${item.name} sha256:${item.sha256.slice(0, 12)}`).join(', ')}`)];
@@ -428,13 +461,24 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     if (simulated.problems.length) throw new Error(simulated.problems.join(' '));
     // A trail shader with cursor_trail at 0 is written but never drawn. Judged without NMSh's own trail line (so a later sync
     // keeps it): when the value would be 0, NMSh's fragment turns the trail on and the review says so.
-    const trailActive = active.some(({preset}) => preset.definition.category === 'cursor');
+    const trailActive = active.some(({preset}) => drawsCursor(preset.definition.category));
     const trailWithout = Number(simulated.values.get('cursor_trail')?.value ?? 0);
     if (trailActive && !(trailWithout > 0)) {
       fragmentText += `# Kitty draws trail shaders only while cursor_trail is above 0.\ncursor_trail ${KITTY_TRAIL_ON}\n`;
       notes.push(`Turns Kitty's cursor_trail on (${KITTY_TRAIL_ON}; it would be ${Number.isFinite(trailWithout) ? trailWithout : 'unreadable'}) so the trail shader draws.`);
       simulated = simulate();
       if (simulated.problems.length) throw new Error(simulated.problems.join(' '));
+    }
+    // Cursor & typing effects run while Kitty's trail moves: start it on one-cell moves (typing) and let it run long enough
+    // for the effect to finish (Kitty reports the cursor only while its trail animates; observed with Kitty 0.49.2).
+    if (active.some(({preset}) => preset.definition.category === 'typing')) {
+      fragmentText += `# NMSh's cursor & typing effects: start Kitty's trail on one-cell moves and keep it running while the effect plays.\n${TYPING_TRAIL.map(([key, value]) => `${key} ${value}`).join('\n')}\n`;
+      simulated = simulate();
+      if (simulated.problems.length) throw new Error(simulated.problems.join(' '));
+      for (const [key, value] of TYPING_TRAIL) {
+        const now = simulated.values.get(key);
+        if (now?.path !== paths.fragment) notes.push(`${key} is set again later${now ? ` (${now.path})` : ''}, so Kitty uses ${now?.value ?? 'its default'} instead of ${value}: typing may not start the effect, or it may end early.`);
+      }
     }
     const effective = simulated.values.get('custom_shaders');
     const effectiveWords = shellWords(effective?.raw ?? '') ?? [];
@@ -448,16 +492,19 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     }
     const record: ShaderLedger = {version: 1, feature: 'kitty-shaders', hostPath: hostFile.path, hook, fragmentHash: digest(fragmentText), pipelineHash: digest(pipelineText),
       created: state.record?.created ?? hostFile.content === undefined, preserved: inspection.userRaw, placement: settings.placement, kittyVersion: catalog.version,
-      presets: active.map(({preset}) => ({id: preset.definition.id, resources: preset.origin.resources}))};
+      presets: active.map(({preset}) => ({id: preset.definition.id, resources: preset.origin.resources})),
+      ...(ownShaders.length ? {shaders: ownShaders.map(shader => ({name: shader.name, path: shader.path, sha256: digest(shader.source)}))} : {})};
     const ledgerText = `${JSON.stringify(record, null, 2)}\n`;
-    const changes: FileChange[] = [{before: state.pipeline, after: pipelineText}, {before: state.fragment, after: fragmentText},
+    const changes: FileChange[] = [...shaderChanges, {before: state.pipeline, after: pipelineText}, {before: state.fragment, after: fragmentText},
       ...(state.record ? [] : [{before: hostFile, after: hostAfter}]), {before: state.ledger, after: ledgerText}];
     if (mode === 'save') notes.push('After writing, NMSh asks the Kitty it runs in to reload its configuration: Kitty does not watch included files, so it would keep drawing the previous effect.');
     const kept = inspection.userEntries.length ? `Kept, in order: ${inspection.userEntries.join(' · ')}` : 'You have no custom_shaders of your own.';
     const shadowedNote = inspection.shadowed.length ? [`Kitty already ignores earlier custom_shaders lines at ${inspection.shadowed.join(', ')} (a later line replaces them); they are unchanged.`] : [];
     const preview = [kept, ...shadowedNote, `Effective after this change: ${effectiveWords.length ? effectiveWords.join(' · ') : '(none)'}`, '',
       ...previewFile(hostFile.path, hostFile.content, state.record ? hostFile.content : hostAfter), ...previewFile(paths.fragment, state.fragment.content, fragmentText),
-      ...previewFile(paths.pipeline, state.pipeline.content, pipelineText), ...(notes.length ? ['', ...notes] : [])];
+      ...previewFile(paths.pipeline, state.pipeline.content, pipelineText),
+      ...shaderChanges.map(change => change.after === undefined ? `- ${change.before.path} (NMSh-owned shader, no longer used)` : `File: ${change.before.path} (NMSh-owned shader, ${change.after.split('\n').length} lines of NMSh’s own Slang)`),
+      ...(notes.length ? ['', ...notes] : [])];
     return {ok: true, plan: {host: 'kitty', operation: mode, hostPath: hostFile.path, fragmentPath: paths.fragment, pipelinePath: paths.pipeline, preview, notes,
       guidance: kittyShaderGuidance(context.platform), home: paths.home, changes, dependencies: [...dependencies, ...(state.record ? [hostFile] : [])], pipelineText,
       effectiveShaders: effectiveWords}};
@@ -503,7 +550,8 @@ export function planKittyShaderRemoval(context: AppearanceContext): KittyShaderP
     const hooks = content.split(state.record.hook).length - 1;
     if (hooks > 1) throw new Error('The owned Kitty shader include is duplicated; it was preserved.');
     // Intact owned files are deleted; a missing one needs nothing; one edited outside NMSh is kept (unreferenced once the hook is gone).
-    const own: FileChange[] = [...(state.damaged.has('fragment') ? [] : [{before: state.fragment}]), ...(state.damaged.has('pipeline') ? [] : [{before: state.pipeline}]), {before: state.ledger}];
+    const own: FileChange[] = [...(state.damaged.has('fragment') ? [] : [{before: state.fragment}]), ...(state.damaged.has('pipeline') ? [] : [{before: state.pipeline}]),
+      ...[...state.shaderFiles].filter(([name]) => !state.damaged.has(`${name}.slang`)).map(([, before]) => ({before})), {before: state.ledger}];
     const notes = [...state.damaged].map(([label, kind]) => kind === 'missing' ? `NMSh's Kitty shader ${label} is already missing.`
       : `NMSh's Kitty shader ${label} was edited outside NMSh; it is kept as it is and no longer included.`);
     const guidance = kittyShaderGuidance(context.platform);
@@ -590,7 +638,8 @@ export function writtenKittyTrail(context: AppearanceContext): string | undefine
     const state = owned(context);
     if (!state.record || !(snapshot(state.record.hostPath, state.paths.home).content ?? '').includes(state.record.hook)) return undefined;
     if (!/^custom_shaders /mu.test(state.fragment.content ?? '')) return undefined;
-    const trail = /^\s*shaders (cursor-trail-[a-z-]+)\s*$/mu.exec(state.pipeline.content ?? '')?.[1];
+    const trail = /^\s*shaders (cursor-trail-[a-z-]+|nmsh-[a-z-]+)\s*$/mu.exec((state.pipeline.content ?? '').split('\n').filter(line => !/^\s*shaders nmsh-/u.test(line)
+      || NMSH_KITTY_CURSOR_SHADERS.has(line.trim().slice('shaders '.length))).join('\n'))?.[1];
     if (!trail) return undefined;
     // Kitty's trail shaders draw only while cursor_trail is above 0; otherwise Kitty draws no trail and Portable must.
     const read = readHostConfiguration('kitty', context);
