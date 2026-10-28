@@ -218,9 +218,15 @@ export class OutputBuffer {
 
   private readonly historicalContexts = new Map<number, HistoricalContextSnapshot>();
 
+  private savedWelcome(): WelcomeSnapshot {
+    // Runtime layout includes a private asset path; only the final portable still is durable.
+    const {studio: _studio, ...snapshot} = this.welcome!;
+    return structuredClone(snapshot);
+  }
+
   transcript(): OutputTranscript {
     return {
-      ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}, ...(this.welcome.studio ? {studio: {...structuredClone(this.welcome.studio), assetPath: ''}} : {})}} : {}),
+      ...(this.welcome ? {welcome: this.savedWelcome()} : {}),
       ...(this.firstRun ? {firstRun: {...this.firstRun}} : {}),
       records: this.completed.map(record => ({
         ...record,

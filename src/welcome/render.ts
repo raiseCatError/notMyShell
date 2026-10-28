@@ -1,15 +1,22 @@
 /** Shared frame adapter. GraphicsService alone turns image plans into cells or typed overlays. */
+import type {GraphicsDecision} from '../graphics/capabilities.js';
 import type {GraphicsService, PlacementOverlay} from '../graphics/service.js';
 import type {WelcomeAsset} from './assets.js';
 import type {WelcomeCapabilities, WelcomeComposition} from './compose.js';
 import {displayWidth} from '../util/text.js';
 export interface WelcomeOverlay {x: number; y: number; placement: PlacementOverlay}
+/** Inline startup and P preview must explain when a viewer-only protocol becomes cells. */
+export function inlineWelcomeReason(decision: GraphicsDecision): string | undefined {
+  if (decision.inline === 'placeholder') return undefined;
+  return ['kitty', 'iterm2', 'sixel'].includes(decision.backend)
+    ? `${decision.reason} Welcome uses character art because verified inline placement is unavailable.` : decision.reason;
+}
 export function assetCapabilities(asset: WelcomeAsset | undefined, reason?: string, animate = true): WelcomeCapabilities['asset'] {
   if (!asset) return reason ? {width: 1, height: 1, reason} : undefined;
-  return {width: asset.metadata.width, height: asset.metadata.height, ...(asset.kind === 'art' ? {rows: asset.rows} : animate && asset.animation ? {frameDelays: asset.animation.frames.map(f => f.delayMs), loopCount: asset.animation.loopCount} : {}), ...(reason ? {reason} : {})};
+  return {width: asset.metadata.width, height: asset.metadata.height, ...(asset.kind === 'image' && asset.animation?.truncated ? {truncated: true} : {}), ...(asset.kind === 'art' ? {rows: asset.rows} : animate && asset.animation && !asset.animation.truncated ? {frameDelays: asset.animation.frames.map(f => f.delayMs), loopCount: asset.animation.loopCount} : {}), ...((asset.metadata.note ?? reason) ? {reason: [asset.metadata.note, reason].filter(Boolean).join(' ')} : {})};
 }
 export function paintWelcome(frame: WelcomeComposition, asset: WelcomeAsset | undefined, service: GraphicsService, owner: unknown,
-  surface: 'inline' | 'viewer', background: {red: number; green: number; blue: number}): {rows: string[]; overlay?: WelcomeOverlay} {
+  surface: 'inline' | 'viewer', background: {red: number; green: number; blue: number}, cellsOnly = false): {rows: string[]; overlay?: WelcomeOverlay} {
   const rows = frame.rows.map(r => r.ansi);
   let overlay: WelcomeOverlay | undefined;
   const keys: string[] = [];
@@ -18,7 +25,7 @@ export function paintWelcome(frame: WelcomeComposition, asset: WelcomeAsset | un
     const frameIndex = Math.max(0, Math.min(asset.animation?.frames.length ? asset.animation.frames.length - 1 : 0, frame.frameIndex ?? 0));
     const decodedFrame = asset.animation?.frames[frameIndex];
     const image = decodedFrame ? {...asset.image, raster: decodedFrame.raster, key: `${asset.image.key}|frame:${frameIndex}`} : asset.image;
-    const placed = service.place(image, {...box, owner, surface, upscale: true, ...(bg ? {background: bg} : {})});
+    const placed = service.place(image, {...box, owner, surface, cellsOnly, upscale: true, ...(bg ? {background: bg} : {})});
     if (placed.key) keys.push(placed.key);
     for (let i = 0; i < box.rows; i++) {
       const row = box.row + i;

@@ -11,7 +11,7 @@ export interface WelcomeCapabilities {
   accent?: {red: number; green: number; blue: number};
   chroma?: {red: number; green: number; blue: number};
   legacy?: WelcomeSnapshot; catFrame?: WelcomeCatFrame;
-  asset?: {rows?: string[]; width: number; height: number; reason?: string; frameDelays?: readonly number[]; loopCount?: number};
+  asset?: {rows?: string[]; width: number; height: number; reason?: string; frameDelays?: readonly number[]; loopCount?: number; truncated?: boolean};
 }
 export interface WelcomeImagePlacement {
   row: number; column: number; columns: number; rows: number;
@@ -19,7 +19,7 @@ export interface WelcomeImagePlacement {
   alpha: WelcomeStudio['alpha'];
   treatment?: {brightness?: number; opacity?: number; shimmer?: number; parallax?: number};
 }
-export interface WelcomeComposition {rows: WrappedRow[]; images: WelcomeImagePlacement[]; active: boolean; frameIndex?: number}
+export interface WelcomeComposition {rows: WrappedRow[]; images: WelcomeImagePlacement[]; active: boolean; frameIndex?: number; nextFrameMs?: number}
 
 /** No I/O, uploads or clock ownership. A sequencer supplies elapsed time; 6b can use this exact frame plan. */
 export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: {columns: number; rows: number}, capabilities: WelcomeCapabilities, time: number): WelcomeComposition {
@@ -27,7 +27,7 @@ export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: 
   const height = Math.max(0, Math.min(80, Math.floor(size.rows)));
   if (!width || !height) return {rows: [], images: [], active: false};
   if (!model.customized && capabilities.legacy && !capabilities.legacy.captured) return {rows: renderLegacyWelcome(capabilities.legacy, width, capabilities.catFrame, {level: capabilities.color ? capabilities.level ?? 'truecolor' : 'none', home: capabilities.home ?? '', safeGlyphs: capabilities.safeGlyphs ?? false}).slice(0, height), images: [], active: false};
-  const allowed = capabilities.color && !capabilities.reducedMotion && !capabilities.effectsOff;
+  const allowed = capabilities.color && !capabilities.reducedMotion && !capabilities.effectsOff && !capabilities.asset?.truncated;
   const moving = allowed && model.effect !== 'original';
   const animated = allowed && (capabilities.asset?.frameDelays?.length ?? 0) > 1;
   const t = (moving || animated) && Number.isFinite(time) ? Math.max(0, Math.min(time, 5000)) : 0;
@@ -85,7 +85,16 @@ export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: 
   if ((image || art) && capabilities.asset?.reason) lines.push(truncateText(capabilities.asset.reason, width));
   else if ((image || art) && !capabilities.asset) lines.push('Choose a local asset to preview.');
   if (model.border) lines.push('-'.repeat(width));
-  return {rows: lines.slice(0, height).map(line => { const ansi = truncateAnsi(capabilities.color ? line : stripAnsi(line), width); return {ansi, plain: stripAnsi(ansi)}; }), images, active: (moving || animated) && t < 5000, frameIndex: animated ? sampleFrame(capabilities.asset!.frameDelays!, t, capabilities.asset?.loopCount ?? 1) : 0};
+  const delays = capabilities.asset?.frameDelays?.slice(0, 75).map(delay => Number.isFinite(delay) ? Math.max(1, Math.min(5000, delay)) : 100) ?? [];
+  const duration = delays.reduce((sum, delay) => sum + delay, 0);
+  const plays = capabilities.asset?.loopCount ?? 1;
+  const animationEnd = plays > 0 ? Math.min(5000, duration * plays) : 5000;
+  const animationActive = animated && t < animationEnd;
+  const frameIndex = animated ? sampleFrame(delays, t >= animationEnd ? Infinity : t, plays) : 0;
+  const nextBoundary = delays.slice(0, frameIndex + 1).reduce((sum, delay) => sum + delay, 0) - (duration ? t % duration : 0);
+  const effectActive = moving && t < 5000;
+  const nextFrameMs = Math.min(moving ? 100 : 5000, animationActive ? Math.max(1, nextBoundary) : 5000, Math.max(1, 5000 - t));
+  return {rows: lines.slice(0, height).map(line => { const ansi = truncateAnsi(capabilities.color ? line : stripAnsi(line), width); return {ansi, plain: stripAnsi(ansi)}; }), images, active: effectActive || animationActive, frameIndex, nextFrameMs};
 }
 
 /** Delays already passed decoder admission. Cap work again so callers cannot supply an unbounded schedule. */
@@ -93,7 +102,7 @@ function sampleFrame(delays: readonly number[], time: number, plays: number): nu
   const bounded = delays.slice(0, 75).map(delay => Number.isFinite(delay) ? Math.max(1, Math.min(5000, delay)) : 100);
   const duration = bounded.reduce((sum, delay) => sum + delay, 0);
   if (!duration || !bounded.length) return 0;
-  if (plays > 0 && time >= duration * plays) return bounded.length - 1;
+  if (!Number.isFinite(time) || plays > 0 && time >= duration * plays) return bounded.length - 1;
   let position = time % duration;
   for (let i = 0; i < bounded.length; i++) { if (position < bounded[i]!) return i; position -= bounded[i]!; }
   return bounded.length - 1;

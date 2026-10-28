@@ -103,7 +103,7 @@ export function renderWelcomeEditor(s: WelcomeEditor, columns: number, height: n
   paint?: (frame: WelcomeComposition) => string[]): string[] {
   const width = Math.max(1, columns - 4);
   const controls = renderControlRows(s.input ? [['Enter', 'apply'], ['Esc', 'cancel']] : s.picker ? [['↑↓', 'select'], ['Enter', 'open'], ['Esc', 'back']] :
-    [['↑↓', 'select'], ['←→', 'change'], ['Enter', 'edit'], ['S', 'save'], ['Esc', 'back'], ['Space', 'pause'], ['R', 'replay'], ['W', 'width'], ['C', 'density'], ['T', 'theme'], ['M', 'still'], ['B', 'before']], width);
+    [['↑↓', 'select'], ['←→', 'change'], ['Enter', 'edit'], ['S', 'save'], ['P', 'full preview'], ['Esc', 'back'], ['Space', 'pause'], ['R', 'replay'], ['W', 'width'], ['C', 'density'], ['T', 'theme'], ['M', 'still'], ['B', 'before']], width);
   const notes = [caps.asset?.reason, s.message ?? (s.input ? 'Esc restores this field.' : 'Local assets only · originals unchanged')].filter((v): v is string => Boolean(v));
   const room = Math.max(0, height - controls.length - 5 - notes.length);
   const listSize = Math.min(5, Math.floor(room / 2));

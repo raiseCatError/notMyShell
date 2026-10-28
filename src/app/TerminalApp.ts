@@ -1,3 +1,4 @@
+import {inlineWelcomeReason} from '../welcome/render.js';
 import {WelcomeStudioController} from '../welcome/studio.js';
 import {NativeWelcomePresentation} from '../welcome/startup.js';
 import {collectWelcomeFacts} from '../welcome/facts.js';
@@ -1641,6 +1642,12 @@ export class TerminalApp {
       this.noteActivity();
     }
     for (const key of keys) {
+      // A preview owns the entire input batch, including paste/type-ahead after its closing key.
+      if (this.welcomeStudio?.fullPreview) {
+        const closing = keys.find(key => !['focusIn', 'focusOut', 'mouseMove'].includes(key.kind));
+        if (closing) void this.welcomeStudio.key(closing);
+        break;
+      }
       const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
       this.handleKey(key);
       this.noteCaretTravel(before);
@@ -1665,6 +1672,7 @@ export class TerminalApp {
   }
 
   private readonly onResize = (): void => {
+    this.welcomeStudio?.endPreview();
     this.nativeWelcome?.cancelMotion();
     this.stopStartupEnding();
     this.effects.cancel();
@@ -1730,6 +1738,7 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.welcomeStudio?.fullPreview) { void this.welcomeStudio.key(key); return; }
     if (key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.nativeWelcome?.cancelMotion();
     // Any real input finishes the ending at once (focus changes and pointer movement are not input); the key is then handled normally.
     if (this.startupEnding && key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.finishStartupEnding();
@@ -8902,7 +8911,7 @@ export class TerminalApp {
         snapshot.studio = structuredClone(model);
         snapshot.facts = collectWelcomeFacts(model, {shell: this.shellId, version: this.buildIdentity.version, terminal: this.host.name ?? 'Unknown', cwd, git: this.context.cwd === cwd ? this.context.branch : undefined});
         const native = this.nativeWelcome = new NativeWelcomePresentation(snapshot, this.graphicsService(), () => this.welcomeCapabilities(), () => UI_COLORS.cwdBackground, () => { if (!this.stopped) this.render(); });
-        this.output.presenter.welcomePainter = (saved, width) => native.rows(saved, width, this.graphicsDecision().inline === 'placeholder' ? undefined : this.graphicsDecision().reason);
+        this.output.presenter.welcomePainter = (saved, width) => native.rows(saved, width, inlineWelcomeReason(this.graphicsDecision()));
         const scratch = join(defaultRuntimeDir(), 'images');
         if (model.assetPath) {
           try { ensurePrivateRuntimeDir(defaultRuntimeDir()); mkdirSync(scratch, {recursive: true, mode: 0o700}); } catch { /* the bounded loader reports unavailable converter storage */ }
@@ -9020,6 +9029,17 @@ export class TerminalApp {
       graphics: () => this.graphicsService(), decision: () => this.graphicsDecision(),
       facts: model => collectWelcomeFacts(model, {shell: this.shellId, version: this.buildIdentity.version, terminal: this.host.name ?? 'Unknown', cwd: this.shellCwd, git: this.context.branch}),
       capabilities: () => this.welcomeCapabilities(), background: () => UI_COLORS.cwdBackground,
+      preview: active => {
+        this.nativeWelcome?.cancelMotion();
+        if (active) {
+          this.presentationSubscription?.(); this.presentationSubscription = undefined;
+          this.transitionClock?.(); this.transitionClock = undefined;
+          this.panelAnimation?.(); this.panelAnimation = undefined;
+          this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
+          this.renderer.enter();
+        }
+        this.renderer.setImageOverlay(undefined); this.renderer.setTextBlocks([]); this.renderer.invalidate();
+      },
       save: config => this.applySettingsConfiguration(config), render: () => { if (!this.stopped) this.render(); },
       close: () => { this.welcomeStudio = undefined; this.returnFromPanel(); this.render(); },
     });
@@ -12362,6 +12382,14 @@ export class TerminalApp {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
+    if (this.welcomeStudio?.fullPreview) {
+      // Renderer.enter owns the alternate screen already; fullscreen surfaces replace its frame without nesting screens.
+      const {columns, rows} = this.terminalDimensions();
+      const welcome = this.welcomeStudio.renderPreview(columns, rows);
+      this.renderer.setImageOverlay(undefined); this.renderer.setTextBlocks([]);
+      this.renderer.render({rows: Array.from({length: rows}, (_, i) => welcome[i] ?? ''), columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false});
+      return;
+    }
     if (this.idle) { this.paintIdle(); return; }
     // A real frame (a key, a prompt) ends the Arcade's recede at once; output chunks and the shell's clocks never do (below).
     this.arcadeClosing = undefined;
@@ -12655,6 +12683,7 @@ export class TerminalApp {
 
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
   private renderTaskPresentation(): void {
+    if (this.welcomeStudio?.fullPreview) return;
     if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     const cached = this.presentationFrame;
@@ -12777,6 +12806,7 @@ export class TerminalApp {
   }
 
   private cancelPresentation(): void {
+    this.welcomeStudio?.endPreview(); this.nativeWelcome?.cancelMotion();
     this.startupSkyClock?.(); this.startupSkyClock = undefined; this.startupSkyInterval = 0;
     this.stopStartupEnding();
     this.transitions.cancel();
@@ -12800,7 +12830,7 @@ export class TerminalApp {
   private paintPresentation(now: number): void {
     // Idle visuals and the Arcade are each the sole owner of the screen while active: a clock the shell's own frame started
     // (a running command's activity rows, a Chroma divider) must never paint between their frames.
-    if (this.idle || this.arcade || this.arcadeClosing) return;
+    if (this.welcomeStudio?.fullPreview || this.idle || this.arcade || this.arcadeClosing) return;
     const cached = this.presentationFrame;
     if (!cached) return;
     const {frame, plan} = cached;
@@ -13202,6 +13232,7 @@ export class TerminalApp {
   }
 
   private renderPresentation(now: number): void {
+    if (this.welcomeStudio?.fullPreview) return;
     if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
@@ -13216,7 +13247,7 @@ export class TerminalApp {
   }
 
   private syncPresentationClock(): void {
-    if (!this.presentationStarted || this.stopped || this.idle) return;
+    if (!this.presentationStarted || this.stopped || this.idle || this.welcomeStudio?.fullPreview) return;
     this.syncStatusStrip();
     this.syncAwake();
     this.syncNotices();
@@ -13228,8 +13259,8 @@ export class TerminalApp {
     const needsFrames = Boolean(this.running || this.effects.active || ((animatedRule || animatedPrompt) && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
     if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
-    if (this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();
-    if (!this.decorativeMotionAllowed()) {
+    if (!this.nativeWelcome && this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();
+    if (this.nativeWelcome || !this.decorativeMotionAllowed()) {
       this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined; this.output.setWelcomeFrame('open');
     }
   }

@@ -90,6 +90,8 @@ export interface PlaceRequest {
   owner: unknown;
   /** `viewer` may use an overlay protocol; `inline` is always text cells. */
   surface: 'inline' | 'viewer';
+  /** Portable snapshot/settled input: never upload terminal objects. */
+  cellsOnly?: boolean;
   /** A region of the image to show (fractions 0..1), for zoom and pan. */
   crop?: {x: number; y: number; width: number; height: number};
   /** Allow the image to be shown larger than its own pixel size. */
@@ -220,6 +222,7 @@ export class GraphicsService {
     const useText = request.surface === 'inline' || decision.inline === 'placeholder';
 
     if (mode === 'off') return this.textPlacement(image, limit, request.owner);
+    if (request.cellsOnly) return this.artPlacement(image, source, box, request.owner);
     if (mode === 'kitty' && useText && decision.inline === 'placeholder') return this.kittyPlacement(image, source, box, cell, request);
     if (request.surface === 'viewer' && (mode === 'kitty' || mode === 'iterm2' || mode === 'sixel')) return this.overlayPlacement(image, source, box, cell, request, mode);
     return this.artPlacement(image, source, box, request.owner);

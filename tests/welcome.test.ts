@@ -141,7 +141,7 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
     Object.defineProperty(app, 'render', {value: () => {}});
     await app['resumeSelectedSession']();
     assert.deepEqual(app['output'].transcript().welcome, first);
-    assert.equal(app['output'].wrapped(80).filter(row => row.plain.includes('notMyShell')).length, 1);
+    assert.deepEqual(app['output'].wrapped(80), renderWelcome(first, 80));
     assert.equal((await new TranscriptStore(directory).list()).length, 2, 'welcome-only current session is archived before resume');
   } finally {
     app['stop'](0);

@@ -20,6 +20,8 @@ const BOLD = '\u001B[1m';
 const NORMAL_WEIGHT = '\u001B[22m';
 
 export interface WelcomeSnapshot {
+  /** Portable final still only; no graphics controls or private asset references. */
+  still?: string[];
   studio?: import('./model.js').WelcomeStudio;
   facts?: import('./compose.js').WelcomeFacts;
   identity: BuildIdentity;

@@ -58,9 +58,15 @@ test('in-flight external preview capture is reused, and disposal cancels outstan
     const binary = join(dir, 'fastfetch');
     await writeFile(binary, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo fastfetch; exit 0; fi\nprintf x >> "$PWD/count"\nsleep 0.2\necho one-capture\n'); await chmod(binary, 0o700);
     process.env.PATH = `${dir}:/usr/bin:/bin`; clearProviderDetection();
-    await Promise.all([controller.start(), controller.start()]);
+    const starts = Promise.all([controller.start(), controller.start()]);
+    await controller.key({kind: 'text', value: 'p'});
+    await starts;
+    assert.match(controller.renderPreview(80, 24).join(''), /one-capture/);
+    await controller.key(escape);
     assert.equal(await readFile(join(dir, 'count'), 'utf8'), 'x');
     assert.deepEqual(controller.state.captured, ['one-capture']);
+    for (let i = 0; i < 2; i++) { await controller.key({kind: 'text', value: 'p'}); controller.renderPreview(80, 24); await controller.key(escape); }
+    assert.equal(await readFile(join(dir, 'count'), 'utf8'), 'x', 'P reuses the one provider capture');
   } finally { controller.dispose(); process.env.PATH = old; clearProviderDetection(); await rm(dir, {recursive: true, force: true}); }
 });
 
