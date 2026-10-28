@@ -17,7 +17,7 @@ export type KittyShaderAction = Exclude<StudioAction, {kind: 'reloaded'}>;
 export const KITTY_STUDIO: StudioHost<ShaderGates> = {
   name: 'Kitty',
   placement: true,
-  intro: catalog => `Kitty ${catalog.version} · shipped shaders read from Kitty itself · effects cover the whole Kitty window, not only NMSh`,
+  intro: catalog => `Kitty ${catalog.version} · shipped shaders read from Kitty itself, plus NMSh’s own (written beside NMSh’s pipeline) · effects cover the whole Kitty window, not only NMSh`,
   unsupportedHint: 'Cursor effects stay with /cursor (Portable, or Kitty’s built-in trail).',
   status: inspection => inspection.drifted ? 'Your own custom_shaders changed since NMSh composed with it; S reviews an updated plan.'
     : inspection.configured ? `Set up · ${inspection.activePresets.length ? `${inspection.activePresets.length} NMSh effect${inspection.activePresets.length === 1 ? '' : 's'} in Kitty’s config` : 'no NMSh effect active'}`

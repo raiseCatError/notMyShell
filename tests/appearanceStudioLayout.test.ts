@@ -19,9 +19,40 @@ test('shader browser offers category jumps and visible focus with a persistent f
   for (const [w, h] of sizes) {
     const rows = renderGhosttyShaderPanel(s, w, h);
     const plain = rows.map(stripAnsi);
-    assert.ok(plain.some(row => row.startsWith('›') && row.includes('Aurora')), 'Tab jumps to the next category');
+    assert.ok(plain.some(row => row.startsWith('›') && row.includes('Ink Bloom')), 'Tab jumps to the next category (Cursor & typing follows Cursor trail)');
     assert.ok(plain.at(-1)?.includes('Esc'));
     assert.ok(rows.length <= h && rows.every(row => displayWidth(row) <= w));
+  }
+});
+
+test('NMSh’s own effects appear in their two categories with a one-line description, at 120x40 and 60x20, on both hosts', () => {
+  const kitty = createKittyShaderPanel(DEFAULT.hostShaders.kitty, {reducedMotion: false, effectsOff: false, cursorRenderer: 'auto'});
+  kitty.catalog = buildKittyCatalog('0.49.2', {'types.slang': '// types'});
+  const ghostty = createGhosttyShaderPanel(DEFAULT.hostShaders.ghostty, gates);
+  ghostty.catalog = buildGhosttyCatalog('1.3.1');
+  const hosts = [[kitty, renderKittyShaderPanel, kittyShaderKey], [ghostty, renderGhosttyShaderPanel, ghosttyShaderKey]] as const;
+  for (const [state, render, keyOf] of hosts) {
+    for (const [w, h] of [[120, 40], [60, 20]] as const) {
+      state.selected = 0;
+      const seen = new Map<string, string>();
+      for (let step = 0; step < 60; step++) {
+        const plain = (render as (s: typeof state, w: number, h: number) => string[])(state, w, h).map(stripAnsi);
+        assert.ok(plain.length <= h && plain.every(row => displayWidth(row) <= w));
+        const focused = plain.find(row => row.startsWith('›')) ?? '';
+        for (const label of ['Ink Bloom', 'Type Garden', 'Filament', 'Glitch Hop', 'Gravity Lens', 'Holo Foil', 'Shine Sweep', 'Halo Bloom']) {
+          if (focused.includes(label) && !seen.has(label)) seen.set(label, plain.join('\n'));
+        }
+        (keyOf as (s: typeof state, k: never) => unknown)(state, {kind: 'down'} as never);
+      }
+      assert.equal(seen.size, 8, `all eight effects reachable at ${w}x${h}`);
+      if (w === 120) {
+        assert.match(seen.get('Ink Bloom')!, /Cursor & typing/u);
+        assert.match(seen.get('Holo Foil')!, /Welcome & images/u);
+        assert.match(seen.get('Ink Bloom')!.replace(/\s+/gu, ' '), /watercolor bloom/u);
+        assert.match(seen.get('Shine Sweep')!.replace(/\s+/gu, ' '), /plain text stays as it is/u);
+        assert.match(seen.get('Filament')!.replace(/\s+/gu, ' '), /One cursor effect at a time/u);
+      }
+    }
   }
 });
 test('hub preserves focused host editing and wrapped actions at every size', () => {

@@ -18,6 +18,7 @@ import {stripTerminalControls} from '../util/terminalControls.js';
 import {CATEGORY_LABELS, type OfferedParam, type PresetCategory, type ShaderValue} from './kittyShaderCatalog.js';
 import type {KittyShaderEffect} from './kittyShaderSettings.js';
 import {PREVIEW_MS, previewKind, previewValues, renderShaderPreview} from './shaderPreview.js';
+import {NMSH_EFFECTS} from './nmshShaders.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import type {RgbColor} from '../ui/palette.js';
 
@@ -75,7 +76,7 @@ export type StudioAction = {kind: 'back'} | {kind: 'review'} | {kind: 'remove'} 
 
 type Row = {kind: 'placement'} | {kind: 'preset'; preset: StudioPreset} | {kind: 'param'; preset: StudioPreset; param: OfferedParam};
 type AnyState = ShaderStudioState<StudioCatalog, StudioInspection, StudioPlan, unknown, StudioDraft>;
-const CATEGORY_ORDER: readonly PresetCategory[] = ['cursor', 'ambient', 'interaction', 'focus', 'display'];
+const CATEGORY_ORDER: readonly PresetCategory[] = ['cursor', 'typing', 'welcome', 'ambient', 'interaction', 'focus', 'display'];
 const PREVIEW_DESCRIPTIONS: Record<string, string> = {
   trail: 'A fading smear follows the cursor between positions.',
   comet: 'A bright head pulls a soft tail behind the cursor.',
@@ -87,6 +88,8 @@ const PREVIEW_DESCRIPTIONS: Record<string, string> = {
   vignette: 'The edges darken to draw attention toward the center.',
   scanlines: 'Fine horizontal lines give the display a CRT texture.',
   glow: 'Bright text gains a soft halo.',
+  // NMSh's own effects: one plain line each (the same words on both hosts).
+  ...Object.fromEntries(NMSH_EFFECTS.map(effect => [effect.id, effect.description])),
 };
 
 export function createShaderStudio<C extends StudioCatalog, I extends StudioInspection, P extends StudioPlan, G, D extends StudioDraft>(saved: D, gates: G): ShaderStudioState<C, I, P, G, D> {
@@ -283,7 +286,9 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
     if (preset) {
       out.push(studioLabel(preset.definition.label));
       text(`${enabled(any, preset.definition.id) ? 'Enabled in draft' : 'Disabled in draft'} · ${passState(preset.definition.id)}`);
-      if (preset.definition.exclusive) text(`Choose one ${CATEGORY_LABELS[preset.definition.category].toLowerCase()} effect at a time.`);
+      if (preset.definition.exclusive) text(preset.definition.exclusive === 'cursor' ? 'One cursor effect at a time: a trail or a cursor & typing effect.'
+        : `Choose one ${CATEGORY_LABELS[preset.definition.category].toLowerCase()} effect at a time.`);
+      if (preset.definition.category === 'welcome') text('Only colorful blocks and images (welcome logo, fastfetch art) change; plain text stays as it is.');
       text(kind ? PREVIEW_DESCRIPTIONS[kind] ?? 'A host shader changes the whole terminal surface.' : preset.definition.note ?? 'A host-wide effect; no faithful cell approximation is available.');
     }
     const note = current?.kind === 'placement' ? host.placementNote : preset?.definition.note || (preset && !preset.params.length ? host.noParams : '');

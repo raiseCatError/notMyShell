@@ -12,8 +12,9 @@ import type {RgbColor} from '../ui/palette.js';
 import {colorEscape} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import type {PresetCategory, ShaderValue} from './kittyShaderCatalog.js';
+import {nmshEffect, type NmshEffectId} from './nmshShaders.js';
 
-export type PreviewKind = 'trail' | 'comet' | 'blaze' | 'lightning' | 'motion-blur' | 'aurora' | 'dim' | 'vignette' | 'scanlines' | 'glow';
+export type PreviewKind = 'trail' | 'comet' | 'blaze' | 'lightning' | 'motion-blur' | 'aurora' | 'dim' | 'vignette' | 'scanlines' | 'glow' | NmshEffectId;
 
 /**
  * Each trail style has its own shape, modelled on what the shader draws (Kitty 0.49.2's shipped sources; NMSh's Ghostty
@@ -27,6 +28,8 @@ const TRAIL_PREVIEWS: ReadonlySet<PreviewKind> = new Set(['trail', 'comet', 'bla
 
 /** The preview kind for a preset (Ghostty and Kitty ids), or undefined when NMSh has no faithful approximation. */
 export function previewKind(id: string, category: PresetCategory): PreviewKind | undefined {
+  // NMSh's own effects each have their own preview (same id on both hosts).
+  if (nmshEffect(id)) return id as NmshEffectId;
   if (category === 'cursor') return TRAIL_KINDS[id] ?? 'trail';
   if (id === 'aurora' || id === 'northern-lights') return 'aurora';
   if (id === 'focus-dim' || id === 'dim-inactive-windows') return 'dim';
@@ -53,7 +56,8 @@ export function previewValues(id: string, values: Readonly<Record<string, Shader
 
 /** How long one run lasts; 0 for a still effect. */
 export const PREVIEW_MS: Record<PreviewKind, number> = {trail: 1800, comet: 1800, blaze: 2000, lightning: 1100, 'motion-blur': 1600,
-  aurora: 3600, dim: 1500, vignette: 0, scanlines: 0, glow: 0};
+  aurora: 3600, dim: 1500, vignette: 0, scanlines: 0, glow: 0,
+  'ink-bloom': 1700, 'type-garden': 2000, filament: 1500, 'glitch-hop': 900, 'gravity-lens': 1400, 'holo-foil': 3600, 'shine-sweep': 2400, 'halo-bloom': 3200};
 
 export interface PreviewInput {
   kind: PreviewKind;
@@ -217,6 +221,8 @@ export function renderShaderPreview(input: PreviewInput): PreviewFrame {
       const cell = at(x, y)!;
       cell.bg = mix(cell.bg, {red: 0, green: 0, blue: 0}, Math.min(1, intensity * 1.5)); cell.fg = mix(cell.fg, {red: 0, green: 0, blue: 0}, intensity);
     }
+  } else if (nmshEffect(kind)) {
+    drawNmshPreview(kind as NmshEffectId, {grid, width, rows, t, elapsed: input.still ? duration * 0.6 : input.elapsed, values, colors});
   } else if (kind === 'glow') {
     for (let y = 0; y < rows; y++) for (let x = 0; x < width; x++) {
       const cell = at(x, y)!;
@@ -239,4 +245,179 @@ export function renderShaderPreview(input: PreviewInput): PreviewFrame {
     }).join('') + '\u001b[0m';
   });
   return {rows: out, busy: !input.still && duration > 0 && input.elapsed < duration};
+}
+
+// ---- NMSh's own effects --------------------------------------------------------------------------------------------
+
+interface NmshPreviewInput {
+  grid: Cell[][]; width: number; rows: number; t: number; elapsed: number;
+  values: Readonly<Record<string, ShaderValue>>; colors: PreviewInput['colors'];
+}
+
+const STRENGTHS = [0.55, 1, 1.7];
+const fromUnit = (rgb: readonly number[]): RgbColor => ({red: channel(rgb[0]), green: channel(rgb[1]), blue: channel(rgb[2])});
+const hash = (x: number, y: number) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
+const rainbow = (phase: number): RgbColor => fromUnit([0, 0.33, 0.67].map(shift => 0.5 + 0.5 * Math.cos(6.283 * (phase + shift))));
+
+/** The effect's palette color for a slot, as the shader picks it (theme slots use the sample's cursor color). */
+function paletteColor(id: NmshEffectId, values: Readonly<Record<string, ShaderValue>>, slot: number, theme: RgbColor): RgbColor {
+  const effect = nmshEffect(id)!;
+  const choice = effect.palette?.[num(values.COLOR, effect.defaults.COLOR ?? 0)] ?? effect.palette?.[0];
+  const value = choice?.[Math.min(slot, choice.length - 1)];
+  return !value || value === 'theme' ? theme : fromUnit(value);
+}
+
+/** A small colorful block "logo" on the right of the sample, where welcome effects act (plain text stays plain). */
+function drawLogo(grid: Cell[][], width: number): Array<{x: number; y: number; cell: Cell}> {
+  const x0 = Math.max(0, width - 11);
+  const shape = ['██ ██ ███', '█████ █ █', '██ ██ ███', '██ ██ █ █'];
+  const cells: Array<{x: number; y: number; cell: Cell}> = [];
+  shape.forEach((line, y) => [...line].forEach((char, dx) => {
+    const cell = grid[y]?.[x0 + dx];
+    if (!cell) return;
+    if (char === ' ') { cell.char = ' '; return; }
+    cell.char = '█'; cell.fg = rainbow(dx / 11 + y * 0.04);
+    cells.push({x: x0 + dx, y, cell});
+  }));
+  return cells;
+}
+
+function drawNmshPreview(id: NmshEffectId, input: NmshPreviewInput): void {
+  const {grid, width, rows, t, values, colors} = input;
+  const at = (x: number, y: number) => grid[y]?.[x];
+  const k = STRENGTHS[num(values.STRENGTH, 1)] ?? 1;
+  const theme = colors.cursor;
+  const color = (slot: number) => paletteColor(id, values, slot, theme);
+  const typed = {x: SAMPLE[2]!.length - 1, y: 2};
+  const caret = (x: number, y: number) => { const cell = at(x, y); if (cell) { cell.bg = colors.cursor; cell.fg = colors.background; } };
+  if (id === 'ink-bloom') {
+    // An irregular wash spreads from the glyph just typed, its rim darker, then it dries.
+    const spread = 1 - (1 - Math.min(1, t * 1.7)) ** 3;
+    const wet = 1 - t;
+    const dry = 1 - Math.max(0, (t - 0.5) / 0.5);
+    for (let y = 0; y < rows; y++) for (let x = 0; x < width; x++) {
+      const dx = (x - typed.x) / 2;
+      const dy = y - typed.y;
+      const angle = Math.atan2(dy, dx);
+      const radius = (0.6 + 1.5 * spread) * (1 + 0.18 * Math.sin(angle * 2 + 1.3) + 0.12 * Math.sin(angle * 3 - 0.7));
+      const r = Math.hypot(dx, dy);
+      if (r > radius + 0.3) continue;
+      const rim = Math.abs(r - radius * 0.85) < 0.45 ? 1 : 0;
+      const ink = mix(color(0), color(1), r / Math.max(radius, 0.1));
+      const cell = at(x, y)!;
+      cell.bg = mix(cell.bg, ink, k * Math.min(0.9, (0.38 * wet + 0.08) * (r < radius ? 1 : 0.4) + rim * 0.45 * dry));
+      if (cell.char !== ' ' && r < radius * 0.7) cell.fg = mix(cell.fg, ink, wet * 0.6);
+    }
+    caret(typed.x + 1, typed.y);
+  } else if (id === 'type-garden') {
+    // Sprouts grow up from the glyph just typed, open small flowers, then rise a row and fade.
+    for (const [index, dx] of [[0, -1], [1, 0], [2, 1]] as const) {
+      const q = Math.max(0, Math.min(1, (t - index * 0.09) / (1 - index * 0.09)));
+      if (q <= 0) continue;
+      const fade = 1 - Math.max(0, (q - 0.55) / 0.45);
+      const rise = q > 0.7 ? 1 : 0;
+      const height = Math.min(2, Math.ceil(q * 2.4 * (index === 1 ? 2 : 1.5)));
+      for (let h = 1; h <= height; h++) {
+        const cell = at(typed.x + dx, typed.y - h - rise);
+        if (!cell) continue;
+        const top = h === height;
+        const tint = mix(cell.bg, top && q > 0.25 ? color(1 + (index % 2)) : color(0), Math.min(1, fade * (0.5 + 0.5 * k)));
+        // Sprouts grow in the gaps; over existing text they only light the cell, as the shader's glow does.
+        if (cell.char === ' ') { cell.char = top && q > 0.25 ? (index === 1 ? '✿' : '❀') : '│'; cell.fg = tint; }
+        else cell.bg = mix(cell.bg, tint, 0.45);
+      }
+    }
+    caret(typed.x + 1, typed.y);
+  } else if (id === 'filament') {
+    // A coiled wire along the cursor's jump, white-hot at the cursor, cooling to amber and deep red from the far end.
+    const from = {x: SAMPLE[0]!.length, y: 0};
+    const to = {x: 2, y: 2};
+    const ramp = (heat: number) => heat > 0.75 ? mix(color(2), {red: 255, green: 247, blue: 230}, (heat - 0.75) / 0.25)
+      : heat > 0.45 ? mix(color(1), color(2), (heat - 0.45) / 0.3) : mix(colors.background, mix(color(0), color(1), heat / 0.45), Math.min(1, heat / 0.2));
+    for (let step = 0; step <= 40; step++) {
+      const s = step / 40;
+      const heat = Math.max(0, Math.min(1, 1.12 - t * 1.25 - (1 - s) * (0.25 + 0.6 * t)));
+      if (heat <= 0) continue;
+      const cell = at(Math.round(from.x + (to.x - from.x) * s), Math.round(from.y + (to.y - from.y) * s));
+      if (!cell) continue;
+      if (cell.char === ' ') { cell.char = '~'; cell.fg = ramp(heat); }
+      cell.bg = mix(cell.bg, ramp(heat), Math.min(0.6, heat * 0.45 * k));
+    }
+    caret(to.x, to.y);
+  } else if (id === 'glitch-hop') {
+    // Rows along a big jump tear sideways in slices, with colored ghosts, for a moment only.
+    const frame = Math.floor(input.elapsed / 60);
+    const env = (1 - t) ** 2;
+    const tintA = color(0);
+    const tintB = color(1);
+    const ghostA = mix(tintA.red + tintA.green + tintA.blue ? tintA : colors.accent, {red: 255, green: 255, blue: 255}, 0.2);
+    const ghostB = mix(tintB, {red: 255, green: 255, blue: 255}, 0.2);
+    for (let y = 0; y < rows - 1; y++) {
+      const r = hash(y, frame);
+      if (r < 0.35 || env <= 0.05) continue;
+      const shove = hash(frame, y * 1.7) - 0.5;
+      const offset = Math.sign(shove || 1) * Math.max(1, Math.round(Math.abs(shove) * 6 * env * k));
+      const source = grid[y]!.map(cell => ({...cell}));
+      for (let x = 0; x < width; x++) {
+        const from = source[x + offset];
+        const cell = grid[y]![x]!;
+        if (!from) continue;
+        cell.char = from.char;
+        cell.fg = from.char === ' ' ? cell.fg : mix(from.fg, offset > 0 ? ghostA : ghostB, Math.min(1, 0.45 + 0.35 * k));
+      }
+    }
+    caret(2, 2);
+  } else if (id === 'gravity-lens') {
+    // Text near the cursor's landing spot is drawn in toward it, overshoots and springs back; a faint ring spreads.
+    const center = {x: 14, y: 1};
+    const spring = Math.exp(-3.6 * t) * Math.cos(t * 7.5) * (1 - Math.exp(-40 * t));
+    const source = grid.map(line => line.map(cell => ({...cell})));
+    for (let y = 0; y < rows; y++) for (let x = 0; x < width; x++) {
+      const dx = (x - center.x) / 2;
+      const dy = y - center.y;
+      const r = Math.hypot(dx, dy);
+      if (r > 3.5 || r < 0.5) continue;
+      const pull = Math.round(spring * k * 1.6 * (r / 3.5) * Math.exp(-((r / 3.5) ** 2)) * 3.2);
+      const from = source[y]?.[x + Math.sign(x - center.x) * pull];
+      const cell = grid[y]![x]!;
+      if (from) { cell.char = from.char; cell.fg = from.fg; }
+      const ring = 0.6 + 2.4 * t;
+      if (Math.abs(r - ring) < 0.4) cell.bg = mix(cell.bg, theme, 0.5 * Math.exp(-4 * t) * k);
+    }
+    caret(center.x, center.y);
+  } else {
+    const logo = drawLogo(grid, width);
+    if (id === 'holo-foil') {
+      // Iridescent bands drift diagonally over the logo, with a few twinkling flecks.
+      for (const {x, y, cell} of logo) {
+        const film = values.COLOR === 1 ? mix(rainbow(x * 0.08 + y * 0.12 - t * 0.9), {red: 255, green: 245, blue: 250}, 0.55)
+          : values.COLOR === 2 ? mix(theme, {red: 255 - theme.red, green: 255 - theme.green, blue: 255 - theme.blue}, 0.5 + 0.5 * Math.sin((x + y) * 0.7 - t * 6))
+            : rainbow(x * 0.08 + y * 0.12 - t * 0.9);
+        cell.fg = mix(cell.fg, film, Math.min(0.9, 0.55 * k));
+        if (hash(x, y + Math.floor(t * 6)) > 0.9) { cell.char = '✦'; cell.fg = {red: 255, green: 255, blue: 255}; cell.bg = mix(cell.bg, film, 0.5); }
+      }
+    } else if (id === 'shine-sweep') {
+      // One bright diagonal band crosses the logo; the text beside it is untouched.
+      const light = paletteColor(id, values, 0, theme);
+      const x0 = Math.max(0, width - 11);
+      const center = -0.25 + t * 1.5;
+      for (const {x, y, cell} of logo) {
+        const d = (x - x0 + (3 - y) * 0.8) / 12 - center;
+        const band = Math.max(0, 1 - Math.abs(d) / 0.14);
+        cell.fg = mix(cell.fg, light, Math.min(1, band * 0.95 * k));
+      }
+    } else {
+      // A soft glow breathes around the logo's colorful cells.
+      const breathe = 0.7 + 0.3 * Math.sin(t * Math.PI * 4);
+      const glowColor = (from: Cell) => values.COLOR === 1 ? theme : from.fg;
+      for (let y = 0; y < rows; y++) for (let x = 0; x < width; x++) {
+        const cell = at(x, y)!;
+        if (logo.some(item => item.cell === cell)) continue;
+        let best: {d: number; cell: Cell} | undefined;
+        for (const item of logo) { const d = Math.hypot((item.x - x) / 2, item.y - y); if (!best || d < best.d) best = {d, cell: item.cell}; }
+        if (!best || best.d > 1.6) continue;
+        cell.bg = mix(cell.bg, glowColor(best.cell), Math.min(0.75, (0.55 - best.d * 0.28) * breathe * k));
+      }
+    }
+  }
 }
