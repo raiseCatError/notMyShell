@@ -482,7 +482,7 @@ export function syncKittyShaders(settings: KittyShaderSettings, context: KittySh
     const fragmentText = `${FRAGMENT_HEADER}# No NMSh effect is active; your own custom_shaders applies unchanged.\n`;
     if (state.pipeline.content === pipelineText && state.fragment.content === fragmentText) return {kind: 'unchanged'};
     const ledgerText = `${JSON.stringify({...record, fragmentHash: digest(fragmentText), pipelineHash: digest(pipelineText), presets: []}, null, 2)}\n`;
-    try { transact([{before: state.pipeline, after: pipelineText}, {before: state.fragment, after: fragmentText}, {before: state.ledger, after: ledgerText}], [], state.paths.home); }
+    try { transact([{before: state.pipeline, after: pipelineText}, {before: state.fragment, after: fragmentText}, {before: state.ledger, after: ledgerText}], [], state.paths.home, {source: 'kitty-shaders', label: 'kitty-shaders synchronization', directory: join(state.paths.directory,'..','backups')}); }
     catch (error) { return {kind: 'review', message: error instanceof Error ? error.message : String(error)}; }
     return {kind: 'written', message: `NMSh's Kitty effects are off · ${kittyShaderGuidance(context.platform)}`};
   }
@@ -522,7 +522,7 @@ export function planKittyShaderRemoval(context: AppearanceContext): KittyShaderP
 }
 
 export function applyKittyShaderPlan(plan: KittyShaderPlan): {ok: true} | {ok: false; error: string} {
-  try { transact(plan.changes, plan.dependencies, plan.home); return {ok: true}; }
+  try { transact(plan.changes, plan.dependencies, plan.home, {source: 'kitty-shaders', directory: join(dirname(plan.fragmentPath),'..','backups'), label: 'kitty-shaders configuration'}); return {ok: true}; }
   catch (error) { return {ok: false, error: error instanceof Error ? error.message : String(error)}; }
 }
 

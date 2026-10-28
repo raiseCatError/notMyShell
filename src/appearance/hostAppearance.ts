@@ -1,3 +1,4 @@
+import {dirname, join} from 'node:path';
 import {appearanceContext, appearancePaths, type AppearanceContext, type AppearanceHost} from './hostPaths.js';
 import {readHostConfiguration, type Definition} from './hostConfiguration.js';
 import {digest, snapshot, transact, type FileChange, type FileSnapshot} from './hostFiles.js';
@@ -170,6 +171,6 @@ export function planHostRemoval(host: AppearanceHost, context = appearanceContex
 }
 
 export function applyHostAppearance(plan: HostAppearancePlan): {ok: true} | {ok: false; error: string} {
-  try { transact(plan.changes, plan.dependencies, plan.home); return {ok: true}; }
+  try { transact(plan.changes, plan.dependencies, plan.home, {source: 'appearance', directory: join(dirname(plan.fragmentPath),'..','backups'), label: `${plan.host} appearance ${plan.operation}`}); return {ok: true}; }
   catch (error) { return {ok: false, error: error instanceof Error ? error.message : String(error)}; }
 }

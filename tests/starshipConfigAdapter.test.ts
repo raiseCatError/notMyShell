@@ -1,3 +1,4 @@
+import {Journal} from '../src/backups/journal.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, readdir, rm, symlink, writeFile} from 'node:fs/promises';
@@ -26,7 +27,7 @@ test('Starship module changes are previewed, backed up, and preserve unrelated c
   };
   try {
     const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-      run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+      run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
     const proposal = await adapter.propose('directory', true);
     assert.equal(await readFile(path, 'utf8'), original);
     assert.match(proposal.diff.join('\n'), /disabled = true/u);
@@ -50,7 +51,7 @@ test('Starship adapter rejects intervening edits and symlink configs', async () 
     return {stdout: '[git_branch]\ndisabled = true\n', stderr: ''};
   };
   const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-    run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+    run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
   try {
     const proposal = await adapter.propose('git_branch', true);
     await writeFile(path, '# changed by user\n');
@@ -74,7 +75,7 @@ test('Starship adapter leaves the user config untouched when CLI validation fail
   };
   try {
     const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-      run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+      run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
     await assert.rejects(adapter.propose('directory', true), /did not accept/u);
     assert.equal(await readFile(path, 'utf8'), '# keep\n');
     assert.deepEqual(await readdir(directory), ['starship.toml']);
@@ -97,4 +98,22 @@ test('Starship panel offers a module editor with explicit review', () => {
   const review = renderPromptPanel(state, 120, []).map(stripAnsi).join('\n');
   assert.match(review, /Review Starship config change/u);
   assert.match(review, /Apply reviewed change/u);
+});
+
+test('apply returns its own transaction backup even if history order changes',async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'nmsh-starship-own-entry-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const path=join(directory,'starship.toml');await writeFile(path,'# original\n');
+ const run=async (_binary:string,args:string[],options:{env?:NodeJS.ProcessEnv})=>{
+  const staged=options.env!.STARSHIP_CONFIG!;
+  if(args[0]==='config'){await writeFile(staged,'# original\n[directory]\ndisabled = true\n');return {stdout:'',stderr:''};}
+  return {stdout:'[directory]\ndisabled = true\n',stderr:''};
+ };
+ const adapter=new StarshipConfigAdapter({installed:true,binary:'/fake/starship',configPath:path,configExists:true},run as ConstructorParameters<typeof StarshipConfigAdapter>[1],{HOME:directory,XDG_CONFIG_HOME:join(directory,'.config')});
+ const proposal=await adapter.propose('directory',true);
+ const originalList=Journal.prototype.list;
+ t.mock.method(Journal.prototype,'list',function(this:Journal,...args:Parameters<Journal['list']>){
+  const entries=originalList.apply(this,args);
+  return entries.length?[{...entries[0],id:'unrelated-newest-entry'},...entries]:entries;
+ });
+ const backup=await adapter.apply(proposal);assert.ok(backup);assert.equal(await readFile(backup,'utf8'),'# original\n');
 });

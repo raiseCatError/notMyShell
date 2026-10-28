@@ -2,15 +2,24 @@
 import {constants, closeSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats} from 'node:fs';
 import {randomUUID, createHash} from 'node:crypto';
 import {dirname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {nmshConfigDirectory} from '../configuration/paths.js';
+import {Journal, type JournalMetadata, type JournalEntry} from '../backups/journal.js';
 
 export const digest = (content: string) => createHash('sha256').update(content).digest('hex');
 export interface FileSnapshot {path: string; content?: string; identity: string; mode: number}
-export interface FileChange {before: FileSnapshot; after?: string}
+export interface FileChange {before: FileSnapshot; after?: string; afterMode?: number}
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const identity = (stat: Stats) => `${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}`;
 
-/** Reject every symbolic-link component. Missing descendants are allowed only below a verified directory. */
-export function checkPath(path: string, home: string, writable = false): void {
+const within = (root: string, path: string) => { const inside = relative(root, path); return !(inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)); };
+
+/**
+ * Reject every symbolic-link component. Missing descendants are allowed only below a verified directory. Paths must be inside the
+ * home, or inside NMSh's own configuration directory (XDG_CONFIG_HOME may point outside the home); the same checks apply there.
+ */
+export function checkPath(path: string, homeRoot: string, writable = false): void {
+  const own = nmshConfigDirectory();
+  const home = isAbsolute(path) && !within(homeRoot, path) && within(own, path) ? own : homeRoot;
   const inside = relative(home, path);
   if (!isAbsolute(path) || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error('The configuration path is outside your home; no changes are allowed.');
   const parts = resolve(path).split(sep).filter(Boolean);
@@ -41,7 +50,10 @@ export function snapshot(path: string, home: string, writable = false): FileSnap
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('Configuration must be a bounded regular file (at most 2 MiB).');
-    return {path, content: readFileSync(fd, 'utf8'), identity: identity(stat), mode: stat.mode & 0o777};
+    const bytes=readFileSync(fd);
+    const content=bytes.toString('utf8');
+    if(bytes.length>MAX_FILE_BYTES||!Buffer.from(content,'utf8').equals(bytes))throw new Error('Configuration must be bounded UTF-8 text; no changes are allowed.');
+    return {path, content, identity: identity(stat), mode: stat.mode & 0o777};
   } finally { closeSync(fd); }
 }
 
@@ -65,18 +77,29 @@ function replace(path: string, content: string, mode: number, home: string, expe
 }
 
 /** All dependencies checked before staging or mutation. On failure restore only our unchanged writes. */
-export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string): void {
+export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string, metadata: JournalMetadata = {source: 'appearance', label: 'Host configuration change'}): JournalEntry | undefined {
+  for (const dependency of dependencies) unchanged(dependency, home);
+  for (const change of changes) unchanged(change.before, home, true);
+  const effective = ['restore','reset'].includes(metadata.source) ? [...changes] : changes.filter(change => change.after !== change.before.content || (change.afterMode!==undefined&&change.afterMode!==change.before.mode));
+  if (!effective.length) return;
+  const journal = new Journal({home, directory: metadata.directory});
+  let entry:JournalEntry;
+  try {entry=journal.record(effective,metadata.source,metadata.label);}
+  catch(error){throw new Error(`Could not create a verified backup; configuration was not changed. ${error instanceof Error?error.message:String(error)}`);}
+  // Backup I/O may take time: recheck every dependency before the first mutation.
   for (const dependency of dependencies) unchanged(dependency, home);
   for (const change of changes) unchanged(change.before, home, true);
   const done: FileChange[] = [];
   try {
     for (const change of changes) {
       unchanged(change.before, home, true);
-      if (change.after === change.before.content) continue;
+      if (change.after === change.before.content && (change.afterMode===undefined||change.afterMode===change.before.mode)) continue;
       if (change.after === undefined) unlinkSync(change.before.path);
-      else replace(change.before.path, change.after, change.before.mode, home, change.before);
+      else replace(change.before.path, change.after, change.afterMode ?? change.before.mode, home, change.before);
       done.push(change);
     }
+    journal.complete(entry);
+    return entry;
   } catch (error) {
     let incomplete = false;
     for (const change of done.reverse()) {

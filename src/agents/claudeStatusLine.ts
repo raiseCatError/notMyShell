@@ -1,6 +1,8 @@
-import {mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs';
+import {snapshot, type FileChange} from '../appearance/hostFiles.js';
+import {journalDirectory} from '../backups/journal.js';
+import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname, isAbsolute, join} from 'node:path';
+import {isAbsolute, join} from 'node:path';
 import {applyPlan, inspectFile, planCreate, planJsonSet, planReplace, sha256, type FileEditPlan} from '../ask/fileEdit.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {posixQuote} from '../shell/adapters/ShellAdapter.js';
@@ -57,13 +59,8 @@ function readOwnership(env: NodeJS.ProcessEnv): OwnershipRecord | undefined {
   } catch { return undefined; }
 }
 
-function writeOwnership(env: NodeJS.ProcessEnv, record: OwnershipRecord | undefined): void {
-  const path = ownershipPath(env);
-  if (!record) { rmSync(path, {force: true}); return; }
-  mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, {mode: 0o600});
-  renameSync(temporary, path);
+function ownershipChange(env:NodeJS.ProcessEnv,record:OwnershipRecord|undefined):FileChange {
+  return {before:snapshot(ownershipPath(env),env.HOME || homedir(),true),after:record?`${JSON.stringify(record,null,2)}\n`:undefined};
 }
 
 const allowedRoots = (env: NodeJS.ProcessEnv) => [env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir(), claudeConfigDirectory(env)];
@@ -116,12 +113,12 @@ export function planClaudeBridge(launcher: string, env: NodeJS.ProcessEnv = proc
 }
 
 export function applyClaudeBridge(plan: FileEditPlan, launcher: string, env: NodeJS.ProcessEnv = process.env, now = new Date()): {ok: true} | {ok: false; reason: string} {
-  const applied = applyPlan(plan);
-  if (!applied.ok) return applied;
-  const created = plan.operation === 'create';
-  writeOwnership(env, {settingsPath: plan.resolvedPath, command: bridgeCommand(launcher), inserted: plan.edits[0]!.text,
-    created, resultSha256: plan.resultSha256, appliedAt: now.toISOString()});
-  return {ok: true};
+  const created=plan.operation==='create';
+  try {
+    const record={settingsPath:plan.resolvedPath,command:bridgeCommand(launcher),inserted:plan.edits[0]!.text,created,resultSha256:plan.resultSha256,appliedAt:now.toISOString()};
+    return applyPlan(plan,{home:env.HOME || homedir(),source:'statusline',directory:journalDirectory(env.HOME || homedir(),env),label:plan.reason,companions:[ownershipChange(env,record)]});
+  }catch(error){return {ok:false,reason:error instanceof Error?error.message:String(error)};}
+
 }
 
 /** Removal deletes exactly the text NMSh inserted, only while the status line is still NMSh's. */
@@ -144,7 +141,7 @@ export function planClaudeBridgeRemoval(env: NodeJS.ProcessEnv = process.env): B
 }
 
 export function applyClaudeBridgeRemoval(plan: FileEditPlan, env: NodeJS.ProcessEnv = process.env): {ok: true} | {ok: false; reason: string} {
-  const applied = applyPlan(plan);
-  if (applied.ok) writeOwnership(env, undefined);
-  return applied;
+  try {return applyPlan(plan,{home:env.HOME || homedir(),source:'statusline',directory:journalDirectory(env.HOME || homedir(),env),label:plan.reason,companions:[ownershipChange(env,undefined)]});}
+  catch(error){return {ok:false,reason:error instanceof Error?error.message:String(error)};}
+
 }

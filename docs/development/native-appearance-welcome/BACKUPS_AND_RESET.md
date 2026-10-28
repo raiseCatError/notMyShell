@@ -1,0 +1,38 @@
+# Backups and guarded reset
+
+Implements the supplied BRIEF-BACKUPS.md in the assigned worktree. No dependencies, PTY changes, shader generation changes, or release version changes.
+
+## Design
+A private, bounded journal records checked before-images and expected after hashes before the existing host transaction can mutate files. All readers reject symlinks and oversized files. Restores capture current snapshots for stale checking and create another journal entry, making undo reversible. Shared studio shells render history and a four-step reset state machine; no write occurs while planning or rendering. Reset discovers ownership and delegates to existing removal planners, retaining user content and reporting refused areas.
+
+The shared transaction is preferred over independent backup implementations because existing snapshot checking and rollback remain authoritative. Legacy writers retain their own validation and use that transaction for their final write. State metadata needed to undo ownership changes belongs in the same journal entry as external files.
+
+## Implementation plan
+- [x] Journal: test missing behavior, implement private atomic read-back-verified entries, caps and pruning, integrate transact, run focused tests, commit.
+- [x] Writers: preserve preconditions, route external final writes through journaled transactions; daily settings checkpoint; focused regression tests, commit.
+- [x] Restore and history: stale snapshots, current-to-before diff, edited-file second confirmation, undoable restore, manual snapshots; shared responsive studio panel; tests, commit.
+- [x] Reset: discover owned areas, exact impact, backup location, exact typed reset confirmation, recheck all snapshots, per-area results; command/help wiring; tests, commit.
+- [x] Verify affected tests using supplied runner, TypeScript and diff checks; save panel snapshots and final evidence report.
+
+## Review focus
+Reject symlink swaps; refuse writes if backups cannot be read back; preserve user newlines and subsequent unrelated edits; refuse stale plans; keep cancellation and confirmation visible at small sizes. Tests use private home directories. Automated results do not establish physical terminal validation.
+
+## Implementation details and safety decisions
+
+`src/backups/journal.ts` stores private before-images and verified after-images. The expected after hash is present in a prepared manifest; a successful transaction verifies bytes and permissions and marks it applied. After-images let ownership-only reset reverse exact NMSh edits across saves while preserving user edits made between those saves. A restore is a new protected entry. It also checkpoints config.json without changing it unless settings were part of the chosen restore.
+
+Entries publish by directory rename only after staged content and manifest read back correctly. Interrupted staging is retained for inspection and counts toward storage limits. A short exclusive process lock serializes entry creation; a lock from a demonstrably dead process can be recovered. Automatic, applied entries may be pruned. Reset, restore, manual and unfinished checkpoints remain protected. A private pruning index prevents legacy resets from treating an incomplete retained history as proof of original ownership.
+
+Host appearance and shader removal use their existing planners. Legacy cursor, keyboard and Starship reset requires verified applied history with after-images, exact target paths, and unambiguous owned changed lines. Without that evidence, the area is skipped. Changed user lines are never guessed at. Theme Bridge and status-line writes checkpoint their ownership records in the same transaction as their host files; restoring an artifact therefore restores its ability to be managed later.
+
+The reset wizard merges disjoint removal plans at whole-line boundaries. Conflicting plans are skipped with a reason. Every captured dependency is rechecked before and after the global reset checkpoint. Each area then uses the checked transaction and reports done, skipped or failed; remaining areas are skipped if an application fails. The global checkpoint remains available even after partial failure.
+
+History uses the shared Studio layout; exact diffs, overwrite confirmation and scrollable result documents use the shared review renderer. Only optional control/subtitle parameters were added to that renderer. At small sizes the scroll position and cancellation/confirmation controls remain visible. Reset starts with no selection; settings are a separate area. A wrong final word cancels. No scheduler or animation loop was added.
+
+Settings saves keep their merge-preserving behavior and take at most one daily checkpoint. Checked snapshots and exclusive staging prevent a save from overwriting a change that arrived during the backup. Host writes and reset/restore require HOME-contained, non-symlink paths. Legacy fixtures that intentionally write config now declare HOME and XDG consistently. Explicit NMSh state paths retain the settings API's existing state-directory behavior.
+
+## Verification and handoff
+
+Focused tests cover journal read-back, corruption, bounds, permissions, symbolic links, live writer exclusion, backup failure, settings coexistence, stale restore, reversible restore, owned-edit preservation, shared-file reset planning, command routing, modal ownership, wrong-word cancellation, all wizard stages and responsive rendering under NO_COLOR. Existing adapter, host, cursor, tmux, prompt persistence, Ask, palette, setup and routing tests were also run. Logs and plain-text/ASCII panel snapshots are in the task evidence folder; the final report names authoritative runs. No full-suite run or physical terminal validation is claimed.
+
+Manual terminal checks still needed: open /changes, review and restore a harmless config change, confirm the extra warning after a later user edit, then undo the restore. In /nmsh reset select one installed area, inspect every diff and backup path, cancel, reopen and complete with the exact word. Verify personal lines and newline style survive, result scrolling works at small sizes, and /reset only explains the guarded command. Test in the supported terminal hosts and with NO_COLOR. Automatic host reload is intentionally left to the lead's integration at `TerminalApp.afterHostFilesChanged(paths)`; the panels currently explain that a reload may be needed.

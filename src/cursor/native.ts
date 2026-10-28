@@ -1,6 +1,8 @@
-import {existsSync, mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {journalDirectory} from '../backups/journal.js';
+import {snapshot, transact} from '../appearance/hostFiles.js';
+import {existsSync, readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {join} from 'node:path';
 import type {CursorSettings} from '../prompt/configuration.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {inspectFile, planAppend, planCreate, type PlanResult} from '../ask/fileEdit.js';
@@ -189,10 +191,8 @@ export function writeManagedFiles(host: NativeHost, settings: CursorSettings, en
   const changed: ManagedFile[] = [];
   const write = (kind: ManagedFile, path: string, content: string) => {
     try { if (readFileSync(path, 'utf8') === content) return; } catch { /* missing: written below */ }
-    mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-    const temporary = `${path}.${process.pid}.tmp`;
-    writeFileSync(temporary, content, {mode: 0o644});
-    renameSync(temporary, path);
+    const home = env.HOME || homedir();
+    transact([{before: snapshot(path, home, true), after: content}], [], home, {source: 'cursor', directory: journalDirectory(home,env), label: `${host} cursor ${kind}`});
     changed.push(kind);
   };
   if (host === 'ghostty') write('shader', shaderPath(env), shaderSource(settings));

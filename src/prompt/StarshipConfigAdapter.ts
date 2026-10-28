@@ -1,10 +1,11 @@
+import {snapshot, transact} from '../appearance/hostFiles.js';
+import {journalDirectory} from '../backups/journal.js';
+import {homedir} from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {copyFile, lstat, mkdir, mkdtemp, open, readFile, rename, rm} from 'node:fs/promises';
-import {constants} from 'node:fs';
+import {lstat, mkdtemp, open, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {join} from 'node:path';
 import type {StarshipStatus} from './starship.js';
 
 const execFileAsync = promisify(execFile);
@@ -45,7 +46,8 @@ function unsupportedContent(text: string, module: StarshipModule): string {
 /** Narrow adapter around Starship's own CLI, never a generic TOML editor. */
 export class StarshipConfigAdapter {
   constructor(private readonly status: StarshipStatus,
-    private readonly run: typeof execFileAsync = execFileAsync) {
+    private readonly run: typeof execFileAsync = execFileAsync,
+    private readonly env: NodeJS.ProcessEnv = process.env) {
     if (!status.installed || !status.binary) throw new Error('Starship is not installed.');
   }
 
@@ -118,23 +120,10 @@ export class StarshipConfigAdapter {
       throw new Error('Starship config changed since preview; review it again.');
     }
     if (proposal.proposed === proposal.original) return undefined;
-    await mkdir(dirname(proposal.path), {recursive: true, mode: 0o700});
-    let backup: string | undefined;
-    if (current.exists) {
-      backup = `${proposal.path}.nmsh-backup-${new Date().toISOString().replace(/[:.]/gu, '-')}-${randomUUID()}`;
-      await copyFile(proposal.path, backup, constants.COPYFILE_EXCL);
-    }
-    const temporary = `${proposal.path}.${randomUUID()}.tmp`;
-    try {
-      const handle = await open(temporary, 'wx', current.mode);
-      try { await handle.writeFile(proposal.proposed, 'utf8'); await handle.sync(); } finally { await handle.close(); }
-      await rename(temporary, proposal.path);
-      const directory = await open(dirname(proposal.path), 'r');
-      try { await directory.sync(); } finally { await directory.close(); }
-      return backup;
-    } catch (error) {
-      await rm(temporary, {force: true});
-      throw error;
-    }
+    const home = this.env.HOME || homedir();
+    const directory = journalDirectory(home, this.env);
+    const entry = transact([{before: snapshot(proposal.path, home, true), after: proposal.proposed}], [], home,
+      {source: 'starship', label: `${proposal.module}.disabled = ${proposal.disabled}`, directory});
+    return current.exists && entry ? join(directory, entry.id, 'files', '0') : undefined;
   }
 }

@@ -1,6 +1,7 @@
-import {copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync} from 'node:fs';
+import {journalDirectory} from '../backups/journal.js';
+import {snapshot, transact} from '../appearance/hostFiles.js';
+import {existsSync, lstatSync, readFileSync, realpathSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname} from 'node:path';
 import {parse as parseToml} from 'smol-toml';
 import {sha256} from '../ask/fileEdit.js';
 import {
@@ -137,19 +138,16 @@ export function reviewLines(items: readonly DotfilesItem[], include: readonly st
 }
 
 /** Backup then atomic replace, refusing if the destination changed since review or is a symlink. */
-function copyExact(item: DotfilesItem, now: Date): string {
+function copyExact(item: DotfilesItem, now: Date, env: NodeJS.ProcessEnv): string {
   const destination = item.destination!;
   const verdict = item.file.tool.exactCopy?.(item.content!);
   if (!verdict?.ok) return 'no exact-copy authority for this tool; nothing was written.';
   if (existsSync(destination)) {
     if (lstatSync(destination).isSymbolicLink()) return `${destination} is a symlink (to ${realpathSync(destination)}); not replaced.`;
     if (sha256(readFileSync(destination, 'utf8')) !== item.destinationSha) return `${destination} changed since review; nothing was written.`;
-    copyFileSync(destination, `${destination}.nmsh-backup-${now.toISOString().replace(/[:.]/gu, '-')}`);
   } else if (item.destinationSha !== 'absent') return `${destination} disappeared since review; nothing was written.`;
-  mkdirSync(dirname(destination), {recursive: true});
-  const staged = `${destination}.nmsh-${process.pid}.tmp`;
-  writeFileSync(staged, item.content!, {encoding: 'utf8', mode: 0o644});
-  renameSync(staged, destination);
+  const home = homeOf(env);
+  transact([{before: snapshot(destination, home, true), after: item.content!}], [], home, {source: 'dotfiles', directory: journalDirectory(home,env), label: `Copy ${item.file.tool.label} configuration`});
   return `copied to ${destination}`;
 }
 
@@ -167,7 +165,7 @@ export function applyPlan(items: readonly DotfilesItem[], env: NodeJS.ProcessEnv
         saveTmuxModel(model, env);
         const written = writeTmuxManaged(model, env);
         results.push(`${item.file.tool.label}: ${written.ok ? 'supported values saved to the NMSh-managed tmux file' : written.error}`);
-      } else if (item.mode === 'copy') results.push(`${item.file.tool.label}: ${copyExact(item, now)}`);
+      } else if (item.mode === 'copy') results.push(`${item.file.tool.label}: ${copyExact(item, now, env)}`);
     } catch (error) {
       results.push(`${item.file.tool.label}: ${error instanceof Error ? error.message : String(error)}`);
     }

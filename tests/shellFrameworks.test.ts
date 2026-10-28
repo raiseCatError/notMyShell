@@ -1,3 +1,4 @@
+import {Journal,journalDirectory} from '../src/backups/journal.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
@@ -286,11 +287,13 @@ test('previous zshrc: compare, default No changes nothing, restore backs up and 
     ohMyZshKey(view, {kind: 'text', value: 'r'});
     ohMyZshKey(view, {kind: 'right'});
     ohMyZshKey(view, enter);
-    assert.match(view.result!, /Restored .* backed up at .*\.zshrc\.nmsh-backup-/u);
+    assert.match(view.result!, /Restored .* backed up at .*backups/u);
     assert.equal(readFileSync(current, 'utf8'), 'alias ll="ls -l"\n', 'the previous file exactly; nothing merged');
     assert.ok(existsSync(previous), 'the previous file stays');
-    const backup = readdirSync(box.home).find(name => name.startsWith('.zshrc.nmsh-backup-'))!;
-    assert.equal(readFileSync(join(box.home, backup), 'utf8'), 'export ZSH=~/.oh-my-zsh\nsource $ZSH/oh-my-zsh.sh\n');
+    const journal=new Journal({home:box.home,directory:journalDirectory(box.home,box.env)});
+    const entry=journal.list()[0];
+    const backup=join(journal.directory,entry.id,'files','0');
+    assert.equal(readFileSync(backup, 'utf8'), 'export ZSH=~/.oh-my-zsh\nsource $ZSH/oh-my-zsh.sh\n');
 
     // Changed since review: refused.
     const again = openPrevious(box.env) as Extract<OhMyZshView, {kind: 'previous'}>;
