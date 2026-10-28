@@ -1,5 +1,5 @@
 {
-  "phase": "Slice 3 (Ghostty native shaders) implemented, independently reviewed, fixed, canonically verified clean; committed on feature/ghostty-native-shaders-20261028",
+  "phase": "Slice 4 (render routing + Chroma-driven Aurora) implemented, reviewed, focused-verified; committed on feature/render-routing-20261028",
   "updated": "2026-10-28",
   "slice1": {
     "branch": "feature/appearance-welcome-20261028",
@@ -23,7 +23,7 @@
     513,
     514
   ],
-  "next": "Slice 4: render routing (src/motion/renderRouting.ts) + Chroma-driven Aurora colors; then Slices 5-7. Human: physical Ghostty QA of /appearance \u203a Ghostty shaders.",
+  "next": "Slice 5: Shader Studio UX with previews; then 6 Welcome Studio (decoder #518), 7 integration/perf/QA/docs.",
   "slice3": {
     "branch": "feature/ghostty-native-shaders-20261028",
     "base": "de2afd0254327390205a5cde62af5d886f8efaaf",
@@ -39,7 +39,8 @@
       "ca90b2bc"
     ],
     "tests": "graphics 113/113 under guard",
-    "review": "Sonnet: no blocker; should-fix items fixed by Codex follow-up"
+    "review": "Sonnet: no blocker; should-fix items fixed by Codex follow-up",
+    "pr": 518
   },
   "mermaid_ci": {
     "failure": "#516 run 40656373289 browserConsoleChrome.test.ts:106 (not rerun)",
@@ -47,5 +48,12 @@
     "local": "pinned mermaid@12.2.0, 3/3 pass at dev c690de05+diag and at #516 de2afd02",
     "diag_commit": "9270894 on local diag/mermaid-ci-20261028 (unpushed)",
     "verdict": "not reproduced; deadline-under-load hypothesis unproven"
-  }
+  },
+  "slice4": {
+    "branch": "feature/render-routing-20261028",
+    "base": "87277285 (Slice 3, PR #517)",
+    "tests": "focused 162/162; tsc clean; full suite left to CI per user",
+    "review": "Sonnet: no blocker; 5 should-fix fixed"
+  },
+  "verification_policy": "User 2026-10-28: run only tests related to the current work; no full-suite reruns of unrelated tests"
 }

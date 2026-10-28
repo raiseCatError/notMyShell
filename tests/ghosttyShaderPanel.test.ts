@@ -178,7 +178,7 @@ test('app: starting NMSh applies gate changes made while it was not running (Red
   });
   mkdirSync(join(home, '.config/ghostty'), {recursive: true, mode: 0o700});
   writeFileSync(join(home, '.config/ghostty/config.ghostty'), '', {mode: 0o600});
-  const context = {env: process.env, platform: process.platform, catalog: buildGhosttyCatalog('1.3.1'), gates, launch: {}, colors: {cursorColors: {head: [1, 1, 1], tail: [0, 0, 0]}}};
+  const context = {env: process.env, platform: process.platform, catalog: buildGhosttyCatalog('1.3.1'), gates, launch: {}, colors: {cursorColors: {head: [1, 1, 1], tail: [0, 0, 0]}, chroma: {a: [0, 1, 0], b: [0, 0, 1]}}};
   const planned = planGhosttyShaders({effects: [{id: 'vignette', enabled: true, values: {}}]}, context);
   assert.ok(planned.ok && applyGhosttyShaderPlan(planned.plan).ok);
   const fragment = ghosttyShaderPaths(context).fragment;

@@ -1,5 +1,13 @@
 # Native appearance / welcome progress
 
+## Slice 4 — render routing and Chroma-driven native colors (Claude, 2026-10-28)
+
+Branch `feature/render-routing-20261028` from 87277285 (Slice 3, PR #517) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/render-routing-20261028`.
+
+- Implemented (DECISIONS, Slice 4): `src/motion/renderRouting.ts`; `src/appearance/nativePasses.ts` (`writtenGhosttyPasses`, `writtenKittyPresets`); `/appearance › Effects routing` hub view; Aurora Follow Chroma colors (`chromaEnds`) with sync on Chroma/theme changes.
+- Independent Sonnet review: no blocker; 5 should-fix (effect None, gated cursor rows, idle under Reduced Motion, legacy Aurora colors, Motion rows Off) + refresh-on-enter fixed with regressions.
+- Tests: tests/renderRouting.test.ts; hub test row indices shifted by the new row.
+
 ## Slice 3 — Ghostty native shaders (Claude, 2026-10-28)
 
 Branch `feature/ghostty-native-shaders-20261028` from de2afd02 (head of draft PR #516, Slice 2) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/ghostty-native-shaders-20261028`. Slice 1/2 worktrees untouched; #513/#514/#515/#516 unmerged and unchanged.
