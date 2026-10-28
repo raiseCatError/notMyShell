@@ -1,6 +1,6 @@
 import {hostIntegration, keyboardGuidance, type HostIntegration} from './integration.js';
 import {spawn} from 'node:child_process';
-import {resolveHostCapabilities, type TerminalCapabilities} from './capabilities.js';
+import {resolveHostCapabilities, terminalProfile, type TerminalCapabilities} from './capabilities.js';
 
 /**
  * The terminal NMSh runs in, and whether NMSh can ask it to open another
@@ -52,12 +52,19 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
   const capabilities = resolveHostCapabilities(env);
   const integration = hostIntegration(env);
   const guidance = keyboardGuidance(env);
-  if (program === 'ghostty' || env.GHOSTTY_RESOURCES_DIR) {
+  // One host identity (terminalProfile): Kitty started from a Ghostty shell inherits TERM_PROGRAM and GHOSTTY_RESOURCES_DIR.
+  // Inside tmux (no profile) the outer host's own markers still name it, as before.
+  const profile = terminalProfile(env);
+  if (profile === 'ghostty' || (profile === 'baseline' && env.GHOSTTY_RESOURCES_DIR)) {
     return {capabilities, integration, keyboardGuidance: guidance, name: 'Ghostty', newWindow: argv => platform === 'darwin'
       // Ghostty's AppleScript API opens a normal window in the running app. The
       // command words arrive as osascript argv, never inside the script text.
       ? {command: 'osascript', args: [...GHOSTTY_NEW_WINDOW_SCRIPT.flatMap(line => ['-e', line]), ...argv]}
       : {command: 'ghostty', args: ['-e', ...argv]}};
+  }
+  if (profile === 'kitty') {
+    // Needs kitty remote control (allow_remote_control); failure falls back like any unsupported host.
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
   if (program === 'Apple_Terminal' && platform === 'darwin') {
     return {capabilities, integration, keyboardGuidance: guidance, name: 'Terminal', newWindow: argv => ({command: 'osascript', args: ['-e',
@@ -76,8 +83,8 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
     // Reachable from WSL when Windows Terminal forwards WT_SESSION; NMSh does not drive Windows from Linux.
     return {capabilities, integration, keyboardGuidance: guidance, name: 'Windows Terminal'};
   }
-  if (env.KITTY_WINDOW_ID || program === 'kitty') {
-    // Needs kitty remote control (allow_remote_control); failure falls back like any unsupported host.
+  if (profile === 'baseline' && env.KITTY_WINDOW_ID) {
+    // Inside tmux the outer Kitty is named by KITTY_WINDOW_ID, after the hosts TERM_PROGRAM names (as before).
     return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
   if (program === 'vscode') return {capabilities, integration, keyboardGuidance: guidance, name: 'VS Code'};

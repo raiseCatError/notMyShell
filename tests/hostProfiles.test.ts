@@ -164,3 +164,32 @@ test('every host profile degrades inside a multiplexer and when TERM is dumb, fr
     assert.equal(resolveHostCapabilities({...env, TERM: 'dumb'}).hyperlinks, false);
   }
 });
+
+test('host identity: the terminal’s own TERM wins over an inherited TERM_PROGRAM (Kitty started from Ghostty or Zed)', () => {
+  // Observed with Kitty 0.49.2 launched from a Ghostty shell: Kitty passes the outer TERM_PROGRAM through unchanged.
+  const kittyFromGhostty = {TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1', KITTY_PID: '42', TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1',
+    GHOSTTY_RESOURCES_DIR: '/Applications/Ghostty.app/Contents/Resources/ghostty'};
+  assert.equal(terminalProfile(kittyFromGhostty), 'kitty');
+  assert.equal(resolveHostCapabilities(kittyFromGhostty).graphicsProtocol, 'kitty');
+  assert.equal(detectTerminalHost(kittyFromGhostty, 'darwin').name, 'kitty');
+  assert.equal(terminalProfile({TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1', TERM_PROGRAM: 'zed'}), 'kitty');
+  assert.equal(detectTerminalHost({TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1', TERM_PROGRAM: 'iTerm.app'}, 'darwin').name, 'kitty');
+  // Ghostty started from a Kitty shell inherits KITTY_WINDOW_ID, but sets its own TERM.
+  assert.equal(terminalProfile({TERM: 'xterm-ghostty', TERM_PROGRAM: 'ghostty', KITTY_WINDOW_ID: '3'}), 'ghostty');
+  assert.equal(detectTerminalHost({TERM: 'xterm-ghostty', KITTY_WINDOW_ID: '3'}, 'darwin').name, 'Ghostty');
+  // Unchanged: an explicit program without a terminal-specific TERM, and the outer host's markers inside tmux.
+  assert.equal(terminalProfile({TERM: 'xterm-256color', TERM_PROGRAM: 'zed', KITTY_WINDOW_ID: '1'}), 'zed');
+  assert.equal(detectTerminalHost({TERM: 'tmux-256color', TERM_PROGRAM: 'tmux', TMUX: '/t,1,0', GHOSTTY_RESOURCES_DIR: '/g'}, 'darwin').name, 'Ghostty');
+  assert.equal(detectTerminalHost({TERM: 'tmux-256color', TERM_PROGRAM: 'tmux', TMUX: '/t,1,0', KITTY_WINDOW_ID: '1'}, 'darwin').name, 'kitty');
+  // A stale KITTY_WINDOW_ID does not outrank a host TERM_PROGRAM names (Terminal.app started from a Kitty shell).
+  assert.equal(detectTerminalHost({TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal', KITTY_WINDOW_ID: '1'}, 'darwin').name, 'Terminal');
+});
+
+test('cursor host facts use the same identity: Kitty with an inherited Ghostty TERM_PROGRAM is Kitty', async () => {
+  const {hostCursorFacts} = await import('../src/cursor/backends.js');
+  const facts = hostCursorFacts({TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1', TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1'}, () => false, () => 'cursor-trail-lightning');
+  assert.equal(facts.host, 'kitty');
+  assert.equal(facts.kittyTrail, 'cursor-trail-lightning');
+  assert.equal(hostCursorFacts({TERM: 'xterm-ghostty', TERM_PROGRAM: 'ghostty', KITTY_WINDOW_ID: '9'}, () => false).host, 'ghostty');
+  assert.equal(hostCursorFacts({TERM: 'tmux-256color', TERM_PROGRAM: 'tmux', KITTY_WINDOW_ID: '1'}, () => false).host, 'kitty', 'Kitty’s trail still draws around tmux');
+});

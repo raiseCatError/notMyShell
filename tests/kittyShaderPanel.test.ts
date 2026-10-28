@@ -9,6 +9,7 @@ import {appearanceHubKey, createAppearanceHub, renderAppearanceHub} from '../src
 import {DEFAULT_HOST_SHADERS} from '../src/appearance/kittyShaderSettings.js';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
+import {cursorPanelRowKeys} from '../src/cursor/CursorPanel.js';
 import {stripAnsi} from '../src/util/text.js';
 
 const RESOURCES: Record<string, string> = {
@@ -146,4 +147,91 @@ test('app: /appearance › Kitty shaders reviews, writes only after Enter, saves
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(app['kittyShaderPanel'], undefined);
   assert.ok(app['appearanceHub']?.kittyShaders?.startsWith('1 effect chosen'));
+});
+
+test('app: first-time Kitty (inherited Ghostty TERM_PROGRAM, no NMSh setup, Motion Off): Host native opens the Kitty studio and a trail is really drawn', async t => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-kfirst-')));
+  const saved = {...process.env};
+  // Kitty started from a Ghostty shell keeps the outer TERM_PROGRAM (observed with Kitty 0.49.2).
+  Object.assign(process.env, {HOME: home, XDG_CONFIG_HOME: join(home, '.config'), KITTY_WINDOW_ID: '1', KITTY_PID: String(process.pid), TERM: 'xterm-kitty',
+    TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1'});
+  for (const name of ['KITTY_CONFIG_DIRECTORY', 'TMUX']) delete process.env[name];
+  const app = new TerminalApp();
+  t.after(() => {
+    app['stop'](0); app['session'].kill();
+    for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+    rmSync(home, {recursive: true, force: true});
+  });
+  const kittyConf = join(home, '.config/kitty/kitty.conf');
+  mkdirSync(join(home, '.config/kitty'), {recursive: true, mode: 0o700});
+  writeFileSync(kittyConf, 'font_size 12\n', {mode: 0o600});
+  app['kittyCatalogRead'] = Promise.resolve(catalog);
+  app['updateConfiguration']((configuration: typeof DEFAULT_PROMPT_CONFIGURATION) => { configuration.cursor.motion = 'off'; configuration.cursor.renderer = 'portable'; });
+  // /appearance offers Kitty's studio, not Ghostty's.
+  await app['startAppearance']();
+  assert.equal(app['glslStudio'].available(), false);
+  assert.ok(app['appearanceHub']?.kittyShaders, 'the Kitty shaders row is shown');
+  app['appearanceHub'] = undefined;
+  // /cursor › Host native setup, with no /cursor include in kitty.conf: straight to the studio.
+  app['openCursorPanel']();
+  const cursor = app['cursorPanel']!;
+  cursor.selected = cursorPanelRowKeys(false, cursor.draft).indexOf('nativeSetup');
+  assert.ok(cursor.selected >= 0);
+  app['handleCursorPanelKey'](key('enter'), cursor);
+  for (let wait = 0; wait < 50 && !app['kittyShaderPanel']?.inspection; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(app['cursorPanel'], undefined, 'the cursor panel handed over to the studio');
+  const state = app['kittyShaderPanel']!;
+  assert.ok(state?.inspection, state?.message);
+  select(state, 'Blaze trail');
+  app['onInput']('\r');
+  app['onInput']('s');
+  assert.ok(state.confirmation, state.message);
+  const review = state.confirmation.plan.preview.join('\n');
+  assert.match(review, /Also changes \/cursor Motion: Off → Tail/u);
+  assert.match(review, /Also changes \/cursor renderer: Portable → Auto/u);
+  assert.match(review, /Turns Kitty's cursor_trail on \(3; it would be 0\)/u);
+  assert.equal(readFileSync(kittyConf, 'utf8'), 'font_size 12\n', 'review writes nothing');
+  app['onInput']('\r');
+  assert.equal(state.confirmation, undefined, state.message);
+  assert.deepEqual([app['promptConfiguration'].cursor.motion, app['promptConfiguration'].cursor.renderer], ['tail', 'auto']);
+  assert.match(readFileSync(join(home, '.config/nmsh/host-appearance/kitty-shaders.conf'), 'utf8'), /^cursor_trail 3$/mu);
+  // Kitty draws the trail now; Portable does not draw a second one.
+  assert.equal(app['cursorFacts']().kittyTrail, 'cursor-trail-blaze');
+  // KITTY_PID here is the test process (node), not a kitty parent: nothing is signalled and the reload keys are given.
+  assert.match(state.message ?? '', /Reload Kitty to load it/u);
+});
+
+test('app: the /cursor changes shown in a Kitty review are the ones applied; a change meanwhile refuses; Reduced Motion changes nothing', async t => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-kstale-')));
+  const saved = {...process.env};
+  Object.assign(process.env, {HOME: home, XDG_CONFIG_HOME: join(home, '.config'), KITTY_WINDOW_ID: '1', KITTY_PID: String(process.pid), TERM: 'xterm-kitty'});
+  for (const name of ['KITTY_CONFIG_DIRECTORY', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'TMUX']) delete process.env[name];
+  const app = new TerminalApp();
+  t.after(() => {
+    app['stop'](0); app['session'].kill();
+    for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+    rmSync(home, {recursive: true, force: true});
+  });
+  const kittyConf = join(home, '.config/kitty/kitty.conf');
+  mkdirSync(join(home, '.config/kitty'), {recursive: true, mode: 0o700});
+  writeFileSync(kittyConf, 'font_size 12\n', {mode: 0o600});
+  app['kittyCatalogRead'] = Promise.resolve(catalog);
+  app['updateConfiguration']((configuration: typeof DEFAULT_PROMPT_CONFIGURATION) => { configuration.cursor.motion = 'off'; });
+  await app['openKittyShaders']();
+  const state = app['kittyShaderPanel']!;
+  select(state, 'Blaze trail');
+  app['onInput']('\r');
+  app['onInput']('s');
+  assert.match(state.confirmation!.plan.preview.join('\n'), /Also changes \/cursor Motion: Off → Tail/u);
+  // Motion turned on elsewhere while the review is open: the shown change no longer applies, so nothing is written.
+  app['updateConfiguration']((configuration: typeof DEFAULT_PROMPT_CONFIGURATION) => { configuration.cursor.motion = 'smear'; });
+  app['onInput']('\r');
+  assert.match(state.message ?? '', /Something changed since the review/u);
+  assert.equal(readFileSync(kittyConf, 'utf8'), 'font_size 12\n');
+  assert.equal(app['promptConfiguration'].cursor.motion, 'smear');
+  // Under Reduced Motion a trail is not written, so /cursor is not changed for it either.
+  app['updateConfiguration']((configuration: typeof DEFAULT_PROMPT_CONFIGURATION) => { configuration.cursor.motion = 'off'; configuration.presentation.reducedMotion = true; });
+  assert.deepEqual(app['kittyTrailFollowUp'](state.draft, catalog).changes, []);
 });

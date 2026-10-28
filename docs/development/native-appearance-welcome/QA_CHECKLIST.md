@@ -17,6 +17,7 @@ Automated tests use private HOMEs, headless host parsers and proxy compiles. Non
 ## Kitty (0.49.x)
 
 ### Kitty shaders
+0. First run: in a Kitty opened from a Ghostty or Zed shell, `/appearance` shows "Kitty shaders" (not Ghostty), and `/cursor` › Host native setup opens the Kitty studio. Switch Lightning ↔ Blaze: the bolt vs the amber band changes without a manual reload ("Kitty was asked to reload…").
 1. Open `/appearance` → Kitty shaders. Enable Lightning trail, Northern Lights, then CRT or CRT (blue) (only one can be on), and Bloom or Water.
 2. Check the review diff. Your `custom_shaders` names stay in order, and placement is Before/After.
 3. Kitty auto-reloads. Check that every effect is visible and that there is exactly one cursor trail.

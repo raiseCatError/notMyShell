@@ -80,9 +80,9 @@ test('forced Host native offers only what the host backend draws, and says why t
   assert.deepEqual(availabilityOf('effect', 'lightning', 'native', live), {available: false, reason: 'Ghostty Native does not provide this effect.'});
   assert.equal(unavailableReason('effect', CURSOR_EFFECTS, 'native', kitty(true)), 'Kitty Native does not provide this effect.');
   assert.equal(unavailableReason('motion', CURSOR_MOTIONS, 'native', terminalApp), 'Host native is not available in this terminal.');
-  // Before setup the values a host WILL draw stay selectable, labelled as waiting for setup.
+  // Before setup the values a host WILL draw stay selectable; Portable draws them until the host is set up (never a motionless cursor).
   const pending = availabilityOf('effect', 'fire', 'native', ghostty(false));
-  assert.deepEqual(pending, {available: true, via: 'native-pending', suffix: 'after Ghostty setup'});
+  assert.deepEqual(pending, {available: true, via: 'native-pending', suffix: 'Portable until Ghostty setup'});
 });
 
 test('Auto says so when Portable draws what an active native backend does not', () => {

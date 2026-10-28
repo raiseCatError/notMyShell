@@ -13,11 +13,21 @@ import {colorEscape} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import type {PresetCategory, ShaderValue} from './kittyShaderCatalog.js';
 
-export type PreviewKind = 'trail' | 'aurora' | 'dim' | 'vignette' | 'scanlines' | 'glow';
+export type PreviewKind = 'trail' | 'comet' | 'blaze' | 'lightning' | 'motion-blur' | 'aurora' | 'dim' | 'vignette' | 'scanlines' | 'glow';
+
+/**
+ * Each trail style has its own shape, modelled on what the shader draws (Kitty 0.49.2's shipped sources; NMSh's Ghostty
+ * passes): Blaze fills a wide amber band with a red edge that eases out; Lightning flashes a thin jagged bolt with forks
+ * and is gone almost at once; Motion blur smears ghost copies of the cursor along its path; Default and Smear are a plain
+ * fading tail; Comet tapers. One shared shape with different colors made Blaze and Lightning look the same.
+ */
+const TRAIL_KINDS: Readonly<Record<string, PreviewKind>> = {'cursor-trail-blaze': 'blaze', 'cursor-trail-lightning': 'lightning',
+  'cursor-trail-motion-blur': 'motion-blur', comet: 'comet'};
+const TRAIL_PREVIEWS: ReadonlySet<PreviewKind> = new Set(['trail', 'comet', 'blaze', 'lightning', 'motion-blur']);
 
 /** The preview kind for a preset (Ghostty and Kitty ids), or undefined when NMSh has no faithful approximation. */
 export function previewKind(id: string, category: PresetCategory): PreviewKind | undefined {
-  if (category === 'cursor') return 'trail';
+  if (category === 'cursor') return TRAIL_KINDS[id] ?? 'trail';
   if (id === 'aurora' || id === 'northern-lights') return 'aurora';
   if (id === 'focus-dim' || id === 'dim-inactive-windows') return 'dim';
   if (id === 'vignette' || id === 'spotlight') return 'vignette';
@@ -42,7 +52,8 @@ export function previewValues(id: string, values: Readonly<Record<string, Shader
 }
 
 /** How long one run lasts; 0 for a still effect. */
-export const PREVIEW_MS: Record<PreviewKind, number> = {trail: 1800, aurora: 3600, dim: 1500, vignette: 0, scanlines: 0, glow: 0};
+export const PREVIEW_MS: Record<PreviewKind, number> = {trail: 1800, comet: 1800, blaze: 2000, lightning: 1100, 'motion-blur': 1600,
+  aurora: 3600, dim: 1500, vignette: 0, scanlines: 0, glow: 0};
 
 export interface PreviewInput {
   kind: PreviewKind;
@@ -86,20 +97,82 @@ export function renderShaderPreview(input: PreviewInput): PreviewFrame {
   const rows = grid.length;
   const at = (x: number, y: number) => grid[y]?.[x];
   const intensity = num(values.INTENSITY, 0.6);
-  if (kind === 'trail') {
-    // The cursor jumps from the end of one command line to the next prompt; the trail fades behind it.
+  if (TRAIL_PREVIEWS.has(kind)) {
+    // The cursor jumps from the end of one command line to the next prompt; each style draws its own trail behind it.
     const from = {x: SAMPLE[0]!.length, y: 0};
     const to = {x: 2, y: 2};
-    const travel = Math.min(1, t / 0.35);
-    const head = {x: from.x + (to.x - from.x) * travel, y: from.y + (to.y - from.y) * travel};
-    const fade = t < 0.35 ? 1 : Math.max(0, 1 - (t - 0.35) / 0.65);
+    const point = (s: number) => ({x: from.x + (to.x - from.x) * s, y: from.y + (to.y - from.y) * s});
     const headColor = rgb(values.HEAD, colors.cursor);
     const tailColor = rgb(values.TAIL, mix(colors.cursor, colors.background, 0.5));
-    for (let step = 0; step <= 24; step++) {
-      const s = step / 24;
-      if (s > travel) break;
-      const cell = at(Math.round(from.x + (to.x - from.x) * s), Math.round(from.y + (to.y - from.y) * s));
-      if (cell) cell.bg = mix(cell.bg, mix(tailColor, headColor, s / Math.max(travel, 0.01)), intensity * fade * (0.35 + 0.65 * (s / Math.max(travel, 0.01))));
+    const paint = (x: number, y: number, color: RgbColor, amount: number) => {
+      const cell = at(Math.round(x), Math.round(y));
+      if (cell && amount > 0) cell.bg = mix(cell.bg, color, Math.min(1, amount));
+    };
+    let head = to;
+    if (kind === 'trail' || kind === 'comet') {
+      const travel = Math.min(1, t / 0.35);
+      const fade = t < 0.35 ? 1 : Math.max(0, 1 - (t - 0.35) / 0.65);
+      head = point(travel);
+      for (let step = 0; step <= 24; step++) {
+        const s = step / 24;
+        if (s > travel) break;
+        const along = s / Math.max(travel, 0.01);
+        // Comet: a bright head on a thin tail that tapers away; the plain trail keeps its width.
+        const taper = kind === 'comet' ? along ** 1.6 : 0.35 + 0.65 * along;
+        const spot = point(s);
+        paint(spot.x, spot.y, mix(tailColor, headColor, along), intensity * fade * taper);
+      }
+    } else if (kind === 'blaze') {
+      // A filled band as wide as the cursor's travel, amber inside and red-orange on its edges, easing out from the far end.
+      // The band's far end retracts towards the cursor as it burns out.
+      const remaining = (1 - Math.min(1, t)) ** 2;
+      const life = Math.max(0, 1 - t * 0.6);
+      for (let step = 0; step <= 32; step++) {
+        const s = step / 32;
+        if (s < 1 - remaining) continue;
+        const spot = point(s);
+        for (const dx of [-2, -1, 0, 1, 2]) {
+          const edge = Math.abs(dx) === 2;
+          paint(spot.x + dx, spot.y, edge ? tailColor : headColor, (edge ? 0.75 : 0.9) * life * (0.4 + 0.6 * s) * (0.6 + 0.4 * intensity));
+        }
+      }
+    } else if (kind === 'lightning') {
+      // A thin bolt with jagged interior nodes and three short forks; it flashes hard, flickers and fades within a moment.
+      const flash = Math.max(0, 1 - t / 0.55) ** 2;
+      const flicker = 0.75 + 0.25 * Math.sin(input.elapsed * 0.095);
+      const strength = flash * flicker;
+      const jag = (s: number) => {
+        const node = Math.round(s * 8);
+        const random = Math.sin(node * 12.9898) * 43758.5453;
+        const offset = ((random - Math.floor(random)) * 2 - 1) * 3 * Math.sin(Math.PI * s);
+        const spot = point(s);
+        return {x: spot.x + offset, y: spot.y};
+      };
+      for (let step = 0; step <= 40; step++) {
+        const spot = jag(step / 40);
+        for (const dx of [-1, 1]) paint(spot.x + dx, spot.y, tailColor, strength * 0.55);
+      }
+      for (let step = 0; step <= 40; step++) {
+        const spot = jag(step / 40);
+        paint(spot.x, spot.y, headColor, strength);
+        const cell = at(Math.round(spot.x), Math.round(spot.y));
+        if (cell && strength > 0.2) cell.fg = colors.background;
+      }
+      for (const fork of [0.3, 0.55, 0.78]) {
+        const root = jag(fork);
+        const side = fork === 0.55 ? -1 : 1;
+        for (let k = 1; k <= 3; k++) paint(root.x + k * side, root.y + (k === 3 ? side : 0), headColor, strength * (0.85 - k * 0.15));
+      }
+    } else {
+      // Motion blur: the cursor glides along a smoothed path and leaves fading ghost copies of itself, no colored band.
+      const travel = 1 - (1 - Math.min(1, t / 0.6)) ** 3;
+      const fade = t < 0.6 ? 1 : Math.max(0, 1 - (t - 0.6) / 0.4);
+      head = point(travel);
+      for (let ghost = 1; ghost <= 6; ghost++) {
+        const s = Math.max(0, travel - ghost * 0.09);
+        const spot = point(s);
+        paint(spot.x, spot.y, colors.cursor, intensity * fade * (0.7 - ghost * 0.1));
+      }
     }
     const cursor = at(Math.round(head.x), Math.round(head.y));
     if (cursor) { cursor.bg = colors.cursor; cursor.fg = colors.background; }

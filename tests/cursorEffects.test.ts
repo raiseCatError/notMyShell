@@ -108,6 +108,11 @@ test('backends: Auto is native only when set up; forced native on another host f
   assert.equal(forced.backend.id, 'portable');
   assert.match(forced.reason, /not available/u);
   assert.deepEqual(forced.portableDraws, {motion: false, effect: false, idle: false}, 'a forced host renderer without a host backend draws nothing, and says so');
+  // Host native chosen in Ghostty with nothing native set up: Ghostty draws no trail, so Portable must, labelled as a fallback.
+  const unset = chooseBackend(settings({renderer: 'native', motion: 'smear'}), hostCursorFacts(env({TERM: 'xterm-ghostty', TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1'}), () => false));
+  assert.equal(unset.backend.id, 'portable');
+  assert.deepEqual(unset.portableDraws, {motion: true, effect: true, idle: true});
+  assert.match(unset.reason, /Portable fallback · Ghostty native is not set up yet/u);
   const ghostty = hostCursorFacts(env({TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.2.0'}), () => true);
   const native = chooseBackend(settings({renderer: 'auto', motion: 'smear', effect: 'fire'}), ghostty);
   assert.equal(native.backend, GHOSTTY_BACKEND);

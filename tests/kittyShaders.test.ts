@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {buildKittyCatalog, discoverKittyCatalog, emitKittyPipeline, formatShaderValue, parseKittyPipeline, parseShaderConstants, type KittyCatalog} from '../src/appearance/kittyShaderCatalog.js';
 import {applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, launchOverrideReason, normalizeHostShaders, planKittyShaderRemoval, planKittyShaders,
-  shellWords, syncKittyShaders, validateEffects, type KittyShaderContext, type KittyShaderSettings, type ShaderGates} from '../src/appearance/kittyShaders.js';
+  kittyReloadTarget, reloadKitty, shellWords, syncKittyShaders, validateEffects, type KittyShaderContext, type KittyShaderSettings, type ShaderGates} from '../src/appearance/kittyShaders.js';
 import {readHostConfiguration} from '../src/appearance/hostConfiguration.js';
 
 // Synthetic stand-ins with the SAME structure as Kitty 0.49.2's shipped resources (not copies of them).
@@ -378,12 +378,12 @@ test('stale files and interrupted writes: edited or unowned NMSh files and chang
   assert.equal(existsSync(m.paths.pipeline), false);
 });
 
-test('notes: trail needs cursor_trail, CRT needs an opaque background, missing user shaders are kept as written', t => {
+test('notes: a trail turns cursor_trail on, CRT needs an opaque background, missing user shaders are kept as written', t => {
   const f = fixture(t);
   f.put(f.kitty, 'background_opacity 0.8\ncustom_shaders not-installed\n');
   const plan = planKittyShaders(settingsOf(['cursor-trail-blaze'], ['crt']), f.context);
   assert.ok(plan.ok);
-  assert.ok(plan.plan.notes.some(note => /cursor_trail is above 0 \(now 0\)/u.test(note)));
+  assert.ok(plan.plan.notes.some(note => /Turns Kitty's cursor_trail on \(3; it would be 0\)/u.test(note)));
   assert.ok(plan.plan.notes.some(note => /background_opacity 0\.8/u.test(note)));
   assert.ok(plan.plan.notes.some(note => /cannot find your shader “not-installed”; it is kept exactly as written/u.test(note)));
   assert.deepEqual(plan.plan.effectiveShaders, ['not-installed', kittyShaderPaths(f.context).pipeline]);
@@ -475,4 +475,81 @@ test('a leaked user var that NMSh cannot pin (multi-line or repeated declaration
   const g = fixture(t);
   g.put(g.kitty, 'custom_shaders ~other/shaders/x\n');
   assert.match((planKittyShaders(settingsOf(['crt']), g.context) as {error: string}).error, /~user/u);
+});
+
+test('a trail with cursor_trail at 0 is turned on by NMSh’s own fragment, kept by sync, refused when a later line forces 0', async t => {
+  const {writtenKittyTrail} = await import('../src/appearance/kittyShaders.js');
+  // Kitty's default (no cursor_trail line), which is also what /cursor's file says with Motion off: the shader would never draw.
+  const f = fixture(t);
+  f.put(f.kitty, 'font_size 12\n');
+  const settings = settingsOf(['cursor-trail-lightning']);
+  const plan = apply(planKittyShaders(settings, f.context));
+  assert.ok(plan.notes.some(note => /Turns Kitty's cursor_trail on \(3; it would be 0\)/u.test(note)), plan.notes.join('\n'));
+  assert.match(readFileSync(f.paths.fragment, 'utf8'), /^cursor_trail 3$/mu);
+  assert.equal(Number(readHostConfiguration('kitty', f.context).values.get('cursor_trail')?.value), 3);
+  assert.equal(writtenKittyTrail(f.context), 'cursor-trail-lightning', 'Kitty owns the trail, so Portable draws no second one');
+  // Sync judges without NMSh's own line, so it keeps that line instead of dropping it and refusing.
+  assert.equal(syncKittyShaders(settings, f.context).kind, 'unchanged');
+  // /cursor Motion Off removes NMSh's trail (like a Portable renderer) and its cursor_trail line with it.
+  assert.equal(syncKittyShaders(settings, {...f.context, gates: {...openGates, cursorMotion: 'off'}}).kind, 'written');
+  assert.doesNotMatch(readFileSync(f.paths.fragment, 'utf8'), /cursor_trail/u);
+  assert.equal(writtenKittyTrail(f.context), undefined);
+  // Back on: the trail and its line return. A later line forcing 0 after NMSh's include refuses with the reason.
+  assert.equal(syncKittyShaders(settings, f.context).kind, 'written');
+  assert.match(readFileSync(f.paths.fragment, 'utf8'), /^cursor_trail 3$/mu);
+  writeFileSync(f.kitty, `${readFileSync(f.kitty, 'utf8')}cursor_trail 0\n`);
+  const refused = planKittyShaders(settings, f.context);
+  assert.ok(!refused.ok && /cursor_trail would still be 0 \(set later in .*kitty\.conf\)/u.test(refused.error), refused.ok ? 'planned' : refused.error);
+  // The person's own positive value is kept as it is: no second cursor_trail line.
+  const g = fixture(t);
+  g.put(g.kitty, 'cursor_trail 10\n');
+  apply(planKittyShaders(settingsOf(['cursor-trail-blaze']), g.context));
+  assert.doesNotMatch(readFileSync(g.paths.fragment, 'utf8'), /cursor_trail/u);
+  // A non-trail effect never touches cursor_trail.
+  const h = fixture(t);
+  h.put(h.kitty, '');
+  apply(planKittyShaders(settingsOf(['northern-lights']), h.context));
+  assert.doesNotMatch(readFileSync(h.paths.fragment, 'utf8'), /cursor_trail/u);
+});
+
+test('switching trail styles replaces the one trail group; Lightning and Blaze reference different shipped shaders', t => {
+  const f = fixture(t);
+  f.put(f.kitty, 'cursor_trail 3\n');
+  apply(planKittyShaders(settingsOf(['cursor-trail-lightning']), f.context));
+  const lightning = readFileSync(f.paths.pipeline, 'utf8');
+  apply(planKittyShaders(settingsOf(['cursor-trail-blaze']), f.context));
+  const blaze = readFileSync(f.paths.pipeline, 'utf8');
+  assert.deepEqual([...lightning.matchAll(/^\s*shaders (.+)$/gmu)].map(match => match[1]), ['cursor-trail-lightning']);
+  assert.deepEqual([...blaze.matchAll(/^\s*shaders (.+)$/gmu)].map(match => match[1]), ['cursor-trail-blaze'], 'one trail, never both');
+  assert.equal((blaze.match(/animation_start cursor-trail-move/gu) ?? []).length, 1);
+});
+
+test('reload: Kitty ignores changed included files, so NMSh asks only the verified Kitty among its parents to reload', t => {
+  const rows = [
+    {pid: 10, ppid: 1, elapsedSeconds: 50, command: '/Applications/kitty.app/Contents/MacOS/kitty'},
+    {pid: 20, ppid: 10, elapsedSeconds: 40, command: '/bin/zsh -l'},
+    {pid: 30, ppid: 20, elapsedSeconds: 30, command: 'node /x/bin/nmsh'},
+    {pid: 40, ppid: 1, elapsedSeconds: 30, command: '/usr/bin/kitty'},
+  ];
+  assert.equal(kittyReloadTarget('10', rows, 30), 10);
+  assert.equal(kittyReloadTarget('40', rows, 30), undefined, 'a Kitty that is not NMSh’s parent (stale or inherited KITTY_PID)');
+  assert.equal(kittyReloadTarget('20', rows, 30), undefined, 'a parent that is not kitty (a reused number)');
+  assert.equal(kittyReloadTarget(undefined, rows, 30), undefined);
+  assert.equal(kittyReloadTarget('10', undefined, 30), undefined, 'no process table: never a guess');
+  const sent: number[] = [];
+  const signal = (pid: number) => { sent.push(pid); };
+  assert.equal(reloadKitty({KITTY_PID: '10'}, 'darwin', {rows: () => rows, selfPid: 30, signal}).reloaded, true);
+  assert.deepEqual(sent, [10]);
+  const refused = reloadKitty({KITTY_PID: '40'}, 'darwin', {rows: () => rows, selfPid: 30, signal});
+  assert.deepEqual([refused.reloaded, sent], [false, [10]]);
+  assert.match(refused.message, /Reload Kitty to load it \(⌃⌘,\)/u);
+  const failed = reloadKitty({KITTY_PID: '10'}, 'linux', {rows: () => rows, selfPid: 30, signal: () => { throw new Error('EPERM'); }});
+  assert.equal(failed.reloaded, false);
+  assert.match(failed.message, /Ctrl\+Shift\+F5/u);
+  // The review says so before anything is written.
+  const f = fixture(t);
+  f.put(f.kitty, 'cursor_trail 3\n');
+  const plan = planKittyShaders(settingsOf(['cursor-trail-blaze']), f.context);
+  assert.ok(plan.ok && plan.plan.preview.some(line => /NMSh asks the Kitty it runs in to reload its configuration/u.test(line)));
+  assert.ok(plan.ok && /Kitty watches only kitty\.conf, not the files it includes/u.test(plan.plan.guidance));
 });
