@@ -326,6 +326,8 @@ import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanc
 import {createKittyShaderPanel, kittyShaderKey, renderKittyShaderPanel, type KittyShaderPanelState} from '../appearance/KittyShaderPanel.js';
 import {discoverKittyCatalog, kittyBinary, type KittyCatalog} from '../appearance/kittyShaderCatalog.js';
 import {GlslShaderStudio} from '../appearance/glslStudio.js';
+import {writtenNativePasses} from '../appearance/nativePasses.js';
+import {renderRoutes} from '../motion/renderRouting.js';
 import {applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, planKittyShaderRemoval, planKittyShaders, readProcessCommand, syncKittyShaders, writtenKittyTrail,
   type KittyShaderContext, type ShaderGates} from '../appearance/kittyShaders.js';
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
@@ -641,7 +643,10 @@ export class TerminalApp {
       const cursorLook = JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor) || previous.nmsh.palette !== next.nmsh.palette || previous.nmsh.accent !== next.nmsh.accent
         || JSON.stringify(previous.customTheme) !== JSON.stringify(next.customTheme);
       // The GLSL studio's passes first: a written studio trail pauses NMSh's older /cursor shader (never two trails).
-      if (cursorLook || previous.presentation.reducedMotion !== next.presentation.reducedMotion || previous.presentation.effectsOff !== next.presentation.effectsOff) this.glslStudio.sync(next);
+      // Effects that follow Chroma are rewritten when the Chroma palette changes (a settings change, never a per-event write).
+      const chromaLook = previous.presentation.preset !== next.presentation.preset || JSON.stringify(previous.presentation.customStops) !== JSON.stringify(next.presentation.customStops)
+        || previous.nmsh.vibrance !== next.nmsh.vibrance;
+      if (cursorLook || chromaLook || previous.presentation.reducedMotion !== next.presentation.reducedMotion || previous.presentation.effectsOff !== next.presentation.effectsOff) this.glslStudio.sync(next);
       if (cursorLook) this.syncCursorNative(next);
       if (previous.cursor.renderer !== next.cursor.renderer || previous.presentation.reducedMotion !== next.presentation.reducedMotion
         || previous.presentation.effectsOff !== next.presentation.effectsOff) void this.syncKittyShaderFiles(next);
@@ -2503,7 +2508,9 @@ export class TerminalApp {
       return;
     }
     if (this.appearanceHub) {
+      const wasRouting = this.appearanceHub.view === 'routing';
       const action = appearanceHubKey(this.appearanceHub, key, this.promptConfiguration);
+      if (!wasRouting && this.appearanceHub.view === 'routing') this.refreshRoutes(this.appearanceHub);
       if (action?.kind === 'close') { this.appearanceHub = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'motion') this.updateConfiguration(configuration => { configuration.motion = action.motion; });
       else if (action?.kind === 'saveHost') void this.saveAppearance();
@@ -3867,6 +3874,7 @@ export class TerminalApp {
 
   /** In Kitty the hub gains its shader row; the summary says what is chosen, never that it is loaded. */
   private addKittyShaderRow(hub: AppearanceHubState): void {
+    this.refreshRoutes(hub);
     if (this.glslStudio.available()) { this.glslStudio.addHubRow(hub); return; }
     if (terminalProfile(process.env) !== 'kitty') return;
     const chosen = this.promptConfiguration.hostShaders.kitty.effects.filter(effect => effect.enabled).length;
@@ -12696,6 +12704,17 @@ export class TerminalApp {
     const busy = this.transitions.busy;
     if (busy && !this.transitionClock) this.transitionClock = presentationClock.subscribe(() => { if (!this.stopped) this.paintPresentation(Date.now()); }, 33, 16);
     else if (!busy && this.transitionClock) { this.transitionClock(); this.transitionClock = undefined; }
+  }
+
+  /** /appearance › Effects routing: who draws each animated surface now (read from the cursor choice, gates and written passes). */
+  private refreshRoutes(hub: AppearanceHubState): void {
+    const config = this.promptConfiguration;
+    const native = writtenNativePasses();
+    hub.routes = renderRoutes({gate: {reducedMotion: isReducedMotion() || config.presentation.reducedMotion, effectsOff: config.presentation.effectsOff, color: colorLevel() !== 'none'},
+      look: config.motion.rendering === 'rich' ? 'rich' : 'clean', cursor: this.cursorBackend(), cursorMotion: config.cursor.motion, cursorEffect: config.cursor.effect,
+      ...(native.hostName ? {hostName: native.hostName} : {}), nativePasses: native.passes, idleTimeout: config.idleVisuals.timeout,
+      idleScreenMode: SCREEN_MODE_EFFECT[config.idleVisuals.mode] !== undefined || config.idleVisuals.mode === 'random',
+      motionOff: {launch: config.motion.commandLaunch === 'off', context: config.motion.contextTransitions === 'off', events: config.motion.eventFeedback === 'off'}});
   }
 
   private decorativeMotionAllowed(): boolean {

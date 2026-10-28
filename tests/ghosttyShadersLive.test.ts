@@ -21,7 +21,7 @@ import {normalizeHostShaders} from '../src/appearance/kittyShaderSettings.js';
 
 const binaries = ['/Applications/Ghostty.app/Contents/MacOS/ghostty', ...(process.env.NMSH_TEST_GHOSTTY_BINARIES ?? '').split(':').filter(Boolean)].filter(path => existsSync(path));
 const slangc = ['/Applications/kitty.app/Contents/MacOS/slangc'].find(path => existsSync(path));
-const colors = {cursorColors: {head: [1, 0.6, 0.2], tail: [0.2, 0.3, 1]}};
+const colors = {cursorColors: {head: [1, 0.6, 0.2], tail: [0.2, 0.3, 1]}, chroma: {a: [0.1, 0.8, 0.4], b: [0.6, 0.2, 0.9]}};
 
 function privateHome(t: {after: (fn: () => void) => void}) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-gshader-live-')));

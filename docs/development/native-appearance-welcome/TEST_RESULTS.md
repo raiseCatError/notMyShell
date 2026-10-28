@@ -66,3 +66,11 @@ Source: branch feature/ghostty-native-shaders-20261028 from de2afd02. Every auto
 - Mermaid (#516 run 40656373289, browserConsoleChrome.test.ts:106): not rerun in CI; local controlled runs 3/3 pass at dev+diagnostic and at #516 (mermaid-diag/REPORT.md). Unexplained in CI; deadline-under-load hypothesis, not proven.
 
 NOT RUN: physical Ghostty/Kitty/Zed QA, GPU rendering, performance measurement.
+
+## Slice 4 — render routing and Chroma-driven native colors (Claude, 2026-10-28)
+
+- Focused tests covering the changed modules and their consumers (renderRouting, ghosttyShaders, ghosttyShaderPanel, ghosttyShadersLive, appearanceHub, kittyShader*, hostIntegration, hostAppearance*, cursor*, idleVisuals, motionTransitions): 162/162 (slice4-focused-final.log); tsc clean; diff --check pass.
+- Full `npm run verify` was started but stopped at the user's direction (2026-10-28): the machine was under heavy external load (another session's xcodebuild, load 50–130), which produced live shell startup timeouts unrelated to this slice. Per the user, only tests related to the current work are run locally; CI on the pushed head is the full check.
+- Independent Sonnet review: no blocker; five should-fix items fixed with regressions.
+
+NOT RUN: physical Ghostty/Kitty QA, GPU rendering.

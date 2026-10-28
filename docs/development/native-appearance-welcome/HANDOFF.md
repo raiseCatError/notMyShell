@@ -1,5 +1,12 @@
 # Native appearance and Welcome Studio handoff
 
+## Slice 4 state (render routing) — read first
+
+- Branch `feature/render-routing-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/render-routing-20261028`) stacked on Slice 3 (`feature/ghostty-native-shaders-20261028`, PR #517). Decoder PR #518 targets dev independently.
+- Code map: `src/motion/renderRouting.ts` (read-only routes), `src/appearance/nativePasses.ts` (host-neutral written passes), hub view `routing` in `AppearanceHub.ts`, `chromaEnds` in `glslStudio.ts`, Aurora `COLORS` in `ghosttyShaderCatalog.ts`.
+- Verification policy (user, 2026-10-28): run only tests related to the current work; CI is the full check.
+- Next: Slice 5 Shader Studio previews; Slice 6 Welcome Studio on #518; Slice 7.
+
 ## Slice 3 state (Ghostty native shaders) — read first
 
 - Branch `feature/ghostty-native-shaders-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/ghostty-native-shaders-20261028`) is stacked on Slice 2 `feature/kitty-native-shaders-20261028` @ de2afd02 (PR #516, draft). Its draft PR targets the Slice 2 branch; retarget only after review, never automatically.

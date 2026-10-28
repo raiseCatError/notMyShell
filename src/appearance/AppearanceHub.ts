@@ -1,3 +1,4 @@
+import type {SurfaceRoute} from '../motion/renderRouting.js';
 import type {HostAppearancePlan} from './hostAppearance.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import {chromaPreviewNote} from './chromaNotes.js';
@@ -26,7 +27,7 @@ import {BRIDGE_TARGETS, BRIDGE_TARGET_LABELS, effectiveMode} from '../themeBridg
 export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge' | 'kittyShaders' | 'glslShaders';
 
 export interface AppearanceHubState {
-  view: 'hub' | 'motion' | 'motionAdvanced';
+  view: 'hub' | 'motion' | 'motionAdvanced' | 'routing';
   selected: number;
   /** Host window editing (the existing AppearanceState), when the host has appearance integration. */
   host?: AppearanceState;
@@ -44,14 +45,16 @@ export interface AppearanceHubState {
   kittyShaders?: string;
   /** Present in Ghostty: the Ghostty shaders row's summary (the row exists only there). */
   ghosttyShaders?: string;
+  /** Who draws each animated surface now (read-only; refreshed by the app whenever the hub renders). */
+  routes?: SurfaceRoute[];
 }
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'} | {kind: 'confirmHost'} | {kind: 'restoreHost'};
 
 /** Compact launcher: each row opens its canonical editor (/theme, /prompt, /cursor, UI chrome, /chroma, Motion, /theme-bridge). */
-const BASE_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
+const BASE_ROWS: Array<{id: HubDestination | 'motion' | 'routing'; label: string}> = [
   {id: 'theme', label: 'Theme Studio'}, {id: 'prompt', label: 'Prompt'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'},
-  {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'},
+  {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'}, {id: 'routing', label: 'Effects routing'},
 ];
 /** The launcher rows for this host: Kitty or Ghostty adds its shader studio after Cursor & effects. */
 const hubRows = (state: AppearanceHubState) => state.kittyShaders !== undefined
@@ -87,6 +90,10 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     }
     return undefined;
   }
+  if (state.view === 'routing') {
+    if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'enter') { state.view = 'hub'; state.selected = NMSH_ROWS.findIndex(row => row.id === 'routing'); }
+    return undefined;
+  }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {
     const advanced = state.view === 'motionAdvanced';
     // The Motion list: Rendering, the five effects, then Advanced (a child screen with the selected rendering's own tuning).
@@ -118,6 +125,7 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     if (key.kind !== 'enter' && key.kind !== 'right') return undefined;
     const row = NMSH_ROWS[state.selected]!;
     if (row.id === 'motion') { state.view = 'motion'; state.selected = 0; state.previewStart = now; return undefined; }
+    if (row.id === 'routing') { state.view = 'routing'; return undefined; }
     return {kind: 'open', destination: row.id};
   }
   // Host rows: the existing opacity/blur editor, with Enter saving through the host integration.
@@ -160,6 +168,17 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
       ...lines.map(line => `  ${stripTerminalControls(line)}`), '', `  ${stripTerminalControls(review.plan.guidance)}`,
       renderControls([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']])].map(row => truncateAnsi(row, columns));
   }
+  if (state.view === 'routing') {
+    const routes = state.routes ?? [];
+    const routeLabel = {native: `${accent}Host GPU${reset}`, portable: `${secondary}Portable${reset}`, off: `${subtle}Off${reset}`} as const;
+    const head = [`${primary}  Appearance › Effects routing${reset}`,
+      `  ${subtle}Who draws each animated surface now. Host GPU shaders only draw what the host can target (the cursor, whole-window focus and display); NMSh draws its own rows.${reset}`, ''];
+    const list = routes.flatMap(route => [`    ${padCells(route.label, 20)}${routeLabel[route.route]}`, `      ${subtle}${stripTerminalControls(route.reason)}${reset}`]);
+    const controls = ['', renderControls([['Esc', 'back']])];
+    const all = [...head, ...list, ...controls];
+    const rows = height === undefined || all.length <= height ? all : [head[0]!, ...list.slice(0, Math.max(0, height - 3)), ...controls];
+    return rows.map(row => truncateAnsi(row, columns));
+  }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {
     const advanced = state.view === 'motionAdvanced';
     const rendering = configuration.motion.rendering === 'rich' ? 'Rich' : 'Clean';
@@ -200,6 +219,8 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,
     kittyShaders: state.kittyShaders ?? '',
     glslShaders: state.ghosttyShaders ?? '',
+    routing: (() => { const routes = state.routes ?? []; const count = (value: string) => routes.filter(route => route.route === value).length;
+      return routes.length ? [count('native') ? `${count('native')} on host GPU` : '', `${count('portable')} Portable`, count('off') ? `${count('off')} off` : ''].filter(Boolean).join(' · ') : 'Who draws each effect'; })(),
     motion: anyMotion ? `${motion.rendering === 'rich' ? 'Rich' : 'Clean'} · Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
   };
   const rows = [`${primary}  Appearance${reset}`, `  ${subtle}Everything visual in one place; each row opens its own editor.${reset}`, '', `  ${subtle}NMSh${reset}`];

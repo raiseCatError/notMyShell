@@ -14,7 +14,7 @@ import {fragmentContent, fragmentPath as cursorFragmentPath, ghosttyCursorFragme
 import {DEFAULT_CURSOR, type CursorSettings} from '../src/prompt/configuration.js';
 
 const openGates: GhosttyShaderGates = {reducedMotion: false, effectsOff: false, cursorRenderer: 'auto', cursorMotion: 'tail'};
-const colors = {cursorColors: {head: [1, 0.5, 0], tail: [0, 0, 1]}};
+const colors = {cursorColors: {head: [1, 0.5, 0], tail: [0, 0, 1]}, chroma: {a: [0.1, 0.8, 0.4], b: [0.6, 0.2, 0.9]}};
 
 function fixture(t: {after: (fn: () => void) => void}, options: {version?: string; gates?: GhosttyShaderGates; launch?: GhosttyShaderContext['launch']} = {}) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-gshader-')));
@@ -89,7 +89,8 @@ test('every parameter really changes the generated GLSL; invalid values are refu
   assert.match(generateGhosttyShader(smear, {COLOR_SOURCE: 0}, colors).source, /headColor\(\) \{ return vec3\(1\.0, 0\.5, 0\.0\); \}/u, '/cursor colors are compiled in');
   assert.match(generateGhosttyShader(smear, {COLOR_SOURCE: 1, HEAD: [0, 1, 0]}, colors).source, /headColor\(\) \{ return vec3\(0\.0, 1\.0, 0\.0\); \}/u);
   assert.match(generateGhosttyShader(smear, {COLOR_SOURCE: 2}, colors).source, /return iCurrentCursorColor\.rgb;/u, 'Ghostty’s live cursor color');
-  assert.throws(() => generateGhosttyShader(smear, {}, {cursorColors: {head: [1, 1], tail: [0, 0, 0]}}), /not valid RGB/u);
+  assert.throws(() => generateGhosttyShader(smear, {}, {...colors, cursorColors: {head: [1, 1], tail: [0, 0, 0]}}), /not valid RGB/u);
+  assert.throws(() => generateGhosttyShader(presetById('aurora')!, {}, {...colors, chroma: {a: [2, 0, 0], b: [0, 0, 0]}}), /Chroma colors are not valid/u);
 });
 
 test('settings: unknown presets, foreign parameters, two trails and too many passes are reported', () => {

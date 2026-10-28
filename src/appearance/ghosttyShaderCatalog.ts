@@ -118,7 +118,12 @@ export interface GhosttyPresetDefinition {
 export interface GenerationContext {
   /** /cursor's effect colors (0–1 RGB): the trail head and tail. */
   cursorColors: {head: readonly number[]; tail: readonly number[]};
+  /** The Chroma palette's ends (0–1 RGB; the theme's colors while Chroma is off), for effects that follow Chroma. */
+  chroma: {a: readonly number[]; b: readonly number[]};
 }
+
+/** Ambient colors: follow Chroma (rewritten when the Chroma palette or theme changes; Ghostty applies it on reload) or the studio's own. */
+export const AMBIENT_COLOR_SOURCES = [[0, 'Follow Chroma'], [1, 'Custom']] as const;
 
 const n = (name: string, label: string, min: number, max: number, step: number, type = 'float'): PresetParam => ({name, label, kind: 'number', type, min, max, step});
 const rgb = (name: string, label: string): PresetParam => ({name, label, kind: 'color', type: 'float3'});
@@ -136,8 +141,9 @@ export const GHOSTTY_PRESETS: readonly GhosttyPresetDefinition[] = [
     defaults: {COLOR_SOURCE: 0, HEAD: [1, 0.85, 0.45], TAIL: [0.95, 0.3, 0.2], INTENSITY: 0.85, DURATION: 0.45, GLOW: 1.2, SPARKS: true},
     note: 'A tapered comet tail with a soft glow and optional sparks along the path.'},
   {id: 'aurora', label: 'Aurora', category: 'ambient', animated: true,
-    params: [rgb('COLOR_A', 'Color A'), rgb('COLOR_B', 'Color B'), n('INTENSITY', 'Intensity', 0.05, 0.8, 0.05), n('SPEED', 'Speed', 0.05, 2, 0.05), n('HEIGHT', 'Height', 0.1, 1, 0.05)],
-    defaults: {COLOR_A: [0.2, 0.9, 0.6], COLOR_B: [0.45, 0.35, 1], INTENSITY: 0.3, SPEED: 0.4, HEIGHT: 0.45},
+    params: [{name: 'COLORS', label: 'Colors', kind: 'choice', type: 'int', choices: AMBIENT_COLOR_SOURCES}, rgb('COLOR_A', 'Color A'), rgb('COLOR_B', 'Color B'),
+      n('INTENSITY', 'Intensity', 0.05, 0.8, 0.05), n('SPEED', 'Speed', 0.05, 2, 0.05), n('HEIGHT', 'Height', 0.1, 1, 0.05)],
+    defaults: {COLORS: 0, COLOR_A: [0.2, 0.9, 0.6], COLOR_B: [0.45, 0.35, 1], INTENSITY: 0.3, SPEED: 0.4, HEIGHT: 0.45},
     note: 'Slow color bands over the background only (text keeps its colors). Animates every frame while Ghostty is focused.'},
   {id: 'focus-dim', label: 'Dim when unfocused', category: 'focus', animated: false,
     params: [n('DIM', 'Dim', 0, 0.9, 0.05), n('DESATURATE', 'Desaturate', 0, 1, 0.05), n('FADE', 'Fade back (s)', 0, 1, 0.05)],
@@ -178,6 +184,8 @@ export const presetById = (id: string) => GHOSTTY_PRESETS.find(preset => preset.
 export function resolvedValues(preset: GhosttyPresetDefinition, values: Readonly<Record<string, ShaderValue>>): Record<string, ShaderValue> {
   const result: Record<string, ShaderValue> = {...preset.defaults};
   for (const param of preset.params) if (values[param.name] !== undefined) result[param.name] = values[param.name]!;
+  // Settings saved before the Colors choice existed keep their own colors rather than switching to Chroma.
+  if (values.COLORS === undefined && preset.params.some(param => param.name === 'COLORS') && preset.params.some(param => param.kind === 'color' && values[param.name] !== undefined)) result.COLORS = 1;
   return result;
 }
 
@@ -251,14 +259,16 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   fragColor = vec4(mix(base.rgb, color, alpha), base.a);
 }
 `,
-  aurora: () => `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  aurora: (values, context) => `vec3 auroraA() { return ${values.COLORS === 0 ? vec3(context.chroma.a) : 'COLOR_A'}; }
+vec3 auroraB() { return ${values.COLORS === 0 ? vec3(context.chroma.b) : 'COLOR_B'}; }
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec4 base = texture(iChannel0, fragCoord / iResolution.xy);
   vec2 uv = fragCoord / iResolution.xy;
   float background = 1.0 - smoothstep(0.03, 0.12, distance(base.rgb, iBackgroundColor));
   float t = iTime * SPEED;
   float wave = sin(uv.x * 5.0 + t) * 0.6 + sin(uv.x * 11.0 - t * 1.4) * 0.3 + sin(uv.x * 23.0 + t * 0.6) * 0.1;
   float band = smoothstep(1.0 - HEIGHT, 1.0, uv.y + wave * 0.06);
-  vec3 tint = mix(COLOR_A, COLOR_B, 0.5 + 0.5 * sin(uv.x * 3.0 + t * 0.7));
+  vec3 tint = mix(auroraA(), auroraB(), 0.5 + 0.5 * sin(uv.x * 3.0 + t * 0.7));
   fragColor = vec4(mix(base.rgb, tint, band * background * INTENSITY), base.a);
 }
 `,
@@ -314,6 +324,9 @@ export function generateGhosttyShader(preset: GhosttyPresetDefinition, saved: Re
   for (const color of [context.cursorColors.head, context.cursorColors.tail]) {
     if (color.length < 3 || !color.slice(0, 3).every(part => Number.isFinite(part) && part >= 0 && part <= 1)) throw new Error('The /cursor colors are not valid RGB values.');
   }
+  for (const color of [context.chroma.a, context.chroma.b]) {
+    if (color.length < 3 || !color.slice(0, 3).every(part => Number.isFinite(part) && part >= 0 && part <= 1)) throw new Error('The Chroma colors are not valid RGB values.');
+  }
   const body = BODIES[preset.id];
   if (!body) throw new Error(`${preset.label} has no shader generator.`);
   const code = `${preset.params.map(param => constant(param, values[param.name]!)).join('\n')}\n${body(values, context)}`;
@@ -344,7 +357,7 @@ export interface GhosttyCatalog {
   notOffered: string[];
 }
 
-const SAMPLE_CONTEXT: GenerationContext = {cursorColors: {head: [1, 1, 1], tail: [0.5, 0.5, 0.5]}};
+const SAMPLE_CONTEXT: GenerationContext = {cursorColors: {head: [1, 1, 1], tail: [0.5, 0.5, 0.5]}, chroma: {a: [0, 1, 0.5], b: [0.5, 0, 1]}};
 
 /** The presets this Ghostty can run, decided from the uniforms each generated shader actually reads. */
 export function buildGhosttyCatalog(versionText: string | undefined): GhosttyCatalog {

@@ -515,6 +515,16 @@ export function readProcessCommand(pid: number): string | undefined {
 }
 
 /** The trail shader NMSh's written Kitty pipeline contains right now, if its fragment is active; never guessed from settings. */
+/** NMSh's Kitty presets Kitty would load now (hook present, custom_shaders listing NMSh's pipeline), by preset id; [] when none. */
+export function writtenKittyPresets(context: AppearanceContext): string[] {
+  try {
+    const state = owned(context);
+    if (!state.record || !(snapshot(state.record.hostPath, state.paths.home).content ?? '').includes(state.record.hook)) return [];
+    if (!/^custom_shaders /mu.test(state.fragment.content ?? '') || state.pipeline.content === undefined) return [];
+    return state.record.presets.map(preset => preset.id);
+  } catch { return []; }
+}
+
 export function writtenKittyTrail(context: AppearanceContext): string | undefined {
   try {
     const state = owned(context);

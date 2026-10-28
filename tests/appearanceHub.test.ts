@@ -22,7 +22,7 @@ test('host with appearance integration keeps opacity/blur editing; Enter saves o
   const hub = createAppearanceHub('Ghostty-like host', {opacity: 0.9, blurModeIndex: 0, blurStrength: 20, selectedIndex: 0});
   const rendered = text(renderAppearanceHub(hub, config(), 100, 'Lavender Native', 'Portable'));
   assert.match(rendered, /Opacity\s+█+░*\s+90%/u);
-  hub.selected = 7; // first host row
+  hub.selected = 8; // first host row
   assert.equal(appearanceHubKey(hub, {kind: 'enter'}, config()), undefined, 'nothing to save yet');
   appearanceHubKey(hub, {kind: 'right'}, config());
   assert.equal(hub.host!.opacity, 0.95);
@@ -72,7 +72,7 @@ test('host save preview owns input; Escape cancels and Enter alone confirms', ()
 test('restore is a separate review action and background input accepts only RGB', () => {
   const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0});
   assert.deepEqual(appearanceHubKey(hub, {kind: 'text', value: 'r'}, config()), {kind: 'restoreHost'});
-  hub.selected = 9; // background after opacity/blur
+  hub.selected = 10; // background after opacity/blur
   appearanceHubKey(hub, {kind: 'enter'}, config());
   appearanceHubKey(hub, {kind: 'text', value: '123abc'}, config());
   appearanceHubKey(hub, {kind: 'enter'}, config());
@@ -83,7 +83,7 @@ test('restore is a separate review action and background input accepts only RGB'
 
 test('short appearance panels keep the selected host control and navigation visible', () => {
   const hub = createAppearanceHub('Host', {opacity: 0.8, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0});
-  hub.selected = 7;
+  hub.selected = 8;
   const rows = renderAppearanceHub(hub, config(), 45, 'Theme', 'Portable', undefined, 8);
   assert.ok(rows.length <= 8);
   assert.match(text(rows), /Opacity/u);

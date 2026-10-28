@@ -13,6 +13,7 @@ import {terminalProfile} from '../host/capabilities.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
 import {effectPalette} from '../cursor/palette.js';
+import {idleStops} from '../idle/IdleVisuals.js';
 import type {HostCursorFacts} from '../cursor/backends.js';
 import {fragmentContent, ghosttyCursorFragment, ghosttyCursorShaderWritten, writeManagedFiles, type ManagedWrite, type NativeHost} from '../cursor/native.js';
 import type {AppearanceHubState} from './AppearanceHub.js';
@@ -31,6 +32,13 @@ export interface StudioServices {
   render(): void;
   /** Esc: back to /appearance. */
   back(): void;
+}
+
+/** The Chroma palette's ends (the theme's colors while Chroma is off): the same resolver as idle visuals' Follow Chroma / Theme. */
+export function chromaEnds(config: PromptConfiguration): {a: number[]; b: number[]} {
+  const stops = idleStops(config, 'appearance');
+  const rgb = (color: {red: number; green: number; blue: number} | undefined) => color ? [color.red / 255, color.green / 255, color.blue / 255] : [0.5, 0.5, 0.5];
+  return {a: rgb(stops[0]), b: rgb(stops.at(-1))};
 }
 
 export class GlslShaderStudio {
@@ -67,7 +75,7 @@ export class GlslShaderStudio {
     const head = palette.trail[0] ?? palette.caret;
     const tail = palette.trail.length > 1 ? palette.trail.at(-1)! : {red: head.red * 0.6, green: head.green * 0.6, blue: head.blue * 0.6};
     return {...this.base, catalog: buildGhosttyCatalog(terminalProfile(this.env) === 'ghostty' ? this.env.TERM_PROGRAM_VERSION : undefined),
-      gates: this.gates(config), launch: launch ?? inspectGhosttyLaunch(readProcessTable(), process.pid), colors: {cursorColors: {head: rgb(head), tail: rgb(tail)}}};
+      gates: this.gates(config), launch: launch ?? inspectGhosttyLaunch(readProcessTable(), process.pid), colors: {cursorColors: {head: rgb(head), tail: rgb(tail)}, chroma: chromaEnds(config)}};
   }
 
   open(): void {

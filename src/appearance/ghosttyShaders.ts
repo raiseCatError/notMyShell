@@ -456,6 +456,16 @@ export function writtenGhosttyTrail(context: AppearanceContext): string | undefi
   } catch { return undefined; }
 }
 
+/** NMSh's passes Ghostty would load now (hook present and listed in the fragment), in order; [] when none or unreadable. */
+export function writtenGhosttyPasses(context: AppearanceContext): string[] {
+  try {
+    const state = owned(context);
+    if (!state.record || !(snapshot(state.record.hostPath, state.paths.home).content ?? '').includes(state.record.hook)) return [];
+    const lines = (state.fragment.content ?? '').split('\n');
+    return state.record.passes.map(pass => pass.id).filter(id => lines.includes(`custom-shader = ${passPath(state.paths, id)}`));
+  } catch { return []; }
+}
+
 /** Every trail Ghostty may still have loaded since its last confirmed reload ('nmsh-cursor' first when present). */
 interface ReloadRecord {version: 1; since: number; previous: string[]}
 const strongest = (list: readonly string[]) => list.includes('nmsh-cursor') ? 'nmsh-cursor' : list[0];
