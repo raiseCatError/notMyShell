@@ -1,0 +1,195 @@
+name: Release
+
+# Source release of NMSh: annotated tag + GitHub Release with the source archive and checksums, then a Homebrew
+# formula PR. Procedure and failure recovery: docs/development/release-workflow.md. The website sync PR and the manual
+# "Publish NMSh website" workflow are separate and are not triggered from here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (X.Y.Z, without v)
+        type: string
+        required: true
+      commit:
+        description: Full commit SHA (empty = the dispatched ref's head). Publishing requires master's head.
+        type: string
+        required: false
+      mode:
+        description: dry-run checks and packages only; publish tags and releases
+        type: choice
+        options: [dry-run, publish]
+        default: dry-run
+      confirmation:
+        description: 'Publishing only: type "publish vX.Y.Z"'
+        type: string
+        required: false
+  pull_request:
+    paths:
+      - scripts/release/**
+      - .github/workflows/release.yml
+      - tests/release*.test.ts
+
+permissions: {}
+
+# An explicit bash shell runs with -eo pipefail: a failing gate piped into tee must still fail its step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  # Pull-request dry runs get their own group so they never displace or wait behind a release dispatch.
+  group: ${{ github.event_name == 'pull_request' && format('nmsh-release-pr-{0}', github.ref) || 'nmsh-release' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'raiseCatError/notMyShell'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    outputs:
+      version: ${{ steps.target.outputs.version }}
+      commit: ${{ steps.target.outputs.commit }}
+      archive_sha256: ${{ steps.package.outputs.archive_sha256 }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_MODE: ${{ inputs.mode }}
+      INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+      ARCHIVE_SHA256: ${{ needs.prepare.outputs.archive_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - run: npm ci
+      - name: Resolve the target
+        id: target
+        run: |
+          # Pull requests (and an empty input) only ever dry-run; the version then comes from package.json.
+          VERSION="${INPUT_VERSION:-$(node -p "require('./package.json').version")}"
+          MODE="${INPUT_MODE:-dry-run}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be X.Y.Z"; exit 1; }
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || MODE=dry-run
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+      - name: Require CI on the exact commit and master's head (publish only)
+        if: steps.target.outputs.mode == 'publish'
+        run: node scripts/release/check-ci.mjs --commit "${{ steps.target.outputs.commit }}" --repo "$GITHUB_REPOSITORY"
+      - name: Prepare (checks, provenance, release notes)
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          COMMIT: ${{ steps.target.outputs.commit }}
+          MODE: ${{ steps.target.outputs.mode }}
+        run: |
+          MASTER_HEAD=""
+          if [ "$MODE" = publish ]; then MASTER_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha)"; fi
+          node scripts/release/prepare.mjs --version "$VERSION" --commit "$COMMIT" --mode "$MODE" --repo "$GITHUB_REPOSITORY" \
+            --master-head "$MASTER_HEAD" --confirmation "$INPUT_CONFIRMATION" --out "$RUNNER_TEMP/release" | tee "$RUNNER_TEMP/prepare.txt"
+          { echo '### Release preparation'; echo '```'; cat "$RUNNER_TEMP/prepare.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Package the source archive
+        id: package
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          COMMIT: ${{ steps.target.outputs.commit }}
+        run: |
+          node scripts/release/package.mjs --version "$VERSION" --commit "$COMMIT" --out "$RUNNER_TEMP/release"
+          echo "archive_sha256=$(sha256sum "$RUNNER_TEMP/release/nmsh-$VERSION-source.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Verify the archive installs like the Homebrew formula
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: node scripts/release/verify-artifact.mjs --version "$VERSION" --dir "$RUNNER_TEMP/release" --work "$RUNNER_TEMP/verify"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nmsh-release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: prepare
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'publish' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: nmsh-production
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+      INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.22.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nmsh-release
+          path: ${{ runner.temp }}/release
+      - name: Tag, draft release, upload, verify, publish
+        run: node scripts/release/publish.mjs --version "$VERSION" --commit "$COMMIT" --dir "$RUNNER_TEMP/release" --confirmation "$INPUT_CONFIRMATION" --expected-sha256 "$ARCHIVE_SHA256"
+
+  homebrew:
+    needs: [prepare, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: nmsh-production
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.22.0
+      - name: Build the formula from GitHub's tag archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/brew"
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/brew/tag.tar.gz" "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$VERSION.tar.gz"
+          SHA="$(sha256sum "$RUNNER_TEMP/brew/tag.tar.gz" | cut -d' ' -f1)"
+          gh api -H 'Accept: application/vnd.github.raw' repos/raiseCatError/homebrew-tap/contents/Formula/nmsh.rb > "$RUNNER_TEMP/brew/current.rb"
+          node scripts/release/homebrew.mjs --version "$VERSION" --sha256 "$SHA" --formula "$RUNNER_TEMP/brew/current.rb" --out "$RUNNER_TEMP/brew/nmsh.rb"
+          echo "TAG_SHA=$SHA" >> "$GITHUB_ENV"
+      - name: Open the tap pull request (only when HOMEBREW_TAP_TOKEN exists)
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            GH_TOKEN="$HOMEBREW_TAP_TOKEN" node scripts/release/homebrew.mjs --version "$VERSION" --sha256 "$TAG_SHA" \
+              --formula "$RUNNER_TEMP/brew/current.rb" --out "$RUNNER_TEMP/brew/nmsh.rb" --open-pr | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Homebrew tap not updated"
+              echo "No HOMEBREW_TAP_TOKEN secret exists. Download the \`nmsh-formula\` artifact, put it at Formula/nmsh.rb on branch \`nmsh-$VERSION\` of raiseCatError/homebrew-tap and open a PR titled \`nmsh $VERSION\`. url sha256: \`$TAG_SHA\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nmsh-formula
+          path: ${{ runner.temp }}/brew/nmsh.rb
+          if-no-files-found: error
+          retention-days: 30
