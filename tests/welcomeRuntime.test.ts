@@ -161,3 +161,51 @@ test('all external provider snapshots remain readable after archive, including M
     assert.deepEqual((await store.list()).map(s => s.transcript.welcome?.provider).sort(), ['fastfetch', 'macchina', 'neofetch', 'zigfetch']);
   } finally { await rm(directory, {recursive: true, force: true}); }
 });
+
+import {renderWelcome} from '../src/output/Welcome.js';
+import {renderLegacyWelcome} from '../src/welcome/legacy.js';
+import {savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
+
+test('old configuration preserves byte-identical historical rows; Studio save persists native layout and presets', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'welcome-save-'));
+  try {
+    const config = normalizePromptConfiguration({welcome: 'vespyr'});
+    assert.equal(config.welcomeStudio.customized, false);
+    const snapshot = {identity: {version: '1', commit: 'abc'}, cwd: '/work', shell: 'zsh' as const, studio: config.welcomeStudio};
+    assert.deepEqual(renderWelcome(snapshot, 80), renderLegacyWelcome(snapshot, 80));
+    const h = host(dir); const controller = new WelcomeStudioController(h);
+    h.save = config => { savePromptConfiguration(config, join(dir, 'config.json')); return true; };
+    controller.state.presets.push({name: 'Saved', model: normalizeWelcomeStudio({title: 'My layout'})});
+    await controller.key({kind: 'text', value: 's'});
+    const saved = loadPromptConfiguration(join(dir, 'config.json'));
+    assert.equal(saved.welcomeStudio.customized, true);
+    assert.equal(saved.welcomePresets[0]?.name, 'Saved');
+    assert.notDeepEqual(renderWelcome({...snapshot, studio: saved.welcomeStudio}, 80), renderLegacyWelcome(snapshot, 80));
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('focus and pointer movement preserve motion; handover retains image card and clears panel origin; snapshots omit asset paths', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'welcome-review-'));
+  const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = dir;
+  const app = new TerminalApp();
+  Object.defineProperty(app, 'render', {value: () => {}});
+  try {
+    await writeFile(join(dir, 'private.png'), encodePng({width: 1, height: 1, data: new Uint8ClampedArray([255, 0, 0, 255])}));
+    app['promptConfiguration'].welcomeStudio = normalizeWelcomeStudio({logo: 'image', assetPath: join(dir, 'private.png'), effect: 'float'});
+    app['startWelcome'](dir);
+    const native = app['nativeWelcome']!; await native.load(dir, dir);
+    const count = presentationClock.subscriberCount;
+    app['output'].wrapped(80);
+    for (const kind of ['focusIn', 'focusOut', 'mouseMove'] as const) app['handleKey']({kind} as any);
+    assert.equal(presentationClock.subscriberCount, count + 1);
+    app['handleKey']({kind: 'escape'});
+    assert.equal(presentationClock.subscriberCount, count);
+    app['openWelcomeStudio'](); app['panelOrigin'] = 'settings';
+    app['handOverTerminal']();
+    assert.equal(app['panelOrigin'], undefined);
+    assert.equal(app['nativeWelcome'], native);
+    assert.doesNotMatch(app['output'].wrapped(80).map(r => r.plain).join(''), /\(image\)/);
+    const stored = JSON.stringify(app['output'].transcript());
+    assert.ok(!stored.includes('private.png')); assert.ok(!stored.includes(dir + '/private'));
+  } finally { app['stop'](0); app['session'].kill(); if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous; await rm(dir, {recursive: true, force: true}); }
+});

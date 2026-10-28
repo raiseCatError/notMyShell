@@ -31,7 +31,7 @@ export function normalizeWelcomeStudio(value: unknown): WelcomeStudio {
   const v = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const d = DEFAULT_WELCOME_STUDIO;
   return {
-    customized: v.customized !== false, logo: choice(v.logo, LOGOS, d.logo), assetPath: welcomeText(v.assetPath, 4096),
+    customized: value !== undefined && v.customized !== false, logo: choice(v.logo, LOGOS, d.logo), assetPath: welcomeText(v.assetPath, 4096),
     fit: choice(v.fit, FITS, d.fit), alpha: choice(v.alpha, ALPHAS, d.alpha), layout: choice(v.layout, LAYOUTS, d.layout),
     density: choice(v.density, ['compact', 'expanded'], d.density), title: typeof v.title === 'string' ? welcomeText(v.title) : d.title,
     greeting: typeof v.greeting === 'string' ? welcomeText(v.greeting, 320) : d.greeting,

@@ -104,3 +104,9 @@ test('configuration-derived background cannot emit OSC controls from the hub', (
   const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0, background: 'black\u001b]52;c;bad\u0007'});
   assert.doesNotMatch(renderAppearanceHub(hub, config(), 100, 'Theme', 'Portable').join('\n'), /\u001b\]52/u);
 });
+
+
+test('Welcome summary uses the provider display label', () => {
+  const configuration = config(); configuration.welcome = 'fastfetch';
+  assert.match(text(renderAppearanceHub(createAppearanceHub('generic'), configuration, 100, 'Theme', 'Portable')), /Welcome.*Fastfetch/);
+});

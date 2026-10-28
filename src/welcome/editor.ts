@@ -47,7 +47,7 @@ export function welcomeEditorKey(state: WelcomeEditor, key: Key, now = Date.now(
   if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + FIELDS.length) % FIELDS.length; return; }
   if (key.kind === 'text') {
     switch (key.value.toLowerCase()) {
-      case 's': return 'save';
+      case 's': state.draft.customized = true; return 'save';
       case ' ': state.elapsed = state.paused ? state.elapsed : now - state.started; state.started = now - state.elapsed; state.paused = !state.paused; return;
       case 'r': state.elapsed = 0; state.started = now; state.paused = false; return;
       case 'w': state.narrow = !state.narrow; return;

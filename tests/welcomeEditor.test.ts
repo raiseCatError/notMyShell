@@ -31,12 +31,12 @@ test('Welcome is appended to Appearance NMSh rows and opens its canonical editor
   assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, normalizePromptConfiguration({})), {kind: 'open', destination: 'welcome'});
 });
 
-test('an unchanged editor preview retains the legacy Vespyr card and save leaves customization off', () => {
+test('an unchanged editor preview retains the legacy Vespyr card and save explicitly selects the native layout', () => {
   const config = normalizePromptConfiguration({welcomeStudio: {customized: false}});
   const state = createWelcomeEditor(config);
   const legacy = {identity: {version: '1', commit: 'abc'}, cwd: '/work', shell: 'zsh' as const};
   renderWelcomeEditor(state, 80, 24, {shell: 'zsh'}, {color: true, legacy}, 0);
   assert.ok(state.preview?.rows.some(r => r.plain.includes('build abc')));
   welcomeEditorKey(state, {kind: 'text', value: 's'}, 0);
-  assert.equal(state.draft.customized, false);
+  assert.equal(state.draft.customized, true);
 });

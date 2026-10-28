@@ -1357,8 +1357,9 @@ export class TerminalApp {
    */
   private handOverTerminal(restore = ''): void {
     // Images uploaded to the terminal are deleted before a program takes the screen.
-    this.welcomeStudio?.dispose(); this.welcomeStudio = undefined;
-    this.nativeWelcome?.dispose(); this.nativeWelcome = undefined; this.output.presenter.welcomePainter = undefined;
+    if (this.welcomeStudio) { this.welcomeStudio.dispose(); this.welcomeStudio = undefined; this.panelOrigin = undefined; }
+    // Retain the admitted asset for the stored card after reclaiming the screen.
+    this.nativeWelcome?.cancelMotion();
     this.graphics?.releaseAll();
     this.browserPanel?.session.forgetPictures();
     // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
@@ -1729,7 +1730,7 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
-    this.nativeWelcome?.cancelMotion();
+    if (key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.nativeWelcome?.cancelMotion();
     // Any real input finishes the ending at once (focus changes and pointer movement are not input); the key is then handled normally.
     if (this.startupEnding && key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove') this.finishStartupEnding();
     const navigating = Boolean(this.outputNavigation);

@@ -58,7 +58,7 @@ test('still image effects produce bounded image plans and every gate restores or
 });
 
 test('fresh normalized native welcome never displays a path without opting in', () => {
-  const config = normalizePromptConfiguration({});
+  const config = normalizePromptConfiguration({welcomeStudio: {customized: true}});
   const snapshot = {...createWelcomeSnapshot({version: '1', commit: 'abc'}, '/PRIVATE/WORK'), studio: config.welcomeStudio, facts: {shell: 'zsh', version: '1', path: '/PRIVATE/WORK'}};
   assert.doesNotMatch(renderWelcome(snapshot, 80).map(r => r.plain).join('\n'), /PRIVATE/);
 });

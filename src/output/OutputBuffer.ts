@@ -220,7 +220,7 @@ export class OutputBuffer {
 
   transcript(): OutputTranscript {
     return {
-      ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
+      ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}, ...(this.welcome.studio ? {studio: {...structuredClone(this.welcome.studio), assetPath: ''}} : {})}} : {}),
       ...(this.firstRun ? {firstRun: {...this.firstRun}} : {}),
       records: this.completed.map(record => ({
         ...record,

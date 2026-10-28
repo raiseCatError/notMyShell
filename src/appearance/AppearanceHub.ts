@@ -1,3 +1,4 @@
+import {welcomeProvider} from '../output/WelcomeProviders.js';
 import type {SurfaceRoute} from '../motion/renderRouting.js';
 import type {HostAppearancePlan} from './hostAppearance.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
@@ -217,7 +218,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     cursor: `${cursorLabel(cursor.shape)} · ${cursor.motion === 'off' ? 'no motion' : cursorLabel(cursor.motion)}${cursor.effect !== 'none' ? ` · ${cursorLabel(cursor.effect)}` : ''} · ${cursorBackend}`,
     chrome: configuration.uiChrome.source === 'theme' ? 'Follow theme' : 'Custom',
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,
-    welcome: configuration.welcome,
+    welcome: welcomeProvider(configuration.welcome).label,
     kittyShaders: state.kittyShaders ?? '',
     glslShaders: state.ghosttyShaders ?? '',
     routing: (() => { const routes = state.routes ?? []; const count = (value: string) => routes.filter(route => route.route === value).length;
