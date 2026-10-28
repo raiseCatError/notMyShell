@@ -30,7 +30,8 @@ export function crc32(bytes: Uint8Array, start = 0, end = bytes.length): number 
   return (c ^ 0xffffffff) >>> 0;
 }
 
-interface Header {
+/** @internal IHDR-shaped metadata shared with the APNG decoder. */
+export interface Header {
   width: number;
   height: number;
   depth: number;
@@ -124,7 +125,8 @@ function decode(bytes: Uint8Array): Raster {
   return build(header, idat, palette, transparency);
 }
 
-function readHeader(bytes: Uint8Array, at: number): Header {
+/** @internal Validate IHDR data without decoding pixels. */
+export function readHeader(bytes: Uint8Array, at: number): Header {
   const width = u32be(bytes, at);
   const height = u32be(bytes, at + 4);
   checkDimensions(width, height);
@@ -137,7 +139,11 @@ function readHeader(bytes: Uint8Array, at: number): Header {
   return {width, height, depth, colorType, interlaced: interlace === 1};
 }
 
-function build(header: Header, idat: Uint8Array[], palette: Uint8Array | undefined, transparency: Uint8Array | undefined): Raster {
+/** @internal Decode one bounded zlib stream using the PNG colour/filter/Adam7 pipeline. */
+export function build(header: Header, idat: Uint8Array[], palette: Uint8Array | undefined, transparency: Uint8Array | undefined, check: () => void = () => {}): Raster {
+  check();
+  checkDimensions(header.width, header.height);
+  if (header.colorType === 3 && !palette) throw malformed('missing palette');
   const {width, height, depth, colorType} = header;
   const channels = CHANNELS[colorType]!;
   const bitsPerPixel = channels * depth;
@@ -186,6 +192,7 @@ function build(header: Header, idat: Uint8Array[], palette: Uint8Array | undefin
     let previous = new Uint8Array(stride);
     let row = new Uint8Array(stride);
     for (let y = 0; y < size.height; y++) {
+      check();
       const filter = raw[pos++]!;
       row.set(raw.subarray(pos, pos + stride));
       pos += stride;

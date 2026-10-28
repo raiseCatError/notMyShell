@@ -80,3 +80,11 @@ NOT RUN: physical Ghostty/Kitty QA, GPU rendering.
 - Focused: shaderPreview, ghosttyShaderPanel, kittyShaderPanel, ghosttyShaders, kittyShaders, appearanceHub, hostIntegration, renderRouting, cursor* — 121/121 after review fixes (slice5-focused-3.log); tsc clean.
 - Live installed Kitty 0.49.2 (private HOME, headless): composed list + compile of the original trio, and each new preset (crt-blue, fireworks-rockets, bloom, tft, water, underwater, negative) compiles; tuned values change the compiled shader versus defaults (slice5-kitty-live.log). Compile only; GPU output NOT verified.
 - Full suite left to CI (user policy 2026-10-28).
+## Slice 6 — Welcome Studio (2026-10-28/29)
+
+- Delegate focused runs: 6a 223/223, 6b 237/237 (welcome/config/graphics/startup editor surfaces; socket-dependent live tests could not run in the delegate sandbox).
+- Lead, socket-capable, under the T7 guard: after 6a, welcome*, startup*, appearanceHub, configuration*, hostIntegration, graphics*, transcript*, vespyrCompositing — 323/323 (2 skipped) (slice6a-lead-focused.log). After 6b + lead fixes: see slice6b-lead-focused.log (recorded in progress.md).
+- `tests/viewImages.test.ts` hung only when run with bare `node --test` (no per-file teardown, real HOME); through the repository runner it passes. Earlier bare runs used the real HOME; real NMSh/Ghostty/Kitty config directories were verified unchanged.
+- Independent Sonnet reviews of 6a and 6b: no blocker; findings fixed (6a by the delegate from REVIEW-6a-FIXES.md; 6b by the lead with regressions).
+
+NOT RUN: physical terminal QA of image/animation playback and P; GPU/graphics protocol output on real hosts.

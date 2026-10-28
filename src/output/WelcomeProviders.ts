@@ -34,7 +34,7 @@ export type WelcomeCapture = {ok: true; lines: string[]} | {ok: false; reason: s
  * bounded output) and flattens what it printed into SGR-only rows.
  */
 export async function captureWelcome(id: Exclude<WelcomeProviderId, 'vespyr' | 'none'>, cwd: string,
-  env: NodeJS.ProcessEnv = process.env): Promise<WelcomeCapture> {
+  env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<WelcomeCapture> {
   const descriptor = welcomeProvider(id);
   const status = await detectProvider(descriptor, env.PATH ?? '');
   if (status.state !== 'installed' || !status.binary) return {ok: false, reason: 'not installed'};
@@ -45,7 +45,7 @@ export async function captureWelcome(id: Exclude<WelcomeProviderId, 'vespyr' | '
     ? [zsh, ['-f', '-c', '"$0" "$@"; exit $?', status.binary, ...(CAPTURE_ARGS[id] ?? [])]]
     : [status.binary, CAPTURE_ARGS[id] ?? []];
   const result = await runExternal(binary, args, {timeoutMs: WELCOME_CAPTURE_TIMEOUT_MS, maxBytes: MAX_CAPTURE_BYTES,
-    cwd, env: {...env, TERM: env.TERM ?? 'xterm-256color'}});
+    cwd, ...(signal ? {signal} : {}), env: {...env, TERM: env.TERM ?? 'xterm-256color'}});
   if (!result.ok) return {ok: false, reason: result.error ?? 'failed'};
   const lines = flattenTerminalOutput(result.stdout);
   return lines.length > 0 ? {ok: true, lines} : {ok: false, reason: 'no output'};
