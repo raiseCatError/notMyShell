@@ -56,13 +56,14 @@ test('GIF local palettes, offsets, interlace and GCE reset', () => {
   }
   const reset = gif([{...base, transparent: 0}, base]);
   // Remove the second GCE: the first frame's transparency must not leak.
-  const secondGce = reset.indexOf(0x21, 27 + 8);
+  const firstGce = Buffer.from(reset).indexOf(Buffer.from([0x21, 0xf9, 4]));
+  const secondGce = Buffer.from(reset).indexOf(Buffer.from([0x21, 0xf9, 4]), firstGce + 8);
   const noGce = concat([reset.subarray(0, secondGce), reset.subarray(secondGce + 8)]);
   assert.deepEqual(pixels(decodeAnimation(noGce), 1), [...red, ...red]);
 });
 
 test('GIF loop count, missing loop extension and centisecond delay normalization', () => {
-  for (const loop of [0, 1, 7]) assert.equal(decodeAnimation(gif([base], loop)).loopCount, loop);
+  for (const loop of [0, 1, 7]) assert.equal(decodeAnimation(gif([base], loop)).loopCount, loop === 0 ? 0 : loop + 1);
   assert.equal(decodeAnimation(gif([base])).loopCount, 1);
   assert.deepEqual(decodeAnimation(gif([0, 1, 2, 5].map((delay) => ({...base, delay})))).frames.map((f) => f.delayMs), [100, 100, 20, 50]);
 });
@@ -129,7 +130,7 @@ test('APNG excluded default image, loop count, zero denominator and fractional t
   assert.equal(animation.frames.length, 2);
   assert.equal(animation.loopCount, 4);
   assert.deepEqual(pixels(animation, 0), [...red, ...clear]);
-  assert.deepEqual(animation.frames.map((f) => f.delayMs), [30, 1000 / 60]);
+  assert.deepEqual(animation.frames.map((f) => f.delayMs), [30, 17]);
   assert.deepEqual(Array.from(decodePng(bytes).data), [...green, ...green]);
 });
 
@@ -142,7 +143,10 @@ for (const [i, bytes] of fixtures.entries()) {
       assert.equal(animation.truncated, true);
     }
     assert.equal(decodeAnimation(bytes, {maxFrames: 3, maxDecodedBytes: 24, maxTotalMs: 60}).truncated, false);
-    for (const budget of [{maxFrames: 0}, {maxDecodedBytes: 7}, {maxTotalMs: 19}]) imageError(() => decodeAnimation(bytes, budget), 'too-large');
+    const short = decodeAnimation(bytes, {maxTotalMs: 19});
+    assert.equal(short.frames.length, 1);
+    assert.equal(short.truncated, true);
+    for (const budget of [{maxFrames: 0}, {maxDecodedBytes: 7}]) imageError(() => decodeAnimation(bytes, budget), 'too-large');
     for (const value of [-1, NaN, Infinity, 0.5, Number.MAX_VALUE]) imageError(() => decodeAnimation(bytes, {maxFrames: value}));
   });
 }
@@ -185,7 +189,14 @@ test('malformed APNG control, sequence, rectangle and frame count', () => {
 
 test('hostile/truncated GIF and APNG inputs never escape as another exception', () => {
   for (const bytes of fixtures) {
-    for (let end = 0; end < bytes.length; end++) imageError(() => decodeAnimation(bytes.subarray(0, end)));
+    for (let end = 0; end < bytes.length; end++) {
+      try {
+        const partial = decodeAnimation(bytes.subarray(0, end));
+        // GIF may end at any complete image (or subsequent complete extension).
+        assert.equal(bytes, fixtures[0]);
+        assert.ok(partial.frames.length > 0);
+      } catch (error) { assert.ok(error instanceof ImageError); }
+    }
     // Deterministic mutations may remain valid, but failures must always be ImageError.
     for (let at = 0; at < bytes.length; at++) {
       const mutated = bytes.slice(); mutated[at] ^= 255;
@@ -195,7 +206,6 @@ test('hostile/truncated GIF and APNG inputs never escape as another exception', 
   const noFrames = encodeGif({width: 1, height: 1, palette, frames: []});
   imageError(() => decodeAnimation(noFrames), 'malformed');
   imageError(() => decodeAnimation(encodeGif({width: 2, height: 1, palette, frames: [base]}, {rawLzw: Uint8Array.of(255)})), 'malformed');
-  imageError(() => decodeAnimation(gif([{...base, dispose: 4}])), 'malformed');
   imageError(() => decodeAnimation(gif([{...base, width: 3, indices: [0, 0, 0]}])), 'malformed');
   const hugeHeader = concat([PNG_SIGNATURE, chunk('IHDR', ihdr(4000, 6000, 8, 6))]);
   // A valid but very large canvas is rejected by the byte budget before inflation/allocation.
@@ -273,9 +283,101 @@ test('APNG rejects invalid chunk ordering and compressed pixel data', () => {
   ]) imageError(() => decodeAnimation(rewritePng(original, transform)), 'malformed');
 });
 
-test('GIF sub-block bookkeeping is bounded even for tiny blocks', () => {
-  const header = gif([base]).subarray(0, 25);
-  const tiny = new Uint8Array((IMAGE_LIMITS.maxChunkScan + 1) * 2 + 1);
-  for (let at = 0; at < tiny.length - 1; at += 2) tiny[at] = 1;
-  imageError(() => decodeAnimation(concat([header, Uint8Array.of(0x21, 0xfe), tiny, Uint8Array.of(0x3b)])), 'malformed');
+test('GIF sub-block scanning admits a legitimate 25 MiB file', () => {
+  const original = gif([base]);
+  const headerEnd = Buffer.from(original).indexOf(Buffer.from([0x21, 0xf9, 4]));
+  // 256 bytes per full sub-block: more than the old global 100,000 scan cap.
+  const blocks = new Uint8Array(25 * 1024 * 1024 + 1);
+  for (let at = 0; at < blocks.length - 1; at += 256) blocks[at] = 255;
+  const bytes = concat([original.subarray(0, headerEnd), Uint8Array.of(0x21, 0xfe), blocks, original.subarray(headerEnd)]);
+  assert.deepEqual(decodeAnimation(bytes), decodeAnimation(original));
+});
+
+test('first GIF and APNG frames ignore the duration budget, even with long delays', () => {
+  for (const bytes of [gif([{...base, delay: 0xffff}]), apng([{pixels: [...red, ...red], num: 6, den: 1}])]) {
+    for (const budget of [{}, {maxTotalMs: 0}]) {
+      const result = decodeAnimation(bytes, budget);
+      assert.equal(result.frames.length, 1);
+      assert.equal(result.truncated, false);
+      assert.ok(result.frames[0]!.delayMs > 5000);
+    }
+  }
+});
+
+test('GIF skips application sub-blocks other than loop controls', () => {
+  const original = gif([base]);
+  const headerEnd = Buffer.from(original).indexOf(Buffer.from([0x21, 0xf9, 4]));
+  for (const name of ['NETSCAPE2.0', 'ANIMEXTS1.0', 'UNKNOWNAPP1']) {
+    for (const sub of [[5, 2, 0, 0, 0, 0], [3, 1, 7, 0, 2, 99, 88], [2, 1, 7]]) {
+      const extension = Uint8Array.from([0x21, 0xff, 11, ...Buffer.from(name), ...sub, 0]);
+      const result = decodeAnimation(concat([original.subarray(0, headerEnd), extension, original.subarray(headerEnd)]));
+      assert.equal(result.loopCount, name !== 'UNKNOWNAPP1' && sub[1] === 1 && sub[0] === 3 ? 8 : 1);
+    }
+  }
+});
+
+test('GIF reserved disposal methods act as none and reserved GCE bits are ignored', () => {
+  for (const dispose of [0, 4, 5, 6, 7]) {
+    const bytes = gif([base, {width: 1, height: 1, indices: [2], dispose}, {width: 1, left: 1, height: 1, indices: [1]}]);
+    const gce = Buffer.from(bytes).indexOf(Buffer.from([0x21, 0xf9, 4]));
+    bytes[gce + 3] |= 0xe0;
+    assert.deepEqual(pixels(decodeAnimation(bytes), 2), [...blue, ...green]);
+  }
+});
+
+test('GIF accepts EOF after a complete image but rejects incomplete image data', () => {
+  const original = gif([base]);
+  assert.deepEqual(decodeAnimation(original.subarray(0, -1)), decodeAnimation(original));
+  imageError(() => decodeAnimation(original.subarray(0, -2)), 'malformed');
+});
+
+test('PNG and APNG ignore ancillary CRC errors and bytes after IEND', () => {
+  for (const original of [encodePng({width: 2, height: 1, colorType: 6, bitDepth: 8, samples: [...red, ...blue]}), apng([{pixels: [...red, ...blue]}])]) {
+    const bad = chunk('tEXt', Uint8Array.of(65, 0, 66));
+    bad[bad.length - 1] ^= 1;
+    const bytes = rewritePng(original, (kind, data) => kind === 'IEND' ? [bad, chunk(kind, data)] : [chunk(kind, data)]);
+    assert.deepEqual(decodeAnimation(bytes), decodeAnimation(original));
+    assert.deepEqual(decodeAnimation(concat([original, Uint8Array.of(255, 1, 2)])), decodeAnimation(original));
+  }
+});
+
+test('PNG critical and APNG control CRC errors remain strict', () => {
+  const original = apng([{pixels: [...red, ...red]}, {pixels: [...blue, ...blue]}]);
+  for (const target of ['IHDR', 'IDAT', 'IEND', 'acTL', 'fcTL', 'fdAT']) {
+    const bytes = rewritePng(original, (kind, data) => {
+      const encoded = chunk(kind, data);
+      if (kind === target) encoded[encoded.length - 1] ^= 1;
+      return [encoded];
+    });
+    imageError(() => decodeAnimation(bytes), 'malformed');
+  }
+});
+
+test('APNG zero delays normalize to 100 ms and fractional delays round to milliseconds', () => {
+  const result = decodeAnimation(apng([{pixels: [...red, ...red], num: 0}, {pixels: [...blue, ...blue], num: 1, den: 60}]));
+  assert.deepEqual(result.frames.map((frame) => frame.delayMs), [100, 17]);
+});
+
+test('invalid budget overrides name the budget in an unavailable error', () => {
+  for (const name of ['maxFrames', 'maxDecodedBytes', 'maxTotalMs']) {
+    for (const value of [-1, NaN, Infinity, 0.5, undefined]) {
+      assert.throws(() => decodeAnimation(gif([base]), {[name]: value}), (error: unknown) =>
+        error instanceof ImageError && error.code === 'unavailable' && error.message.includes(name));
+    }
+  }
+});
+
+test('GIF out-of-palette transparent index leaves the canvas unchanged', () => {
+  const bytes = gif([base, {width: 2, height: 1, indices: [7, 1], transparent: 7, minCodeSize: 3}]);
+  assert.deepEqual(pixels(decodeAnimation(bytes), 1), [...red, ...green]);
+});
+
+test('APNG BACKGROUND clears only its offset sub-rectangle after OVER', () => {
+  const result = decodeAnimation(apng([
+    {pixels: [...red, ...red]},
+    {width: 1, left: 1, pixels: [0, 0, 255, 128], dispose: 1, blend: 1},
+    {width: 1, pixels: clear, blend: 1},
+  ]));
+  assert.deepEqual(pixels(result, 1), [...red, 127, 0, 128, 255]);
+  assert.deepEqual(pixels(result, 2), [...red, ...clear]);
 });

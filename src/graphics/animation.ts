@@ -9,7 +9,7 @@ export interface DecodedAnimation {
   width: number;
   height: number;
   frames: AnimationFrame[];
-  /** The file's loop count; 0 means forever. GIF without a loop extension plays once. */
+  /** Total plays, 0 = forever. GIF without a loop extension plays once. */
   loopCount: number;
   truncated: boolean;
 }
@@ -38,9 +38,10 @@ class Compositor {
     this.check();
     const count = this.result.frames.length + 1;
     // Admit the frame BEFORE allocating its canvas, snapshot, sub-image or inflated pixels.
+    // Duration only truncates later frames: even a very slow still image must decode.
     if (this.result.truncated || count > this.budget.maxFrames ||
         this.width * this.height * 4 > Math.floor(this.budget.maxDecodedBytes / count) ||
-        this.totalMs + control.delayMs > this.budget.maxTotalMs) {
+        (count > 1 && this.totalMs + control.delayMs > this.budget.maxTotalMs)) {
       this.result.truncated = true;
       return;
     }
@@ -81,7 +82,8 @@ class Compositor {
 
 /**
  * Decode a prefix within the retained-RGBA and playback-duration budgets. An unfit
- * first frame is too-large. After truncation, container structure is still checked,
+ * first frame is too-large only for frame-count or byte limits. After truncation,
+ * container structure is still checked,
  * but dropped compressed pixel streams are not inflated/LZW-decoded.
  * Cancellation is checked between chunks, GIF codes and pixel rows; synchronous
  * zlib inflation itself is bounded by the existing PNG inflated-size ceiling.
@@ -93,8 +95,8 @@ export function decodeAnimation(bytes: Uint8Array, budget: Partial<AnimationBudg
     };
     check();
     const limits = {...ANIMATION_LIMITS, ...budget};
-    for (const value of Object.values(limits)) {
-      if (!Number.isSafeInteger(value) || value < 0) throw malformed('invalid animation budget');
+    for (const [name, value] of Object.entries(limits)) {
+      if (!Number.isSafeInteger(value) || value < 0) throw new ImageError('unavailable', `Invalid animation budget ${name}: expected a nonnegative safe integer.`);
     }
     if (bytes.length > IMAGE_LIMITS.maxFileBytes) throw new ImageError('too-large', 'The image file is too large to decode.');
     const info = identify(bytes);
@@ -122,11 +124,16 @@ function gif(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
   let subBlocks = 0;
   const readBlocks = (start: number): {data: Uint8Array; next: number} => readSubBlocks(bytes, start, () => {
     check();
-    if (++subBlocks > IMAGE_LIMITS.maxChunkScan) throw malformed('too many GIF sub-blocks');
+    // Every scan consumes at least one file byte (even a zero terminator).
+    // A maxFileBytes scan cap admits all sub-block sizes in a legal 32 MiB
+    // file, while bounding total bookkeeping independently of frame admission.
+    if (++subBlocks > IMAGE_LIMITS.maxFileBytes) throw malformed('too many GIF sub-blocks');
   });
   let transparent = -1, dispose = 0, delayMs = 100, images = 0;
   for (let steps = 0; steps < IMAGE_LIMITS.maxChunkScan; steps++) {
     check();
+    // Browsers accept missing trailers after complete images, never partial blocks.
+    if (index === bytes.length && images) return compositor.finish();
     const block = u8(bytes, index++);
     if (block === 0x3b) {
       if (!images) throw malformed('no image');
@@ -141,15 +148,23 @@ function gif(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
         if (u8(bytes, start) !== 4 || body.data.length !== 4) throw malformed('bad graphic control');
         const flags = body.data[0]!;
         const method = (flags >> 2) & 7;
-        if (method > 3 || flags & 0xe0) throw malformed('bad disposal method');
+        // Reserved bits are ignored; disposal 4–7 behaves as none, like browsers.
         dispose = method === 2 ? 1 : method === 3 ? 2 : 0;
         transparent = flags & 1 ? body.data[3]! : -1;
         const cs = u16le(body.data, 1);
         // Browser-compatible GIF timing: 0 and 1 centisecond become 100 ms.
         delayMs = cs <= 1 ? 100 : cs * 10;
-      } else if (label === 0xff && Buffer.from(body.data.subarray(0, 11)).toString('ascii') === 'NETSCAPE2.0') {
-        if (u8(bytes, start) !== 11 || body.data.length !== 14 || body.data[11] !== 1) throw malformed('bad loop extension');
-        compositor.result.loopCount = u16le(body.data, 12);
+      } else if (label === 0xff && u8(bytes, start) === 11 &&
+          ['NETSCAPE2.0', 'ANIMEXTS1.0'].includes(Buffer.from(body.data.subarray(0, 11)).toString('ascii'))) {
+        // Only a three-byte id-1 sub-block is a loop control. Buffering (id 2)
+        // and other sub-blocks are valid application data and may be skipped.
+        for (let at = start + 12; bytes[at]; at += bytes[at]! + 1) {
+          check();
+          if (bytes[at] === 3 && bytes[at + 1] === 1) {
+            const repeats = u16le(bytes, at + 2);
+            compositor.result.loopCount = repeats === 0 ? 0 : repeats + 1;
+          }
+        }
       } else if (label === 0x01) {
         // Plain text is a graphic rendering block and consumes the pending GCE.
         transparent = -1; dispose = 0; delayMs = 100;
@@ -191,6 +206,14 @@ function gif(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
   throw malformed('too many GIF blocks');
 }
 
+/**
+ * Stricter than decodePng: APNG control CRCs, ordering, sequences, rectangles,
+ * operations and declared frame counts must agree so compositing is unambiguous.
+ * Also require consecutive IDAT, metadata before pixels, an empty IEND and known
+ * critical chunks; these prevent interpreting incompatible frame/palette data.
+ * The chunk scan ceiling bounds hostile-container work, including dropped frames.
+ * Ordinary ancillary CRC errors and bytes after IEND retain still-PNG tolerance.
+ */
 function png(bytes: Uint8Array, budget: AnimationBudget, check: () => void): DecodedAnimation {
   let header: Header | undefined, palette: Uint8Array | undefined, transparency: Uint8Array | undefined;
   let compositor: Compositor | undefined;
@@ -215,7 +238,8 @@ function png(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
     const length = u32be(bytes, index), kind = tag(bytes, index + 4), at = index + 8;
     if (length > 0x7fffffff || at + length + 4 > bytes.length) throw malformed('chunk overruns file');
     if (!/^[A-Za-z]{4}$/.test(kind)) throw malformed('bad chunk name');
-    if (crc32(bytes, index + 4, at + length) !== u32be(bytes, at + length)) throw malformed('checksum mismatch');
+    const strictCrc = !(bytes[index + 4]! & 0x20) || kind === 'acTL' || kind === 'fcTL' || kind === 'fdAT';
+    if (strictCrc && crc32(bytes, index + 4, at + length) !== u32be(bytes, at + length)) throw malformed('checksum mismatch');
     if (!header && kind !== 'IHDR') throw malformed('missing header');
     const data = bytes.subarray(at, at + length);
     if (sawIdat && kind !== 'IDAT') idatEnded = true;
@@ -233,7 +257,9 @@ function png(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
       flush();
       const control: FrameControl = {
         width: u32be(bytes, at + 4), height: u32be(bytes, at + 8), left: u32be(bytes, at + 12), top: u32be(bytes, at + 16),
-        delayMs: u16be(bytes, at + 20) * 1000 / (u16be(bytes, at + 22) || 100), dispose: u8(bytes, at + 24), over: u8(bytes, at + 25) === 1,
+        // Zero APNG delay uses 100 ms, matching normalized zero-delay GIFs.
+        delayMs: u16be(bytes, at + 20) === 0 ? 100 : Math.round(u16be(bytes, at + 20) * 1000 / (u16be(bytes, at + 22) || 100)),
+        dispose: u8(bytes, at + 24), over: u8(bytes, at + 25) === 1,
       };
       checkRect(control, header!.width, header!.height);
       if (control.dispose > 2 || u8(bytes, at + 25) > 1) throw malformed('bad frame operation');
@@ -262,7 +288,7 @@ function png(bytes: Uint8Array, budget: AnimationBudget, check: () => void): Dec
     } else if (!(bytes[index + 4]! & 0x20)) throw malformed('unknown critical chunk');
     index = at + length + 4;
   }
-  if (!ended || index !== bytes.length || !sawIdat || !header) throw malformed('truncated PNG');
+  if (!ended || !sawIdat || !header) throw malformed('truncated PNG');
   if (declared) {
     if (count !== declared) throw malformed('animation frame count mismatch');
   } else {
