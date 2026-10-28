@@ -9,7 +9,7 @@ import {identify} from '../src/graphics/formats.js';
 import {decodePng} from '../src/graphics/png.js';
 import {decodeGif} from '../src/graphics/gif.js';
 import {applyOrientation, decodeJpeg, readExifOrientation} from '../src/graphics/jpeg.js';
-import {decodeWebp, webpDecoderAvailable} from '../src/graphics/webp.js';
+import {decodeWebp, setWebpConvertersForTests, webpDecoderAvailable} from '../src/graphics/webp.js';
 import {decodeImage, readImageFile} from '../src/graphics/decode.js';
 import {IMAGE_LIMITS, ImageError, type Raster} from '../src/graphics/raster.js';
 import {chunk, concat, encodePng, ihdr, PNG_SIGNATURE, type PngSpec} from './support/pngEncoder.js';
@@ -214,8 +214,26 @@ test('WebP: lossy and lossless fixtures decode through an installed converter', 
 });
 
 test('WebP: without a converter the error names what to install', async () => {
-  if (converter.available) return;
-  await assert.rejects(decodeWebp(webp(LOSSY_WEBP), {scratchDir: tmpDir()}), (e: unknown) => e instanceof ImageError && e.code === 'unavailable' && /install/.test(e.message));
+  // Forced, so this runs on machines that do have a converter too.
+  setWebpConvertersForTests([]);
+  try {
+    await assert.rejects(decodeWebp(webp(LOSSY_WEBP), {scratchDir: tmpDir()}), (e: unknown) => e instanceof ImageError && e.code === 'unavailable' && /install/.test(e.message));
+  } finally { setWebpConvertersForTests(undefined); }
+});
+
+test('WebP: a converter that fails or writes nothing is malformed, not a crash, and leaves no temp files', async () => {
+  const dir = tmpDir();
+  setWebpConvertersForTests([
+    {name: 'failing', probe: 'file-exists', file: process.execPath, args: ['-e', 'process.exit(1)']},
+    {name: 'silent', probe: 'file-exists', file: process.execPath, args: ['-e', '']},
+  ]);
+  try {
+    await assert.rejects(decodeWebp(webp(LOSSY_WEBP), {scratchDir: dir}), (e: unknown) => e instanceof ImageError && e.code === 'malformed');
+    assert.deepEqual(fs.readdirSync(dir), [], 'the temp directory is removed');
+  } finally {
+    setWebpConvertersForTests(undefined);
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
 });
 
 test('decodeImage dispatches on content and refuses SVG and unknown data', async () => {

@@ -40,7 +40,7 @@ test('asset loader validates bounded pixels and ANSI strips all controls except 
 import jpeg from 'jpeg-js';
 import {encodeGif} from './support/gifEncoder.js';
 import {LOSSLESS_WEBP} from './support/graphicsFixtures.js';
-import {webpDecoderAvailable} from '../src/graphics/webp.js';
+import {setWebpConvertersForTests, webpDecoderAvailable} from '../src/graphics/webp.js';
 import {chunk, concat, ihdr, PNG_SIGNATURE} from './support/pngEncoder.js';
 
 test('welcome admission covers JPEG, WebP, GIF, APNG and the 2 MP source limit', async () => {
@@ -49,8 +49,9 @@ test('welcome admission covers JPEG, WebP, GIF, APNG and the 2 MP source limit',
     await writeFile(join(dir, 'a.jpg'), jpeg.encode({width: 2, height: 2, data: Buffer.alloc(16, 255)}).data);
     assert.equal((await loadWelcomeAsset('a.jpg', dir, dir)).metadata.format, 'jpeg');
     await writeFile(join(dir, 'a.webp'), Buffer.from(LOSSLESS_WEBP, 'base64'));
-    if (webpDecoderAvailable()) assert.equal((await loadWelcomeAsset('a.webp', dir, dir)).metadata.format, 'webp');
-    else await assert.rejects(loadWelcomeAsset('a.webp', dir, dir), ImageError);
+    // Whatever this machine has: a WebP decodes when a converter is installed and is refused as unavailable otherwise.
+    if ((await webpDecoderAvailable()).available) assert.equal((await loadWelcomeAsset('a.webp', dir, dir)).metadata.format, 'webp');
+    else await assert.rejects(loadWelcomeAsset('a.webp', dir, dir), e => e instanceof ImageError && e.code === 'unavailable');
     const gif = encodeGif({width: 1, height: 1, palette: [[0, 0, 0], [255, 255, 255]], frames: Array.from({length: 76}, () => ({width: 1, height: 1, indices: [1]}))});
     await writeFile(join(dir, 'a.gif'), gif);
     const animation = await loadWelcomeAsset('a.gif', dir, dir);
@@ -65,4 +66,38 @@ test('welcome admission covers JPEG, WebP, GIF, APNG and the 2 MP source limit',
     await writeFile(join(dir, 'large.png'), concat([PNG_SIGNATURE, chunk('IHDR', ihdr(2000, 1001, 8, 6))]));
     await assert.rejects(loadWelcomeAsset('large.png', dir, dir), e => e instanceof ImageError && e.code === 'too-large');
   } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('welcome WebP without any converter is refused as unavailable with install advice; other formats still load', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'welcome-webp-none-'));
+  setWebpConvertersForTests([]);
+  try {
+    assert.deepEqual(await webpDecoderAvailable(), {available: false});
+    await writeFile(join(dir, 'a.webp'), Buffer.from(LOSSLESS_WEBP, 'base64'));
+    await assert.rejects(loadWelcomeAsset('a.webp', dir, dir), e => e instanceof ImageError && e.code === 'unavailable' && /install/.test(e.message));
+    await writeFile(join(dir, 'a.png'), encodePng({width: 1, height: 1, data: new Uint8ClampedArray([1, 2, 3, 255])}));
+    assert.equal((await loadWelcomeAsset('a.png', dir, dir)).metadata.format, 'png');
+    await writeFile(join(dir, 'a.jpg'), jpeg.encode({width: 2, height: 2, data: Buffer.alloc(16, 255)}).data);
+    assert.equal((await loadWelcomeAsset('a.jpg', dir, dir)).metadata.format, 'jpeg');
+  } finally { setWebpConvertersForTests(undefined); await rm(dir, {recursive: true, force: true}); }
+});
+
+test('welcome WebP decodes through an available converter and leaves no conversion files', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'welcome-webp-fake-'));
+  const scratch = join(dir, 'scratch');
+  // A stand-in converter: copies a known PNG to out.png, but only after checking it was handed the WebP.
+  const png = join(dir, 'known.png');
+  await writeFile(png, encodePng({width: 3, height: 2, data: new Uint8ClampedArray(24).fill(200)}));
+  const script = "const fs=require('fs');if(fs.readFileSync('in.webp').subarray(0,4).toString()!=='RIFF')process.exit(3);fs.copyFileSync(process.argv[1],'out.png')";
+  setWebpConvertersForTests([{name: 'fake', probe: 'file-exists', file: process.execPath, args: ['-e', script, png]}]);
+  try {
+    assert.deepEqual(await webpDecoderAvailable(), {available: true, tool: 'fake'});
+    await writeFile(join(dir, 'a.webp'), Buffer.from(LOSSLESS_WEBP, 'base64'));
+    const asset = await loadWelcomeAsset('a.webp', dir, scratch);
+    assert.equal(asset.kind, 'image');
+    assert.equal(asset.metadata.format, 'webp');
+    assert.equal(asset.metadata.frames, 1);
+    const {readdir} = await import('node:fs/promises');
+    assert.deepEqual((await readdir(scratch)).filter(name => name.startsWith('webp-')), [], 'the conversion directory is removed');
+  } finally { setWebpConvertersForTests(undefined); await rm(dir, {recursive: true, force: true}); }
 });
