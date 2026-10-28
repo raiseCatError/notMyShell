@@ -1,4 +1,5 @@
 import type {CursorEffect, CursorIdleEffect, CursorMotion, CursorRenderer, CursorSettings} from '../prompt/configuration.js';
+import {terminalProfile} from '../host/capabilities.js';
 
 /**
  * Cursor-effect backends. Portable works wherever NMSh owns its input
@@ -83,14 +84,16 @@ const KNOWN_HOSTS: Record<string, string> = {zed: 'Zed', Apple_Terminal: 'Termin
 
 export function hostCursorFacts(env: NodeJS.ProcessEnv, integrated: (host: 'ghostty' | 'kitty') => boolean, kittyTrail: () => string | undefined = () => undefined,
   ghostty: () => {trail?: string; pending?: string} = () => ({})): HostCursorFacts {
+  // One host identity for every surface (terminalProfile): an inherited TERM_PROGRAM must not turn Kitty into Ghostty.
+  const profile = terminalProfile(env);
   const hostName = KNOWN_HOSTS[env.TERM_PROGRAM ?? ''];
-  const caretColor = env.TERM_PROGRAM === 'zed' ? 'theme-controlled' as const : 'host-controlled' as const;
-  if (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') {
+  const caretColor = profile === 'zed' ? 'theme-controlled' as const : 'host-controlled' as const;
+  if (profile === 'ghostty') {
     const studio = ghostty();
     return {host: 'ghostty', hostName: 'Ghostty', caretColor, ...(env.TERM_PROGRAM_VERSION ? {version: env.TERM_PROGRAM_VERSION} : {}), integrated: integrated('ghostty'),
       ...(studio.trail ? {ghosttyTrail: studio.trail} : {}), ...(studio.pending ? {ghosttyTrailPending: studio.pending} : {})};
   }
-  if (env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') {
+  if (profile === 'kitty' || (profile === 'baseline' && env.KITTY_WINDOW_ID)) {
     const trail = kittyTrail();
     return {host: 'kitty', hostName: 'Kitty', caretColor, integrated: integrated('kitty'), ...(trail ? {kittyTrail: trail} : {})};
   }

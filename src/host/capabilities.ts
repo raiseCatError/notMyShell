@@ -48,7 +48,12 @@ const MOUSE_PROFILE = {
 export type TerminalProfile = 'ghostty' | 'iterm2' | 'kitty' | 'wezterm' | 'zed' | 'windows-terminal' | 'baseline';
 
 export function terminalProfile(env: NodeJS.ProcessEnv): TerminalProfile {
-  // An explicit program wins over inherited outer-host variables.
+  // The terminal itself sets TERM for every child, so its own name there is the strongest evidence. TERM_PROGRAM is not:
+  // Kitty never sets it and passes an inherited one through, so a Kitty started from a Ghostty or Zed shell still carries
+  // TERM_PROGRAM=ghostty (observed with Kitty 0.49.2: TERM=xterm-kitty, KITTY_WINDOW_ID=1, TERM_PROGRAM=ghostty).
+  if (env.TERM === 'xterm-kitty') return 'kitty';
+  if (env.TERM === 'xterm-ghostty') return 'ghostty';
+  // Otherwise an explicit program wins over inherited outer-host variables.
   if (env.TERM_PROGRAM) {
     switch (env.TERM_PROGRAM) {
       case 'ghostty': return 'ghostty';

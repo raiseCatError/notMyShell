@@ -15,7 +15,11 @@ const key = (kind: string, value = ''): Key => ({kind, value} as unknown as Key)
 
 test('every preset family maps to a preview or honestly to none', () => {
   assert.equal(previewKind('smear', 'cursor'), 'trail');
-  assert.equal(previewKind('cursor-trail-blaze', 'cursor'), 'trail');
+  assert.equal(previewKind('cursor-trail-default', 'cursor'), 'trail');
+  assert.equal(previewKind('cursor-trail-blaze', 'cursor'), 'blaze');
+  assert.equal(previewKind('cursor-trail-lightning', 'cursor'), 'lightning');
+  assert.equal(previewKind('cursor-trail-motion-blur', 'cursor'), 'motion-blur');
+  assert.equal(previewKind('comet', 'cursor'), 'comet');
   assert.equal(previewKind('northern-lights', 'ambient'), 'aurora');
   assert.equal(previewKind('focus-dim', 'focus'), 'dim');
   assert.equal(previewKind('crt', 'display'), 'scanlines');
@@ -23,7 +27,7 @@ test('every preset family maps to a preview or honestly to none', () => {
 });
 
 test('previews are deterministic, bounded, play once and settle; Reduced Motion is one still frame', () => {
-  for (const kind of ['trail', 'aurora', 'dim', 'vignette', 'scanlines', 'glow'] as const) {
+  for (const kind of ['trail', 'comet', 'blaze', 'lightning', 'motion-blur', 'aurora', 'dim', 'vignette', 'scanlines', 'glow'] as const) {
     const frame = renderShaderPreview(input({kind}));
     assert.equal(frame.rows.length, PREVIEW_ROWS, kind);
     assert.deepEqual(frame, renderShaderPreview(input({kind})), `${kind} is deterministic`);
@@ -93,4 +97,20 @@ test('a dropped preview shows no replay hint and restarts when it can be seen; v
   renderGhosttyShaderPanel(state, 120, undefined, studioPreviewContext(5000, false, true));
   assert.equal(state.previewStart, 5000, 'the run starts when the preview is visible');
   assert.doesNotMatch(renderGhosttyShaderPanel(state, 20, undefined, studioPreviewContext(6000, false, true)).map(stripAnsi).join('\n'), /Preview ·/u);
+});
+
+test('trail styles differ in shape, not only in color: Lightning is never drawn like Blaze', () => {
+  // The same colors for every style, so only the drawing can tell them apart.
+  const values = {HEAD: [1, 0.8, 0.6], TAIL: [0.8, 0.1, 0.1]};
+  const cells = (kind: PreviewInput['kind'], elapsed: number) => renderShaderPreview(input({kind, values, elapsed})).rows.join('\n');
+  const kinds = ['trail', 'comet', 'blaze', 'lightning', 'motion-blur'] as const;
+  for (const elapsed of [80, 300]) {
+    const frames = kinds.map(kind => cells(kind, elapsed));
+    assert.equal(new Set(frames).size, kinds.length, `every style draws its own frame at ${elapsed} ms`);
+  }
+  // Lightning flashes and is gone long before Blaze burns out; both settle (no idle loop).
+  assert.equal(renderShaderPreview(input({kind: 'lightning', values, elapsed: 900})).rows.join(''), renderShaderPreview(input({kind: 'lightning', values, elapsed: 1000})).rows.join(''));
+  assert.notEqual(cells('blaze', 900), cells('blaze', 1300), 'Blaze is still burning');
+  assert.ok(PREVIEW_MS.lightning < PREVIEW_MS.blaze);
+  for (const kind of kinds) assert.equal(renderShaderPreview(input({kind, values, elapsed: PREVIEW_MS[kind]})).busy, false, `${kind} settles`);
 });

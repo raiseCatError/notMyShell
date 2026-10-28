@@ -23,21 +23,28 @@ import {digest, snapshot, transact, type FileChange, type FileSnapshot} from './
 import {withoutHook} from './hostAppearance.js';
 import {CATEGORY_LABELS, defaultPipeline, emitKittyPipeline, formatShaderValue, KITTY_MAX_GROUPS, mergeVars, parseKittyPipeline, pipelineTextures,
   subscribesToCursorTrail, type KittyCatalog, type KittyGroup, type KittyPipeline, type KittyVar, type OfferedParam, type OfferedPreset, type ShaderValue} from './kittyShaderCatalog.js';
-import type {CursorRenderer} from '../prompt/configuration.js';
+import type {CursorMotion, CursorRenderer} from '../prompt/configuration.js';
 
 // ---- Settings ----------------------------------------------------------------------------------------------------
 
 export {DEFAULT_HOST_SHADERS, normalizeHostShaders, type HostShaderSettings, type KittyShaderEffect, type KittyShaderSettings} from './kittyShaderSettings.js';
 import type {KittyShaderEffect, KittyShaderSettings} from './kittyShaderSettings.js';
 
-export interface ShaderGates {reducedMotion: boolean; effectsOff: boolean; cursorRenderer: CursorRenderer}
+/** cursorMotion: /cursor's Motion decides whether there is a trail at all; Off removes NMSh's Kitty trail like a Portable renderer does. */
+export interface ShaderGates {reducedMotion: boolean; effectsOff: boolean; cursorRenderer: CursorRenderer; cursorMotion?: CursorMotion}
 
-/** What NMSh's pipeline may contain right now: nothing under Reduced Motion or Effects Off, no Kitty trail when the cursor renderer is Portable. */
+/**
+ * Kitty draws trail shaders only while cursor_trail is above 0. When a written NMSh trail would otherwise see 0 (Kitty's default,
+ * or /cursor's own file with Motion off), NMSh's fragment sets this value, the one /cursor's Kitty file uses for a trail.
+ */
+export const KITTY_TRAIL_ON = 3;
+
+/** What NMSh's pipeline may contain right now: nothing under Reduced Motion or Effects Off, no Kitty trail when the cursor renderer is Portable or Motion is Off. */
 export function gatedEffects(settings: KittyShaderSettings, catalog: KittyCatalog, gates: ShaderGates): Array<{preset: OfferedPreset; effect: KittyShaderEffect}> {
   if (gates.reducedMotion || gates.effectsOff) return [];
   return settings.effects.filter(effect => effect.enabled).flatMap(effect => {
     const preset = catalog.offered.find(item => item.definition.id === effect.id);
-    if (!preset || (preset.definition.category === 'cursor' && gates.cursorRenderer === 'portable')) return [];
+    if (!preset || (preset.definition.category === 'cursor' && (gates.cursorRenderer === 'portable' || gates.cursorMotion === 'off'))) return [];
     return [{preset, effect}];
   });
 }
@@ -357,7 +364,6 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
           if (file.content !== undefined) throw new Error(`${candidate} would replace Kitty's shipped ${shader} shader; NMSh only tunes shipped shaders.`);
         }
       }
-      if (preset.definition.requires === 'cursor_trail') notes.push(`${preset.definition.label} draws only while cursor_trail is above 0 (now ${inspection.cursorTrail}); /cursor Motion › Tail with Kitty native sets it.`);
       if (preset.definition.requires === 'opaque' && inspection.backgroundOpacity < 1) notes.push(`${preset.definition.label} does not work with background_opacity ${inspection.backgroundOpacity} (Kitty's own note).`);
     }
     const pipeline = buildNmshPipeline(active, catalog, leaked);
@@ -369,7 +375,7 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     const ours = quoteWord(paths.pipeline);
     const composed = !active.length ? undefined : inspection.userRaw ? (settings.placement === 'before' ? `${ours} ${inspection.userRaw}` : `${inspection.userRaw} ${ours}`) : ours;
     const expected = !active.length ? inspection.userEntries : settings.placement === 'before' ? [paths.pipeline, ...inspection.userEntries] : [...inspection.userEntries, paths.pipeline];
-    const fragmentText = `${FRAGMENT_HEADER}${composed ? `custom_shaders ${composed}\n` : '# No NMSh effect is active; your own custom_shaders applies unchanged.\n'}`;
+    let fragmentText = `${FRAGMENT_HEADER}${composed ? `custom_shaders ${composed}\n` : '# No NMSh effect is active; your own custom_shaders applies unchanged.\n'}`;
     if (state.record && state.record.hostPath !== inspection.hostPath) throw new Error('Kitty’s configuration file changed; remove the old integration before setting up this one.');
     const hostFile = snapshot(inspection.hostPath, paths.home, true);
     const original = hostFile.content ?? '';
@@ -380,12 +386,28 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     if (mode === 'sync' && !state.record) throw new Error('Kitty shaders are not set up.');
     const hostAfter = state.record ? original : `${original}${hook}`;
     // Prove the effective value is exactly the composed list, from NMSh's fragment.
-    const simulated = readHostConfiguration('kitty', context, new Map([[hostFile.path, hostAfter], [paths.fragment, fragmentText]]));
+    const simulate = () => readHostConfiguration('kitty', context, new Map([[hostFile.path, hostAfter], [paths.fragment, fragmentText]]));
+    let simulated = simulate();
     if (simulated.problems.length) throw new Error(simulated.problems.join(' '));
+    // A trail shader with cursor_trail at 0 is written but never drawn. Judged without NMSh's own trail line (so a later sync
+    // keeps it): when the value would be 0, NMSh's fragment turns the trail on and the review says so.
+    const trailActive = active.some(({preset}) => preset.definition.category === 'cursor');
+    const trailWithout = Number(simulated.values.get('cursor_trail')?.value ?? 0);
+    if (trailActive && !(trailWithout > 0)) {
+      fragmentText += `# Kitty draws trail shaders only while cursor_trail is above 0.\ncursor_trail ${KITTY_TRAIL_ON}\n`;
+      notes.push(`Turns Kitty's cursor_trail on (${KITTY_TRAIL_ON}; it would be ${Number.isFinite(trailWithout) ? trailWithout : 'unreadable'}) so the trail shader draws.`);
+      simulated = simulate();
+      if (simulated.problems.length) throw new Error(simulated.problems.join(' '));
+    }
     const effective = simulated.values.get('custom_shaders');
     const effectiveWords = shellWords(effective?.raw ?? '') ?? [];
     if (active.length && (effective?.path !== paths.fragment || JSON.stringify(effectiveWords) !== JSON.stringify(expected))) {
       throw new Error('A later or unresolved custom_shaders line would override NMSh’s composed list. Resolve that explicitly; no files were changed.');
+    }
+    const trailAfter = Number(simulated.values.get('cursor_trail')?.value ?? 0);
+    if (trailActive && !(trailAfter > 0)) {
+      const where = simulated.values.get('cursor_trail')?.path;
+      throw new Error(`cursor_trail would still be ${Number.isFinite(trailAfter) ? trailAfter : 'unreadable'}${where ? ` (set later in ${where})` : ''}, so Kitty would draw no trail. Turn on /cursor Motion or remove that line; no files were changed.`);
     }
     const record: ShaderLedger = {version: 1, feature: 'kitty-shaders', hostPath: hostFile.path, hook, fragmentHash: digest(fragmentText), pipelineHash: digest(pipelineText),
       created: state.record?.created ?? hostFile.content === undefined, preserved: inspection.userRaw, placement: settings.placement, kittyVersion: catalog.version,
