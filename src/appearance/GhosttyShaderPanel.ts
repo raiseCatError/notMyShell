@@ -8,7 +8,7 @@ import type {Key} from '../terminal/keys.js';
 import type {GhosttyCatalog} from './ghosttyShaderCatalog.js';
 import {trailGateReason, type GhosttyShaderGates, type GhosttyShaderInspection, type GhosttyShaderPlan} from './ghosttyShaders.js';
 import type {GhosttyShaderSettings} from './kittyShaderSettings.js';
-import {createShaderStudio, renderShaderStudio, shaderStudioKey, type ShaderStudioState, type StudioAction, type StudioHost} from './ShaderStudioPanel.js';
+import {createShaderStudio, renderShaderStudio, shaderStudioKey, type ShaderStudioState, type StudioAction, type StudioHost, type StudioPreviewContext} from './ShaderStudioPanel.js';
 
 export type GhosttyShaderPanelState = ShaderStudioState<GhosttyCatalog, GhosttyShaderInspection, GhosttyShaderPlan, GhosttyShaderGates, GhosttyShaderSettings>;
 
@@ -37,6 +37,6 @@ export function ghosttyShaderKey(state: GhosttyShaderPanelState, key: Key): Stud
   return shaderStudioKey(state, key, GHOSTTY_STUDIO);
 }
 
-export function renderGhosttyShaderPanel(state: GhosttyShaderPanelState, columns: number, height?: number): string[] {
-  return renderShaderStudio(state, GHOSTTY_STUDIO, columns, height);
+export function renderGhosttyShaderPanel(state: GhosttyShaderPanelState, columns: number, height?: number, preview?: StudioPreviewContext): string[] {
+  return renderShaderStudio(state, GHOSTTY_STUDIO, columns, height, preview);
 }

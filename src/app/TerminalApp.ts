@@ -324,6 +324,7 @@ import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
 import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
 import {createKittyShaderPanel, kittyShaderKey, renderKittyShaderPanel, type KittyShaderPanelState} from '../appearance/KittyShaderPanel.js';
+import {studioPreviewContext} from '../appearance/ShaderStudioPanel.js';
 import {discoverKittyCatalog, kittyBinary, type KittyCatalog} from '../appearance/kittyShaderCatalog.js';
 import {GlslShaderStudio} from '../appearance/glslStudio.js';
 import {writtenNativePasses} from '../appearance/nativePasses.js';
@@ -6706,9 +6707,18 @@ export class TerminalApp {
       }
       return framePanel(rows, columns);
     }
-    if (this.kittyShaderPanel) return framePanel(renderKittyShaderPanel(this.kittyShaderPanel, columns, this.dimensions().rows - 4), columns);
-    const glsl = this.glslStudio.render(columns, this.dimensions().rows - 4);
-    if (glsl) return framePanel(glsl, columns);
+    if (this.kittyShaderPanel || this.glslStudio.panel) {
+      const preview = studioPreviewContext(Date.now(), !this.decorativeMotionAllowed(), colorLevel() !== 'none', colorLevel());
+      const rows = this.kittyShaderPanel ? renderKittyShaderPanel(this.kittyShaderPanel, columns, this.dimensions().rows - 4, preview) : this.glslStudio.render(columns, this.dimensions().rows - 4, preview)!;
+      // A frame clock only while a studio preview run is animating; none once it settles.
+      const busy = Boolean((this.kittyShaderPanel ?? this.glslStudio.panel)?.previewBusy);
+      if (busy && !this.studioPreviewClock) this.studioPreviewClock = presentationClock.subscribe(() => {
+        if (!this.stopped && (this.kittyShaderPanel ?? this.glslStudio.panel)?.previewBusy) { this.render(); return; }
+        this.studioPreviewClock?.(); this.studioPreviewClock = undefined;
+      }, 33, 16);
+      else if (!busy && this.studioPreviewClock) { this.studioPreviewClock(); this.studioPreviewClock = undefined; }
+      return framePanel(rows, columns);
+    }
     if (this.appearanceHub) {
       const theme = themeLabel(this.promptConfiguration.nmsh.palette);
       const now = Date.now();
@@ -10887,6 +10897,7 @@ export class TerminalApp {
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
   private transitionClock?: () => void;
   private motionPreviewClock?: () => void;
+  private studioPreviewClock?: () => void;
   /** The /appearance → Motion preview gate: Effects Off and Reduced Motion stay distinct so the preview can say which applies. */
   private motionPreviewGate(): MotionGate {
     const presentation = this.promptConfiguration.presentation;

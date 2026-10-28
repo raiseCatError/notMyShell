@@ -74,3 +74,9 @@ NOT RUN: physical Ghostty/Kitty/Zed QA, GPU rendering, performance measurement.
 - Independent Sonnet review: no blocker; five should-fix items fixed with regressions.
 
 NOT RUN: physical Ghostty/Kitty QA, GPU rendering.
+
+## Slice 5 — Shader Studio previews (Claude, 2026-10-28)
+
+- Focused: shaderPreview, ghosttyShaderPanel, kittyShaderPanel, ghosttyShaders, kittyShaders, appearanceHub, hostIntegration, renderRouting, cursor* — 121/121 after review fixes (slice5-focused-3.log); tsc clean.
+- Live installed Kitty 0.49.2 (private HOME, headless): composed list + compile of the original trio, and each new preset (crt-blue, fireworks-rockets, bloom, tft, water, underwater, negative) compiles; tuned values change the compiled shader versus defaults (slice5-kitty-live.log). Compile only; GPU output NOT verified.
+- Full suite left to CI (user policy 2026-10-28).

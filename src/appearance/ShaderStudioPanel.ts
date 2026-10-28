@@ -15,6 +15,17 @@ import {padCells, truncateAnsi} from '../util/text.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import {CATEGORY_LABELS, type OfferedParam, type PresetCategory, type ShaderValue} from './kittyShaderCatalog.js';
 import type {KittyShaderEffect} from './kittyShaderSettings.js';
+import {PREVIEW_MS, previewKind, previewValues, renderShaderPreview} from './shaderPreview.js';
+import type {ColorLevel} from '../presentation/capabilities.js';
+import type {RgbColor} from '../ui/palette.js';
+
+/** The sample terminal's colors: NMSh's UI text on a neutral dark sample background. */
+export function studioPreviewContext(now: number, still: boolean, color: boolean, level?: ColorLevel): StudioPreviewContext {
+  return {now, still, color, ...(level ? {level} : {}), colors: {background: {red: 22, green: 22, blue: 28}, foreground: UI_COLORS.primary, accent: UI_COLORS.accent, cursor: UI_COLORS.accent}};
+}
+
+/** What the app knows when drawing a studio preview. */
+export interface StudioPreviewContext {now: number; still: boolean; color: boolean; level?: ColorLevel; colors: {background: RgbColor; foreground: RgbColor; accent: RgbColor; cursor: RgbColor}}
 
 export interface StudioPreset {definition: {id: string; label: string; category: PresetCategory; exclusive?: string; note?: string}; params: OfferedParam[]; missing: string[]}
 export interface StudioCatalog {version: string; supported: boolean; reason?: string; offered: readonly StudioPreset[]; notOffered: readonly string[]}
@@ -35,6 +46,11 @@ export interface ShaderStudioState<C extends StudioCatalog, I extends StudioInsp
   message?: string;
   /** Ghostty: a trail Ghostty may still draw until its configuration is reloaded (L confirms the reload). */
   reloadPending?: string;
+  /** The preview's current run: restarted when the selected preset or its values change, or on P. */
+  previewStart?: number;
+  previewKey?: string;
+  /** The last drawn preview is still animating (the app keeps a frame clock only while true). */
+  previewBusy?: boolean;
 }
 
 export interface StudioHost<G> {
@@ -164,6 +180,7 @@ export function shaderStudioKey<G>(state: ShaderStudioState<StudioCatalog, Studi
   // Removal needs no catalog: it works on an unsupported or downgraded host too.
   if (key.kind === 'text' && key.value.toLowerCase() === 'r' && state.catalog) return {kind: 'remove'};
   if (host.reloadKey && key.kind === 'text' && key.value.toLowerCase() === 'l' && state.reloadPending) return {kind: 'reloaded'};
+  if (key.kind === 'text' && key.value.toLowerCase() === 'p') { state.previewStart = undefined; state.previewKey = undefined; return undefined; }
   if (!state.catalog?.supported) return undefined;
   const list = rows(any, host as StudioHost<unknown>);
   if (!list.length) return undefined;
@@ -194,7 +211,9 @@ export function shaderStudioKey<G>(state: ShaderStudioState<StudioCatalog, Studi
   return undefined;
 }
 
-export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, StudioInspection, StudioPlan, G, StudioDraft>, host: StudioHost<G>, columns: number, height?: number): string[] {
+export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, StudioInspection, StudioPlan, G, StudioDraft>, host: StudioHost<G>, columns: number, height?: number,
+  preview?: StudioPreviewContext): string[] {
+  state.previewBusy = false;
   const any = state as AnyState;
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
@@ -258,17 +277,42 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
     : preset ? [preset.definition.note, !preset.params.length && !preset.definition.note ? host.noParams : undefined,
       preset.missing.length ? `Not offered here: ${preset.missing.join(', ')} (the installed shader does not declare them as NMSh expects).` : undefined,
       current?.kind === 'param' && current.param.kind === 'color' ? 'Enter types an RGB color.' : undefined].filter(Boolean).join(' ') : '';
-  const footer = [
+  // An approximate preview of the selected preset, drawn by NMSh in cells (never claimed to be the host's GPU output).
+  const kind = preset ? previewKind(preset.definition.id, preset.definition.category) : undefined;
+  const sample: string[] = [];
+  if (preview && preset && columns >= 22) {
+    const values = Object.fromEntries(preset.params.map(param => [param.name, studioParamValue(any, preset, param)]));
+    const key = `${preset.definition.id}:${JSON.stringify(values)}`;
+    if (state.previewKey !== key) { state.previewKey = key; state.previewStart = preview.now; }
+    const label = `  ${subtle}Preview · ${preset.definition.label} · approximate, drawn by NMSh; ${host.name}’s GPU shader is the real effect${reset}`;
+    if (!preview.color) sample.push('', `  ${subtle}Preview needs color (NO_COLOR or a monochrome terminal).${reset}`);
+    else if (!kind) sample.push('', `  ${subtle}No preview for ${preset.definition.label}: NMSh would only be guessing at it.${reset}`);
+    else {
+      const frame = renderShaderPreview({kind, values: previewValues(preset.definition.id, values), width: Math.min(48, columns - 6), elapsed: preview.now - (state.previewStart ?? preview.now),
+        still: preview.still, colors: preview.colors, ...(preview.level ? {level: preview.level} : {})});
+      state.previewBusy = frame.busy;
+      sample.push('', label, ...frame.rows.map(row => `    ${row}`), ...(preview.still ? [`  ${subtle}Still frame (Reduced Motion or Effects Off).${reset}`] : []));
+    }
+  }
+  const replayable = Boolean(preview && kind && preview.color && !preview.still && PREVIEW_MS[kind] > 0);
+  const footerFor = (replay: boolean) => [
     ...(note ? ['', `  ${subtle}${clean(note)}${reset}`] : []),
     ...(catalog.notOffered.length ? [`  ${subtle}${host.placement ? 'Installed, not offered yet' : 'Not available in this version'}: ${clean(catalog.notOffered.join(', '))}${reset}`] : []),
     ...(inspection?.problems.length ? [`  ${secondary}${clean(inspection.problems[0]!)}${reset}`] : []),
     ...(state.message ? [`  ${secondary}${clean(state.message)}${reset}`] : []),
     // Narrow terminals wrap the controls at control boundaries rather than cutting off Esc.
     '', ...renderControlRows([['↑↓', 'select'], ['Enter', current?.kind === 'preset' ? 'on/off' : 'change'], ['←→', 'adjust'], ['⇧↑↓', 'order'], ['S', 'review'], ['R', 'remove'],
-      ...(reload.length ? [['L', 'reloaded'] as [string, string]] : []), ['Esc', 'back']], Math.max(20, columns - 2)),
+      ...(reload.length ? [['L', 'reloaded'] as [string, string]] : []), ...(replay ? [['P', 'replay'] as [string, string]] : []), ['Esc', 'back']], Math.max(20, columns - 2)),
   ];
-  const all = [...head, ...intro, ...body, ...footer];
+  // Not enough room for the preview: the list and controls win; the preview is dropped (not cut), its replay hint goes,
+  // and its run starts again once it can be seen.
+  const previewFits = height === undefined || head.length + intro.length + body.length + sample.length + footerFor(replayable && sample.length > 0).length <= height;
+  if (!previewFits && sample.length) { sample.length = 0; state.previewBusy = false; state.previewKey = undefined; state.previewStart = undefined; }
+  const footer = footerFor(replayable && sample.length > 0);
+  const all = [...head, ...intro, ...body, ...sample, ...footer];
   if (height === undefined || all.length <= height) return all.map(row => truncateAnsi(row, columns));
+  // Short windows (the preview, if any, was already dropped above).
+  state.previewBusy = false;
   // Short windows keep the title, a pending-reload line (Portable motion waits on it), the selected row's neighbourhood and the footer.
   const compact = reload.length ? [`  ${secondary}Reload pending: press L after reloading ${host.name}.${reset}`] : [];
   const room = Math.max(1, height - head.length - compact.length - footer.length);

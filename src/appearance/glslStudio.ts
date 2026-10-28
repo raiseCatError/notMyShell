@@ -17,6 +17,7 @@ import {idleStops} from '../idle/IdleVisuals.js';
 import type {HostCursorFacts} from '../cursor/backends.js';
 import {fragmentContent, ghosttyCursorFragment, ghosttyCursorShaderWritten, writeManagedFiles, type ManagedWrite, type NativeHost} from '../cursor/native.js';
 import type {AppearanceHubState} from './AppearanceHub.js';
+import type {StudioPreviewContext} from './ShaderStudioPanel.js';
 import {createGhosttyShaderPanel, ghosttyShaderKey, renderGhosttyShaderPanel, type GhosttyShaderPanelState} from './GhosttyShaderPanel.js';
 import {buildGhosttyCatalog} from './ghosttyShaderCatalog.js';
 import {applyGhosttyShaderPlan, ghosttyReloadPending, ghosttyShaderPaths, inspectGhosttyLaunch, inspectGhosttyShaders, noteGhosttyTrailChange, planGhosttyShaderRemoval, planGhosttyShaders,
@@ -92,8 +93,8 @@ export class GlslShaderStudio {
     this.services.render();
   }
 
-  render(columns: number, height: number): string[] | undefined {
-    return this.panel ? renderGhosttyShaderPanel(this.panel, columns, height) : undefined;
+  render(columns: number, height: number, preview?: StudioPreviewContext): string[] | undefined {
+    return this.panel ? renderGhosttyShaderPanel(this.panel, columns, height, preview) : undefined;
   }
 
   key(key: Key): void {
