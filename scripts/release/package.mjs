@@ -2,7 +2,7 @@
 // Packages the exact commit: git archive -> nmsh-X.Y.Z-source.tar.gz, then SHA256SUMS over the release files.
 // Usage: node scripts/release/package.mjs --version X.Y.Z --out DIR [--commit SHA]
 import {execFileSync} from 'node:child_process';
-import {readFile, stat, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, stat, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
@@ -16,6 +16,7 @@ export async function packageRelease(argv) {
   if (!values.version || !values.out || !parseSemver(values.version)) throw new Error('Usage: package.mjs --version X.Y.Z --out DIR [--commit SHA]');
   const out = resolve(values.out);
   const commit = execFileSync('git', ['rev-parse', '--verify', `${values.commit ?? 'HEAD'}^{commit}`], {encoding: 'utf8'}).trim();
+  await mkdir(out, {recursive: true});
   const tarball = join(out, artifactName(values.version));
   // git archive stamps entries with the commit time and gzips with -n, so the same commit gives the same bytes.
   execFileSync('git', ['archive', '--format=tar.gz', `--prefix=notMyShell-${values.version}/`, '-o', tarball, commit]);

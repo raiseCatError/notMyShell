@@ -190,7 +190,6 @@ test('package.mjs archives the exact commit reproducibly with a checksum file', 
   git('add', '.');
   git('commit', '-q', '-m', 'two');
   const pack = (out: string): void => { execFileSync(process.execPath, [join(root, 'scripts/release/package.mjs'), '--version', '1.2.3', '--commit', commit, '--out', out], {cwd: repo, env: {...process.env, HOME: dir}}); };
-  mkdirSync(join(dir, 'o1')); mkdirSync(join(dir, 'o2'));
   pack(join(dir, 'o1')); pack(join(dir, 'o2'));
   assert.equal(readFileSync(join(dir, 'o1/SHA256SUMS'), 'utf8'), readFileSync(join(dir, 'o2/SHA256SUMS'), 'utf8'), 'the same commit packages to the same bytes');
   const listing = execFileSync('tar', ['-tzf', join(dir, 'o1/nmsh-1.2.3-source.tar.gz')], {encoding: 'utf8'});
