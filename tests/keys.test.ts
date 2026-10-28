@@ -44,3 +44,10 @@ test('existing Kitty Ctrl mappings are unaffected by the new Escape entries', ()
   assert.deepEqual(decodeKeys('\u001B[99;5u'), [{kind: 'interrupt'}], 'Kitty Ctrl+C');
   assert.deepEqual(decodeKeys('\u001B[127u'), [{kind: 'backspace'}], 'Kitty Backspace (no modifier)');
 });
+
+test('a Kitty graphics reply is never decoded as Escape plus typed text, even split across reads', () => {
+  assert.deepEqual(decodeKeys('a\u001b_Gi=31;OK\u001b\\b'), [{kind: 'text', value: 'a'}, {kind: 'text', value: 'b'}]);
+  const decoder = new KeyDecoder();
+  assert.deepEqual(decoder.push('\u001b_Gi=31;O'), []);
+  assert.deepEqual(decoder.push('K\u001b\\x'), [{kind: 'text', value: 'x'}]);
+});

@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- On a slow terminal connection or a busy machine, the terminal's reply to NMSh's startup image check no longer appears in the composer as `_Gi=31;OK\` and no longer turns images into character art. NMSh's startup check now ends as soon as the terminal has answered (instead of always waiting 80 ms), waits up to 0.75 s for a slow one, and still uses an answer that comes later.
 - A native welcome image (Kitty, Ghostty) stays a native image after the first key press, scroll or resize instead of turning into character art. A logo animation still stops at once and its frames are deleted; only the still remains.
 - With the Portable cursor renderer, NMSh's Kitty cursor setup no longer leaves Kitty's own `cursor_trail` on, which drew two trails.
 

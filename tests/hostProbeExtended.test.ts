@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {BASELINE_CAPABILITIES} from '../src/host/capabilities.js';
-import {DISPLAY_QUERY, HOST_QUERY, TEXT_SIZING_QUERY, probeHost, resolveProbeReplies} from '../src/host/probe.js';
+import {DISPLAY_QUERY, HOST_QUERY, TEXT_SIZING_QUERY, probeHost, resolveProbeReplies, takeLateProbeReplies} from '../src/host/probe.js';
 
 /** Replies as a terminal would send them, in the order the queries were written. */
 const cpr = (row: number, column: number) => `\u001b[${row};${column}R`;
@@ -71,4 +71,33 @@ test('a real exchange: replies arriving through the transport resolve the capabi
   assert.equal(result.capabilities.synchronizedOutput, true);
   assert.deepEqual(result.capabilities.cellPixels, {width: 10, height: 20});
   assert.equal(result.input, '');
+});
+
+test('the extended probe ends as soon as DA1, its last query, answers', async () => {
+  assert.ok(DISPLAY_QUERY.endsWith('\u001b[c'), 'DA1 is the end marker');
+  const started = Date.now();
+  let listener: (data: string) => void = () => {};
+  const transport = {
+    listen: (receive: (data: string) => void) => { listener = receive; return () => {}; },
+    write: () => { setImmediate(() => listener(`\u001b_Gi=31;OK\u001b\\\u001b[?1u\u001b[?2026;2$y\u001b[6;20;10t\u001b[?62;4c`)); },
+  };
+  const result = await probeHost({...BASELINE_CAPABILITIES}, transport, undefined, {extended: true, graphics: true});
+  assert.ok(Date.now() - started < 60, 'no fixed wait once the marker arrived');
+  assert.equal(result.pending, false);
+  assert.equal(result.input, '');
+  assert.equal(result.capabilities.graphicsProtocol, 'kitty');
+});
+
+test('replies later than the probe never become typing and still count as evidence', async () => {
+  const transport = {listen: () => () => {}, write: () => {}};
+  const result = await probeHost({...BASELINE_CAPABILITIES}, transport, 5, {extended: true, graphics: true});
+  assert.equal(result.pending, true, 'the end marker did not arrive');
+  assert.equal(result.capabilities.graphicsProtocol, 'none');
+  const late = takeLateProbeReplies(`ls\u001b_Gi=31;OK\u001b\\\u001b[?62;4c`, result.capabilities);
+  assert.equal(late.capabilities?.graphicsProtocol, 'kitty', 'a late OK still turns native images on');
+  assert.equal(late.done, true);
+  assert.doesNotMatch(late.input, /Gi=31|OK/, 'the reply is not typed');
+  assert.ok(late.input.startsWith('ls'), 'keys around it are kept');
+  const error = takeLateProbeReplies(`\u001b_Gi=31;ENOTSUPPORTED:x\u001b\\`, {...BASELINE_CAPABILITIES, graphicsProtocol: 'kitty'});
+  assert.equal(error.input, ''); assert.equal(error.capabilities, undefined); assert.equal(error.done, false);
 });

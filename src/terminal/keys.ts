@@ -160,6 +160,12 @@ export function decodeKeys(input: string): Key[] {
       index += sequence[0].length;
       continue;
     }
+    // A Kitty graphics reply (APC G ... ST) is the terminal answering, never a key: Escape plus its text would be typed.
+    const apcMatch = /^\u001B_G[^\u001B]{0,4096}\u001B\\/u.exec(input.slice(index));
+    if (apcMatch) {
+      index += apcMatch[0].length;
+      continue;
+    }
     const csiMatch = /^\u001B\[[0-?]*[ -/]*[@-~]/.exec(input.slice(index));
     if (csiMatch) {
       // Unknown CSI sequence, consume and ignore
@@ -250,7 +256,7 @@ export class KeyDecoder {
           const suffix = remaining.slice(escape);
           const known = [...SEQUENCES.map(([sequence]) => sequence), '\u001B[200~'];
           // Held only while it can still become a key; an endless parameter run is not held (bounded memory).
-          if (suffix.length <= 256 && ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix))) {
+          if (suffix.length <= 256 && ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix) || /^\u001B_G[^\u001B]*$/.test(suffix))) {
             this.keyBuffer = suffix;
             remaining = remaining.slice(0, escape);
           }

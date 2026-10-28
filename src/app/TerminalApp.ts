@@ -29,7 +29,7 @@ import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
-import {probeHost} from '../host/probe.js';
+import {LATE_PROBE_WINDOW_MS, probeHost, takeLateProbeReplies} from '../host/probe.js';
 import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type SessionPreset} from '../session/SessionPresets.js';
 import {createPresetPanel, presetPanelKey, renderPresetPanel, type PresetPanel} from '../session/PresetPanel.js';
 import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
@@ -1518,6 +1518,8 @@ export class TerminalApp {
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
       earlyInput = resolved.input;
+      // A slow terminal can still answer: its late replies are taken out of the input (never typed) and used as evidence.
+      if (resolved.pending) this.lateProbeUntil = Date.now() + LATE_PROBE_WINDOW_MS;
     }
     this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
       () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript(), live: this.liveLink()}),
@@ -1596,7 +1598,23 @@ export class TerminalApp {
     appendFileSync(join(tmpdir(), 'nmsh-key-debug.log'), `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
   }
 
+  /** Until then, replies to the startup probe that arrive late are recognized (see `takeLateProbe`). */
+  private lateProbeUntil = 0;
+
+  private takeLateProbe(data: string): string {
+    if (Date.now() > this.lateProbeUntil) { this.lateProbeUntil = 0; return data; }
+    const late = takeLateProbeReplies(data, this.host.capabilities);
+    if (late.done) this.lateProbeUntil = 0;
+    if (late.capabilities) {
+      this.host.capabilities = late.capabilities;
+      this.renderer.setCapabilities(late.capabilities);
+      if (!this.stopped) setImmediate(() => { if (!this.stopped) this.render(); });
+    }
+    return late.input;
+  }
+
   private readonly onInput = (data: string): void => {
+    if (this.lateProbeUntil) { data = this.takeLateProbe(data); if (!data) return; }
     // Before probes classify a read, or inside a native reader, input can already be sensitive.
     // Key diagnostics therefore observe only the idle composer, never startup or running-program input, nor typing held
     // at the prompt because it may be a reply to hidden input (#426).
