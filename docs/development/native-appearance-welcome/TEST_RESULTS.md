@@ -52,3 +52,17 @@ Source: branch feature/kitty-native-shaders-20261028 from 4abd014d. All Kitty ru
 - Source manifest unchanged after verify (only docs edited since).
 
 NOT RUN: physical Kitty/Ghostty/Zed QA, GPU rendering, performance measurement, Ghostty shader work.
+
+## Slice 3 — Ghostty native shaders (Claude, 2026-10-28)
+
+Source: branch feature/ghostty-native-shaders-20261028 from de2afd02. Every automated run used private HOME/XDG/NMSH config dirs; no real Ghostty config, window or installed app was touched. Evidence: `/Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028/` (slice3-probe/, logs below).
+
+- `t7run --check`: PASSED (after clearing regenerable caches on T7 at the user's request: node-compile, pycache, clang-module).
+- Probes: shader prefixes of Ghostty v1.2.0/v1.3.0/v1.3.1/v1.4.0 compared (1.3.0–1.4.0 identical); path.zig / validate_config.zig / Config.zig read; installed 1.3.1 and staged signature-verified 1.4.0 used headlessly (`+validate-config --config-file`) only.
+- Live (tests/ghosttyShadersLive.test.ts, both binaries via NMSH_TEST_GHOSTTY_BINARIES): uniform table equals each binary's compiled-in prefix; `+validate-config` accepts NMSh's composed config; slangc (Kitty-bundled) compiles every preset against its prefix and rejects a 1.3-only preset against the 1.2 prefix. PROXY compile only: Ghostty's own glslang/SPIRV-Cross/Metal path and GPU output NOT verified.
+- Independent Codex review: no blocker; 7 items fixed with regressions (INDEPENDENT_REVIEW.md).
+- Focused after fixes: ghosttyShaders, ghosttyShaderPanel, ghosttyShadersLive, kittyShader*, cursor*, appearanceHub, hostAppearance*, hostIntegration — 132/132 (slice3-fixes-2.log); live on 1.3.1 + 1.4.0 with hostProfiles 12/12 (slice3-fixes-live.log); tsc clean; diff --check pass.
+- Canonical `npm run verify` on source manifest 4f0f9e10… (slice3-canonical-verify.log): build and typecheck passed; tests 4662, pass 4648, fail 0, skipped 13, todo 1 (existing Arcade TODO); diff --check passed; exit 0. Manifest unchanged afterwards. A clean local canonical pass.
+- Mermaid (#516 run 40656373289, browserConsoleChrome.test.ts:106): not rerun in CI; local controlled runs 3/3 pass at dev+diagnostic and at #516 (mermaid-diag/REPORT.md). Unexplained in CI; deadline-under-load hypothesis, not proven.
+
+NOT RUN: physical Ghostty/Kitty/Zed QA, GPU rendering, performance measurement.
