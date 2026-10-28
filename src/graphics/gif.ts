@@ -5,18 +5,19 @@
 import {checkDimensions, type Raster} from './raster.js';
 import {guard, malformed, u16le, u8} from './formats.js';
 
-const INTERLACE_PASSES: readonly (readonly [number, number])[] = [[0, 8], [4, 8], [2, 4], [1, 2]];
+export const INTERLACE_PASSES: readonly (readonly [number, number])[] = [[0, 8], [4, 8], [2, 4], [1, 2]];
 
 export function decodeGif(bytes: Uint8Array): Raster {
   return guard(() => decode(bytes));
 }
 
 /** Concatenate a run of data sub-blocks starting at `index`; returns the data and the index after the terminator. */
-function readSubBlocks(bytes: Uint8Array, start: number): {data: Uint8Array; next: number} {
+export function readSubBlocks(bytes: Uint8Array, start: number, check: () => void = () => {}): {data: Uint8Array; next: number} {
   const parts: Uint8Array[] = [];
   let total = 0;
   let index = start;
   for (;;) {
+    check();
     const size = u8(bytes, index);
     index++;
     if (size === 0) break;
@@ -34,7 +35,8 @@ function readSubBlocks(bytes: Uint8Array, start: number): {data: Uint8Array; nex
   return {data, next: index};
 }
 
-function lzw(data: Uint8Array, minCodeSize: number, count: number): Uint8Array {
+/** @internal Shared strict LZW engine; animation supplies bounded cancellation checks. */
+export function lzw(data: Uint8Array, minCodeSize: number, count: number, check: () => void = () => {}): Uint8Array {
   const clear = 1 << minCodeSize;
   const end = clear + 1;
   const prefix = new Uint16Array(4096);
@@ -51,6 +53,7 @@ function lzw(data: Uint8Array, minCodeSize: number, count: number): Uint8Array {
   let pos = 0;
   for (let i = 0; i < clear; i++) suffix[i] = i;
   for (;;) {
+    check();
     while (bits < size) {
       if (pos >= data.length) throw malformed('image data ended early');
       acc |= data[pos++]! << bits;

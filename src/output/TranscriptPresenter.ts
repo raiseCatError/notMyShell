@@ -125,6 +125,8 @@ export class TranscriptPresenter {
 
   private appearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
   private welcomeFrame: WelcomeCatFrame = 'open';
+  /** Runtime graphics stay out of serialized snapshots. */
+  welcomePainter?: (snapshot: WelcomeSnapshot, width: number) => WrappedRow[];
   private layout: TranscriptLayout = 'normal';
 
   setLayout(layout: TranscriptLayout): void {
@@ -174,7 +176,7 @@ export class TranscriptPresenter {
       blockWidths.set(start, widest);
       return widest;
     };
-    const welcomeRows = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
+    const welcomeRows = welcome ? this.welcomePainter?.(welcome, width) ?? renderWelcome(welcome, width, this.welcomeFrame) : [];
     // The first-run welcome follows Vespyr's block (line 0); its rows carry line numbers so it can arrive line by line.
     const result: WrappedRow[] = firstRun ? [...welcomeRows.map(row => ({...row, firstRunLine: 0})), ...renderFirstRunWelcome(width)] : welcomeRows;
     let skipUntil = -1;
