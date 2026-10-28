@@ -5,7 +5,7 @@ import {tabCycleDelta} from '../ui/PanelShell.js';
 import {renderStudioLayout, studioLabel, studioMuted, studioWrap, type StudioEntry} from '../ui/StudioLayout.js';
 import {renderControlRows, renderValueControl} from '../ui/controls.js';
 import {composeWelcome, type WelcomeCapabilities, type WelcomeFacts, type WelcomeComposition} from './compose.js';
-import {ALPHAS, DEFAULT_WELCOME_STUDIO, EFFECTS, FACTS, FITS, LAYOUTS, LOGOS, PALETTES, WELCOME_PRESETS, normalizeWelcomeStudio, welcomeText, type SavedWelcomePreset, type WelcomeStudio} from './model.js';
+import {ALPHAS, DEFAULT_WELCOME_STUDIO, EFFECTS, FACTS, FITS, LAYOUTS, LOGOS, LOGO_ANIMATIONS, LOGO_PLAYS, PALETTES, WELCOME_PRESETS, normalizeWelcomeStudio, welcomeText, type SavedWelcomePreset, type WelcomeStudio} from './model.js';
 import type {AssetEntry} from './assets.js';
 
 export interface WelcomeEditor {
@@ -25,14 +25,14 @@ export function createWelcomeEditor(config: PromptConfiguration, now = Date.now(
 }
 const FIELDS = ['Provider', 'Logo', 'Asset path / picker', 'Fit', 'Alpha', 'Layout', 'Title', 'Greeting', 'Density', 'Border', 'Palette', 'Custom RGB', 'Still image effect', 'Links',
   ...FACTS.map(f => `Fact: ${f}${['hostname', 'user', 'path', 'git'].includes(f) ? ' (private, opt in)' : ''}`),
-  'Preset', 'Save preset', 'Duplicate preset', 'Reset layout', 'Import JSON file', 'Export JSON file', 'Export private path'] as const;
+  'Preset', 'Save preset', 'Duplicate preset', 'Reset layout', 'Import JSON file', 'Export JSON file', 'Export private path', 'Logo animation', 'Play'] as const;
 const SECTIONS = [
   {label: 'Logo & image', fields: [0, 1, 2, 3, 4]},
   {label: 'Typography & greeting', fields: [6, 7, 13]},
   {label: 'Layout & position', fields: [5, 8, 9]},
   {label: 'Theme & palette', fields: [10, 11]},
   {label: 'Facts/modules', fields: Array.from({length: FACTS.length}, (_, i) => i + 14)},
-  {label: 'Animation', fields: [12]},
+  {label: 'Animation', fields: [31, 32, 12]},
   {label: 'Presets', fields: [24, 25, 26, 27, 28, 29, 30]},
 ] as const;
 const FIELD_ORDER = SECTIONS.flatMap(section => [...section.fields]);
@@ -41,6 +41,8 @@ const choiceValues = (s: WelcomeEditor) => s.choices?.kind === 'preset' ? [...WE
   : s.choices?.kind === 'layout' ? [...LAYOUTS] : s.choices?.kind === 'logo' ? [...LOGOS] : [...EFFECTS];
 
 export type WelcomeEditorAction = 'close' | 'save' | 'asset' | 'picker' | 'import' | 'export' | 'provider' | undefined;
+const LOGO_ANIMATION_LABELS: Record<typeof LOGO_ANIMATIONS[number], string> = {off: 'Off', assemble: 'Assemble', shine: 'Shine', glow: 'Glow pulse', glitch: 'Glitch', embers: 'Embers'};
+const LOGO_PLAY_LABELS: Record<typeof LOGO_PLAYS[number], string> = {once: 'Once at startup', loop: 'Gentle loop'};
 const cycle = <T>(values: readonly T[], current: T, delta: number): T => values[(values.indexOf(current) + delta + values.length) % values.length]!;
 export function welcomeEditorKey(state: WelcomeEditor, key: Key, now = Date.now(), providers: readonly WelcomeProviderId[] = WELCOME_PROVIDERS.map(p => p.id)): WelcomeEditorAction {
   if (state.input) {
@@ -123,6 +125,8 @@ export function welcomeEditorKey(state: WelcomeEditor, key: Key, now = Date.now(
     case 28: input('import'); return;
     case 29: input('export'); return;
     case 30: state.includePath = !state.includePath; return;
+    case 31: m.logoAnimation = cycle(LOGO_ANIMATIONS, m.logoAnimation, delta); break;
+    case 32: m.logoPlay = cycle(LOGO_PLAYS, m.logoPlay, delta); break;
     default: {
       const fact = FACTS[state.selected - 14];
       if (fact) m.modules = m.modules.includes(fact) ? m.modules.filter(f => f !== fact) : [...m.modules, fact];
@@ -133,7 +137,8 @@ export function welcomeEditorKey(state: WelcomeEditor, key: Key, now = Date.now(
 function values(s: WelcomeEditor): string[] {
   const m = s.draft;
   return [s.provider, m.logo, m.assetPath || 'Enter path; O browse', m.fit, m.alpha, m.layout, m.title, m.greeting, m.density, m.border ? 'On' : 'Off', m.palette, m.customColor, m.effect, m.links.join(' '),
-    ...FACTS.map(f => m.modules.includes(f) ? 'On' : 'Off'), [...WELCOME_PRESETS, ...s.presets][s.preset]?.name ?? 'Vespyr', `${s.presets.length}/12 saved`, 'Copy current layout', 'Built-in defaults', 'Local JSON only', 'No bytes exported', s.includePath ? 'Include path (private)' : 'Omit path (default)'];
+    ...FACTS.map(f => m.modules.includes(f) ? 'On' : 'Off'), [...WELCOME_PRESETS, ...s.presets][s.preset]?.name ?? 'Vespyr', `${s.presets.length}/12 saved`, 'Copy current layout', 'Built-in defaults', 'Local JSON only', 'No bytes exported', s.includePath ? 'Include path (private)' : 'Omit path (default)',
+    `${LOGO_ANIMATION_LABELS[m.logoAnimation]}${m.logoAnimation !== 'off' && m.logo !== 'image' ? ' · image logos only' : ''}`, LOGO_PLAY_LABELS[m.logoPlay]];
 }
 /** Field-specific guidance belongs beside the editor, never in startup's composition. */
 function fieldHelp(s: WelcomeEditor): string {
@@ -154,7 +159,9 @@ function fieldHelp(s: WelcomeEditor): string {
     27: 'Enter resets the draft to built-in defaults. S saves; Esc leaves saved settings unchanged.',
     28: 'Import a local JSON preset into the draft. Unknown fields are refused; no code is run.',
     29: 'Export JSON to a new file. Existing files are never overwritten. Asset bytes are never included.',
-    30: 'Private asset paths are omitted by default. Include one only for your own use.'} as Record<number, string>)[s.selected] ?? '';
+    30: 'Private asset paths are omitted by default. Include one only for your own use.',
+    31: 'Animates your image logo at startup from frames NMSh makes in memory; no GIF needed. Reduced Motion and Effects Off show the still image.',
+    32: 'Once plays about two seconds and settles on your image. Gentle loop repeats softly for up to 30 s and stops when you type.'} as Record<number, string>)[s.selected] ?? '';
 }
 
 export function renderWelcomeEditor(s: WelcomeEditor, columns: number, height: number, facts: WelcomeFacts, caps: WelcomeCapabilities, now: number,
@@ -215,11 +222,12 @@ export function renderWelcomeEditor(s: WelcomeEditor, columns: number, height: n
         else if (gallery.kind === 'logo') model.logo = LOGOS[gallery.selected]!;
         else model.effect = EFFECTS[gallery.selected]!;
       }
-      const label = `Live preview · ${s.before ? 'before' : 'draft'} · ${s.paused ? 'paused' : now - s.started >= 5000 ? 'settled' : 'playing'}${s.reduced ? ' · still' : ''}`;
-      const result = [studioLabel(label)];
       const frame = composeWelcome(model, facts, {columns: s.narrow ? Math.min(40, width) : width, rows: Math.max(0, room - 1)},
         {...caps, ...(gallery && model.assetPath !== s.draft.assetPath ? {asset: undefined} : {}), reducedMotion: caps.reducedMotion || s.reduced, ...(s.theme ? {accent: {red: 90, green: 180, blue: 210}, chroma: {red: 230, green: 150, blue: 70}} : {})}, s.paused ? s.elapsed : now - s.started);
       s.preview = frame; s.previewTop = origin.y + 1; s.previewLeft = origin.x;
+      // A gentle logo loop keeps playing past five seconds; the label follows the frame, not the clock.
+      const label = `Live preview · ${s.before ? 'before' : 'draft'} · ${s.paused ? 'paused' : now - s.started >= 5000 && !frame.active ? 'settled' : 'playing'}${s.reduced ? ' · still' : ''}`;
+      const result = [studioLabel(label)];
       const preview = s.provider === 'none' ? ['No startup welcome.'] : s.provider !== 'vespyr'
         ? s.captured?.map(row => caps.color ? row : row.replace(/\x1b\[[0-9;]*m/gu, '')) ?? ['External provider preview loading…']
         : paint?.(frame) ?? frame.rows.map(row => row.ansi);

@@ -61,7 +61,7 @@ test('section tabs jump without mutating the draft, and a choice gallery cancels
 test('all editor fields and pickers keep focus and complete controls in the four requested sizes', () => {
   for (const [columns, height] of [[120, 40], [80, 24], [60, 20], [40, 14]]) {
     const state = createWelcomeEditor(normalizePromptConfiguration({}));
-    for (let selected = 0; selected < 31; selected++) {
+    for (let selected = 0; selected < 33; selected++) {
       state.selected = selected;
       const rows = renderWelcomeEditor(state, columns!, height!, {}, {color: false}, 0);
       assert.ok(rows.length <= height! && rows.every(row => displayWidth(row) <= columns!));

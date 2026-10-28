@@ -1,4 +1,5 @@
 import {stripTerminalControls} from '../util/terminalControls.js';
+import {LOGO_ANIMATIONS, LOGO_PLAYS} from '../graphics/logoAnimation.js';
 
 export const LOGOS = ['none', 'mascot', 'image', 'art'] as const;
 export const FITS = ['contain', 'cover', 'crop'] as const;
@@ -6,6 +7,7 @@ export const ALPHAS = ['preserve', 'theme', 'black', 'white'] as const;
 export const LAYOUTS = ['left', 'right', 'top'] as const;
 export const PALETTES = ['theme', 'chroma', 'custom'] as const;
 export const EFFECTS = ['original', 'float', 'pulse', 'parallax', 'glow', 'shimmer', 'particles', 'reveal', 'panZoom'] as const;
+export {LOGO_ANIMATIONS, LOGO_PLAYS};
 export const FACTS = ['os', 'shell', 'terminal', 'time', 'uptime', 'version', 'hostname', 'user', 'path', 'git'] as const;
 export type WelcomeFact = typeof FACTS[number];
 export interface WelcomeStudio {
@@ -17,11 +19,14 @@ export interface WelcomeStudio {
   title: string; greeting: string; links: string[]; border: boolean;
   palette: typeof PALETTES[number]; customColor: string;
   modules: WelcomeFact[]; effect: typeof EFFECTS[number];
+  /** Animate a still image logo at startup with generated frames; Off keeps the still picture. */
+  logoAnimation: typeof LOGO_ANIMATIONS[number]; logoPlay: typeof LOGO_PLAYS[number];
 }
 export const DEFAULT_WELCOME_STUDIO: WelcomeStudio = {
   customized: true, logo: 'mascot', assetPath: '', fit: 'contain', alpha: 'preserve',
   layout: 'left', density: 'compact', title: 'notMyShell', greeting: 'A real shell. A livelier terminal.',
   links: [], border: true, palette: 'theme', customColor: '#A67CF3', modules: ['os', 'shell', 'version'], effect: 'original',
+  logoAnimation: 'off', logoPlay: 'once',
 };
 export function welcomeText(value: unknown, max = 160): string {
   return typeof value === 'string' ? stripTerminalControls(value, max * 8).replace(/[\r\n\t]/gu, ' ').slice(0, max) : '';
@@ -40,6 +45,7 @@ export function normalizeWelcomeStudio(value: unknown): WelcomeStudio {
     customColor: typeof v.customColor === 'string' && /^#[a-f0-9]{6}$/iu.test(v.customColor) ? v.customColor : d.customColor,
     modules: Array.isArray(v.modules) ? [...new Set(v.modules.filter((x): x is WelcomeFact => FACTS.includes(x as WelcomeFact)))].slice(0, FACTS.length) : [...d.modules],
     effect: choice(v.effect, EFFECTS, d.effect),
+    logoAnimation: choice(v.logoAnimation, LOGO_ANIMATIONS, d.logoAnimation), logoPlay: choice(v.logoPlay, LOGO_PLAYS, d.logoPlay),
   };
 }
 export const WELCOME_PRESETS: ReadonlyArray<{name: string; model: WelcomeStudio}> = [

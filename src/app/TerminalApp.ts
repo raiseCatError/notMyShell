@@ -9141,7 +9141,7 @@ export class TerminalApp {
 
   private welcomeCapabilities() {
     return {color: colorLevel() !== 'none', level: colorLevel(), home: homedir(), safeGlyphs: getCurrentGlyphMode() === 'safe', reducedMotion: this.promptConfiguration.presentation.reducedMotion || isReducedMotion(),
-      effectsOff: this.promptConfiguration.presentation.effectsOff, legacy: createWelcomeSnapshot(this.buildIdentity, this.shellCwd, this.shellId, this.welcomeUnderstanding()), accent: idleStops(this.promptConfiguration, 'theme')[0], chroma: idleStops(this.promptConfiguration, 'appearance')[0]};
+      effectsOff: this.promptConfiguration.presentation.effectsOff, hidden: this.terminalFocus === 'blurred', legacy: createWelcomeSnapshot(this.buildIdentity, this.shellCwd, this.shellId, this.welcomeUnderstanding()), accent: idleStops(this.promptConfiguration, 'theme')[0], chroma: idleStops(this.promptConfiguration, 'appearance')[0]};
   }
 
   private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'editor'): void {
