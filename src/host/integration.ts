@@ -1,24 +1,32 @@
-import {readGhosttySettings, saveGhosttySettings, type GhosttySettings, type SaveResult} from '../appearance/ghostty.js';
+import {applyHostAppearance, planHostAppearance, planHostRemoval, readHostAppearance, appearanceGuidance, type AppearanceRead, type AppearancePlanResult, type HostAppearancePlan, type HostAppearanceSettings} from '../appearance/hostAppearance.js';
+import {terminalProfile} from './capabilities.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {resolveHostCapabilities} from './capabilities.js';
 
 /** Explicit panel actions only. Constructing an adapter never reads or writes preferences. */
 export interface HostIntegration {
-  readAppearance(): Promise<GhosttySettings>;
-  saveAppearance(settings: GhosttySettings): Promise<SaveResult>;
-  installKeyboard(): Promise<{success: boolean; error?: string}>;
-  keyboardReload: string;
+  readAppearance(): Promise<AppearanceRead>;
+  planAppearance(settings: HostAppearanceSettings): AppearancePlanResult;
+  planAppearanceRemoval(): AppearancePlanResult;
+  applyAppearance(plan: HostAppearancePlan): ReturnType<typeof applyHostAppearance>;
+  /** Present only where NMSh can install a host key binding (Ghostty); other hosts show guidance. */
+  installKeyboard?(): Promise<{success: boolean; error?: string}>;
+  keyboardReload?: string;
   appearanceRestart: string;
 }
 
 export function hostIntegration(env: NodeJS.ProcessEnv = process.env): HostIntegration | undefined {
   if (!resolveHostCapabilities(env).hostConfiguration) return undefined;
+  const profile = terminalProfile(env);
+  if (profile !== 'kitty' && profile !== 'ghostty') return undefined;
+  const context = {env, platform: process.platform};
   return {
-    readAppearance: readGhosttySettings,
-    saveAppearance: saveGhosttySettings,
-    installKeyboard: installGhosttyKeybinding,
-    keyboardReload: 'Reload Ghostty config (Cmd+Shift+,) for changes to take effect.',
-    appearanceRestart: 'Opacity changes require Ghostty restart.',
+    readAppearance: async () => readHostAppearance(profile, context),
+    planAppearance: settings => planHostAppearance(profile, settings, context),
+    planAppearanceRemoval: () => planHostRemoval(profile, context),
+    applyAppearance: applyHostAppearance,
+    ...(profile === 'ghostty' ? {installKeyboard: installGhosttyKeybinding, keyboardReload: 'Reload Ghostty config (Cmd+Shift+,) for changes to take effect.'} : {}),
+    appearanceRestart: appearanceGuidance(profile, process.platform),
   };
 }
 

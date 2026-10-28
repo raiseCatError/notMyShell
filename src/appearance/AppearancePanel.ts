@@ -12,6 +12,8 @@ const RESET = '\u001B[0m';
 export const BLUR_MODES: BlurMode[] = ['Off', 'Numeric', 'Glass Regular', 'Glass Clear'];
 
 export interface AppearanceState {
+  background?: string;
+  allowedBlurModes?: readonly BlurMode[];
   opacity: number;
   blurModeIndex: number;
   blurStrength: number;
@@ -39,13 +41,15 @@ export function handleAppearanceKey(key: Key, state: AppearanceState): boolean {
       state.opacity = Math.round(state.opacity * 100) / 100;
     } else if (state.selectedIndex === 1) {
       if (Math.abs(delta) === 1) {
-         state.blurModeIndex = Math.max(0, Math.min(BLUR_MODES.length - 1, state.blurModeIndex + delta));
+         const allowed = state.allowedBlurModes ?? BLUR_MODES;
+         const current = Math.max(0, allowed.indexOf(BLUR_MODES[state.blurModeIndex]!));
+         state.blurModeIndex = BLUR_MODES.indexOf(allowed[Math.max(0, Math.min(allowed.length - 1, current + delta))]!);
          if (BLUR_MODES[state.blurModeIndex] !== 'Numeric' && state.selectedIndex > 1) {
            state.selectedIndex = 1;
          }
       }
     } else if (state.selectedIndex === 2 && BLUR_MODES[state.blurModeIndex] === 'Numeric') {
-      state.blurStrength = Math.max(0, Math.min(50, state.blurStrength + delta));
+      state.blurStrength = Math.max(0, Math.min(Math.max(50, state.blurStrength), state.blurStrength + delta));
     }
     return true;
   }

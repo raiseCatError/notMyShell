@@ -55,3 +55,52 @@ test('NMSh rows open the canonical editors; Motion opens the general motion scre
   assert.equal(hub.view, 'hub');
   assert.equal(hub.selected, 5, 'back on the Motion row');
 });
+
+
+test('host save preview owns input; Escape cancels and Enter alone confirms', () => {
+  const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0});
+  hub.confirmation = {plan: {preview: ['File: private/config', '+ background-opacity = 0.65'], guidance: 'Reload required'} as any, offset: 0};
+  const rows = text(renderAppearanceHub(hub, config(), 64, 'Theme', 'Portable', undefined, 12));
+  assert.match(rows, /Review host configuration/u);
+  assert.match(rows, /background-opacity = 0.65/u);
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'confirmHost'});
+  assert.equal(appearanceHubKey(hub, {kind: 'escape'}, config()), undefined);
+  assert.equal(hub.confirmation, undefined);
+  assert.equal(hub.view, 'hub');
+});
+
+test('restore is a separate review action and background input accepts only RGB', () => {
+  const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0});
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'text', value: 'r'}, config()), {kind: 'restoreHost'});
+  hub.selected = 9; // background after opacity/blur
+  appearanceHubKey(hub, {kind: 'enter'}, config());
+  appearanceHubKey(hub, {kind: 'text', value: '123abc'}, config());
+  appearanceHubKey(hub, {kind: 'enter'}, config());
+  assert.equal(hub.host?.background, '#123abc');
+  assert.equal(hub.hostDirty, true);
+});
+
+
+test('short appearance panels keep the selected host control and navigation visible', () => {
+  const hub = createAppearanceHub('Host', {opacity: 0.8, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0});
+  hub.selected = 7;
+  const rows = renderAppearanceHub(hub, config(), 45, 'Theme', 'Portable', undefined, 8);
+  assert.ok(rows.length <= 8);
+  assert.match(text(rows), /Opacity/u);
+  assert.match(text(rows), /Esc/u);
+});
+
+
+test('Motion R remains replay on integrated hosts; large existing blur values do not crash', () => {
+  const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 1, blurStrength: 75, selectedIndex: 0});
+  assert.doesNotThrow(() => renderAppearanceHub(hub, config(), 70, 'Theme', 'Portable'));
+  hub.view = 'motion'; hub.selected = 1;
+  assert.equal(appearanceHubKey(hub, {kind: 'text', value: 'r'}, config(), 123), undefined);
+  assert.equal(hub.previewStart, 123);
+});
+
+
+test('configuration-derived background cannot emit OSC controls from the hub', () => {
+  const hub = createAppearanceHub('Host', {opacity: 1, blurModeIndex: 0, blurStrength: 0, selectedIndex: 0, background: 'black\u001b]52;c;bad\u0007'});
+  assert.doesNotMatch(renderAppearanceHub(hub, config(), 100, 'Theme', 'Portable').join('\n'), /\u001b\]52/u);
+});

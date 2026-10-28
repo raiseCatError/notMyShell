@@ -2472,6 +2472,8 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.appearanceHub = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'motion') this.updateConfiguration(configuration => { configuration.motion = action.motion; });
       else if (action?.kind === 'saveHost') void this.saveAppearance();
+      else if (action?.kind === 'confirmHost') void this.saveAppearance(true);
+      else if (action?.kind === 'restoreHost') void this.saveAppearance(false, true);
       else if (action?.kind === 'open') {
         // The canonical editors; /appearance never duplicates them.
         this.appearanceHub = undefined;
@@ -3742,35 +3744,38 @@ export class TerminalApp {
     this.render();
   }
 
-  private async saveAppearance(): Promise<void> {
+  private async saveAppearance(confirm = false, remove = false): Promise<void> {
     const hub = this.appearanceHub;
-    const state = hub?.host;
-    if (!hub || !state || !this.host.integration) return;
-    hub.hostDirty = false;
-    this.output.addHistoryLine(`${INFO}✻ Saving appearance settings...${RESET}`);
-    this.render();
-
-    const result = await this.host.integration.saveAppearance({
-      opacity: state.opacity,
-      blurMode: BLUR_MODES[state.blurModeIndex],
-      blurStrength: state.blurStrength
-    });
-
-    if (result.success) {
-      this.output.addHistoryLine(`${SUCCESS}✻ Saved to ${result.fragmentPath}${RESET}`);
-      this.output.addHistoryLine(`${INFO}✻ Host config updated: ${result.hostPath}${RESET}`);
-      if (state.opacity < 1) {
-        this.output.addHistoryLine(`${INFO}✻ ${this.host.integration.appearanceRestart}${RESET}`);
+    const integration = this.host.integration;
+    if (!hub || !integration || (!hub.host && !confirm && !remove)) return;
+    if (confirm) {
+      const pending = hub.confirmation?.plan;
+      hub.confirmation = undefined;
+      if (!pending) return;
+      const result = integration.applyAppearance(pending);
+      hub.hostMessage = result.ok ? pending.guidance : result.error;
+      if (result.ok) {
+        hub.hostDirty = false;
+        const inspected = await integration.readAppearance();
+        if (this.stopped || this.appearanceHub !== hub) return;
+        const settings = inspected.settings;
+        hub.host = settings ? {opacity: settings.opacity, blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)), blurStrength: settings.blurStrength,
+          ...(settings.background ? {background: settings.background} : {}), allowedBlurModes: ['Off', 'Numeric'], selectedIndex: 0} : undefined;
+        if (inspected.problems.length) hub.hostMessage = `${inspected.problems.join(' ')} ${pending.guidance}`;
       }
     } else {
-      this.output.addHistoryLine(`${ERROR}✻ Failed to save appearance${RESET}`);
-      this.output.addHistoryLine(`  ⎿ ${result.error}`);
+      const planned = remove ? integration.planAppearanceRemoval() : integration.planAppearance({
+        opacity: hub.host!.opacity, blurMode: BLUR_MODES[hub.host!.blurModeIndex]!, blurStrength: hub.host!.blurStrength,
+        ...(hub.host!.background ? {background: hub.host!.background} : {}),
+      });
+      if (planned.ok) hub.confirmation = {plan: planned.plan, offset: 0};
+      else hub.hostMessage = planned.error;
     }
     this.render();
   }
 
   private async startKeyboard(): Promise<void> {
-    if (!this.host.capabilities.hostConfiguration || !this.host.integration) {
+    if (!this.host.capabilities.hostConfiguration || !this.host.integration?.installKeyboard) {
       this.output.addFrontendInteraction('/keyboard', this.host.keyboardGuidance ?? 'Ctrl+J inserts a newline; Ctrl+W deletes a word.', INFO);
       this.render();
       return;
@@ -3788,7 +3793,9 @@ export class TerminalApp {
     this.output.addHistoryLine(`${INFO}✻ Installing ${this.host.name} keyboard bindings...${RESET}`);
     this.render();
 
-    const result = await this.host.integration!.installKeyboard();
+    const install = this.host.integration?.installKeyboard;
+    if (!install) return;
+    const result = await install();
 
     if (result.success) {
       this.output.addHistoryLine(`${SUCCESS}✻ Installed keyboard bindings in ${this.host.name} config${RESET}`);
@@ -3804,10 +3811,18 @@ export class TerminalApp {
   private async startAppearance(): Promise<void> {
     let host: AppearanceState | undefined;
     if (this.host.capabilities.appearanceIntegration && this.host.integration) {
-      const settings = await this.host.integration.readAppearance();
-      host = {opacity: settings.opacity, blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)), blurStrength: settings.blurStrength, selectedIndex: 0};
+      const inspected = await this.host.integration.readAppearance();
+      const settings = inspected.settings;
+      if (settings) host = {opacity: settings.opacity, blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)), blurStrength: settings.blurStrength,
+        ...(settings.background ? {background: settings.background} : {}), allowedBlurModes: ['Off', 'Numeric'], selectedIndex: 0};
+      if (inspected.problems.length) {
+        this.appearanceHub = createAppearanceHub(this.host.name, undefined, inspected.problems.join(' '));
+        this.appearanceHub.canRestoreHost = true;
+        this.render(); return;
+      }
     }
     this.appearanceHub = createAppearanceHub(this.host.name, host, this.host.appearanceGuidance);
+    this.appearanceHub.canRestoreHost = Boolean(this.host.integration);
     this.render();
   }
 

@@ -122,7 +122,7 @@ export function resolveHostCapabilities(env: NodeJS.ProcessEnv = process.env): T
     else if (profile !== 'baseline') Object.assign(result, MOUSE_PROFILE);
     if (profile === 'ghostty') Object.assign(result, {enhancedKeyboard: true, kittyKeyboard: true,
       appearanceIntegration: true, hostConfiguration: true});
-    if (profile === 'kitty') Object.assign(result, {enhancedKeyboard: true, kittyKeyboard: true, graphicsProtocol: 'kitty'});
+    if (profile === 'kitty') Object.assign(result, {enhancedKeyboard: true, kittyKeyboard: true, graphicsProtocol: 'kitty', appearanceIntegration: true, hostConfiguration: true});
     if (profile === 'iterm2' || profile === 'wezterm') result.graphicsProtocol = 'iterm2';
   }
   else if (env.TMUX && !env.STY && !env.ZELLIJ && env.TERM !== 'dumb') Object.assign(result, TMUX_PROFILE);

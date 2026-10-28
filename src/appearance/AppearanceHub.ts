@@ -1,3 +1,5 @@
+import type {HostAppearancePlan} from './hostAppearance.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 import {chromaPreviewNote} from './chromaNotes.js';
 import type {Key} from '../terminal/keys.js';
 import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
@@ -32,11 +34,15 @@ export interface AppearanceHubState {
   hostGuidance?: string;
   /** Host values were changed and not saved yet. */
   hostDirty: boolean;
+  confirmation?: {plan: HostAppearancePlan; offset: number};
+  backgroundInput?: string;
+  hostMessage?: string;
+  canRestoreHost?: boolean;
   /** When the Motion preview last started (row selected, value changed, R); one run, never a loop. */
   previewStart?: number;
 }
 
-export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'};
+export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'} | {kind: 'confirmHost'} | {kind: 'restoreHost'};
 
 /** Compact launcher: each row opens its canonical editor (/theme, /prompt, /cursor, UI chrome, /chroma, Motion, /theme-bridge). */
 const NMSH_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
@@ -51,10 +57,27 @@ export function createAppearanceHub(hostName: string, host?: AppearanceState, ho
 /** Host rows that exist for this host (opacity, blur mode, and blur strength for Numeric). */
 function hostRowCount(state: AppearanceHubState): number {
   if (!state.host) return 0;
-  return BLUR_MODES[state.host.blurModeIndex] === 'Numeric' ? 3 : 2;
+  return BLUR_MODES[state.host.blurModeIndex] === 'Numeric' ? 4 : 3;
 }
 
 export function appearanceHubKey(state: AppearanceHubState, key: Key, configuration: PromptConfiguration, now = Date.now()): HubAction | undefined {
+  if (state.confirmation) {
+    if (key.kind === 'escape' || key.kind === 'interrupt') { state.confirmation = undefined; return undefined; }
+    if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min(state.confirmation.plan.preview.length - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
+    return key.kind === 'enter' ? {kind: 'confirmHost'} : undefined;
+  }
+  if (state.backgroundInput !== undefined) {
+    if (key.kind === 'escape' || key.kind === 'interrupt') state.backgroundInput = undefined;
+    else if (key.kind === 'backspace') state.backgroundInput = state.backgroundInput.slice(0, -1);
+    else if (key.kind === 'text') state.backgroundInput = (state.backgroundInput + key.value.replace(/[^#0-9a-f]/giu, '')).slice(0, 7);
+    else if (key.kind === 'enter' && state.host) {
+      if (!state.backgroundInput || /^#?[0-9a-f]{6}$/iu.test(state.backgroundInput)) {
+        state.host.background = state.backgroundInput ? `#${state.backgroundInput.replace(/^#/u, '')}` : undefined;
+        state.backgroundInput = undefined; state.hostDirty = true;
+      } else state.hostMessage = 'Enter six RGB digits, or leave empty to inherit the host background.';
+    }
+    return undefined;
+  }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {
     const advanced = state.view === 'motionAdvanced';
     // The Motion list: Rendering, the five effects, then Advanced (a child screen with the selected rendering's own tuning).
@@ -77,6 +100,8 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     }
     return undefined;
   }
+  if (state.host && state.hostDirty && key.kind === 'text' && key.value.toLowerCase() === 's') return {kind: 'saveHost'};
+  if ((state.host || state.canRestoreHost) && key.kind === 'text' && key.value.toLowerCase() === 'r') return {kind: 'restoreHost'};
   const total = NMSH_ROWS.length + hostRowCount(state);
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + total) % total; return undefined; }
@@ -88,6 +113,11 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
   }
   // Host rows: the existing opacity/blur editor, with Enter saving through the host integration.
   if (!state.host) return undefined;
+  const backgroundIndex = NMSH_ROWS.length + hostRowCount(state) - 1;
+  if (state.selected === backgroundIndex) {
+    if (key.kind === 'enter') state.backgroundInput = '';
+    return undefined;
+  }
   if (key.kind === 'enter') return state.hostDirty ? {kind: 'saveHost'} : undefined;
   state.host.selectedIndex = state.selected - NMSH_ROWS.length;
   if ((key.kind === 'left' || key.kind === 'right') && handleAppearanceKey(key, state.host)) {
@@ -112,6 +142,14 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001b[0m';
   const mark = (selected: boolean) => selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
+  if (state.confirmation) {
+    const review = state.confirmation;
+    const available = Math.max(1, (height ?? 24) - 7);
+    const lines = review.plan.preview.slice(review.offset, review.offset + available);
+    return [`${primary}  Review host configuration${reset}`, '  Enter confirms exactly this plan; Esc keeps every file unchanged.',
+      ...lines.map(line => `  ${stripTerminalControls(line)}`), '', `  ${stripTerminalControls(review.plan.guidance)}`,
+      renderControls([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']])].map(row => truncateAnsi(row, columns));
+  }
   if (state.view === 'motion' || state.view === 'motionAdvanced') {
     const advanced = state.view === 'motionAdvanced';
     const rendering = configuration.motion.rendering === 'rich' ? 'Rich' : 'Clean';
@@ -158,17 +196,30 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(row.label, 20)}${reset}${subtle}${summaries[row.id]}${reset}  ${selected ? `${accent}›${reset}` : ''}`);
   });
   rows.push(`  ${subtle}Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}${reset}`);
-  rows.push('', `  ${subtle}Host window${reset}`, `    ${secondary}${padCells('Host', 20)}${reset}${primary}${state.hostName}${reset}`);
+  rows.push('', `  ${subtle}Host window · configuration snapshot (CLI overrides are not visible)${reset}`, `    ${secondary}${padCells('Host', 20)}${reset}${primary}${stripTerminalControls(state.hostName)}${reset}`);
   if (state.host) {
-    const bar = (fraction: number) => `${'█'.repeat(Math.round(fraction * 10))}${'░'.repeat(10 - Math.round(fraction * 10))}`;
+    const bar = (fraction: number) => { const filled = Math.max(0, Math.min(10, Math.round(fraction * 10))); return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`; };
     const hostRows = [['Opacity', `${bar(state.host.opacity)}  ${Math.round(state.host.opacity * 100)}%`], ['Blur mode', BLUR_MODES[state.host.blurModeIndex]!]];
     if (BLUR_MODES[state.host.blurModeIndex] === 'Numeric') hostRows.push(['Blur', `${bar(state.host.blurStrength / 50)}  ${state.host.blurStrength}`]);
+    hostRows.push(['Background', state.backgroundInput !== undefined ? `RGB: ${state.backgroundInput}_` : stripTerminalControls(state.host.background ?? 'Inherit host color')]);
     hostRows.forEach(([label, value], index) => {
       const selected = NMSH_ROWS.length + index === state.selected;
       rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(label!, 20)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
-    if (state.hostDirty) rows.push(`    ${subtle}Enter saves the host window settings${reset}`);
-  } else rows.push(`    ${subtle}${state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`}${reset}`);
+    if (state.hostDirty) rows.push(`    ${subtle}S reviews pending host changes before writing${reset}`);
+    rows.push(`    ${subtle}R reviews removal of NMSh-owned appearance overrides${reset}`);
+  } else rows.push(`    ${subtle}${stripTerminalControls(state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`)}${reset}`);
+  if (!state.host && state.canRestoreHost) rows.push(`  ${subtle}R reviews removal of NMSh-owned appearance overrides${reset}`);
+  if (state.hostMessage) rows.push(`  ${subtle}${stripTerminalControls(state.hostMessage)}${reset}`);
   rows.push('', renderControls([['↑↓', 'select'], ['Enter', 'open'], ...(state.host ? [['←→', 'adjust host'] as [string, string]] : []), ['Esc', 'close']]));
+  if (height !== undefined && rows.length > height) {
+    const limit = Math.max(1, Math.floor(height));
+    const controls = columns < 60 ? renderControls([['Esc', 'close'], ['↑↓', 'select'], ['←→', 'edit'], ['S', 'review']]) : rows.at(-1)!;
+    if (limit <= 2) return [rows[0]!, controls].slice(0, limit).map(row => truncateAnsi(row, columns));
+    const count = limit - 2;
+    const selectedRow = Math.max(1, rows.findIndex(row => row.startsWith(mark(true))));
+    const start = Math.max(1, Math.min(rows.length - 1 - count, selectedRow - Math.floor(count / 2)));
+    return [rows[0]!, ...rows.slice(start, start + count), controls].map(row => truncateAnsi(row, columns));
+  }
   return rows.map(row => truncateAnsi(row, columns));
 }
