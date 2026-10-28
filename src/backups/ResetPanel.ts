@@ -3,6 +3,8 @@ import {renderStudioLayout,renderStudioReview,studioWrap,type StudioReview} from
 import type {AppearanceContext} from '../appearance/hostPaths.js';
 import {Journal} from './journal.js';
 import {applyReset,discoverResetAreas,planReset,type ResetArea,type ResetPlan} from './reset.js';
+import {checkMark} from '../ui/glyphs.js';
+import {renderTextValue} from '../ui/formControls.js';
 export interface ResetPanel {
   context:AppearanceContext;journal:Journal;areas:ResetArea[];selected:Set<string>;index:number;
   step:'choose'|'impact'|'backup'|'confirm'|'result';review?:StudioReview;plan?:ResetPlan;typed:string;shown:boolean;message:string;results:string[];
@@ -54,13 +56,13 @@ export function renderResetPanel(state:ResetPanel,columns:number,height:number):
   if(state.step==='impact'||state.step==='backup')return renderStudioReview(state.review!,state.step==='impact'?'Step 2 · Impact':'Step 3 · Verified backup',columns,height);
   state.shown=columns>=24&&height>=8;
   if(state.step==='confirm')return renderStudioLayout({title:'Step 4 · Confirm reset',selected:0,
-    entries:[{group:'Final confirmation',label:`Type reset: ${state.typed || '…'}`,render:()=>`Type reset: ${state.typed || '…'}`}],
+    entries:[{group:'Final confirmation',label:'Type reset',render:()=>`Type reset  ${renderTextValue(state.typed,'reset',{focused:true,color:!process.env.NO_COLOR})}`}],
     notice:state.message,details:width=>studioWrap(`Reset only the selected NMSh-owned areas. ${state.plan!.steps.length} areas; ${state.plan!.changes.length} backup files. Type reset exactly, then Enter. Esc cancels.`,width),
     controls:[['Enter','reset if word matches'],['Esc','cancel']]},columns,height);
   if(state.step==='result')return renderStudioReview(state.review!,'Reset · results',columns,height);
   return renderStudioLayout({title:'Step 1 · Choose reset areas',subtitle:'Space toggles · nothing is selected by default',selected:state.index,
     entries:state.areas.map(item=>({group:item.id==='settings'?'NMSh settings':'Owned integrations',label:item.label,
-      render:()=>`${state.selected.has(item.id)?'[x]':'[ ]'} ${item.label} · ${item.status}`})),
+      render:()=>`${checkMark(state.selected.has(item.id))} ${item.label} · ${item.status}`})),
     notice:state.message,details:width=>studioWrap(state.areas[state.index]?.reason??'Only NMSh-owned changes are offered; unrelated user lines are kept.',width),
     controls:[['↑↓','select'],['Space','toggle'],['Enter','impact'],['Esc','cancel']]},columns,height);
 }
