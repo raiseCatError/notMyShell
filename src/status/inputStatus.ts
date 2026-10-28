@@ -86,28 +86,28 @@ export function completionWaitFact(timing: InputTiming | undefined): string {
 }
 
 /** How to settle typing NMSh is holding because it cannot tell who reads it (#426): the composer's hint and the rows'. */
-export function heldInputActions(program: string): string {
-  return `Ctrl+S sends it to ${program} · Tab shows it · Esc discards it`;
+export function heldInputActions(program: string, queueReview = false): string {
+  return `Ctrl+S sends it to ${program} · Tab shows it · Esc discards it${queueReview ? ' · Ctrl+Q reviews for queue' : ''}`;
 }
 
 /**
  * Typing held at the prompt (#426): the command ended right after hidden input, and NMSh could not tell whether the
  * typing was the next command or a reply to a question with no prompt. Nothing typed is shown until the person chooses.
  */
-export function heldAtPromptActions(program: string): string {
-  return `Typed during ${program}'s hidden input · held, not run · Tab shows it · Esc discards it`;
+export function heldAtPromptActions(program: string, confirmation = false): string {
+  return `${confirmation ? `Typed while ${program} ran` : `Typed during ${program}'s hidden input`} · held, not run · Tab shows it · Esc discards it`;
 }
 
 /**
  * The activity rows while typing is held without evidence of who reads it: what happened, then how to choose. Nothing
  * typed is shown; the person decides, or later evidence does.
  */
-export function heldInputRows(program: string, columns: number): [string, string] {
+export function heldInputRows(program: string, columns: number, queueReview = false): [string, string] {
   const attention = foreground(UI_COLORS.attention);
   const secondary = foreground(UI_COLORS.secondary);
   const head = `${inputGlyph({confidence: 'likely'})} Can't tell whether ${program} is reading your typing`;
   const tail = ' · held, not shown';
   const first = `${attention}${BOLD}${truncateText(head, columns)}${RESET}${displayWidth(head + tail) <= columns ? `${secondary}${tail}${RESET}` : ''}`;
   const indent = '  ';
-  return [first, `${indent}${secondary}${truncateText(heldInputActions(program), Math.max(1, columns - indent.length))}${RESET}`];
+  return [first, `${indent}${secondary}${truncateText(heldInputActions(program, queueReview), Math.max(1, columns - indent.length))}${RESET}`];
 }

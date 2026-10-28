@@ -36,6 +36,7 @@ function fixture() {
   Object.defineProperty(frame.session, 'interrupt', {value: () => { interrupts += 1; }, configurable: true});
   const originalQueue = frame.session.queue.bind(frame.session);
   Object.defineProperty(frame.session, 'queue', {value: (op: QueueOp) => { queueOps.push(op); originalQueue(op); }, configurable: true});
+  const originalSubmit = frame.app['submit'];
   Object.defineProperty(frame.app, 'submit', {value: async () => { submitted.push(frame.app['editor'].text); frame.app['editor'].clear(); }, configurable: true});
   let looks = 0;
   let settle: (result: LookResult | undefined) => void = () => {};
@@ -69,7 +70,7 @@ function fixture() {
     assert.equal(submitted.some(entry => entry.includes(secret)), false, `${what}: not run as a command`);
     assert.equal(transcript().includes(secret), false, `${what}: not in the transcript`);
   };
-  return {...frame, queueOps, written, submitted, slowLooks, quickLooks, type, enter, text, adds, screen, transcript, found, nowhere,
+  return {...frame, originalSubmit, queueOps, written, submitted, slowLooks, quickLooks, type, enter, text, adds, screen, transcript, found, nowhere,
     interrupts: () => interrupts, looks: () => looks, settle: (result: LookResult | undefined) => settle(result)};
 }
 
@@ -93,6 +94,8 @@ test('#426: a reply to a prompt-less read is not queued when the look outlasts 8
     // The look finds the shell's own read, holding its terminal and idle.
     f.found({since: 0, confidence: 'likely', mode: 'line'});
     await settled();
+    assert.deepEqual(f.written, [], 'likely evidence alone cannot submit a held Enter');
+    f.app['onInput'](CTRL_S);
     assert.deepEqual(f.written, ['hello\r'], 'the answer reaches the read, once');
     assert.deepEqual(f.adds(), [], 'nothing was queued');
     assert.equal(f.text(), '');
@@ -134,8 +137,10 @@ test('#426: keys typed after a held Enter stay behind it, in order', async t => 
     t.mock.timers.tick(SLOW_MS + 100);
     f.found({since: 0, confidence: 'likely', mode: 'line'});
     await settled();
-    assert.deepEqual(f.written, ['hello\r']);
-    assert.equal(f.text(), 'ls', 'what followed the Enter is the next draft');
+    assert.deepEqual(f.written, [], 'likely evidence alone cannot submit a held Enter');
+    f.app['onInput'](CTRL_S);
+    assert.deepEqual(f.written, ['hello\rls'], 'explicit send preserves every held byte in order');
+    assert.equal(f.text(), '', 'the explicit send leaves no future command draft');
     assert.deepEqual(f.adds(), []);
   } finally { f.dispose(); }
 });
@@ -253,7 +258,7 @@ test('#426 timeout: evidence that arrives while typing is held decides it (a hid
   } finally { f.dispose(); }
 });
 
-test('#426: a look that saw the terminal echoing routes type-ahead at once; no held state', async t => {
+test('#426: echo permits draft display but Enter without a reader stays held', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -264,9 +269,10 @@ test('#426: a look that saw the terminal echoing routes type-ahead at once; no h
     assert.equal(f.text(), 'echo next');
     f.enter();
     await settled();
-    assert.deepEqual(f.adds(), ['echo next'], 'queued as soon as the look answered');
+    assert.deepEqual(f.adds(), [], 'echo is not reader evidence');
+    assert.equal(f.text(), '', 'the draft moved into the hold');
     assert.equal(f.looks(), 2, 'one look for the draft, one for the Enter');
-    assert.doesNotMatch(f.screen(), HELD);
+    assert.match(f.screen(), HELD);
     assert.deepEqual(f.written, []);
   } finally { f.dispose(); }
 });
@@ -311,7 +317,7 @@ test('#426: type-ahead is not delayed beyond the look: it appears as soon as the
   } finally { f.dispose(); }
 });
 
-test('#426: an answer to a question the program printed goes as soon as the look answers, never queued', async t => {
+test('#426: a held answer to a printed question needs confirmation when the look only infers a reader', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
@@ -324,6 +330,8 @@ test('#426: an answer to a question the program printed goes as soon as the look
     assert.deepEqual(f.adds(), []);
     f.found({since: 0, confidence: 'likely', mode: 'line'});
     await settled();
+    assert.deepEqual(f.written, [], 'a likely reader cannot submit the held Enter');
+    f.app['onInput'](CTRL_S);
     assert.deepEqual(f.written, ['y\r']);
     assert.deepEqual(f.adds(), []);
   } finally { f.dispose(); }
@@ -394,4 +402,148 @@ test('#426: Ctrl+C discards held typing, as a terminal flushes its input on inte
       assert.deepEqual(f.written, []);
     } finally { f.dispose(); }
   }
+});
+
+for (const combined of [false, true]) {
+  test(`#473: echo-only Enter (${combined ? 'combined' : 'separate'} hold) needs confirmation after late likely evidence`, async () => {
+    const f = fixture();
+    try {
+      f.quickLooks('visible');
+      f.begin(READ);
+      f.type('hello');
+      if (!combined) await settled();
+      f.enter();
+      await settled();
+      assert.deepEqual(f.adds(), [], 'an answer is not turned into an approval-held command');
+      assert.equal(f.text(), '', 'the entire draft belongs to the hold, not the future prompt');
+      f.found({since: 0, confidence: 'likely', mode: 'line'});
+      await settled();
+      assert.deepEqual(f.written, [], 'late likely evidence does not send');
+      f.app['onInput'](CTRL_S);
+      assert.equal(f.written.join(''), 'hello\r', 'explicit send recovers the answer exactly once');
+      f.settle('visible');
+      await settled();
+      assert.equal(f.written.join(''), 'hello\r', 'late lookup cannot duplicate delivery');
+      assert.deepEqual(f.adds(), []);
+    } finally { f.dispose(); }
+  });
+}
+
+for (const action of ['interrupt', 'escape', 'complete', 'queueCommand', 'done', 'prompt', 'terminalOwner', 'passthrough'] as const) {
+  test(`#473: ambiguous Enter followed by ${action} never silently sends or executes`, async () => {
+    const f = fixture();
+    try {
+      f.quickLooks('visible');
+      f.begin(READ);
+      f.type('hello');
+      await settled();
+      f.enter();
+      await settled();
+      if (action === 'done') f.session.emit('inputState', {done: true, timing: {waitedMs: 0, waits: 0}});
+      else if (action === 'prompt') f.complete(0);
+      else if (action === 'terminalOwner') f.session.emit('inputState', {terminalOwner: true, timing: {waitedMs: 0, waits: 0}});
+      else if (action === 'passthrough') f.app['onActiveModeChange']('PASSTHROUGH');
+      else f.app['handleKey']({kind: action});
+      await settled();
+      assert.deepEqual(f.written, [], 'neither the answer nor its Enter is sent');
+      assert.deepEqual(f.adds(), [], 'nothing queued without a fresh explicit Enter');
+      assert.deepEqual(f.submitted, []);
+      if (action === 'complete' || action === 'queueCommand') {
+        assert.equal(f.text(), 'hello', 'review restores text without Enter');
+        if (action === 'queueCommand') {
+          f.enter();
+          assert.deepEqual(f.adds(), ['hello'], 'explicit queue review Enter queues once');
+          assert.equal(f.queueOps.find(op => op.op === 'add')?.op, 'add');
+          assert.deepEqual(f.written, []);
+        }
+      } else {
+        assert.equal(f.text(), '', 'cancellation cannot leave a command draft');
+        if (action === 'done' || action === 'prompt') assert.equal(f.app['ownershipLook']?.atPrompt, true, 'completion invalidates delivery but keeps typing for explicit review');
+        f.app['onInput'](CTRL_S);
+        assert.equal(f.written.join('').includes('hello'), false, 'invalidated capture is never recovered');
+      }
+    } finally { f.dispose(); }
+  });
+}
+
+test('#473: a submitted command taking the alternate screen invalidates its held Enter before new raw keys', async () => {
+  const f = fixture();
+  try {
+    f.quickLooks('visible');
+    Object.defineProperty(f.session, 'submit', {value: () => {}, configurable: true});
+    f.app['editor'].insert(READ);
+    await f.originalSubmit.call(f.app);
+    f.app['onShellExec'](READ);
+    f.type('hello'); await settled(); f.enter(); await settled();
+    assert.deepEqual(f.adds(), []);
+    f.app['onShellData']('\u001b[?1049h');
+    assert.equal(f.app['passthrough'], true, 'the real submitted output callback handed over the terminal');
+    assert.equal(f.app['ownershipLook'], undefined, 'ownership change invalidates the old decision');
+    f.app['onInput']('X');
+    assert.equal(f.written.join(''), 'X', 'only newly typed raw input reaches the new owner');
+  } finally { f.dispose(); }
+});
+
+for (const result of ['unknown', undefined] as const) {
+  test(`#473: ${result ?? 'older-service'} lookup followed by false-positive likely wait never submits a held Enter`, async () => {
+    const f = fixture();
+    try {
+      f.quickLooks(result); f.begin('wait'); f.type('hello'); f.enter(); await settled();
+      f.found({since: 0, confidence: 'likely', mode: 'line'}); await settled();
+      assert.deepEqual(f.written, []); assert.deepEqual(f.adds(), []); assert.equal(f.text(), '');
+      f.app['handleKey']({kind: 'escape'}); f.complete(0); await settled();
+      assert.deepEqual(f.submitted, []); assert.equal(f.text(), '');
+    } finally { f.dispose(); }
+  });
+}
+
+test('#473: a password transition cannot expose or auto-send a confirmation-held reply; Tab reviews without acting', async () => {
+  const f = fixture();
+  try {
+    f.quickLooks('visible'); f.begin('sleep 1; read -s pw'); f.type(SECRET); await settled(); f.enter(); await settled();
+    f.found({since: 0, confidence: 'confirmed', mode: 'hidden'}); await settled();
+    f.type('X');
+    f.nowhere(SECRET, 'later hidden reader'); assert.deepEqual(f.written, []);
+    f.app['onInput'](TAB);
+    assert.equal(f.text(), `${SECRET}\nX`, 'review preserves editing order but never replays Enter as submission');
+    f.found({since: 0, confidence: 'confirmed', mode: 'hidden'}); await settled();
+    assert.deepEqual(f.written, [], 'a reader re-report cannot steal the reviewed queue draft');
+    assert.deepEqual(f.written, []); assert.deepEqual(f.adds(), []);
+  } finally { f.dispose(); }
+});
+
+for (const change of ['exec', 'stop'] as const) {
+  test(`#473: ${change} invalidates confirmation before a stale lookup can recover it`, async () => {
+    const f = fixture();
+    try {
+      f.quickLooks('visible'); f.begin(READ); f.type('hello'); await settled(); f.enter(); await settled();
+      if (change === 'exec') f.app['onShellExec']('echo other');
+      else f.app['stop'](0);
+      f.settle('visible'); await settled();
+      assert.equal(f.app['ownershipLook'], undefined); assert.equal(f.text(), '');
+      assert.deepEqual(f.written, []); assert.deepEqual(f.adds(), []);
+    } finally { f.dispose(); }
+  });
+}
+
+test('#473: likely hidden inference keeps even an unfinished held reply private until explicit send', async () => {
+  const f = fixture();
+  try {
+    f.slowLooks(); f.begin('sleep 1; read -s pw'); f.type(SECRET);
+    f.found({since: 0, confidence: 'likely', mode: 'hidden'}); await settled();
+    f.nowhere(SECRET, 'echo off without reliable reader ownership');
+    assert.deepEqual(f.written, [], 'merely likely hidden evidence cannot deliver held bytes');
+    f.app['onInput'](CTRL_S);
+    assert.equal(f.written.join(''), SECRET);
+  } finally { f.dispose(); }
+});
+
+test('#473: a whole slash action held by the first-key look is still parsed as an NMSh action', async () => {
+  const f = fixture();
+  try {
+    f.quickLooks('visible'); f.begin('sleep 30'); f.type('/queue'); f.enter(); await settled();
+    assert.deepEqual(f.submitted, ['/queue']);
+    assert.equal(f.app['ownershipLook'], undefined);
+    assert.deepEqual(f.written, []); assert.deepEqual(f.adds(), []);
+  } finally { f.dispose(); }
 });

@@ -64,7 +64,7 @@ for (const [index, shell] of (['zsh', 'bash', 'fish'] as const).entries()) {
       first.pty.write('w');
       await first.waitFor(/runs even after a failure/u, mark);
       first.pty.write('\u001b[27u');
-      await first.waitFor(/Enter holds it for approval · Ctrl\+Q runs it after/u, mark);
+      await first.waitFor(/Enter checks who reads it · Ctrl\+Q runs it after/u, mark);
       first.pty.write('\u0003');
       await first.waitFor(/Queue paused:[\s\S]*was interrupted/u, mark);
       await first.run('echo AFTER-INTERRUPT', /AFTER-INTERRUPT/u);

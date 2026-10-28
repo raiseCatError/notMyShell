@@ -67,11 +67,11 @@ for (const reply of REPLIES) {
       f.begin('sleep 1; read -t 1 QA_REPLY || true');
       await f.typeLine(reply);
       const held = f.entry(reply);
-      assert.equal(held?.condition, 'approve', 'it waits for approval, whatever it looks like');
-      assert.equal(held?.typedWhile, 'sleep', 'the owner knows it was typed while sleep ran');
+      assert.equal(held, undefined, 'it stays in the ownership hold, not the approval queue');
+      assert.equal(f.text(), '', 'cancellation cannot leave a future command draft');
       assert.equal(f.written.some(data => data.includes(reply)), false, 'not written to the terminal');
       assert.equal(f.recalled().includes(reply), false, 'not offered by Up as a command typed this session');
-      assert.match(f.transcript(), /never runs by itself/u, 'a note says why');
+      assert.match(f.screen(), /Can.t tell whether sleep is reading/u, 'the ownership choice is visible');
       // No question was ever reported: the read gave up unseen, and the command succeeded.
       f.tick(1500);
       f.complete(0); await settled();
@@ -86,7 +86,7 @@ test('quarantine: the held line is shown by where it came from, never by its tex
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('sleep 1; read -t 1 QA_REPLY || true');
-    await f.typeLine(SECRET);
+    f.owner.holdUnread(`${SECRET}\r`, 'sleep');
     assert.equal(f.screen().includes(SECRET), false, 'while the command runs');
     assert.equal(f.transcript().includes(SECRET), false, 'the note never repeats the text');
     f.complete(0); await settled();
@@ -100,7 +100,7 @@ test('quarantine: approving is explicit and needs no display; Tab shows the text
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('sleep 1');
-    await f.typeLine('echo NEXT-QZ');
+    f.owner.holdUnread('echo NEXT-QZ\r', 'sleep');
     f.complete(0); await settled();
     assert.deepEqual(f.dispatched, []);
     // Enter at the empty composer arms the review; nothing runs from one key.
@@ -131,12 +131,12 @@ test('Ctrl+Q is the explicit run-after: a command queued with it while one runs 
   } finally { f.dispose(); }
 });
 
-test('the composer says where Enter sends a line while a command runs: held for approval, Ctrl+Q runs it after', async t => {
+test('the composer says where Enter sends a line while a command runs: checks ownership, Ctrl+Q runs it after', async t => {
   const f = fixture();
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('make');
-    assert.match(f.screen(), /Enter holds it for approval · Ctrl\+Q runs it after · Ctrl\+S sends to make/u);
+    assert.match(f.screen(), /Enter checks who reads it · Ctrl\+Q runs it after · Ctrl\+S sends to make/u);
   } finally { f.dispose(); }
 });
 
@@ -284,7 +284,7 @@ test('a held line at the head of the queue never holds the prompt: a command sub
   try {
     t.mock.timers.enable({apis: ['setTimeout']});
     f.begin('sleep 1');
-    await f.typeLine('yes');
+    f.owner.holdUnread('yes\r', 'sleep');
     f.complete(0); await settled();
     f.type('echo NOW');
     f.enter();
