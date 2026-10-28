@@ -1,6 +1,6 @@
 {
-  "phase": "Slice 4 (render routing + Chroma-driven Aurora) implemented, reviewed, focused-verified; committed on feature/render-routing-20261028",
-  "updated": "2026-10-28",
+  "phase": "Slices 3-7 implemented and verified to the extent available; all draft PRs open, none merged",
+  "updated": "2026-10-29",
   "slice1": {
     "branch": "feature/appearance-welcome-20261028",
     "head": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474",
@@ -17,13 +17,13 @@
     "review": "independent Sonnet review: no blocker; 4 should-fix fixed with regressions"
   },
   "evidence": "/Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028 (CHECKPOINT.json, slice2-probe/, slice2-canonical-verify.log, slice2-live-rerun.log)",
-  "physical_qa": "NOT RUN",
+  "physical_qa": "NOT RUN \u2014 docs/development/native-appearance-welcome/QA_CHECKLIST.md",
   "gpu_validation": "NOT RUN (headless Kitty parse, Ghostty +validate-config, slangc proxy compile only)",
   "unrelated_prs_untouched": [
     513,
     514
   ],
-  "next": "Slice 5: Shader Studio UX with previews; then 6 Welcome Studio (decoder #518), 7 integration/perf/QA/docs.",
+  "next": "Human: physical QA per QA_CHECKLIST.md; review and merge the stack in order (#515 \u2192 #516 \u2192 #517 \u2192 #519 \u2192 #520/#521 \u2192 integration; #518 to dev). Agents: never merge automatically.",
   "slice3": {
     "branch": "feature/ghostty-native-shaders-20261028",
     "base": "de2afd0254327390205a5cde62af5d886f8efaaf",
@@ -55,5 +55,18 @@
     "tests": "focused 162/162; tsc clean; full suite left to CI per user",
     "review": "Sonnet: no blocker; 5 should-fix fixed"
   },
-  "verification_policy": "User 2026-10-28: run only tests related to the current work; no full-suite reruns of unrelated tests"
+  "verification_policy": "User 2026-10-28: run only tests related to the current work; no full-suite reruns of unrelated tests",
+  "prs": {
+    "517": "S3 Ghostty shaders (base #516 branch) CI pass",
+    "518": "animated decode (base dev) CI: 1 live /resume timeout on Ubuntu, unrelated, not rerun",
+    "519": "S4 routing+Chroma (base #517) CI pass",
+    "520": "S5 studio previews (base #519) CI pass",
+    "521": "S6 Welcome Studio (base #519; includes #518) CI pending at record time",
+    "integration": "S7 (base #520) see PR"
+  },
+  "slice7": {
+    "branch": "feature/appearance-integration-20261029",
+    "tests": "related 531/533 pass, 0 fail, 2 skipped",
+    "perf": "slice7/bench-*.log"
+  }
 }

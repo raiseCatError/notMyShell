@@ -96,3 +96,11 @@ Dirty files at this checkpoint:
 Final independent re-review: no material blocker found in Slice1. Current stable canonical run active (tool session83932). Project read attempt failed once for missing read:project; no retry or claimed status update.
 
 New blocking slice edge case reproduced while canonical remains frozen: removing an owned hook from a config originally without final newline joins a later user-appended setting onto the previous line. Fix after current run, add LF/CRLF coverage, then revalidate. Do not commit as complete before fixing. Evidence newline-removal-red.md.
+
+## Slice 7 — integration, performance, QA, docs (Claude, 2026-10-29)
+
+Branch `feature/appearance-integration-20261029` = Slice 5 (#520) + merged Slice 6 (#521) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/appearance-integration-20261029`. Source merged cleanly; doc conflicts resolved by keeping both sides. Combined related tests, performance measurements and the physical QA checklist (QA_CHECKLIST.md) are recorded in TEST_RESULTS (Slice 7).
+
+### Implemented (all slices) vs remaining
+- Implemented: host appearance foundation (S1 #515), Kitty native shaders (S2 #516), Ghostty native shaders (S3 #517), bounded animated decoding (#518), effects routing + Chroma-driven native colors (S4 #519), Shader Studio previews + full shipped Kitty catalog (S5 #520), Welcome Studio with startup playback and P preview (S6 #521), integration (S7).
+- Remaining / not verified: physical QA on Ghostty/Kitty/Zed (QA_CHECKLIST.md); GPU output (only headless parse/proxy compiles); animated WebP (first frame only; needs the external converter); per-widget GPU effects (deliberately not offered: hosts give no reliable targeting).

@@ -1,5 +1,12 @@
 # Native appearance and Welcome Studio handoff
 
+## Final state (Slices 3–7, 2026-10-29) — read first
+
+- PR stack (all draft, none merged): #515 (S1) → #516 (S2) → #517 (S3) → #519 (S4) → #520 (S5) → integration (S7, merges #521); #521 (S6) is based on #519 and contains #518 (decoder, its own PR to dev).
+- Worktrees: kitty/ghostty/render-routing/shader-studio-previews/welcome-studio/appearance-integration under `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/`.
+- Testing: run focused files through `/Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028/run-focused.mjs` (the repo runner's `runTestFiles`; private HOME). Never bare `node --test` (real HOME, no teardown).
+- Remaining: physical QA (QA_CHECKLIST.md); GPU output unverified; animated WebP first frame only.
+
 ## Slice 4 state (render routing) — read first
 
 - Branch `feature/render-routing-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/render-routing-20261028`) stacked on Slice 3 (`feature/ghostty-native-shaders-20261028`, PR #517). Decoder PR #518 targets dev independently.
