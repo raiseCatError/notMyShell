@@ -92,6 +92,8 @@ function owned(host: AppearanceHost, context: AppearanceContext) {
 
 function preview(changes: readonly FileChange[]): string[] {
   return changes.filter(change => change.before.content !== change.after).flatMap(change => {
+    // NMSh's own ownership record is bookkeeping, not a setting: name it instead of printing its JSON.
+    if (change.before.path.endsWith('.json')) return [`File: ${change.before.path}`, change.after === undefined ? "  NMSh's record of what it added is removed." : "  NMSh's record of what it added (used to remove it cleanly later)."];
     const before = change.before.content ?? '';
     const after = change.after ?? '';
     // Host includes are append-only. Show only inserted/removed lines, never unrelated secret-bearing config.

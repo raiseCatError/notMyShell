@@ -2,6 +2,7 @@ import {welcomeProvider} from '../output/WelcomeProviders.js';
 import type {SurfaceRoute} from '../motion/renderRouting.js';
 import type {HostAppearancePlan} from './hostAppearance.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
+import {truncateAnsi} from '../util/text.js';
 import {chromaPreviewNote} from './chromaNotes.js';
 import type {Key} from '../terminal/keys.js';
 import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
@@ -60,6 +61,24 @@ const BASE_ROWS: Array<{id: HubDestination | 'motion' | 'routing'; label: string
 const hubRows = (state: AppearanceHubState) => state.kittyShaders !== undefined
   ? [...BASE_ROWS.slice(0, 3), {id: 'kittyShaders' as const, label: 'Kitty shaders'}, ...BASE_ROWS.slice(3)]
   : state.ghosttyShaders !== undefined ? [...BASE_ROWS.slice(0, 3), {id: 'glslShaders' as const, label: 'Ghostty shaders'}, ...BASE_ROWS.slice(3)] : BASE_ROWS;
+
+/** One plain sentence per row, shown beside the list: what the row changes, in everyday words. */
+const ROW_HELP: Record<string, string> = {
+  'Theme Studio': 'Colors for NMSh, and optionally for your terminal and other tools.',
+  Prompt: 'The line shown in front of your commands.',
+  'Cursor & effects': 'Cursor shape and color, plus trails and effects when it moves.',
+  shaders: 'GPU effects your terminal draws itself: cursor trails, glow and shine.',
+  'UI chrome': "Colors of NMSh's own panels, borders and highlights.",
+  Chroma: "Gentle color motion across NMSh's interface.",
+  Motion: 'Small animations when commands start, finish or fail.',
+  'Theme Bridge': 'Share your theme with other command-line tools.',
+  'Effects routing': 'Shows whether each effect is drawn by your terminal (GPU) or by NMSh.',
+  Welcome: 'The greeting and logo shown when NMSh starts.',
+  Opacity: 'How see-through the window is. Lower it to see your desktop behind the text.',
+  'Blur mode': 'Blurs what shows through the window. It needs opacity below 100%.',
+  Blur: 'How strongly the desktop behind the window is blurred.',
+  Background: "The window's background color. Inherit keeps your terminal's own color.",
+};
 
 export function createAppearanceHub(hostName: string, host?: AppearanceState, hostGuidance?: string): AppearanceHubState {
   return {view: 'hub', selected: 0, ...(host ? {host} : {}), hostName, ...(hostGuidance ? {hostGuidance} : {}), hostDirty: false};
@@ -201,7 +220,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     motion: anyMotion ? `${motion.rendering === 'rich' ? 'Rich' : 'Clean'} · Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
   };
   const entries: StudioEntry[] = NMSH_ROWS.map(row => ({
-    group: ['theme', 'prompt'].includes(row.id) ? 'Identity' : ['cursor', 'kittyShaders', 'glslShaders'].includes(row.id) ? 'Cursor & host effects' : row.id === 'welcome' ? 'Startup' : 'Interface & motion',
+    group: ['theme', 'prompt'].includes(row.id) ? 'Look' : ['cursor', 'kittyShaders', 'glslShaders'].includes(row.id) ? 'Cursor & effects' : row.id === 'welcome' ? 'Startup' : 'Interface & motion',
     label: row.label, value: summaries[row.id],
   }));
   if (state.host) {
@@ -212,10 +231,11 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     ];
     if (BLUR_MODES[host.blurModeIndex] === 'Numeric') hostRows.push(['Blur', renderValueControl('number', String(host.blurStrength), host.blurStrength / 50)]);
     hostRows.push(['Background', state.backgroundInput !== undefined ? `RGB: ${state.backgroundInput}_` : stripTerminalControls(host.background ?? 'Inherit host color')]);
-    entries.push(...hostRows.map(([label, value]) => ({group: `Host window · ${stripTerminalControls(state.hostName)}`, label, value})));
+    entries.push(...hostRows.map(([label, value]) => ({group: `Window · ${stripTerminalControls(state.hostName)}`, label, value})));
   }
   const selectedEntry = entries[state.selected];
-  return renderStudioLayout({title: 'Appearance', stacked: height === undefined, subtitle: 'Your terminal, composed · select an editor to shape it',
+  const help = selectedEntry ? ROW_HELP[selectedEntry.label] ?? (/shaders$/u.test(selectedEntry.label) ? ROW_HELP.shaders : undefined) : undefined;
+  return renderStudioLayout({title: 'Appearance', stacked: height === undefined, subtitle: state.host ? 'Enter opens a row · ←→ changes window values' : 'Enter opens a row',
     entries, selected: state.selected,
     // Blur shows through the transparent part of the window only; at 100% opacity there is nothing to blur.
     notice: [state.hostMessage ?? (state.hostDirty ? 'Unsaved host changes · S reviews, Enter writes and reloads the terminal' : undefined),
@@ -224,9 +244,10 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
       ['↑↓', 'select'], ['Enter', 'open'], ...(state.host ? [['←→', 'adjust'], ['S', 'review']] as const : []),
       ...(state.host || state.canRestoreHost ? [['R', 'restore']] as const : []), ['Esc', 'close']],
     details: width => [studioLabel(selectedEntry?.label ?? 'Appearance'),
-      ...studioWrap(selectedEntry?.value ?? '', width), '', studioMuted('Host window · configuration snapshot'),
-      ...studioWrap(`Host  ${stripTerminalControls(state.hostName)} · CLI overrides are not visible`, width).map(studioMuted),
-      ...studioWrap(state.host ? 'Changes are reviewed before writing, then NMSh asks the terminal to reload so they show at once. R reviews removal of NMSh-owned appearance overrides.' : state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`, width).map(studioMuted), '',
+      ...studioWrap(selectedEntry?.value ?? '', width), ...(help ? ['', ...studioWrap(help, width)] : []), '',
+      studioMuted(truncateAnsi(`Terminal  ${stripTerminalControls(state.hostName)}`, width)),
+      ...studioWrap(state.host ? `Window settings: NMSh shows the exact change before writing, then reloads ${stripTerminalControls(state.hostName)} so it shows at once. R removes NMSh's window settings again.`
+        : state.hostGuidance ?? `Opacity and blur are controlled by ${stripTerminalControls(state.hostName)}.`, width).map(studioMuted), '',
       ...studioWrap(`Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}`, width).map(studioMuted)],
   }, columns, height ?? 72);
 }
