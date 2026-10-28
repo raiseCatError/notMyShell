@@ -217,14 +217,16 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const selectedEntry = entries[state.selected];
   return renderStudioLayout({title: 'Appearance', stacked: height === undefined, subtitle: 'Your terminal, composed · select an editor to shape it',
     entries, selected: state.selected,
-    notice: state.hostMessage ?? (state.hostDirty ? 'Unsaved host changes · S reviews before writing' : undefined),
+    // Blur shows through the transparent part of the window only; at 100% opacity there is nothing to blur.
+    notice: [state.hostMessage ?? (state.hostDirty ? 'Unsaved host changes · S reviews, Enter writes and reloads the terminal' : undefined),
+      state.host && state.host.opacity >= 1 && BLUR_MODES[state.host.blurModeIndex] !== 'Off' ? 'Blur shows only below 100% opacity: lower Opacity first.' : undefined].filter(Boolean).join(' · ') || undefined,
     controls: state.backgroundInput !== undefined ? [['Enter', 'apply RGB'], ['Esc', 'cancel']] : [
       ['↑↓', 'select'], ['Enter', 'open'], ...(state.host ? [['←→', 'adjust'], ['S', 'review']] as const : []),
       ...(state.host || state.canRestoreHost ? [['R', 'restore']] as const : []), ['Esc', 'close']],
     details: width => [studioLabel(selectedEntry?.label ?? 'Appearance'),
       ...studioWrap(selectedEntry?.value ?? '', width), '', studioMuted('Host window · configuration snapshot'),
       ...studioWrap(`Host  ${stripTerminalControls(state.hostName)} · CLI overrides are not visible`, width).map(studioMuted),
-      ...studioWrap(state.host ? 'Changes are reviewed before writing. R reviews removal of NMSh-owned appearance overrides.' : state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`, width).map(studioMuted), '',
+      ...studioWrap(state.host ? 'Changes are reviewed before writing, then NMSh asks the terminal to reload so they show at once. R reviews removal of NMSh-owned appearance overrides.' : state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`, width).map(studioMuted), '',
       ...studioWrap(`Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}`, width).map(studioMuted)],
   }, columns, height ?? 72);
 }

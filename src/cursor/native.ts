@@ -201,12 +201,10 @@ export function writeManagedFiles(host: NativeHost, settings: CursorSettings, en
 }
 
 /**
- * The one line to show after managed files changed, or undefined when nothing
- * needs doing. NMSh never restarts the terminal and never signals its process
- * (an unhandled signal would end the window): a changed fragment is part of
- * the host's configuration, so the person reloads it with the host's own
- * documented shortcut; a shader-only change leaves the configuration alone,
- * and the line says what to do if the terminal has not picked it up.
+ * The one line to show after managed files changed when NMSh could not ask the
+ * terminal to reload (src/appearance/hostReload.ts signals only a verified parent
+ * Kitty, or Ghostty 1.3+, whose reload signal is known to be handled; NMSh never
+ * restarts the terminal). Undefined when nothing needs doing.
  */
 export function reloadInstruction(host: NativeHost, write: ManagedWrite, platform: NodeJS.Platform = process.platform): string | undefined {
   if (!write.changed.length) return undefined;

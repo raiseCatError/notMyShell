@@ -20,6 +20,7 @@ import type {AppearanceHubState} from './AppearanceHub.js';
 import type {StudioPreviewContext} from './ShaderStudioPanel.js';
 import {createGhosttyShaderPanel, ghosttyShaderKey, renderGhosttyShaderPanel, type GhosttyShaderPanelState} from './GhosttyShaderPanel.js';
 import {buildGhosttyCatalog} from './ghosttyShaderCatalog.js';
+import {reloadGhostty, reloadHost, type HostReloadResult} from './hostReload.js';
 import {applyGhosttyShaderPlan, ghosttyReloadPending, ghosttyShaderPaths, inspectGhosttyLaunch, inspectGhosttyShaders, noteGhosttyTrailChange, planGhosttyShaderRemoval, planGhosttyShaders,
   readProcessTable, setGhosttyReloadPending, syncGhosttyShaders, writtenGhosttyTrail, type GhosttyLaunch, type GhosttyShaderContext, type GhosttyShaderGates} from './ghosttyShaders.js';
 
@@ -137,8 +138,10 @@ export class GlslShaderStudio {
     panel.draft = structuredClone(saved);
     panel.dirty = false;
     try { panel.inspection = inspectGhosttyShaders(this.context(this.services.configuration(), {})); } catch { /* the message below still applies */ }
+    const reload = this.reloadGhostty();
     panel.reloadPending = this.pending();
-    panel.message = plan.operation === 'remove' ? `Removed NMSh's Ghostty shaders. ${plan.guidance}` : plan.guidance;
+    const outcome = reload.reloaded ? reload.message : plan.guidance;
+    panel.message = plan.operation === 'remove' ? `Removed NMSh's Ghostty shaders. ${outcome}` : outcome;
   }
 
   /**
@@ -149,13 +152,15 @@ export class GlslShaderStudio {
   sync(next: PromptConfiguration, options: {render?: boolean} = {}): void {
     try { if (!existsSync(ghosttyShaderPaths(this.base).ledger)) return; } catch { return; }
     const result = syncGhosttyShaders(next.hostShaders.ghostty, this.context(next, {}));
+    let reload: HostReloadResult | undefined;
     if (result.kind === 'written') {
       this.noteTrailChange(result.trailBefore, result.trailAfter);
+      reload = this.reloadGhostty();
       this.services.invalidateCursor();
       if (this.panel) this.panel.reloadPending = this.pending();
     }
     if (result.kind === 'written' || result.kind === 'review') {
-      const message = result.kind === 'review' ? `Ghostty shaders were not updated: ${result.message}` : result.message;
+      const message = result.kind === 'review' ? `Ghostty shaders were not updated: ${result.message}` : reload?.reloaded ? `${result.message} ${reload.message}` : result.message;
       if (this.panel) this.panel.message = message;
       else this.services.notify(message, result.kind === 'review');
       if (options.render !== false) this.services.render();
@@ -195,6 +200,25 @@ export class GlslShaderStudio {
    * Write NMSh's /cursor managed files for a host. In Ghostty a written studio trail keeps the older /cursor shader
    * paused, and a shader that stops being written is remembered until Ghostty reloads (never two trails).
    */
+  /**
+   * Ask the verified Ghostty NMSh runs in to reload after NMSh rewrote its files. On success nothing is pending any more:
+   * Ghostty has dropped any trail NMSh stopped writing, so Portable may draw at once.
+   */
+  reloadGhostty(): HostReloadResult {
+    const result = reloadGhostty(this.env, this.platform);
+    if (result.reloaded) {
+      try { setGhosttyReloadPending(this.base, undefined); } catch { /* a stale record only delays Portable until the next reload */ }
+      this.unsavedPending = [];
+      if (this.panel) this.panel.reloadPending = undefined;
+    }
+    return result;
+  }
+
+  /** /cursor's managed files changed for this host: Ghostty also clears its reload-pending record on success. */
+  reloadNativeHost(host: NativeHost): HostReloadResult {
+    return host === 'ghostty' ? this.reloadGhostty() : reloadHost(host, this.env, this.platform);
+  }
+
   writeCursorFiles(host: NativeHost, settings: CursorSettings): ManagedWrite & {trailChanged: boolean} {
     if (host !== 'ghostty') return {...writeManagedFiles(host, settings, this.env), trailChanged: false};
     const studioTrail = Boolean(writtenGhosttyTrail(this.base));
