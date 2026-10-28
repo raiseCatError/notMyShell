@@ -916,7 +916,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   outputFolding: 'smart',
   semanticOutput: true,
   welcome: 'vespyr',
-  welcomeStudio: structuredClone(DEFAULT_WELCOME_STUDIO),
+  // A missing or unreadable configuration keeps the historical card; only a Studio save selects the native layout.
+  welcomeStudio: {...structuredClone(DEFAULT_WELCOME_STUDIO), customized: false},
   welcomePresets: [],
   suggestions: 'nmsh',
   history: 'native',

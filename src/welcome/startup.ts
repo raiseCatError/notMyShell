@@ -43,16 +43,20 @@ export class NativeWelcomePresentation {
     if (this.closed) return {rows: [], images: [], active: false};
     if (!model?.customized || snapshot.captured) return {rows: renderWelcome(snapshot, columns).slice(0, height), images: [], active: false};
     const capabilities = this.caps();
-    const caps = {...capabilities, effectsOff: capabilities.effectsOff || this.waitingForAsset, asset: assetCapabilities(this.asset, this.reason ?? reason)};
+    const caps = {...capabilities, effectsOff: capabilities.effectsOff || this.waitingForAsset, loading: this.waitingForAsset, asset: assetCapabilities(this.asset, this.reason ?? reason)};
     const frame = composeWelcome(model, snapshot.facts ?? {}, {columns, rows: height}, caps, this.still ? 5000 : elapsed);
     // Durable stills are sampled independently of playback and always rendered as portable cells.
-    const finalKey = JSON.stringify([columns, height, caps, this.background()]);
-    if (finalKey !== this.finalKey) {
+    // A small key (not the art rows or legacy card) so playback frames do not serialize the whole capability set.
+    const finalKey = JSON.stringify([columns, height, caps.color, caps.level, caps.safeGlyphs, caps.reducedMotion, caps.effectsOff, caps.accent, caps.chroma, caps.catFrame,
+      caps.asset?.width, caps.asset?.height, caps.asset?.reason, caps.asset?.rows?.length, this.background()]);
+    // While the asset loads there is no final still to keep (a session archived now keeps its previous still, if any).
+    if (!this.waitingForAsset && finalKey !== this.finalKey) {
       const final = composeWelcome(model, snapshot.facts ?? {}, {columns, rows: height}, caps, 5000);
       snapshot.still = paintWelcome(final, this.asset, this.service, {}, 'inline', this.background(), true).rows;
       this.finalKey = finalKey;
     }
-    this.sequence.sync(!this.still && frame.active, this.repaint, frame.nextFrameMs);
+    // At most ~30 repaints a second: very short GIF delays play slightly slower rather than driving 60 fps app renders.
+    this.sequence.sync(!this.still && frame.active, this.repaint, frame.nextFrameMs === undefined ? undefined : Math.max(33, frame.nextFrameMs));
     const painted = paintWelcome(frame, this.asset, this.service, this.owner, 'inline', this.background(), this.still);
     return {...frame, active: !this.still && frame.active, rows: painted.rows.map(ansi => ({ansi, plain: stripAnsi(ansi)}))};
   }

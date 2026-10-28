@@ -1,5 +1,9 @@
 # Native appearance / welcome progress
 
+## Slice 6 — Welcome Studio (Codex 6a/6b + lead, 2026-10-28/29)
+
+Branch `feature/welcome-studio-20261028` = Slice 4 (5f317aa7) + merged #518 decoder, in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/welcome-studio-20261028`. 6a: model, presets, assets/picker, shared `composeWelcome`, editor with live preview, `/appearance › Welcome` and `/welcome`. 6b: startup GIF/APNG playback and P full-terminal preview through the same presentation. Two independent reviews; fixes applied with regressions. Related tests 364/370 (+ 24/24 load reruns). See DECISIONS/TEST_RESULTS Slice 6.
+
 ## Slice 4 — render routing and Chroma-driven native colors (Claude, 2026-10-28)
 
 Branch `feature/render-routing-20261028` from 87277285 (Slice 3, PR #517) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/render-routing-20261028`.

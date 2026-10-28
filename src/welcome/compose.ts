@@ -11,6 +11,8 @@ export interface WelcomeCapabilities {
   accent?: {red: number; green: number; blue: number};
   chroma?: {red: number; green: number; blue: number};
   legacy?: WelcomeSnapshot; catFrame?: WelcomeCatFrame;
+  /** The startup asset is still being read: say so rather than asking the person to choose one. */
+  loading?: boolean;
   asset?: {rows?: string[]; width: number; height: number; reason?: string; frameDelays?: readonly number[]; loopCount?: number; truncated?: boolean};
 }
 export interface WelcomeImagePlacement {
@@ -83,7 +85,7 @@ export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: 
     if (box.row + box.rows <= Math.min(lines.length, height)) images.push(box);
   }
   if ((image || art) && capabilities.asset?.reason) lines.push(truncateText(capabilities.asset.reason, width));
-  else if ((image || art) && !capabilities.asset) lines.push('Choose a local asset to preview.');
+  else if ((image || art) && !capabilities.asset) lines.push(capabilities.loading ? 'Loading image…' : 'Choose a local asset to preview.');
   if (model.border) lines.push('-'.repeat(width));
   const delays = capabilities.asset?.frameDelays?.slice(0, 75).map(delay => Number.isFinite(delay) ? Math.max(1, Math.min(5000, delay)) : 100) ?? [];
   const duration = delays.reduce((sum, delay) => sum + delay, 0);

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {normalizePromptConfiguration, savePromptConfiguration} from '../src/prompt/configuration.js';
+import {promptConfigurationPath} from '../src/configuration/paths.js';
 import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -16,11 +18,17 @@ import {displayWidth} from '../src/util/text.js';
 
 const identity = {version: '0.2.0', commit: 'abcdef0', branch: 'dev'};
 
-test('fresh native welcome snapshots identity and cwd, shows safe facts and one divider', () => {
+test('a saved native welcome snapshots identity and cwd, shows safe facts and one divider', () => {
   // A controlled cwd under the private test home keeps this identity test independent of checkout-path truncation.
   const previousCwd = process.cwd();
   const directory = mkdtempSync(join(homedir(), 'welcome-'));
   process.chdir(directory);
+  // Without a saved Studio layout the historical card stays (compatibility); this test covers the native one.
+  const configPath = promptConfigurationPath();
+  const previousConfig = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
+  const config = normalizePromptConfiguration({});
+  config.welcomeStudio = {...config.welcomeStudio, customized: true};
+  savePromptConfiguration(config, configPath);
   const app = new TerminalApp();
   try {
     const transcript = app['output'].transcript();
@@ -42,6 +50,7 @@ test('fresh native welcome snapshots identity and cwd, shows safe facts and one 
     app['session'].kill();
     process.chdir(previousCwd);
     rmSync(directory, {recursive: true, force: true});
+    if (previousConfig === undefined) rmSync(configPath, {force: true}); else writeFileSync(configPath, previousConfig);
   }
 });
 

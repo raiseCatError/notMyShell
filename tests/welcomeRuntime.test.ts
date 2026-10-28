@@ -215,3 +215,24 @@ test('focus and pointer movement preserve motion; handover retains image card an
     assert.ok(!stored.includes('private.png')); assert.ok(!stored.includes(dir + '/private'));
   } finally { app['stop'](0); app['session'].kill(); if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous; await rm(dir, {recursive: true, force: true}); }
 });
+
+test('lead review fixes: missing config keeps the historical card; a loading image is said, not stored; archives never keep a path', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-welcome-lead-'));
+  try {
+    assert.equal(loadPromptConfiguration(join(directory, 'missing.json')).welcomeStudio.customized, false, 'no config file: historical card');
+    const h = host('.');
+    const model = normalizeWelcomeStudio({customized: true, logo: 'image', assetPath: '/private/logo.png'});
+    const snapshot = {identity: {version: '1', commit: 'abc'}, cwd: '.', shell: 'zsh' as const, studio: model};
+    const native = new NativeWelcomePresentation(snapshot, h.graphics(), h.capabilities, h.background);
+    const rows = native.rows(snapshot, 80).map(row => row.plain).join('\n');
+    assert.match(rows, /Loading image…/u);
+    assert.doesNotMatch(rows, /Choose a local asset/u);
+    assert.equal((snapshot as {still?: string[]}).still, undefined, 'no durable still while the asset loads');
+    native.dispose();
+    const output = new OutputBuffer();
+    output.setWelcome(snapshot);
+    const stored = JSON.stringify(output.transcript());
+    assert.doesNotMatch(stored, /private\/logo\.png|assetPath/u);
+    assert.match(stored, /"customized":true/u, 'a never-painted customized card keeps its layout, not the historical card');
+  } finally { await rm(directory, {recursive: true, force: true}); }
+});
