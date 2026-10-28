@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A native welcome image (Kitty, Ghostty) stays a native image after the first key press, scroll or resize instead of turning into character art. A logo animation still stops at once and its frames are deleted; only the still remains.
 - With the Portable cursor renderer, NMSh's Kitty cursor setup no longer leaves Kitty's own `cursor_trail` on, which drew two trails.
 
 ## [0.23.0] - 2026-10-21 — Vespyr Arcade
