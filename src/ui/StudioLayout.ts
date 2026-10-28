@@ -103,20 +103,20 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
 }
 
 /** shown: false while the terminal is too small to show the plan; callers then refuse Enter (never confirm an unseen plan). */
-export interface StudioReview {plan: {preview: string[]; guidance: string}; offset: number; rowCount?: number; shown?: boolean}
+export interface StudioReview {plan: {preview: string[]; guidance: string}; offset: number; rowCount?: number; shown?: boolean; controls?: readonly StudioControl[]; subtitle?: string}
 /** Exact-plan review, shared by host appearance and shader transactions. Only callers handle keys/writes. */
 export function renderStudioReview(review: StudioReview, title: string, columns: number, height = 24): string[] {
   const width = Math.max(1, columns - 4);
   const document = [...review.plan.preview, '', 'After Enter', review.plan.guidance].flatMap(line => studioWrap(line, width));
   review.rowCount = document.length;
-  const controls = renderControlRows([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']], columns);
+  const controls = renderControlRows(review.controls ?? [['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']], columns);
   if (height < 8 || columns < 24) {
     review.shown = false;
     return framePanel(['Resize to review', ...renderControlRows([['Esc', 'cancel']], columns)], columns).slice(0, height);
   }
   review.shown = true;
   const guidance = studioWrap(review.plan.guidance, columns).map(studioMuted);
-  const head = [studioLabel(title), studioMuted('Review only · nothing written yet')];
+  const head = [studioLabel(title), studioMuted(review.subtitle ?? 'Review only · nothing written yet')];
   const available = Math.max(1, height - 1 - head.length - controls.length - Math.min(2, guidance.length) - 2);
   review.offset = Math.max(0, Math.min(review.offset, Math.max(0, document.length - available)));
   const visible = document.slice(review.offset, review.offset + available).map(line => `  ${line}`);

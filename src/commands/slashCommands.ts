@@ -29,12 +29,19 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/welcome': {group: 'Providers', title: 'Configure Welcome'}, '/history-provider': {group: 'Providers', title: 'Configure History Provider'},
   '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
   '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
+  '/changes': {group: 'Tools & integration', title: 'Browse Changes & Backups'}, '/backups': {alias: '/changes'}, '/snapshots': {alias: '/changes'},
+  '/nmsh reset': {group: 'Tools & integration', title: 'Reset NMSh-owned settings'},
   '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
   '/btw': {title: 'Open local intelligence'}, '/ask': {alias: '/btw'},
   '/caffeinate': {group: 'Tools & integration', title: 'Open Keep Awake'}, '/awake': {alias: '/caffeinate'}, '/zoomies': {alias: '/caffeinate'},
 };
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
+  {name:'/changes', insertion:'/changes', description:'Browse backed-up config changes and review a restore; S takes a manual snapshot'},
+  {name:'/backups', insertion:'/backups', description:'Same as /changes'},
+  {name:'/snapshots', insertion:'/snapshots', description:'Same as /changes'},
+  {name:'/nmsh reset', insertion:'/nmsh reset', description:'Choose NMSh-owned areas, review impact and backup, then type reset to confirm'},
+  {name:'/reset', insertion:'/reset', description:'Explain the guarded /nmsh reset; this command writes nothing'},
   {name: '/actions', insertion: '/actions', description: 'Select completed output: Up/Down moves, Enter opens Actions, Esc returns; /actions N opens output N directly'},
   {name: '/action', insertion: '/action', alias: '/actions', description: 'Same as /actions, including /action N'},
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
@@ -192,6 +199,7 @@ export type ParsedSlashCommand =
   /** /edit <path>: NMSh's small native editor for one text file (relative to the shell's directory, ~ for home). */
   | {kind: 'editFile'; target: string}
   | {kind: 'appearance'}
+  | {kind: 'changes'} | {kind: 'nmshReset'} | {kind: 'resetGuidance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
   | {kind: 'modules'; report?: 'explain' | 'timings'}
@@ -304,6 +312,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
   const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
   if (copy) return {kind: 'copy', args: copy[1] ?? ''};
+  if (/^\/(?:changes|backups|snapshots)\s*$/u.test(input)) return {kind:'changes'};
+  if (/^\/nmsh\s+reset\s*$/u.test(input)) return {kind:'nmshReset'};
+  if (/^\/reset\s*$/u.test(input)) return {kind:'resetGuidance'};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};

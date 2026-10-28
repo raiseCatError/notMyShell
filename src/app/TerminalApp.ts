@@ -1,3 +1,7 @@
+import {Journal, journalDirectory} from '../backups/journal.js';
+import {createChangesPanel,changesKey,renderChangesPanel,type ChangesPanel} from '../backups/ChangesPanel.js';
+import {createResetPanel,resetKey,renderResetPanel,type ResetPanel} from '../backups/ResetPanel.js';
+import {ownedSnapshotPaths} from '../backups/reset.js';
 import {inlineWelcomeReason} from '../welcome/render.js';
 import {WelcomeStudioController} from '../welcome/studio.js';
 import {NativeWelcomePresentation} from '../welcome/startup.js';
@@ -1060,6 +1064,8 @@ export class TerminalApp {
   private welcomeBlinkCount = 0;
   private contextGeneration = 0;
   private appearanceHub?: AppearanceHubState;
+  private changesPanel?: ChangesPanel;
+  private resetPanel?: ResetPanel;
   /** /appearance › Kitty shaders (Kitty 0.49+ pipelines); opened from the hub, Esc returns there. */
   private kittyShaderPanel?: KittyShaderPanelState;
   /** /cursor › Host native is reading Kitty's catalog to choose the studio or the older setup; a second Enter waits for it. */
@@ -2532,6 +2538,12 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.changesPanel || this.resetPanel) {
+      const action = this.changesPanel ? changesKey(this.changesPanel,key) : resetKey(this.resetPanel!,key);
+      if (action?.paths) this.afterHostFilesChanged(action.paths);
+      if (action?.close) { this.changesPanel=undefined;this.resetPanel=undefined;this.returnFromPanel(); }
+      this.render();return;
+    }
     if (this.appearanceHub) {
       const wasRouting = this.appearanceHub.view === 'routing';
       const action = appearanceHubKey(this.appearanceHub, key, this.promptConfiguration);
@@ -3278,6 +3290,21 @@ export class TerminalApp {
       }
     }
     else if (slash.kind === 'copySettings') { this.panelOrigin = undefined; this.rowPanel = createRowPanel('Copy', '/copy and /cp', ['copyMode', 'copyIncludeStatus', 'copyAutoExpand']); }
+    else if (slash.kind === 'resetGuidance') this.output.addFrontendInteraction(command.trim(), 'Use /nmsh reset to choose only NMSh-owned settings, review impact and backup, then type reset to confirm. /reset writes nothing. Browse or undo changes with /changes.', INFO);
+    else if (slash.kind === 'changes' || slash.kind === 'nmshReset') {
+      this.panelOrigin=undefined;
+      try {
+        const home=process.env.HOME || homedir();
+        const journal=new Journal({home,directory:journalDirectory(home)});
+        const context={env:process.env,platform:process.platform};
+        if (slash.kind==='changes') {
+          this.changesPanel=createChangesPanel(journal,[]);
+          try {this.changesPanel.ownershipPaths=ownedSnapshotPaths(context,journal);}
+          catch(error){this.changesPanel.message=`Ownership discovery is incomplete: ${error instanceof Error?error.message:String(error)}. Journal history remains available.`;}
+        }
+        else this.resetPanel=createResetPanel(context,journal);
+      } catch(error) {this.output.addFrontendInteraction(command.trim(), `Cannot open backup tools: ${error instanceof Error?error.message:String(error)}`, ERROR);}
+    }
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'motion') {
       // The same Motion screen and state as /appearance → Motion.
@@ -3878,6 +3905,20 @@ export class TerminalApp {
       this.output.addHistoryLine(`  ⎿ ${result.error}`);
     }
     this.render();
+  }
+
+  /** Integration hook for reviewed restore/reset writes. The host owner can add its reload callback here. */
+  private afterHostFilesChanged(paths: readonly string[]): void {
+    if (!paths.length) return;
+    // Load disk state without the settings setter: restoring files must not regenerate the files just restored.
+    this.configuration=loadPromptConfiguration();
+    this.effectivePromptProvider=this.configuration.provider;
+    this.externalPrompt=undefined;
+    this.externalPromptError=undefined;
+    this.themeStopsKey='';
+    this.cursorHost=undefined;
+    this.renderer.setCursorStyle(cursorStyleSequence(this.configuration.cursor.shape,this.configuration.cursor.blink));
+    setIconStyle(this.configuration.glyphStyle);
   }
 
   /** /appearance: the visual hub. NMSh rows always work; host window rows edit opacity/blur only where the host supports it. */
@@ -6573,7 +6614,7 @@ export class TerminalApp {
 
   private hasModalInput(ignorePalette = false): boolean {
     return Boolean(this.welcomeStudio || this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.kittyShaderPanel || this.glslStudio.panel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.changesPanel || this.resetPanel || this.appearanceHub || this.kittyShaderPanel || this.glslStudio.panel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -6779,6 +6820,8 @@ export class TerminalApp {
       else if (!busy && this.studioPreviewClock) { this.studioPreviewClock(); this.studioPreviewClock = undefined; }
       return framePanel(rows, columns);
     }
+    if (this.changesPanel) return renderChangesPanel(this.changesPanel,columns,this.dimensions().rows-4);
+    if (this.resetPanel) return renderResetPanel(this.resetPanel,columns,this.dimensions().rows-4);
     if (this.appearanceHub) {
       const theme = themeLabel(this.promptConfiguration.nmsh.palette);
       const now = Date.now();
@@ -10675,7 +10718,7 @@ export class TerminalApp {
       let written: ManagedWrite;
       try { written = writeManagedFiles(native.host, resolveCursorSettings(state.draft, contextFor(this.promptConfiguration))); } catch { state.message = 'Could not write NMSh\'s managed cursor files; nothing else was changed.'; return; }
       if (setup.plan.kind === 'plan') {
-        const applied = applyPlan(setup.plan.plan);
+        const applied = applyPlan(setup.plan.plan, {home:process.env.HOME || homedir(),source:'cursor',label:'Set up native cursor include',directory:journalDirectory(process.env.HOME || homedir())});
         if (!applied.ok) { state.message = applied.reason; return; }
       }
       this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value), () => writtenKittyTrail({env: process.env, platform: process.platform}), () => this.glslStudio.trailFacts());
@@ -11306,7 +11349,7 @@ export class TerminalApp {
       return;
     }
     if (action.kind === 'applyEdit') {
-      const applied = applyPlan(action.plan);
+      const applied = applyPlan(action.plan, {home:process.env.HOME || homedir(),source:'ask',label:action.plan.reason,directory:journalDirectory(process.env.HOME || homedir())});
       if (!applied.ok) { finish(applied.reason); return; }
       // Verify by reading back: the file must now be exactly what the preview showed.
       let verified = false;
