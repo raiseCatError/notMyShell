@@ -579,6 +579,7 @@ test('NMSh’s own Kitty shaders are written beside the pipeline, owned, swapped
   assert.match(plan.pipelineText, /animation_start cursor-trail-move\n {4}animation_stop cursor-trail-stop\n {4}animation_step 16\n {4}var int COLOR = 2\n {4}var int STRENGTH = 2\n {4}shaders nmsh-ink-bloom/u);
   assert.match(plan.pipelineText, /animation_start os-window-focus-in\n {4}animation_stop 2200[\s\S]*var int CADENCE = 1\n {4}shaders nmsh-shine-sweep/u, 'On focus only starts on focus');
   assert.ok(parseKittyPipeline(plan.pipelineText, 'nmsh').ok);
+  assert.match(plan.pipelineText, /# Ink Bloom: NMSh’s own nmsh-ink-bloom\.slang sha256:/u);
   for (const id of ['ink-bloom', 'shine-sweep']) assert.match(readFileSync(shader(id), 'utf8'), /^#language slang 2026\n[\s\S]*import kitty_custom_shader_types;[\s\S]*fragment_main/u);
   const fragment = readFileSync(f.paths.fragment, 'utf8');
   assert.match(fragment, /cursor_trail 3\n/u, 'trail turned on for the cursor effect');

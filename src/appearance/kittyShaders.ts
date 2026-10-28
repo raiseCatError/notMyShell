@@ -439,7 +439,7 @@ function compose(settings: KittyShaderSettings, context: KittyShaderContext, mod
     for (const [name, before] of state.shaderFiles) if (!ownShaders.some(shader => shader.name === name) && before.content !== undefined) shaderChanges.push({before});
     if (userGroups.length + pipeline.groups.length > KITTY_MAX_GROUPS) throw new Error(`Kitty allows ${KITTY_MAX_GROUPS} shader groups in total; your shaders use ${userGroups.length} and these effects need ${pipeline.groups.length}.`);
     const header = ['Managed by NMSh (/appearance › Kitty shaders). Edits here are replaced; remove with R there.',
-      ...active.map(({preset}) => `${preset.definition.label}: Kitty ${preset.origin.kittyVersion} shipped ${preset.origin.resources.map(item => `${item.name} sha256:${item.sha256.slice(0, 12)}`).join(', ')}`)];
+      ...active.map(({preset}) => `${preset.definition.label}: ${'nmsh' in preset.definition.source ? 'NMSh’s own' : `Kitty ${preset.origin.kittyVersion} shipped`} ${preset.origin.resources.map(item => `${item.name} sha256:${item.sha256.slice(0, 12)}`).join(', ')}`)];
     const pipelineText = active.length ? emitKittyPipeline(pipeline, header) : `${header.map(line => `# ${line}`).join('\n')}\n# No NMSh effect is active (Reduced Motion, Effects Off or a Portable cursor).\n`;
     if (active.length && !parseKittyPipeline(pipelineText, 'nmsh').ok) throw new Error('NMSh generated a pipeline Kitty would reject; nothing was changed.');
     const ours = quoteWord(paths.pipeline);
