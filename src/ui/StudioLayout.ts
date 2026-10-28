@@ -59,20 +59,24 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
     return framePanel([truncateAnsi(model.title, columns), truncateAnsi(row, columns), ...controls], columns).slice(0, height);
   }
   const footer = renderControlRows(model.controls, columns);
-  const head = [studioLabel(model.title),
-    ...(model.subtitle && height >= 12 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : []),
-    ...(model.tabs ? [renderTabStrip(model.tabs.labels, model.tabs.selected, columns)] : [])];
   const wrappedNotice = model.notice ? studioWrap(model.notice, columns) : [];
   const noticeRows = height >= 24 ? 2 : 1;
   // A notice that does not fit ends in an ellipsis rather than being cut silently.
   const notices = wrappedNotice.slice(0, noticeRows).map((row, index) => index === noticeRows - 1 && wrappedNotice.length > noticeRows
     ? truncateAnsi(`${row.trimEnd()} …`, columns) : row).map(studioMuted);
-  const budget = Math.max(1, height - 1 - head.length - notices.length - footer.length - 1);
+  const lines = groupLines(model.entries, entry => entry.group);
+  // Explanations give way before list rows: a list that does not fit first takes the subtitle's row, then the spacer above the footer.
+  const fixedRows = 1 + 1 + (model.tabs ? 1 : 0) + notices.length + footer.length;
+  const short = lines.length - (height - fixedRows - (model.subtitle && height >= 12 ? 1 : 0) - 1);
+  const subtitle = model.subtitle && height >= 12 && short <= 0 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : [];
+  const spacer = model.subtitle && height >= 12 ? (short >= 2 ? [] : ['']) : (short >= 1 ? [] : ['']);
+  const head = [studioLabel(model.title), ...subtitle,
+    ...(model.tabs ? [renderTabStrip(model.tabs.labels, model.tabs.selected, columns)] : [])];
+  const budget = Math.max(1, height - 1 - head.length - notices.length - footer.length - spacer.length);
   const widths = model.stacked || !model.details ? {list: columns, detail: columns} : studioColumns(columns, height);
   const wide = widths.list !== columns && Boolean(model.details);
   const detailBudget = model.details && !wide && columns >= 60 && height >= 24 && budget >= 12 ? Math.min(model.stacked ? 30 : 10, budget - 5) : 0;
   const listBudget = wide ? budget : budget - detailBudget;
-  const lines = groupLines(model.entries, entry => entry.group);
   const selected = lines.findIndex(line => line.kind === 'item' && line.index === model.selected);
   const window = groupedWindow(lines, selected < 0 ? undefined : selected, listBudget);
   const list = lines.slice(window.start, window.end).map(line => {
@@ -95,7 +99,7 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
     model.detailOrigin?.(0, head.length + 1 + list.length);
     body = [...list, ...model.details!(columns, detailBudget).slice(0, detailBudget)];
   }
-  return framePanel([...head, ...body, ...notices, '', ...footer].map(row => truncateAnsi(row, columns)), columns);
+  return framePanel([...head, ...body, ...notices, ...spacer, ...footer].map(row => truncateAnsi(row, columns)), columns);
 }
 
 /** shown: false while the terminal is too small to show the plan; callers then refuse Enter (never confirm an unseen plan). */
