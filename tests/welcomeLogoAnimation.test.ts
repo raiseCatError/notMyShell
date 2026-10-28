@@ -204,3 +204,33 @@ test('Welcome Studio shows Logo animation and Play in the Animation section at 1
     if (height >= 40) assert.match(rows.join('\n'), /Gentle loop repeats softly/);
   }
 });
+
+test('a key press keeps the native still: Off stays put and a cancelled animation frees only its frames', () => {
+  const PLACEHOLDER = String.fromCodePoint(0x10eeee);
+  const deletes = (sent: string[]) => sent.filter(d => d.includes('a=d')).length;
+  const still = asset(logo()), bg = () => ({red: 0, green: 0, blue: 0});
+  const sentOff: string[] = [], offService = service(sentOff, true);
+  const off = new NativeWelcomePresentation(snapshot(model()), offService, () => ({color: true}), bg, () => {}, still);
+  const before = off.frame(80, 40, 0);
+  assert.ok(before.rows.some(r => r.plain.includes(PLACEHOLDER)), 'Off draws a native placement');
+  const uploads = offService.stats().uploads, removed = deletes(sentOff);
+  off.cancelMotion();
+  const after = off.frame(80, 40, 10);
+  assert.deepEqual(after.rows, before.rows, 'a key press never turns the still into character art');
+  assert.equal(offService.stats().uploads, uploads); assert.equal(deletes(sentOff), removed, 'the still is not deleted and re-sent');
+  off.dispose();
+  assert.equal(offService.stats().uploads, 0, 'dispose still releases everything');
+
+  const count = presentationClock.subscriberCount;
+  const playing = service([], true);
+  const native = new NativeWelcomePresentation(snapshot(model({logoAnimation: 'assemble'})), playing, () => ({color: true}), bg, () => {}, still);
+  assert.equal(native.frame(80, 40, 300).active, true);
+  native.cancelMotion();
+  assert.equal(playing.stats().uploads, 0, 'playback frames are deleted at once');
+  assert.equal(presentationClock.subscriberCount, count, 'no frame timer remains');
+  const settled = native.frame(80, 40, 320);
+  assert.equal(settled.active, false);
+  assert.ok(settled.rows.some(r => r.plain.includes(PLACEHOLDER)), 'the cancelled animation shows the native still');
+  assert.equal(playing.stats().uploads, 1, 'only the still is uploaded');
+  native.dispose();
+});

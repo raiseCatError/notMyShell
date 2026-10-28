@@ -135,7 +135,7 @@ test('Reduced Motion, Effects Off and no color hold decoded frame zero without a
   } finally { await rm(dir, {recursive: true, force: true}); }
 });
 
-test('only a portable final still is serialized; input releases uploads/timers and cannot restart them', async () => {
+test('only a portable final still is serialized; input frees playback uploads/timers, cannot restart them and keeps the native still', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'welcome-still-'));
   const count = presentationClock.subscriberCount;
   try {
@@ -152,8 +152,9 @@ test('only a portable final still is serialized; input releases uploads/timers a
       assert.deepEqual(output.transcript(), before, 'runtime animation never mutates transcript frames');
       assert.doesNotMatch(JSON.stringify(before), /assetPath|a.gif|frameIndex|iVBOR|\\u001b_G/);
       assert.ok(before.welcome?.still?.length);
-      native.cancelMotion(); native.frame(80, 40, 200);
-      assert.equal(h.graphics().stats().uploads, 0); assert.equal(presentationClock.subscriberCount, count);
+      native.cancelMotion(); assert.equal(h.graphics().stats().uploads, 0, 'playback frames are deleted at once');
+      native.frame(80, 40, 200);
+      assert.equal(h.graphics().stats().uploads, 1, 'the still stays a native image'); assert.equal(presentationClock.subscriberCount, count);
     } finally { native.dispose(); }
   } finally { await rm(dir, {recursive: true, force: true}); }
 });
@@ -262,7 +263,7 @@ test('the shared sequencer requests decoded boundaries and removes its last subs
   } finally { presentationClock.subscribe = original; await rm(dir, {recursive: true, force: true}); }
 });
 
-test('startup releases uploads and timers on input, Esc, resize, history detach, handover, frontend detach and shutdown', async () => {
+test('startup frees playback uploads and timers on input, Esc, resize, history detach, handover, frontend detach and shutdown', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'welcome-startup-exits-'));
   const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = dir;
   try {
@@ -283,10 +284,12 @@ test('startup releases uploads and timers on input, Esc, resize, history detach,
         else if (exit === 'handover') app['handOverTerminal']();
         else if (exit === 'detach') app['onTerminate']();
         else app['stop'](0);
-        assert.equal(h.graphics().stats().uploads, 0); assert.equal(presentationClock.subscriberCount, count);
+        // Scrolling repaints at once: the still is back as one native upload; every other exit repaints later.
+        assert.equal(h.graphics().stats().uploads, exit === 'history' ? 1 : 0, exit); assert.equal(presentationClock.subscriberCount, count);
         if (!app['stopped']) {
           app['output'].wrapped(80);
-          assert.equal(h.graphics().stats().uploads, 0); assert.equal(presentationClock.subscriberCount, count);
+          // Playback cannot restart; the repaint shows the still as a native image (one upload), never character art.
+          assert.equal(h.graphics().stats().uploads, 1, exit); assert.equal(presentationClock.subscriberCount, count);
         }
       } finally { app['stop'](0); app['session'].kill(); }
     }

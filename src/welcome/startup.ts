@@ -15,6 +15,8 @@ export class NativeWelcomePresentation {
   private started: number;
   private finalKey?: string;
   private still = false;
+  /** The last paint showed playback frames (generated or decoded), not the admitted still. */
+  private paintedMotion = false;
   private waitingForAsset: boolean;
   constructor(readonly snapshot: WelcomeSnapshot, private service: GraphicsService, private caps: () => WelcomeCapabilities,
     private background: () => {red: number; green: number; blue: number}, private repaint: () => void = () => {},
@@ -59,8 +61,12 @@ export class NativeWelcomePresentation {
     }
     // At most ~30 repaints a second: very short GIF delays play slightly slower rather than driving 60 fps app renders.
     this.sequence.sync(!this.still && frame.active, this.repaint, frame.nextFrameMs === undefined ? undefined : Math.max(33, frame.nextFrameMs));
-    const painted = paintWelcome(frame, frame.active ? live : this.asset, this.service, this.owner, 'inline', this.background(), this.still);
-    return {...frame, active: !this.still && frame.active, rows: painted.rows.map(ansi => ({ansi, plain: stripAnsi(ansi)}))};
+    // A stopped animation shows the still the way the terminal draws it (a native image where supported), exactly like Off.
+    const moving = !this.still && frame.active;
+    const painted = paintWelcome(frame, moving ? live : this.asset, this.service, this.owner, 'inline', this.background());
+    // Still-image effects reuse the still's upload; only generated or decoded frames are separate uploads.
+    this.paintedMotion = moving && (live !== this.asset || (this.asset?.kind === 'image' && (this.asset.animation?.frames.length ?? 0) > 1));
+    return {...frame, active: moving, rows: painted.rows.map(ansi => ({ansi, plain: stripAnsi(ansi)}))};
   }
   rows(snapshot: WelcomeSnapshot, columns: number, reason?: string) {
     if (snapshot.studio !== this.snapshot.studio) return renderWelcome(snapshot, columns);
@@ -68,6 +74,13 @@ export class NativeWelcomePresentation {
     snapshot.still = this.snapshot.still?.slice();
     return frame.rows;
   }
-  cancelMotion(): void { this.still = true; this.sequence.stop(); this.service.releaseOwner(this.owner); }
-  dispose(): void { this.cancelMotion(); this.closed = true; this.asset = undefined; }
+  /**
+   * Stops playback for good. Uploaded playback frames are deleted now; a still already on screen stays, so a key press
+   * never turns the picture into character art.
+   */
+  cancelMotion(): void {
+    this.still = true; this.sequence.stop();
+    if (this.paintedMotion) { this.service.releaseOwner(this.owner); this.paintedMotion = false; }
+  }
+  dispose(): void { this.cancelMotion(); this.service.releaseOwner(this.owner); this.closed = true; this.asset = undefined; }
 }
