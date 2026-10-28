@@ -18,8 +18,10 @@ export function studioWrap(text: string, width: number): string[] {
   let row = '';
   for (const char of stripTerminalControls(text)) {
     if (displayWidth(row + char) > Math.max(1, width) && row) {
+      // Break at the last space after the text starts; an indented long word (a diff path) splits instead of leaving a row of spaces.
+      const lead = row.length - row.trimStart().length;
       const space = row.lastIndexOf(' ');
-      if (space > 0) { rows.push(row.slice(0, space + 1)); row = row.slice(space + 1); }
+      if (space > 0 && space >= lead) { rows.push(row.slice(0, space + 1)); row = row.slice(space + 1); }
       else { rows.push(row); row = ''; }
     }
     row += char;
@@ -60,7 +62,11 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
   const head = [studioLabel(model.title),
     ...(model.subtitle && height >= 12 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : []),
     ...(model.tabs ? [renderTabStrip(model.tabs.labels, model.tabs.selected, columns)] : [])];
-  const notices = model.notice ? studioWrap(model.notice, columns).slice(0, height >= 24 ? 2 : 1).map(studioMuted) : [];
+  const wrappedNotice = model.notice ? studioWrap(model.notice, columns) : [];
+  const noticeRows = height >= 24 ? 2 : 1;
+  // A notice that does not fit ends in an ellipsis rather than being cut silently.
+  const notices = wrappedNotice.slice(0, noticeRows).map((row, index) => index === noticeRows - 1 && wrappedNotice.length > noticeRows
+    ? truncateAnsi(`${row.trimEnd()} …`, columns) : row).map(studioMuted);
   const budget = Math.max(1, height - 1 - head.length - notices.length - footer.length - 1);
   const widths = model.stacked || !model.details ? {list: columns, detail: columns} : studioColumns(columns, height);
   const wide = widths.list !== columns && Boolean(model.details);
@@ -92,14 +98,19 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
   return framePanel([...head, ...body, ...notices, '', ...footer].map(row => truncateAnsi(row, columns)), columns);
 }
 
-export interface StudioReview {plan: {preview: string[]; guidance: string}; offset: number; rowCount?: number}
+/** shown: false while the terminal is too small to show the plan; callers then refuse Enter (never confirm an unseen plan). */
+export interface StudioReview {plan: {preview: string[]; guidance: string}; offset: number; rowCount?: number; shown?: boolean}
 /** Exact-plan review, shared by host appearance and shader transactions. Only callers handle keys/writes. */
 export function renderStudioReview(review: StudioReview, title: string, columns: number, height = 24): string[] {
   const width = Math.max(1, columns - 4);
-  const document = [...review.plan.preview, '', 'Apply & reload', review.plan.guidance].flatMap(line => studioWrap(line, width));
+  const document = [...review.plan.preview, '', 'After Enter', review.plan.guidance].flatMap(line => studioWrap(line, width));
   review.rowCount = document.length;
   const controls = renderControlRows([['↑↓', 'scroll diff'], ['Enter', 'confirm write'], ['Esc', 'cancel']], columns);
-  if (height < 8 || columns < 24) return framePanel(['Resize to review', ...controls], columns).slice(0, height);
+  if (height < 8 || columns < 24) {
+    review.shown = false;
+    return framePanel(['Resize to review', ...renderControlRows([['Esc', 'cancel']], columns)], columns).slice(0, height);
+  }
+  review.shown = true;
   const guidance = studioWrap(review.plan.guidance, columns).map(studioMuted);
   const head = [studioLabel(title), studioMuted('Review only · nothing written yet')];
   const available = Math.max(1, height - 1 - head.length - controls.length - Math.min(2, guidance.length) - 2);

@@ -34,7 +34,7 @@ export interface AppearanceHubState {
   hostGuidance?: string;
   /** Host values were changed and not saved yet. */
   hostDirty: boolean;
-  confirmation?: {plan: HostAppearancePlan; offset: number; rowCount?: number};
+  confirmation?: {plan: HostAppearancePlan; offset: number; rowCount?: number; shown?: boolean};
   backgroundInput?: string;
   hostMessage?: string;
   canRestoreHost?: boolean;
@@ -76,7 +76,8 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
   if (state.confirmation) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.confirmation = undefined; return undefined; }
     if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min((state.confirmation.rowCount ?? state.confirmation.plan.preview.length) - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
-    return key.kind === 'enter' ? {kind: 'confirmHost'} : undefined;
+    // Enter confirms only a plan the person could see (not the 'Resize to review' stub).
+    return key.kind === 'enter' && state.confirmation.shown !== false ? {kind: 'confirmHost'} : undefined;
   }
   if (state.backgroundInput !== undefined) {
     if (key.kind === 'escape' || key.kind === 'interrupt') state.backgroundInput = undefined;

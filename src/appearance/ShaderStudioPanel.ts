@@ -43,7 +43,7 @@ export interface ShaderStudioState<C extends StudioCatalog, I extends StudioInsp
   dirty: boolean;
   selected: number;
   gates: G;
-  confirmation?: {plan: P; offset: number; rowCount?: number};
+  confirmation?: {plan: P; offset: number; rowCount?: number; shown?: boolean};
   colorInput?: {preset: string; param: string; text: string};
   message?: string;
   /** Ghostty: a trail Ghostty may still draw until its configuration is reloaded (L confirms the reload). */
@@ -170,7 +170,8 @@ export function shaderStudioKey<G>(state: ShaderStudioState<StudioCatalog, Studi
   if (state.confirmation) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.confirmation = undefined; state.message = 'Nothing was changed.'; return undefined; }
     if (key.kind === 'up' || key.kind === 'down') state.confirmation.offset = Math.max(0, Math.min((state.confirmation.rowCount ?? state.confirmation.plan.preview.length) - 1, state.confirmation.offset + (key.kind === 'up' ? -1 : 1)));
-    return key.kind === 'enter' ? {kind: 'confirm'} : undefined;
+    // Enter confirms only a plan the person could see (not the 'Resize to review' stub).
+    return key.kind === 'enter' && state.confirmation.shown !== false ? {kind: 'confirm'} : undefined;
   }
   if (state.colorInput) {
     const input = state.colorInput;
@@ -203,7 +204,10 @@ export function shaderStudioKey<G>(state: ShaderStudioState<StudioCatalog, Studi
     const current = list[Math.min(state.selected, list.length - 1)];
     const category = current && current.kind !== 'placement' ? current.preset.definition.category : undefined;
     const categories = CATEGORY_ORDER.filter(c => list.some(row => row.kind !== 'placement' && row.preset.definition.category === c));
-    const next = categories[(categories.indexOf(category!) + tabCycleDelta(key)! + categories.length) % categories.length];
+    // From the Placement row (no category) Tab goes to the first category and Shift+Tab to the last.
+    const delta = tabCycleDelta(key)!;
+    const index = category ? categories.indexOf(category) : delta > 0 ? -1 : 0;
+    const next = categories[(index + delta + categories.length) % categories.length];
     state.selected = Math.max(0, list.findIndex(row => row.kind !== 'placement' && row.preset.definition.category === next));
     return undefined;
   }
@@ -321,13 +325,14 @@ export function renderShaderStudio<G>(state: ShaderStudioState<StudioCatalog, St
     subtitle: `${host.name} ${catalog?.version || 'version unknown'} · ${status}${state.dirty ? ' · unsaved' : ''}`,
     ...(categories.length && supported ? {tabs: {labels: categories.map(c => CATEGORY_LABELS[c]), selected: Math.max(0, categories.indexOf(preset?.definition.category ?? categories[0]!))}} : {}),
     entries: entries.length ? entries : [{group: supported ? 'Presets' : 'Compatibility', label: !catalog ? `Reading ${host.name}’s shader support…` : clean(catalog.reason ?? 'No presets available'), render: () => !catalog ? `Reading ${host.name}’s shader support…` : clean(catalog.reason ?? 'No presets available')}],
-    selected, controls, notice: reload ?? message ?? gate,
+    // Every notice is kept, the refusal or result first; the layout ends a long one with an ellipsis.
+    selected, controls, notice: [message, reload, gate].filter(Boolean).join(' · ') || undefined,
     details: catalog && supported ? details : (width: number) => studioWrap(catalog ? `${catalog.reason ?? ''} ${host.unsupportedHint}` : `Reading ${host.name}’s configuration…`, width).map(studioMuted),
   };
   // Unbounded callers (diagnostics/tests) receive the complete catalogue and details.
   const limit = height ?? Math.max(64, list.length + 45);
   let result = renderStudioLayout(model, columns, limit);
-  if (previewShown && preview && !preview.still && kind && PREVIEW_MS[kind] > 0) {
+  if (previewShown && preview && !preview.still && kind && PREVIEW_MS[kind] > 0 && !state.colorInput) {
     controls.splice(controls.length - 1, 0, ['P', 'replay']);
     state.previewBusy = false; previewShown = false;
     result = renderStudioLayout(model, columns, limit);

@@ -125,3 +125,34 @@ for (const color of ['truecolor', '16', 'none']) test(`both shader studios retai
     if (savedNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = savedNoColor;
   }
 });
+
+test('review fixes: an unseen plan cannot be confirmed; Shift+Tab from Placement; indented wrap; long notices end with an ellipsis', () => {
+  // Too small to show the plan: no "confirm write" is offered and Enter does nothing; a usable size makes Enter confirm again.
+  const s = createGhosttyShaderPanel(DEFAULT.hostShaders.ghostty, gates);
+  s.catalog = buildGhosttyCatalog('1.3.1');
+  s.confirmation = {plan: {...plan, preview: ['+ custom-shader = x']} as never, offset: 0};
+  const tiny = renderGhosttyShaderPanel(s, 40, 6).map(stripAnsi).join('\n');
+  assert.match(tiny, /Resize to review/u);
+  assert.doesNotMatch(tiny, /confirm write/u);
+  assert.equal(ghosttyShaderKey(s, {kind: 'enter'} as never), undefined);
+  assert.ok(s.confirmation, 'still reviewing');
+  renderGhosttyShaderPanel(s, 80, 24);
+  assert.equal(ghosttyShaderKey(s, {kind: 'enter'} as never)?.kind, 'confirm');
+  // Kitty's Placement row has no category: Shift+Tab goes to the last category, Tab to the first.
+  const k = createKittyShaderPanel(DEFAULT.hostShaders.kitty, gates);
+  k.catalog = buildKittyCatalog('0.49.2', resources);
+  k.selected = 0;
+  kittyShaderKey(k, {kind: 'focusPrevious'} as never);
+  assert.ok(renderKittyShaderPanel(k, 120, 40).map(stripAnsi).some(row => row.startsWith('›') && row.includes('Spotlight')), 'Shift+Tab from Placement selects the last category');
+  k.selected = 0;
+  kittyShaderKey(k, {kind: 'complete'} as never);
+  assert.ok(renderKittyShaderPanel(k, 120, 40).map(stripAnsi).some(row => row.startsWith('›') && row.includes('Blaze')), 'Tab from Placement selects the first category');
+  // An indented long word splits instead of leaving a row of spaces; ordinary text still breaks at spaces.
+  assert.ok(studioWrap('  /a/very/long/path/name', 10).every(row => row.trim().length > 0));
+  assert.deepEqual(studioWrap('alpha beta gamma', 11), ['alpha beta ', 'gamma']);
+  // A notice longer than its rows ends with an ellipsis.
+  const g = createGhosttyShaderPanel(DEFAULT.hostShaders.ghostty, gates);
+  g.catalog = buildGhosttyCatalog('1.3.1');
+  g.message = 'word '.repeat(80);
+  assert.ok(renderGhosttyShaderPanel(g, 60, 20).map(stripAnsi).some(row => row.trimEnd().endsWith('…')));
+});
