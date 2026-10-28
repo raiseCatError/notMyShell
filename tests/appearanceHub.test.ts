@@ -13,7 +13,7 @@ test('/appearance always offers the NMSh rows, with or without host integration'
   for (const label of ['Theme Studio', 'Prompt', 'Cursor & effects', 'UI chrome', 'Chroma', 'Motion', 'Theme Bridge']) assert.match(rendered, new RegExp(label, 'u'));
   assert.doesNotMatch(rendered, /Prompt & theme/u, 'themes are not presented as prompt-only');
   assert.match(rendered, /Theme Bridge\s+Off · every tool Independent/u);
-  assert.match(rendered, /Host\s+Zed/u);
+  assert.match(rendered, /Terminal\s+Zed/u);
   assert.match(rendered, /controlled by Zed/u);
   assert.doesNotMatch(rendered, /Opacity\s+█/u);
 });
