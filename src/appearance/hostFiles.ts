@@ -2,6 +2,7 @@
 import {constants, closeSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats} from 'node:fs';
 import {randomUUID, createHash} from 'node:crypto';
 import {dirname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {Journal, type JournalMetadata} from '../backups/journal.js';
 
 export const digest = (content: string) => createHash('sha256').update(content).digest('hex');
 export interface FileSnapshot {path: string; content?: string; identity: string; mode: number}
@@ -65,7 +66,14 @@ function replace(path: string, content: string, mode: number, home: string, expe
 }
 
 /** All dependencies checked before staging or mutation. On failure restore only our unchanged writes. */
-export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string): void {
+export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string, metadata: JournalMetadata = {source: 'appearance', label: 'Host configuration change'}): void {
+  for (const dependency of dependencies) unchanged(dependency, home);
+  for (const change of changes) unchanged(change.before, home, true);
+  const effective = changes.filter(change => change.after !== change.before.content);
+  if (!effective.length) return;
+  const journal = new Journal({home, directory: metadata.directory});
+  const entry = journal.record(effective, metadata.source, metadata.label);
+  // Backup I/O may take time: recheck every dependency before the first mutation.
   for (const dependency of dependencies) unchanged(dependency, home);
   for (const change of changes) unchanged(change.before, home, true);
   const done: FileChange[] = [];
@@ -77,6 +85,7 @@ export function transact(changes: readonly FileChange[], dependencies: readonly 
       else replace(change.before.path, change.after, change.before.mode, home, change.before);
       done.push(change);
     }
+    journal.complete(entry);
   } catch (error) {
     let incomplete = false;
     for (const change of done.reverse()) {
