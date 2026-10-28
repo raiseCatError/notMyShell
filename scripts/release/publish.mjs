@@ -2,6 +2,7 @@
 // Publishes a verified release: annotated tag at the commit -> DRAFT release -> assets -> re-download and verify -> publish.
 // Idempotent: a tag at the same commit with only a draft release is resumed; anything else already published is refused.
 // Needs GH_TOKEN (contents: write). Usage: node scripts/release/publish.mjs --version X.Y.Z --commit SHA --dir DIR --confirmation TEXT
+import {createHash} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {basename, join, resolve} from 'node:path';
@@ -14,7 +15,7 @@ function fail(message) { throw new Error(message); }
 
 export async function publish(argv) {
   const {values} = parseArgs({args: argv, options: {
-    version: {type: 'string'}, commit: {type: 'string'}, dir: {type: 'string'}, confirmation: {type: 'string', default: ''},
+    version: {type: 'string'}, commit: {type: 'string'}, dir: {type: 'string'}, 'expected-sha256': {type: 'string'}, confirmation: {type: 'string', default: ''},
     repo: {type: 'string', default: process.env.GITHUB_REPOSITORY ?? 'raiseCatError/notMyShell'},
   }});
   const {version, commit, repo} = values;
@@ -25,8 +26,11 @@ export async function publish(argv) {
   const early = [...checkApproval({mode: 'publish', confirmation: values.confirmation, version}),
     ...validateRefs({version, tag, commit, mode: 'publish', masterHead: getMasterHead(repo)})];
   if (early.length) fail(early.map(item => `[${item.code}] ${item.message}`).join('\n'));
-  const problems = await verifySums(dir, {required: [name, 'provenance.json']});
+  const problems = await verifySums(dir, {required: [name, 'provenance.json', 'release-notes.md']});
   if (problems.length) fail(`Artifacts do not verify:\n${problems.join('\n')}`);
+  // The archive digest also travels as a prepare-job output, outside the artifact, so a replaced artifact can't pass.
+  const archiveSha = createHash('sha256').update(await readFile(join(dir, name))).digest('hex');
+  if (!values['expected-sha256'] || archiveSha !== values['expected-sha256']) fail(`The archive digest ${archiveSha} does not match the prepare job's ${values['expected-sha256'] || '(missing)'}.`);
   const provenance = JSON.parse(await readFile(join(dir, 'provenance.json'), 'utf8'));
   const refusal = provenanceRefusal(provenance, {version, commit});
   if (refusal) fail(refusal);
@@ -47,17 +51,21 @@ export async function publish(argv) {
   const releaseName = title ? `${tag} — ${title}` : tag;
   const state = getRemoteState(repo, tag);
   let release = state.release;
-  const body = ['-f', `name=${releaseName}`, '-f', `body=${notes}`];
+  const body = ['-f', `name=${releaseName}`, '-f', `body=${notes}`, '-f', `target_commitish=${commit}`];
   if (!release) release = gh(['api', '-X', 'POST', `repos/${repo}/releases`, '-f', `tag_name=${tag}`, '-F', 'draft=true', ...body]);
   else release = gh(['api', '-X', 'PATCH', `repos/${repo}/releases/${release.id}`, ...body]);
   console.log(`Draft release ${release.id} ready`);
 
-  const files = parseSums(await readFile(join(dir, 'SHA256SUMS'), 'utf8')).map(entry => entry.name).filter(file => file !== 'release-notes.md');
+  const files = parseSums(await readFile(join(dir, 'SHA256SUMS'), 'utf8')).map(entry => entry.name);
   gh(['release', 'upload', tag, '--repo', repo, '--clobber', join(dir, 'SHA256SUMS'), ...files.map(file => join(dir, file))], {json: false});
 
   const check = await mkdtemp(join(tmpdir(), 'nmsh-redownload-'));
   try {
     const assets = gh(['api', `repos/${repo}/releases/${release.id}`]).assets;
+    // A resumed draft must carry exactly these files: nothing left over from an earlier or manual run.
+    const expected = [...files, 'SHA256SUMS'].map(file => basename(file)).sort();
+    const actual = assets.map(item => item.name).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(`The draft's assets are ${actual.join(', ')}; expected exactly ${expected.join(', ')}. The release stays a draft.`);
     for (const file of [...files, 'SHA256SUMS']) {
       const asset = assets.find(item => item.name === basename(file));
       if (!asset) fail(`Asset ${file} is not on the draft release.`);

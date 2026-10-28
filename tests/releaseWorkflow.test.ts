@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 // @ts-expect-error plain ESM scripts without declarations
 import * as lib from '../scripts/release/lib.mjs';
@@ -10,7 +11,7 @@ import * as lib from '../scripts/release/lib.mjs';
 import {updateFormula} from '../scripts/release/homebrew.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const tmp = (): string => mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? process.env.TMPDIR ?? '.', 'release-'));
+const tmp = (): string => mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? process.env.TMPDIR ?? tmpdir(), 'release-'));
 const SHA = 'a'.repeat(40), OTHER = 'b'.repeat(40);
 const codes = (items: Array<{code: string}>): string[] => items.map(item => item.code);
 
@@ -204,7 +205,7 @@ test('release.yml: manual or release-script-PR triggers only, pinned actions, ga
   assert.match(on, /^ {2}pull_request:\n {4}paths:\n {6}- scripts\/release\/\*\*\n {6}- \.github\/workflows\/release\.yml\n {6}- tests\/release\*\.test\.ts/mu);
   assert.doesNotMatch(on, /^ {2}(push|schedule|release|workflow_run|pull_request_target):/mu);
   assert.match(text, /^permissions: \{\}$/mu);
-  assert.match(text, /concurrency:\n {2}group: nmsh-release\n {2}cancel-in-progress: false/u);
+  assert.match(text, /concurrency:\n(?: {2}#.*\n)? {2}group: \$\{\{ github\.event_name == 'pull_request' && format\('nmsh-release-pr-\{0\}', github\.ref\) \|\| 'nmsh-release' \}\}\n {2}cancel-in-progress: false/u);
   for (const match of text.matchAll(/^\s*- uses: (\S+)/gmu)) assert.match(match[1], /^actions\/[\w-]+@[0-9a-f]{40}$/u, match[1]);
   const jobs = text.split(/^jobs:\n/mu)[1].split(/^ {2}(?=[a-z]+:\n)/mu).filter(Boolean);
   assert.equal(jobs.length, 3);
@@ -230,4 +231,17 @@ test('a lost gate exit status cannot publish: pipefail shell, and publish refuse
   assert.match(provenanceRefusal({...record, blockers: undefined}, {version: '1.2.3', commit})!, /does not record/);
   assert.match(provenanceRefusal({...record, mode: 'dry-run'}, {version: '1.2.3', commit})!, /publish-mode/);
   assert.match(provenanceRefusal(record, {version: '1.2.4', commit})!, /publish-mode/);
+});
+
+test('safety: an untagged draft gets an annotated tag first; publish pins digests, assets and the tap token', () => {
+  assert.equal(lib.classifyExisting({commit: SHA, tag: {exists: false}, release: {draft: true}}).action, 'create');
+  assert.equal(lib.classifyExisting({commit: SHA, tag: {exists: true, commit: SHA}, release: {draft: true}}).action, 'resume');
+  const text = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+  assert.match(text, /--expected-sha256 "\$ARCHIVE_SHA256"/u, 'the archive digest reaches publish outside the artifact');
+  assert.doesNotMatch(text.split(/^ {2}homebrew:/mu)[1]!.split('steps:')[0]!, /HOMEBREW_TAP_TOKEN/u, 'the tap token is step-scoped, not job-wide');
+  assert.match(text, /\[\[ "\$VERSION" =~ \^\[0-9\]\+/u, 'the version is validated before it is written to outputs');
+  const publish = readFileSync(join(root, 'scripts/release/publish.mjs'), 'utf8');
+  assert.match(publish, /target_commitish=\$\{commit\}/u);
+  assert.match(publish, /expected exactly/u, 'a resumed draft must carry exactly the verified assets');
+  assert.match(readFileSync(join(root, 'scripts/release/check-ci.mjs'), 'utf8'), /app\?\.slug === 'github-actions'/u);
 });

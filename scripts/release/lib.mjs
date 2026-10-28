@@ -143,6 +143,8 @@ export function classifyExisting({commit, tag, release}) {
   const tagCommit = tag?.exists ? tag.commit : undefined;
   if (release && !release.draft) return {action: 'refuse', blocker: blocker('release-exists', `A published GitHub release for this tag already exists.`)};
   if (tag?.exists && tagCommit !== commit) return {action: 'refuse', blocker: blocker('tag-exists', `The tag exists at ${tagCommit}, not ${commit}. A pushed tag is never moved.`)};
+  // Without the tag, a draft would make GitHub create a lightweight tag at the default branch on publish: create ours first.
+  if (!tag?.exists) return {action: 'create', reason: release ? 'Only an untagged draft release exists; creating the annotated tag, then reusing the draft.' : 'Neither the tag nor a release exists.'};
   if (release) return {action: 'resume', reason: 'The tag is at this commit and only a draft release exists; resuming it.'};
   if (tag?.exists) return {action: 'resume', reason: 'The tag exists at this commit without a release; creating the draft release.'};
   return {action: 'create', reason: 'Neither the tag nor a release exists.'};

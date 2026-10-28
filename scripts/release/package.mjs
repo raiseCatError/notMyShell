@@ -28,7 +28,7 @@ export async function packageRelease(argv) {
     provenance.artifact = {name: artifactName(values.version), sha256: sha256(data), bytes: (await stat(tarball)).size};
     await writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
   }
-  const names = [artifactName(values.version), 'provenance.json'].filter(name => existsSync(join(out, name)));
+  const names = [artifactName(values.version), 'provenance.json', 'release-notes.md'].filter(name => existsSync(join(out, name)));
   const entries = [];
   for (const name of names) entries.push({name, sha256: sha256(await readFile(join(out, name)))});
   await writeFile(join(out, 'SHA256SUMS'), formatSums(entries));
