@@ -143,8 +143,10 @@ const isOff = (value: string) => value === 'off' || value === 'none';
 /**
  * Auto uses native only when NMSh's managed integration is present on a
  * supporting host; Portable draws whatever native does not. Forced Host
- * native draws only what the host backend does, and nothing at all where the
- * host has none. Portable is always available. The person never ends up
+ * native draws only what a set-up host backend does; on a host with native
+ * effects that are not set up yet Portable draws meanwhile (labelled), so the
+ * cursor is never left motionless. A host with none draws nothing under Host
+ * native and says so. Portable is always available. The person never ends up
  * unsure which renderer is drawing.
  */
 export function chooseBackend(settings: CursorSettings, facts: HostCursorFacts): BackendChoice {
@@ -173,8 +175,9 @@ function chooseWithoutPending(settings: CursorSettings, facts: HostCursorFacts):
   const integrated = facts.integrated || Boolean(facts.kittyTrail) || Boolean(facts.ghosttyTrail);
   if (!integrated) {
     return {backend: PORTABLE_BACKEND, native, nativeHandles: none,
-      reason: settings.renderer === 'native' ? `${native.label} needs setup (shown before anything changes); no effects are drawn until then` : `Portable · ${native.label} is available after setup`,
-      portableDraws: settings.renderer === 'native' ? nothing : all};
+      // Host native chosen but nothing native is set up yet: nothing on the GPU would draw, so Portable does until setup.
+      reason: settings.renderer === 'native' ? `Portable fallback · ${native.label} is not set up yet (Host native setup shows every change first)` : `Portable · ${native.label} is available after setup`,
+      portableDraws: all};
   }
   const motion = !isOff(settings.motion) && supports(native, 'motion', settings.motion);
   // Kitty's shader trails draw only while its cursor_trail runs, which NMSh's Kitty fragment turns on with a motion.
@@ -207,7 +210,8 @@ export function availabilityOf(feature: CursorFeature, value: string, renderer: 
   if (renderer === 'native') {
     if (!native) return {available: false, reason: 'Host native is not available in this terminal.'};
     if (!supports(native, feature, value)) return {available: false, reason: `${native.host ?? native.label} Native does not provide this ${FEATURE_WORD[feature]}.`};
-    return facts.integrated || facts.ghosttyTrail ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'native-pending', suffix: `after ${native.host} setup`};
+    // Not set up yet: Portable draws it meanwhile, so the value is usable now.
+    return facts.integrated || facts.ghosttyTrail || facts.kittyTrail ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'native-pending', suffix: `Portable until ${native.host} setup`};
   }
   if (native && (facts.integrated || facts.kittyTrail || facts.ghosttyTrail)) return supports(native, feature, value) ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'portable-fallback', suffix: 'Portable fallback'};
   return {available: true, via: 'portable', suffix: ''};
