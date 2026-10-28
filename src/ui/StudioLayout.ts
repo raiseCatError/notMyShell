@@ -47,11 +47,11 @@ export function renderStudioLayout(model: StudioLayout, columns: number, height 
   if (height <= 0 || columns <= 0) return [];
   if (height < 7 || columns < 24) return framePanel([
     truncateAnsi(model.title, columns), 'Resize to edit',
-    ...renderControlRows([['Enter', 'confirm'], ['Esc', 'back']], columns),
+    ...renderControlRows(model.controls.filter(([key]) => key === 'Esc' || key === 'Enter'), columns),
   ], columns).slice(0, height);
   const footer = renderControlRows(model.controls, columns);
   const head = [studioLabel(model.title),
-    ...(model.subtitle && height >= 18 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : []),
+    ...(model.subtitle && height >= 12 ? [studioMuted(truncateAnsi(model.subtitle, columns))] : []),
     ...(model.tabs ? [renderTabStrip(model.tabs.labels, model.tabs.selected, columns)] : [])];
   const notices = model.notice ? studioWrap(model.notice, columns).slice(0, height >= 24 ? 2 : 1).map(studioMuted) : [];
   const budget = Math.max(1, height - 1 - head.length - notices.length - footer.length - 1);

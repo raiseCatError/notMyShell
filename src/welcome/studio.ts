@@ -12,6 +12,7 @@ import {loadWelcomeAsset, listWelcomeAssets, resolveWelcomePath, type WelcomeAss
 import {createWelcomeEditor, renderWelcomeEditor, welcomeEditorKey, type WelcomeEditor} from './editor.js';
 import {exportWelcomePreset, importWelcomePreset, normalizeWelcomeStudio, type WelcomeStudio} from './model.js';
 import {inlineWelcomeReason, assetCapabilities, paintWelcome, type WelcomeOverlay} from './render.js';
+import {renderControlRows} from '../ui/controls.js';
 
 export interface StudioHost {
   config(): PromptConfiguration; cwd(): string; scratch(): string;
@@ -55,9 +56,15 @@ export class WelcomeStudioController {
     this.host.preview?.(true);
   }
   renderPreview(columns: number, height: number): string[] {
-    if (!this.full || this.state.provider === 'none') return [];
+    if (!this.full) return [];
     const decision = this.host.decision();
-    return this.full.frame(columns, Math.min(40, height), undefined, inlineWelcomeReason(decision)).rows.map(r => r.ansi);
+    const rows = this.state.provider === 'none' ? [] : this.full.frame(columns, Math.min(40, height), undefined, inlineWelcomeReason(decision)).rows.map(r => r.ansi);
+    // Keep the startup card untouched. Use a free row for editor controls when one exists.
+    if (rows.length < height) {
+      while (rows.length < height - 1) rows.push('');
+      rows.push(renderControlRows([['Any key', 'return to Welcome Studio']], columns)[0]!);
+    }
+    return rows;
   }
   async start(): Promise<void> { await Promise.all([this.assetChanged(), this.providerChanged()]); }
   private async assetChanged(selectLogo = false): Promise<void> {
@@ -116,13 +123,13 @@ export class WelcomeStudioController {
       return;
     }
     const s = this.state;
-    if (!s.input && !s.picker && key.kind === 'text' && key.value.toLowerCase() === 'p') { this.beginPreview(); this.host.render(); return; }
+    if (!s.input && !s.picker && !s.choices && key.kind === 'text' && key.value.toLowerCase() === 'p') { this.beginPreview(); this.host.render(); return; }
     const before = JSON.stringify(s.draft);
     if (!s.input && key.kind === 'text' && ['r', ' '].includes(key.value.toLowerCase())) this.sequence.stop();
     if (s.picker) {
       const p = s.picker;
       if (key.kind === 'escape' || key.kind === 'interrupt') s.picker = undefined;
-      else if (key.kind === 'up' || key.kind === 'down') p.selected = (p.selected + (key.kind === 'up' ? -1 : 1) + p.entries.length) % p.entries.length;
+      else if ((key.kind === 'up' || key.kind === 'down') && p.entries.length) p.selected = (p.selected + (key.kind === 'up' ? -1 : 1) + p.entries.length) % p.entries.length;
       else if (key.kind === 'enter') {
         const entry = p.entries[p.selected];
         if (entry?.directory) await this.pick(entry.path);
@@ -176,7 +183,7 @@ export class WelcomeStudioController {
     this.overlay = undefined;
     const rows = renderWelcomeEditor(this.state, columns, height, this.host.facts(this.state.before ? this.state.original : this.state.draft), {...caps, asset: assetCapabilities(asset, reason)}, Date.now(), frame => {
       const painted = paintWelcome(frame, asset, this.host.graphics(), this.owner, 'viewer', this.host.background());
-      if (painted.overlay) this.overlay = {...painted.overlay, y: painted.overlay.y + (this.state.previewTop ?? 0), x: painted.overlay.x};
+      if (painted.overlay) this.overlay = {...painted.overlay, y: painted.overlay.y + (this.state.previewTop ?? 0), x: painted.overlay.x + (this.state.previewLeft ?? 0)};
       return painted.rows;
     });
     const active = this.state.provider === 'vespyr' && !this.state.paused && !this.state.reduced && this.state.preview?.active;
