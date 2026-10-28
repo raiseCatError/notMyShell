@@ -325,6 +325,7 @@ import {renameSession} from '../session/SocketSessionClient.js';
 import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
 import {createKittyShaderPanel, kittyShaderKey, renderKittyShaderPanel, type KittyShaderPanelState} from '../appearance/KittyShaderPanel.js';
 import {discoverKittyCatalog, kittyBinary, type KittyCatalog} from '../appearance/kittyShaderCatalog.js';
+import {GlslShaderStudio} from '../appearance/glslStudio.js';
 import {applyKittyShaderPlan, inspectKittyLaunch, inspectKittyShaders, kittyShaderPaths, planKittyShaderRemoval, planKittyShaders, readProcessCommand, syncKittyShaders, writtenKittyTrail,
   type KittyShaderContext, type ShaderGates} from '../appearance/kittyShaders.js';
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
@@ -637,8 +638,11 @@ export class TerminalApp {
     // session at once, and NMSh's managed native cursor files follow the cursor and theme settings.
     if (this.renderer) {
       this.renderer.setCursorStyle(cursorStyleSequence(next.cursor.shape, next.cursor.blink));
-      if (JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor) || previous.nmsh.palette !== next.nmsh.palette || previous.nmsh.accent !== next.nmsh.accent
-        || JSON.stringify(previous.customTheme) !== JSON.stringify(next.customTheme)) this.syncCursorNative(next);
+      const cursorLook = JSON.stringify(previous.cursor) !== JSON.stringify(next.cursor) || previous.nmsh.palette !== next.nmsh.palette || previous.nmsh.accent !== next.nmsh.accent
+        || JSON.stringify(previous.customTheme) !== JSON.stringify(next.customTheme);
+      // The GLSL studio's passes first: a written studio trail pauses NMSh's older /cursor shader (never two trails).
+      if (cursorLook || previous.presentation.reducedMotion !== next.presentation.reducedMotion || previous.presentation.effectsOff !== next.presentation.effectsOff) this.glslStudio.sync(next);
+      if (cursorLook) this.syncCursorNative(next);
       if (previous.cursor.renderer !== next.cursor.renderer || previous.presentation.reducedMotion !== next.presentation.reducedMotion
         || previous.presentation.effectsOff !== next.presentation.effectsOff) void this.syncKittyShaderFiles(next);
     }
@@ -1044,6 +1048,15 @@ export class TerminalApp {
   private appearanceHub?: AppearanceHubState;
   /** /appearance › Kitty shaders (Kitty 0.49+ pipelines); opened from the hub, Esc returns there. */
   private kittyShaderPanel?: KittyShaderPanelState;
+  /** The GLSL shader studio (NMSh's own custom-shader passes); host detection and writes live in the appearance layer. */
+  private readonly glslStudio = new GlslShaderStudio({
+    configuration: () => this.promptConfiguration,
+    update: mutate => this.updateConfiguration(mutate),
+    invalidateCursor: () => { this.cursorHost = undefined; },
+    notify: (message, error) => this.output.addFrontendInteraction('/appearance', message, error ? ERROR : INFO),
+    render: () => this.render(),
+    back: () => { void this.startAppearance(); },
+  });
   /** The installed Kitty catalog, read once per process through Kitty's own resource API. */
   private kittyCatalogRead?: Promise<KittyCatalog>;
   private keyboardState?: KeyboardState;
@@ -1105,6 +1118,8 @@ export class TerminalApp {
     this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
     // Settings and Setup rows read the host's cursor capabilities through the one provider this window owns.
     setCursorHostProvider(() => this.cursorFacts());
+    // Gate changes made while NMSh was not running (OS Reduced Motion, an edited config) reach NMSh's written shader passes.
+    this.glslStudio.sync(this.promptConfiguration, {render: false});
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
@@ -2482,6 +2497,11 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.glslStudio.panel) {
+      this.glslStudio.key(key);
+      this.render();
+      return;
+    }
     if (this.appearanceHub) {
       const action = appearanceHubKey(this.appearanceHub, key, this.promptConfiguration);
       if (action?.kind === 'close') { this.appearanceHub = undefined; this.returnFromPanel(); }
@@ -2497,6 +2517,7 @@ export class TerminalApp {
         else if (action.destination === 'themeBridge') void this.openThemeBridge();
         else if (action.destination === 'cursor') { this.panelOrigin = undefined; this.openCursorPanel(); }
         else if (action.destination === 'kittyShaders') void this.openKittyShaders();
+        else if (action.destination === 'glslShaders') this.glslStudio.open();
         else if (action.destination === 'chroma') this.startChromaSettings();
         else this.focusConfigRow('uiChrome');
       }
@@ -3846,6 +3867,7 @@ export class TerminalApp {
 
   /** In Kitty the hub gains its shader row; the summary says what is chosen, never that it is loaded. */
   private addKittyShaderRow(hub: AppearanceHubState): void {
+    if (this.glslStudio.available()) { this.glslStudio.addHubRow(hub); return; }
     if (terminalProfile(process.env) !== 'kitty') return;
     const chosen = this.promptConfiguration.hostShaders.kitty.effects.filter(effect => effect.enabled).length;
     hub.kittyShaders = chosen ? `${chosen} effect${chosen === 1 ? '' : 's'} chosen · Kitty 0.49+` : 'Off · Kitty 0.49+ GPU effects';
@@ -6483,7 +6505,7 @@ export class TerminalApp {
 
   private hasModalInput(ignorePalette = false): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.summaryReview || this.reportReview || this.comparePanel || this.arcade || this.browserPanel || this.docSession || this.imageView || this.viewer || this.textEditor || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.kittyShaderPanel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.kittyShaderPanel || this.glslStudio.panel || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -6677,6 +6699,8 @@ export class TerminalApp {
       return framePanel(rows, columns);
     }
     if (this.kittyShaderPanel) return framePanel(renderKittyShaderPanel(this.kittyShaderPanel, columns, this.dimensions().rows - 4), columns);
+    const glsl = this.glslStudio.render(columns, this.dimensions().rows - 4);
+    if (glsl) return framePanel(glsl, columns);
     if (this.appearanceHub) {
       const theme = themeLabel(this.promptConfiguration.nmsh.palette);
       const now = Date.now();
@@ -10431,7 +10455,7 @@ export class TerminalApp {
   }
 
   private cursorFacts(): HostCursorFacts {
-    this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host), () => writtenKittyTrail({env: process.env, platform: process.platform}));
+    this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host), () => writtenKittyTrail({env: process.env, platform: process.platform}), () => this.glslStudio.trailFacts());
     return this.cursorHost;
   }
 
@@ -10475,6 +10499,13 @@ export class TerminalApp {
     const host = facts.host === 'other' ? undefined : facts.host;
     if (action.kind === 'native') {
       if (!host || !nativeBackendFor(facts)) { state.message = 'This terminal has no native cursor effects NMSh can use; Portable works here.'; return; }
+      if (this.glslStudio.ownsCursorSetup(facts)) {
+        // Trail styles set up through the GLSL studio live there; /cursor keeps whether there is a trail and its colors.
+        this.closeCursorPanel();
+        this.appearanceHub = undefined;
+        this.glslStudio.open();
+        return;
+      }
       if (host === 'kitty' && (facts.integrated || facts.kittyTrail)) {
         // Kitty 0.49+ trail styles live in the one Kitty shader studio; /cursor keeps whether there is a trail and its color.
         this.closeCursorPanel();
@@ -10499,7 +10530,7 @@ export class TerminalApp {
         const applied = applyPlan(setup.plan.plan);
         if (!applied.ok) { state.message = applied.reason; return; }
       }
-      this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value), () => writtenKittyTrail({env: process.env, platform: process.platform}));
+      this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value), () => writtenKittyTrail({env: process.env, platform: process.platform}), () => this.glslStudio.trailFacts());
       void written;
       state.message = this.cursorHost.integrated
         ? (reloadInstruction(native.host, {changed: ['fragment']}) ?? `Set up. Renderer Auto now uses ${nativeHostLabel(native.host)} native.`)
@@ -10522,8 +10553,10 @@ export class TerminalApp {
       : installedNativeHost();
     if (!host) { this.cursorReload = undefined; return; }
     try {
-      const written = writeManagedFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
+      const written = this.glslStudio.writeCursorFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
       this.cursorReload = reloadInstruction(host, written);
+      // A native shader that stopped being written stays loaded until the host reloads: Portable waits rather than draw a second trail.
+      if (written.trailChanged) this.cursorHost = undefined;
       // Kitty's cursor_trail decides whether a Kitty trail shader draws at all; re-read the facts after it changes.
       if (host === 'kitty' && written.changed.length) this.cursorHost = undefined;
     } catch { this.cursorReload = 'Could not update the managed cursor files.'; }

@@ -83,15 +83,25 @@ export function setupPlan(host: NativeHost, env: NodeJS.ProcessEnv = process.env
 const hex = (color: {red: number; green: number; blue: number}) => `#${[color.red, color.green, color.blue].map(value => Math.round(value).toString(16).padStart(2, '0')).join('')}`;
 const vec3 = (color: {red: number; green: number; blue: number}) => `vec3(${(color.red / 255).toFixed(3)}, ${(color.green / 255).toFixed(3)}, ${(color.blue / 255).toFixed(3)})`;
 
-/** The managed fragment for a host, from the person's cursor settings. */
-export function fragmentContent(host: NativeHost, settings: CursorSettings, env: NodeJS.ProcessEnv = process.env): string {
-  const header = '# Managed by NMSh (/cursor). Edits here are replaced; your own config is never changed by NMSh after setup.\n';
+export const MANAGED_CURSOR_HEADER = '# Managed by NMSh (/cursor). Edits here are replaced; your own config is never changed by NMSh after setup.\n';
+
+/** NMSh's /cursor Ghostty fragment with its shader on or off (the only two contents NMSh ever writes there). */
+export function ghosttyCursorFragment(active: boolean, env: NodeJS.ProcessEnv = process.env): string {
+  return `${MANAGED_CURSOR_HEADER}${active ? `custom-shader = ${shaderPath(env)}\ncustom-shader-animation = true\n` : ''}`;
+}
+
+/**
+ * The managed fragment for a host, from the person's cursor settings. `ghosttyStudioTrail`: a trail from
+ * /appearance › Ghostty shaders is written, so this older /cursor shader stays off (never two trails).
+ */
+export function fragmentContent(host: NativeHost, settings: CursorSettings, env: NodeJS.ProcessEnv = process.env, ghosttyStudioTrail = false): string {
+  const header = MANAGED_CURSOR_HEADER;
   if (host === 'ghostty') {
     // Only what NMSh's shader really draws counts: Smooth, Lightning, Railgun, Wireframe and idle effects leave the shader off.
     // Renderer Portable means NMSh draws everything itself, so Ghostty's shader is off too (never two trails).
-    const active = settings.renderer !== 'portable'
+    const active = !ghosttyStudioTrail && settings.renderer !== 'portable'
       && (GHOSTTY_BACKEND.support.motion.includes(settings.motion) || GHOSTTY_BACKEND.support.effect.includes(settings.effect));
-    return `${header}${active ? `custom-shader = ${shaderPath(env)}\ncustom-shader-animation = true\n` : ''}`;
+    return ghosttyCursorFragment(active, env);
   }
   const palette = effectPalette(settings);
   const decay = {low: '0.15 0.5', medium: '0.1 0.4', high: '0.05 0.25'}[settings.speed];
@@ -175,7 +185,7 @@ export type ManagedFile = 'fragment' | 'shader';
 export interface ManagedWrite {changed: ManagedFile[]}
 
 /** Write NMSh's own managed files (fragment and shader), only the ones whose content differs. Never touches the host's main config. */
-export function writeManagedFiles(host: NativeHost, settings: CursorSettings, env: NodeJS.ProcessEnv = process.env): ManagedWrite {
+export function writeManagedFiles(host: NativeHost, settings: CursorSettings, env: NodeJS.ProcessEnv = process.env, ghosttyStudioTrail = false): ManagedWrite {
   const changed: ManagedFile[] = [];
   const write = (kind: ManagedFile, path: string, content: string) => {
     try { if (readFileSync(path, 'utf8') === content) return; } catch { /* missing: written below */ }
@@ -186,7 +196,7 @@ export function writeManagedFiles(host: NativeHost, settings: CursorSettings, en
     changed.push(kind);
   };
   if (host === 'ghostty') write('shader', shaderPath(env), shaderSource(settings));
-  write('fragment', fragmentPath(host, env), fragmentContent(host, settings, env));
+  write('fragment', fragmentPath(host, env), fragmentContent(host, settings, env, ghosttyStudioTrail));
   return {changed};
 }
 
@@ -206,6 +216,11 @@ export function reloadInstruction(host: NativeHost, write: ManagedWrite, platfor
     return `Cursor shader updated · if it does not apply, reload Ghostty config: ${mac ? '⌘⇧,' : 'Ctrl+Shift+,'}`;
   }
   return `Reload Kitty config: ${mac ? '⌃⌘,' : 'Ctrl+Shift+F5'}`;
+}
+
+/** Whether NMSh's /cursor Ghostty fragment currently lists its shader (read-only; false when absent or unreadable). */
+export function ghosttyCursorShaderWritten(env: NodeJS.ProcessEnv = process.env): boolean {
+  try { return readFileSync(fragmentPath('ghostty', env), 'utf8') === ghosttyCursorFragment(true, env); } catch { return false; }
 }
 
 /** The host whose NMSh-managed cursor files are installed, for when the running terminal is hidden (inside tmux). */

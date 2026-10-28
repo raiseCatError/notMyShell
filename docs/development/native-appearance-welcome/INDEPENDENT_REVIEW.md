@@ -30,3 +30,15 @@ Should-fix, all FIXED with regressions:
 
 Minor, handled: `~user/` entries refuse (not guessed); R works on unsupported Kitty; confirmation re-plans and refuses if gates/files changed since the review; opening the studio applies gate changes made while NMSh was not running.
 Minor, documented only: symlinked user pipelines refuse (safe, by design of Slice 1 reads); `ps` launch check can block up to 2 s on open/review/sync; Unicode-space splitting in `shellWords` differs from shlex (resolution only; raw value preserved); `unitPair` accepts hex numbers Kitty rejects (user pipelines only; NMSh never emits them).
+
+## Slice 3 (Ghostty native shaders) — Codex gpt-6.1-sol, read-only, 2026-10-28
+
+Full review: evidence `slice3-review/REVIEW.md`. No blocker. All items fixed by the lead with regressions:
+
+1. Should-fix: successive trail changes replaced the pending record (legacy → Smear → Comet lost the /cursor shader). Fixed: pending trails accumulate; 'nmsh-cursor' wins.
+2. Should-fix: a refused sync or unsaved reload record let Portable draw over a written trail. Fixed: a written studio trail suppresses Portable motion whenever native does not handle motion; in-memory fallback in the controller.
+3. Should-fix: studio confirm called /cursor's writer outside the reviewed transaction. Fixed: removed; ledger `legacyPaused`; removal resumes the exact paused fragment in the same transaction, or says it was left alone.
+4. Should-fix: no startup reconciliation. Fixed: one sync at app construction (no process-table read).
+5. Should-fix: sync substituted the recorded version for an explicitly unsupported running version. Fixed: `hidden` capability; >1.4.x fails closed; sync removes passes with the reason.
+6. Minor: Smear note claimed redraws only while fading. Fixed; every plan discloses Ghostty's animation loop.
+7. Minor: short windows hid the reload warning. Fixed: compact pending line.

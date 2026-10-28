@@ -1,5 +1,14 @@
 # Native appearance and Welcome Studio handoff
 
+## Slice 3 state (Ghostty native shaders) — read first
+
+- Branch `feature/ghostty-native-shaders-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/ghostty-native-shaders-20261028`) is stacked on Slice 2 `feature/kitty-native-shaders-20261028` @ de2afd02 (PR #516, draft). Its draft PR targets the Slice 2 branch; retarget only after review, never automatically.
+- Code map: `src/appearance/ghosttyShaderCatalog.ts` (version table, uniforms, presets, GLSL generation), `src/appearance/ghosttyShaders.ts` (inspection, effective-list simulation, compose/plan/apply/remove, sync, reload-pending, launch inspection), `src/appearance/glslStudio.ts` (app controller; TerminalApp never names hosts), `src/appearance/ShaderStudioPanel.ts` (shared Kitty/Ghostty studio), `GhosttyShaderPanel.ts`, cursor integration in `cursor/backends.ts` (`GHOSTTY_TRAIL_BACKEND`, pending suppression) and `cursor/native.ts` (legacy fragment pause).
+- Owned files (host-appearance dir): `ghostty-shaders.conf`, `ghostty-shaders/<id>.glsl`, `ghostty-shaders.json` (ledger), `ghostty-reload.json` (pending trails), plus one hook `config-file = ?…ghostty-shaders.conf` at the end of the effective root config.
+- Next slices (all still required): 4 render routing (semantic surfaces → native/portable/off with reasons; native only for cursor trail and host focus) + Chroma-driven native colors via `idleStops`; 5 Shader Studio UX with previews; 6 Welcome Studio (uses the animation decoder branch); 7 integration, performance, QA, docs.
+- Known follow-up (Slice 2 scope, not fixed here): Kitty integrated with motion Smear may draw Kitty's tail while Portable draws smear.
+- Physical Ghostty/Kitty/Zed QA: NOT RUN. GPU rendering: NOT verified.
+
 ## Slice 2 state (Kitty native shaders) — read first
 
 - Slice 2 branch `feature/kitty-native-shaders-20261028` (worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/kitty-native-shaders-20261028`) is stacked on Slice 1 `feature/appearance-welcome-20261028` @ 4abd014d (PR #515, draft, unmerged). Its PR targets the Slice 1 branch so the diff is Slice 2 only; after #515 merges, rebase/retarget to `dev` only after review — never automatically.

@@ -1,14 +1,51 @@
 {
-  "phase": "Slice 2 (Kitty native shaders) implemented, reviewed, canonically verified (1 load-induced live timeout, passes alone); committed on feature/kitty-native-shaders-20261028",
+  "phase": "Slice 3 (Ghostty native shaders) implemented, independently reviewed, fixed, canonically verified clean; committed on feature/ghostty-native-shaders-20261028",
   "updated": "2026-10-28",
-  "slice1": {"branch": "feature/appearance-welcome-20261028", "head": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474", "pr": 515, "ci": "run 40640910786 success (not re-run)", "state": "draft, unmerged, unchanged"},
-  "slice2": {"branch": "feature/kitty-native-shaders-20261028", "base": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474", "pr": "stacked draft PR targeting feature/appearance-welcome-20261028 (see HANDOFF/progress for number)",
+  "slice1": {
+    "branch": "feature/appearance-welcome-20261028",
+    "head": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474",
+    "pr": 515,
+    "ci": "run 40640910786 success (not re-run)",
+    "state": "draft, unmerged, unchanged"
+  },
+  "slice2": {
+    "branch": "feature/kitty-native-shaders-20261028",
+    "base": "4abd014d3bee8c19f2a1c25c5271cc6f5b3fe474",
+    "pr": "stacked draft PR targeting feature/appearance-welcome-20261028 (see HANDOFF/progress for number)",
     "source_manifest_sha256": "a658e9704941d4588014f137d22fc2129f3c72d9650e27e9e5ab113db6620519",
     "tests": "canonical 4621/4636 pass, 1 fail (outputSelectionLive fish startup timeout; 3/3 alone), 13 skipped, 1 todo; Kitty focused 26/26; tsc clean; diff --check pass",
-    "review": "independent Sonnet review: no blocker; 4 should-fix fixed with regressions"},
+    "review": "independent Sonnet review: no blocker; 4 should-fix fixed with regressions"
+  },
   "evidence": "/Volumes/T7Tmp/ai-dev/nmsh-native-appearance-welcome-20261028 (CHECKPOINT.json, slice2-probe/, slice2-canonical-verify.log, slice2-live-rerun.log)",
   "physical_qa": "NOT RUN",
-  "gpu_validation": "NOT RUN (headless Kitty parse + slangc compile only)",
-  "unrelated_prs_untouched": [513, 514],
-  "next": "Human: physical Kitty QA of /appearance › Kitty shaders (enable Blaze/Lightning trail with /cursor Motion Tail, Northern Lights, CRT; check user custom_shaders still run; R restores). Agents: Ghostty GLSL slice next (separate stacked PR); never merge automatically; after #515 merges, rebase/retarget only after review."
+  "gpu_validation": "NOT RUN (headless Kitty parse, Ghostty +validate-config, slangc proxy compile only)",
+  "unrelated_prs_untouched": [
+    513,
+    514
+  ],
+  "next": "Slice 4: render routing (src/motion/renderRouting.ts) + Chroma-driven Aurora colors; then Slices 5-7. Human: physical Ghostty QA of /appearance \u203a Ghostty shaders.",
+  "slice3": {
+    "branch": "feature/ghostty-native-shaders-20261028",
+    "base": "de2afd0254327390205a5cde62af5d886f8efaaf",
+    "pr": "stacked draft PR targeting feature/kitty-native-shaders-20261028 (see progress)",
+    "source_manifest_sha256": "4f0f9e10b9a98000bb2d1d38b13f665c42235e5f91aa5597f1fca02b6404d063",
+    "tests": "canonical 4648/4662 pass, 0 fail, 13 skipped, 1 todo; focused 132/132; live 1.3.1+1.4.0 12/12; tsc clean",
+    "review": "Codex gpt-6.1-sol read-only: no blocker; 5 should-fix + 2 minor fixed with regressions"
+  },
+  "animated_decode": {
+    "branch": "feature/animated-image-decode-20261028",
+    "commits": [
+      "86aad528",
+      "ca90b2bc"
+    ],
+    "tests": "graphics 113/113 under guard",
+    "review": "Sonnet: no blocker; should-fix items fixed by Codex follow-up"
+  },
+  "mermaid_ci": {
+    "failure": "#516 run 40656373289 browserConsoleChrome.test.ts:106 (not rerun)",
+    "diagnosis": "mermaid-diag/REPORT.md (Codex + lead addendum)",
+    "local": "pinned mermaid@12.2.0, 3/3 pass at dev c690de05+diag and at #516 de2afd02",
+    "diag_commit": "9270894 on local diag/mermaid-ci-20261028 (unpushed)",
+    "verdict": "not reproduced; deadline-under-load hypothesis unproven"
+  }
 }

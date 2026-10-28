@@ -1,5 +1,16 @@
 # Native appearance / welcome progress
 
+## Slice 3 — Ghostty native shaders (Claude, 2026-10-28)
+
+Branch `feature/ghostty-native-shaders-20261028` from de2afd02 (head of draft PR #516, Slice 2) in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/ghostty-native-shaders-20261028`. Slice 1/2 worktrees untouched; #513/#514/#515/#516 unmerged and unchanged.
+
+- Implemented (DECISIONS, Slice 3): version table verified against Ghostty 1.2.0/1.3.0/1.3.1/1.4.0 shader prefixes; seven NMSh-original GLSL presets (Smear, Comet, Aurora, Dim when unfocused, Vignette, Scanlines, Text glow) with real compiled-in parameters; multi-pass composition after the person's passes through one optional include; exact effective-list simulation (roots, include queue, clears, `?`, quotes, relative paths); refusals; ownership ledger + Slice 1 snapshot transaction; exact removal; gate sync (Reduced Motion, Effects Off, Portable, motion) incl. startup; reload-pending state so Portable never draws a second trail; the older /cursor Ghostty shader pauses/resumes inside reviewed transactions; launch-option inspection; `/appearance › Ghostty shaders` studio sharing one panel with Kitty (`ShaderStudioPanel`). TerminalApp stays host-neutral (`glslStudio.ts`).
+- Tests: tests/ghosttyShaders.test.ts, tests/ghosttyShaderPanel.test.ts, tests/ghosttyShadersLive.test.ts (binary uniform parity, `+validate-config` in a private HOME, slangc proxy compile; staged 1.4.0 via NMSH_TEST_GHOSTTY_BINARIES). See TEST_RESULTS.
+- Independent Codex review (gpt-6.1-sol, read-only): no blocker; 5 should-fix + 2 minor, all fixed with regressions (INDEPENDENT_REVIEW.md, Slice 3).
+- Mermaid CI failure on #516 (run 40656373289, browserConsoleChrome.test.ts:106): diagnosed separately, not reproduced locally (3/3 pass at dev+diag and at #516), consistent with a deadline under CI load; diagnostic commit 9270894 on local branch `diag/mermaid-ci-20261028` (not pushed). Nothing rerun or bundled here.
+- Parallel (independent PR to dev, Slice 6 prerequisite): bounded animated GIF/APNG decoding by Codex in `feature/animated-image-decode-20261028` (commit 86aad528), lead rerun 103/103 under the guard; independent review pending at time of writing.
+- NOT done: Slices 4–7 (render routing + Chroma-driven native colors, Shader Studio previews, Welcome Studio, integration/performance/QA). Physical Ghostty/Kitty/Zed QA NOT RUN; GPU rendering NOT verified (headless parse + proxy compile only).
+
 ## Slice 2 — Kitty native shaders (fresh Claude session, 2026-10-28)
 
 Branch `feature/kitty-native-shaders-20261028` from 4abd014d in worktree `/Volumes/T7Tmp/ai-dev/worktrees/notMyShell/kitty-native-shaders-20261028`. Slice 1 (PR #515, branch feature/appearance-welcome-20261028) is untouched; its one uncommitted progress.md line stays in its own worktree.

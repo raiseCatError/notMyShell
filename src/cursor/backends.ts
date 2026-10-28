@@ -47,6 +47,12 @@ export const KITTY_BACKEND: CursorEffectBackend = {id: 'kitty', label: 'Kitty na
  * Portable must not draw its own Lightning too. Other Kitty trail styles (Blaze, Motion blur, Default) are trail looks only.
  */
 export const KITTY_LIGHTNING_BACKEND: CursorEffectBackend = {...KITTY_BACKEND, support: {motion: ['tail'], effect: ['lightning'], idleEffect: []}};
+/**
+ * Ghostty with a trail from /appearance › Ghostty shaders written (NMSh's reviewed studio pass): Ghostty draws the Smear or
+ * Tail trail; NMSh's older /cursor shader is paused then, so its Fire/Sparks/Ripple are drawn by Portable.
+ */
+export const GHOSTTY_TRAIL_BACKEND: CursorEffectBackend = {id: 'ghostty', label: 'Ghostty native', host: 'Ghostty', surfaceWide: true, support: {motion: ['smear', 'tail'], effect: [], idleEffect: []}};
+const GHOSTTY_TRAIL_LABELS: Record<string, string> = {smear: 'Smear', comet: 'Comet'};
 const KITTY_TRAIL_LABELS: Record<string, string> = {'cursor-trail-default': 'Default', 'cursor-trail-blaze': 'Blaze', 'cursor-trail-lightning': 'Lightning', 'cursor-trail-motion-blur': 'Motion blur'};
 
 export interface HostCursorFacts {
@@ -64,14 +70,26 @@ export interface HostCursorFacts {
   integrated: boolean;
   /** Kitty: the trail shader NMSh's reviewed Kitty pipeline currently contains (e.g. "cursor-trail-blaze"). */
   kittyTrail?: string;
+  /** Ghostty: the studio trail NMSh's reviewed Ghostty configuration currently contains (e.g. "comet"). */
+  ghosttyTrail?: string;
+  /**
+   * Ghostty: a native trail NMSh stopped writing that Ghostty may still draw until its config is reloaded
+   * ('nmsh-cursor' = NMSh's older /cursor shader). Portable cursor motion waits meanwhile (never two trails).
+   */
+  ghosttyTrailPending?: string;
 }
 
 const KNOWN_HOSTS: Record<string, string> = {zed: 'Zed', Apple_Terminal: 'Terminal.app', 'iTerm.app': 'iTerm2', WezTerm: 'WezTerm', vscode: 'VS Code', ghostty: 'Ghostty'};
 
-export function hostCursorFacts(env: NodeJS.ProcessEnv, integrated: (host: 'ghostty' | 'kitty') => boolean, kittyTrail: () => string | undefined = () => undefined): HostCursorFacts {
+export function hostCursorFacts(env: NodeJS.ProcessEnv, integrated: (host: 'ghostty' | 'kitty') => boolean, kittyTrail: () => string | undefined = () => undefined,
+  ghostty: () => {trail?: string; pending?: string} = () => ({})): HostCursorFacts {
   const hostName = KNOWN_HOSTS[env.TERM_PROGRAM ?? ''];
   const caretColor = env.TERM_PROGRAM === 'zed' ? 'theme-controlled' as const : 'host-controlled' as const;
-  if (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') return {host: 'ghostty', hostName: 'Ghostty', caretColor, ...(env.TERM_PROGRAM_VERSION ? {version: env.TERM_PROGRAM_VERSION} : {}), integrated: integrated('ghostty')};
+  if (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') {
+    const studio = ghostty();
+    return {host: 'ghostty', hostName: 'Ghostty', caretColor, ...(env.TERM_PROGRAM_VERSION ? {version: env.TERM_PROGRAM_VERSION} : {}), integrated: integrated('ghostty'),
+      ...(studio.trail ? {ghosttyTrail: studio.trail} : {}), ...(studio.pending ? {ghosttyTrailPending: studio.pending} : {})};
+  }
   if (env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') {
     const trail = kittyTrail();
     return {host: 'kitty', hostName: 'Kitty', caretColor, integrated: integrated('kitty'), ...(trail ? {kittyTrail: trail} : {})};
@@ -98,6 +116,7 @@ const atLeast = (version: string | undefined, major: number, minor: number) => {
 
 /** Whether this host can do native cursor effects at all (documented feature present), regardless of setup. */
 export function nativeBackendFor(facts: HostCursorFacts): CursorEffectBackend | undefined {
+  if (facts.host === 'ghostty' && facts.ghosttyTrail) return GHOSTTY_TRAIL_BACKEND;
   if (facts.host === 'ghostty' && (facts.version === undefined || atLeast(facts.version, 1, 2))) return GHOSTTY_BACKEND;
   if (facts.host === 'kitty') return facts.kittyTrail === 'cursor-trail-lightning' ? KITTY_LIGHTNING_BACKEND : KITTY_BACKEND;
   return undefined;
@@ -126,6 +145,18 @@ const isOff = (value: string) => value === 'off' || value === 'none';
  * unsure which renderer is drawing.
  */
 export function chooseBackend(settings: CursorSettings, facts: HostCursorFacts): BackendChoice {
+  const choice = chooseWithoutPending(settings, facts);
+  // A trail Ghostty may still draw: one NMSh stopped writing (until a reload), or one still written although it should not be
+  // (Portable chosen but the update was refused). Portable must not add a second trail either way.
+  const loaded = facts.ghosttyTrailPending ?? (facts.ghosttyTrail && !choice.nativeHandles.motion ? facts.ghosttyTrail : undefined);
+  if (!loaded) return choice;
+  const effects = loaded === 'nmsh-cursor';
+  return {...choice, portableDraws: {...choice.portableDraws, motion: false, effect: choice.portableDraws.effect && !effects},
+    reason: facts.ghosttyTrailPending ? `${choice.reason} · Portable cursor motion waits for a Ghostty config reload (then L in /appearance › Ghostty shaders)`
+      : `${choice.reason} · Ghostty still lists NMSh’s trail (its update was refused); open /appearance › Ghostty shaders`};
+}
+
+function chooseWithoutPending(settings: CursorSettings, facts: HostCursorFacts): BackendChoice {
   const native = nativeBackendFor(facts);
   const all = {motion: true, effect: true, idle: true};
   const nothing = {motion: false, effect: false, idle: false};
@@ -136,7 +167,7 @@ export function chooseBackend(settings: CursorSettings, facts: HostCursorFacts):
     return {backend: PORTABLE_BACKEND, reason: 'Portable (this terminal has no native cursor effects)', nativeHandles: none, portableDraws: all};
   }
   // A Kitty trail shader NMSh wrote after review counts as set up: Kitty draws that trail, so Portable must not draw a second one.
-  const integrated = facts.integrated || Boolean(facts.kittyTrail);
+  const integrated = facts.integrated || Boolean(facts.kittyTrail) || Boolean(facts.ghosttyTrail);
   if (!integrated) {
     return {backend: PORTABLE_BACKEND, native, nativeHandles: none,
       reason: settings.renderer === 'native' ? `${native.label} needs setup (shown before anything changes); no effects are drawn until then` : `Portable · ${native.label} is available after setup`,
@@ -147,7 +178,8 @@ export function chooseBackend(settings: CursorSettings, facts: HostCursorFacts):
   const effect = !isOff(settings.effect) && supports(native, 'effect', settings.effect) && (native.id !== 'kitty' || !isOff(settings.motion));
   const forced = settings.renderer === 'native';
   const fallback = !forced && ((!isOff(settings.motion) && !motion) || (!isOff(settings.effect) && !effect) || !isOff(settings.idleEffect));
-  const style = facts.kittyTrail ? ` · ${KITTY_TRAIL_LABELS[facts.kittyTrail] ?? 'custom'} trail shader` : '';
+  const style = facts.kittyTrail ? ` · ${KITTY_TRAIL_LABELS[facts.kittyTrail] ?? 'custom'} trail shader`
+    : facts.ghosttyTrail ? ` · ${GHOSTTY_TRAIL_LABELS[facts.ghosttyTrail] ?? 'studio'} trail shader` : '';
   return {backend: native, native, nativeHandles: {motion, effect},
     reason: `${native.label}${style}${fallback ? ' with Portable fallback for what it does not draw' : ''}`,
     portableDraws: forced ? nothing : {motion: !motion, effect: !effect, idle: true}};
@@ -172,9 +204,9 @@ export function availabilityOf(feature: CursorFeature, value: string, renderer: 
   if (renderer === 'native') {
     if (!native) return {available: false, reason: 'Host native is not available in this terminal.'};
     if (!supports(native, feature, value)) return {available: false, reason: `${native.host ?? native.label} Native does not provide this ${FEATURE_WORD[feature]}.`};
-    return facts.integrated ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'native-pending', suffix: `after ${native.host} setup`};
+    return facts.integrated || facts.ghosttyTrail ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'native-pending', suffix: `after ${native.host} setup`};
   }
-  if (native && (facts.integrated || facts.kittyTrail)) return supports(native, feature, value) ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'portable-fallback', suffix: 'Portable fallback'};
+  if (native && (facts.integrated || facts.kittyTrail || facts.ghosttyTrail)) return supports(native, feature, value) ? {available: true, via: 'native', suffix: ''} : {available: true, via: 'portable-fallback', suffix: 'Portable fallback'};
   return {available: true, via: 'portable', suffix: ''};
 }
 
