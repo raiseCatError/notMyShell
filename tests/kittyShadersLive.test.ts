@@ -80,7 +80,10 @@ test('installed Kitty loads NMSh’s composed custom_shaders exactly and compile
 
 test('installed Kitty compiles each newer curated preset with its tuned values (headless, private HOME)', {skip: !supported && 'Kitty 0.49+ is not installed', timeout: 300_000}, async t => {
   const presets: Array<[string, Record<string, unknown>]> = [['crt-blue', {WARP: 0.15}], ['fireworks-rockets', {CYCLE_TIME: 4.5}], ['bloom', {BLOOM_STRENGTH: 0.35}],
-    ['tft', {STRENGTH: 0.65}], ['water', {CAUSTIC_INTEN: 0.007, WATER_COLOR: [0.2, 0.4, 0.6]}], ['underwater', {}], ['negative', {}]];
+    ['tft', {STRENGTH: 0.65}], ['water', {CAUSTIC_INTEN: 0.007, WATER_COLOR: [0.2, 0.4, 0.6]}], ['underwater', {}], ['negative', {}],
+    // NMSh's own Slang, written beside its pipeline: Kitty must find and compile it (warnings are errors in Kitty).
+    ['ink-bloom', {COLOR: 2}], ['type-garden', {STRENGTH: 2}], ['filament', {COLOR: 2}], ['glitch-hop', {COLOR: 1}], ['gravity-lens', {STRENGTH: 0}],
+    ['holo-foil', {COLOR: 1}], ['shine-sweep', {CADENCE: 1}], ['halo-bloom', {COLOR: 1}]];
   const compile = async (id: string, values: Record<string, unknown>) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-klive2-')));
     t.after(() => rmSync(home, {recursive: true, force: true}));

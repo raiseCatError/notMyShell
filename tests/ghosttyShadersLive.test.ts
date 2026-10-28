@@ -61,7 +61,9 @@ for (const binary of binaries) {
     mkdirSync(dirname(config), {recursive: true, mode: 0o700});
     writeFileSync(config, 'font-size = 13\ncustom-shader = mine.glsl\n', {mode: 0o600});
     writeFileSync(join(dirname(config), 'mine.glsl'), 'void mainImage(out vec4 c, in vec2 p) { c = texture(iChannel0, p / iResolution.xy); }\n');
-    const effects = buildGhosttyCatalog(version).offered.filter(item => item.definition.id !== 'comet').map(item => ({id: item.definition.id, enabled: true, values: {}}));
+    // One cursor effect (Smear) and at most six passes: the original presets plus nothing exclusive with Smear.
+    const effects = buildGhosttyCatalog(version).offered.filter(item => item.definition.id !== 'comet' && item.definition.category !== 'typing' && item.definition.category !== 'welcome')
+      .map(item => ({id: item.definition.id, enabled: true, values: {}}));
     const planned = planGhosttyShaders(normalizeHostShaders({ghostty: {effects}}).ghostty, context);
     assert.ok(planned.ok, planned.ok ? '' : planned.error);
     assert.ok(applyGhosttyShaderPlan(planned.plan).ok);

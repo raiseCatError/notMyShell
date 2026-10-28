@@ -47,8 +47,9 @@ test('version gates: unknown, too old and any unverified newer version fail clos
     assert.match(ghosttyCapability(newer).reason!, /newer than NMSh has verified \(through 1\.4\.x\)/u);
   }
   const old = buildGhosttyCatalog('1.2.0');
-  assert.deepEqual(old.offered.map(item => item.definition.id).sort(), ['comet', 'glow', 'scanlines', 'smear', 'vignette']);
-  assert.deepEqual(old.notOffered, ['Aurora (Ghostty 1.3+)', 'Dim when unfocused (Ghostty 1.3+)']);
+  assert.deepEqual(old.offered.map(item => item.definition.id).sort(), ['comet', 'filament', 'glitch-hop', 'glow', 'gravity-lens', 'halo-bloom', 'holo-foil', 'ink-bloom',
+    'scanlines', 'smear', 'type-garden', 'vignette']);
+  assert.deepEqual(old.notOffered, ['Aurora (Ghostty 1.3+)', 'Dim when unfocused (Ghostty 1.3+)', 'Shine Sweep (Ghostty 1.3+)'], 'Shine Sweep reads the 1.3 focus time');
   assert.deepEqual(buildGhosttyCatalog('1.3.1').offered.map(item => item.definition.id), buildGhosttyCatalog('1.4.0').offered.map(item => item.definition.id));
   assert.equal(buildGhosttyCatalog('1.3.1').offered.length, GHOSTTY_PRESETS.length);
   assert.equal(buildGhosttyCatalog(undefined).offered.length, 0);
@@ -399,4 +400,47 @@ test('animation: the person’s custom-shader-animation is read, never written; 
   const vignette = planGhosttyShaders(settingsOf(['vignette']), still.context);
   assert.ok(vignette.ok && vignette.plan.notes.some(note => /runs its animation loop on the focused surface \(custom-shader-animation true, the default\)/u.test(note)));
   assert.ok(!presetById('smear')!.note!.includes('Redraws only'));
+});
+
+// ---- NMSh's own effects ------------------------------------------------------------------------------------------
+
+test('NMSh’s own effects: two new categories, ≤3 friendly choices each, typing effects are the one cursor effect, every value generates', () => {
+  const ours = GHOSTTY_PRESETS.filter(preset => preset.category === 'typing' || preset.category === 'welcome');
+  assert.deepEqual(ours.map(preset => preset.id), ['ink-bloom', 'type-garden', 'filament', 'glitch-hop', 'gravity-lens', 'holo-foil', 'shine-sweep', 'halo-bloom']);
+  for (const preset of ours) {
+    assert.ok(preset.params.length <= 3 && preset.params.every(param => param.kind === 'choice' && param.type === 'int'), preset.id);
+    assert.equal(preset.trail === true && preset.exclusive === 'cursor', preset.category === 'typing', `${preset.id}: typing effects replace the trail`);
+    for (const param of preset.params) for (const [value] of param.choices!) {
+      const source = generateGhosttyShader(preset, {[param.name]: value}, colors).source;
+      assert.match(source, new RegExp(`const int ${param.name} = ${value};`, 'u'));
+      assert.match(source, /Original NMSh code, GPL-3\.0-only/u);
+    }
+  }
+  assert.deepEqual(validateGhosttyEffects(settingsOf(['smear'], ['ink-bloom']), buildGhosttyCatalog('1.3.1')), ['Ink Bloom and Smear trail cannot run together (one cursor trail).']);
+  assert.deepEqual(validateGhosttyEffects(settingsOf(['ink-bloom'], ['holo-foil'], ['halo-bloom']), buildGhosttyCatalog('1.3.1')), [], 'one cursor effect plus welcome effects');
+  // Ghostty's fragment y axis points down under Metal (macOS) and up under OpenGL; Type Garden grows up on both.
+  assert.match(generateGhosttyShader(presetById('type-garden')!, {}, {...colors, platform: 'darwin'}).source, /#define NMSH_UP -1\.0/u);
+  assert.match(generateGhosttyShader(presetById('type-garden')!, {}, {...colors, platform: 'linux'}).source, /#define NMSH_UP 1\.0/u);
+  // Theme colors are read live, not baked in.
+  assert.match(generateGhosttyShader(presetById('ink-bloom')!, {COLOR: 0}, colors).source, /iCurrentCursorColor\.rgb/u);
+  assert.match(generateGhosttyShader(presetById('shine-sweep')!, {CADENCE: 1}, colors).source, /iTimeFocus/u);
+});
+
+test('NMSh’s own effects are written as owned passes, gated like trails, and removed exactly', t => {
+  const {context, put, legacy, paths} = fixture(t);
+  put(legacy, 'font-size = 13\n');
+  const plan = apply(planGhosttyShaders(settingsOf(['filament', {COLOR: 2}], ['holo-foil']), context));
+  assert.deepEqual(plan.shaders.map(shader => shader.id), ['filament', 'holo-foil']);
+  assert.equal(plan.trailAfter, 'filament', 'a typing effect is the trail Portable must not double');
+  assert.equal(writtenGhosttyTrail(context), 'filament');
+  for (const id of ['filament', 'holo-foil']) assert.ok(readFileSync(join(paths.shaderDirectory, `${id}.glsl`), 'utf8').includes('nmshEffect('));
+  // Portable cursor: the typing effect leaves, the welcome effect stays.
+  const synced = syncGhosttyShaders(settingsOf(['filament'], ['holo-foil']), {...context, gates: {...openGates, cursorRenderer: 'portable'}});
+  assert.equal(synced.kind, 'written');
+  assert.deepEqual(effective(context).map(path => path.split('/').at(-1)), ['holo-foil.glsl']);
+  const removal = planGhosttyShaderRemoval(context);
+  assert.ok(removal.ok, removal.ok ? '' : removal.error);
+  assert.ok(applyGhosttyShaderPlan(removal.plan).ok);
+  for (const id of ['filament', 'holo-foil']) assert.equal(existsSync(join(paths.shaderDirectory, `${id}.glsl`)), false, `${id} removed`);
+  assert.equal(readFileSync(legacy, 'utf8'), 'font-size = 13\n');
 });

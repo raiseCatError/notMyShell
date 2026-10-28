@@ -4040,7 +4040,7 @@ export class TerminalApp {
    * would remove it again (Portable). Returns the configuration the review is planned against and the /cursor changes it implies.
    */
   private kittyTrailFollowUp(draft: KittyShaderSettings, catalog: KittyCatalog, config: PromptConfiguration = this.promptConfiguration): {config: PromptConfiguration; changes: string[]} {
-    const trail = draft.effects.some(effect => effect.enabled && catalog.offered.some(item => item.definition.id === effect.id && item.definition.category === 'cursor'));
+    const trail = draft.effects.some(effect => effect.enabled && catalog.offered.some(item => item.definition.id === effect.id && (item.definition.category === 'cursor' || item.definition.category === 'typing')));
     // Under Reduced Motion or Effects Off the pipeline has no trail, so /cursor is left alone.
     const gates = this.shaderGates(config);
     if (!trail || gates.reducedMotion || gates.effectsOff || (config.cursor.motion !== 'off' && config.cursor.renderer !== 'portable')) return {config, changes: []};

@@ -553,3 +553,76 @@ test('reload: Kitty ignores changed included files, so NMSh asks only the verifi
   assert.ok(plan.ok && plan.plan.preview.some(line => /NMSh asks the Kitty it runs in to reload its configuration/u.test(line)));
   assert.ok(plan.ok && /Kitty watches only kitty\.conf, not the files it includes/u.test(plan.plan.guidance));
 });
+
+// ---- NMSh's own effects ------------------------------------------------------------------------------------------
+
+test('NMSh’s own effects: offered from NMSh’s Slang (any Kitty 0.49+), typing effects are the one cursor effect, ≤3 choices each', () => {
+  const c = catalog();
+  const ours = c.offered.filter(preset => 'nmsh' in preset.definition.source);
+  assert.deepEqual(ours.map(preset => preset.definition.id), ['ink-bloom', 'type-garden', 'filament', 'glitch-hop', 'gravity-lens', 'holo-foil', 'shine-sweep', 'halo-bloom']);
+  for (const preset of ours) {
+    assert.deepEqual(preset.missing, [], `${preset.definition.id}: every setting is declared by NMSh's own shader`);
+    assert.ok(preset.params.length <= 3 && preset.params.every(param => param.kind === 'choice'));
+    assert.equal(preset.definition.exclusive === 'cursor', preset.definition.category === 'typing');
+    assert.equal(c.shaders.has(`nmsh-${preset.definition.id}`), false, 'NMSh’s shaders are not mistaken for shipped ones');
+  }
+  assert.deepEqual(validateEffects(settingsOf(['cursor-trail-blaze'], ['type-garden']), c), ['Type Garden and Blaze trail cannot run together.']);
+  assert.equal(catalog('0.48.1').offered.length, 0, 'older Kitty has no custom shaders at all');
+});
+
+test('NMSh’s own Kitty shaders are written beside the pipeline, owned, swapped and removed exactly; typing starts the trail on one-cell moves', t => {
+  const f = fixture(t);
+  f.put(f.kitty, 'font_size 13\n');
+  const shader = (id: string) => join(f.paths.directory, `nmsh-${id}.slang`);
+  const plan = apply(planKittyShaders(settingsOf(['ink-bloom', {COLOR: 2, STRENGTH: 2}], ['shine-sweep', {CADENCE: 1}]), f.context));
+  // The pipeline names NMSh's shaders by name; Kitty finds them in the pipeline's own folder first.
+  assert.match(plan.pipelineText, /animation_start cursor-trail-move\n {4}animation_stop cursor-trail-stop\n {4}animation_step 16\n {4}var int COLOR = 2\n {4}var int STRENGTH = 2\n {4}shaders nmsh-ink-bloom/u);
+  assert.match(plan.pipelineText, /animation_start os-window-focus-in\n {4}animation_stop 2200[\s\S]*var int CADENCE = 1\n {4}shaders nmsh-shine-sweep/u, 'On focus only starts on focus');
+  assert.ok(parseKittyPipeline(plan.pipelineText, 'nmsh').ok);
+  assert.match(plan.pipelineText, /# Ink Bloom: NMSh’s own nmsh-ink-bloom\.slang sha256:/u);
+  for (const id of ['ink-bloom', 'shine-sweep']) assert.match(readFileSync(shader(id), 'utf8'), /^#language slang 2026\n[\s\S]*import kitty_custom_shader_types;[\s\S]*fragment_main/u);
+  const fragment = readFileSync(f.paths.fragment, 'utf8');
+  assert.match(fragment, /cursor_trail 3\n/u, 'trail turned on for the cursor effect');
+  assert.match(fragment, /cursor_trail_start_threshold 0\ncursor_trail_decay 6 12\n/u);
+  const ledger = JSON.parse(readFileSync(f.paths.ledger, 'utf8'));
+  assert.deepEqual(ledger.shaders.map((item: {name: string}) => item.name), ['nmsh-ink-bloom', 'nmsh-shine-sweep']);
+  return import('../src/appearance/kittyShaders.js').then(({writtenKittyTrail}) => {
+    assert.equal(writtenKittyTrail(f.context), 'nmsh-ink-bloom', 'Portable must not draw a second cursor effect');
+    // Swapping effects writes the new shader and deletes the one no longer used; welcome effects are not trails.
+    apply(planKittyShaders(settingsOf(['ink-bloom', {}, false], ['halo-bloom']), f.context));
+    assert.equal(existsSync(shader('ink-bloom')), false);
+    assert.equal(existsSync(shader('shine-sweep')), false);
+    assert.ok(existsSync(shader('halo-bloom')));
+    assert.equal(writtenKittyTrail(f.context), undefined);
+    assert.doesNotMatch(readFileSync(f.paths.fragment, 'utf8'), /cursor_trail_start_threshold/u, 'no trail tuning without a typing effect');
+    // A same-named file NMSh did not record is never overwritten; an edited owned shader blocks a rewrite but not removal.
+    f.put(shader('filament'), '// mine\n');
+    const refused = planKittyShaders(settingsOf(['filament'], ['halo-bloom']), f.context);
+    assert.equal(refused.ok, false);
+    assert.match((refused as {error: string}).error, /nmsh-filament\.slang exists but is not recorded as NMSh’s/u);
+    writeFileSync(shader('halo-bloom'), '// edited\n');
+    assert.match((planKittyShaders(settingsOf(['halo-bloom']), f.context) as {error: string}).error, /nmsh-halo-bloom\.slang is unowned or was edited/u);
+    const removal = planKittyShaderRemoval(f.context);
+    assert.ok(removal.ok, removal.ok ? '' : removal.error);
+    assert.ok(applyKittyShaderPlan(removal.plan).ok);
+    assert.equal(readFileSync(shader('halo-bloom'), 'utf8'), '// edited\n', 'an edited shader is kept as it is');
+    assert.equal(readFileSync(shader('filament'), 'utf8'), '// mine\n');
+    assert.equal(readFileSync(f.kitty, 'utf8'), 'font_size 13\n');
+    assert.equal(existsSync(f.paths.pipeline), false);
+  });
+});
+
+test('removal deletes every intact NMSh shader it recorded; a later trail-threshold line is disclosed, not fought', t => {
+  const f = fixture(t);
+  f.put(f.kitty, 'cursor_trail 3\ninclude late.conf\n');
+  f.put(join(dirname(f.kitty), 'late.conf'), '');
+  apply(planKittyShaders(settingsOf(['gravity-lens'], ['holo-foil']), f.context));
+  writeFileSync(f.kitty, `${readFileSync(f.kitty, 'utf8')}cursor_trail_start_threshold 2\n`);
+  const replan = planKittyShaders(settingsOf(['gravity-lens', {SPEED: 2}], ['holo-foil']), f.context);
+  assert.ok(replan.ok, replan.ok ? '' : replan.error);
+  assert.ok(replan.plan.notes.some(note => /cursor_trail_start_threshold is set again later .*uses 2 instead of 0/u.test(note)), replan.plan.notes.join('\n'));
+  const removal = planKittyShaderRemoval(f.context);
+  assert.ok(removal.ok);
+  assert.ok(applyKittyShaderPlan(removal.plan).ok);
+  for (const id of ['gravity-lens', 'holo-foil']) assert.equal(existsSync(join(f.paths.directory, `nmsh-${id}.slang`)), false);
+});

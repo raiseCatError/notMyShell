@@ -128,3 +128,33 @@ test('trail styles differ in shape, not only in color: Lightning is never drawn 
   assert.ok(PREVIEW_MS.lightning < PREVIEW_MS.blaze);
   for (const kind of kinds) assert.equal(renderShaderPreview(input({kind, values, elapsed: PREVIEW_MS[kind]})).busy, false, `${kind} settles`);
 });
+
+test('NMSh’s own effects: each has its own distinct, deterministic preview; still under Reduced Motion; welcome effects leave plain text alone', () => {
+  const ids = ['ink-bloom', 'type-garden', 'filament', 'glitch-hop', 'gravity-lens', 'holo-foil', 'shine-sweep', 'halo-bloom'] as const;
+  const frames = new Map<string, string>();
+  for (const id of ids) {
+    assert.equal(previewKind(id, id.endsWith('foil') || id.endsWith('sweep') || id === 'halo-bloom' ? 'welcome' : 'typing'), id);
+    const at = (elapsed: number, still = false) => renderShaderPreview(input({kind: id, values: {STRENGTH: 1}, elapsed, still}));
+    const mid = at(PREVIEW_MS[id] * 0.3);
+    assert.equal(mid.rows.length, PREVIEW_ROWS);
+    assert.ok(mid.rows.every(row => stripAnsi(row).length === 40), id);
+    assert.deepEqual(mid, at(PREVIEW_MS[id] * 0.3), `${id} is deterministic`);
+    assert.equal(mid.busy, true, `${id} animates while the preview runs`);
+    assert.equal(at(PREVIEW_MS[id] + 1).busy, false, `${id} settles`);
+    assert.deepEqual(at(10, true).rows, at(9000, true).rows, `${id} is one still frame under Reduced Motion / Effects Off`);
+    assert.equal(at(10, true).busy, false);
+    assert.notDeepEqual(mid.rows, renderShaderPreview(input({kind: 'glow', elapsed: 0})).rows, `${id} draws something`);
+    frames.set(id, mid.rows.join('\n'));
+    // Strength changes the preview.
+    assert.notDeepEqual(renderShaderPreview(input({kind: id, values: {STRENGTH: 0}, elapsed: PREVIEW_MS[id] * 0.3})).rows, mid.rows, `${id} strength`);
+  }
+  assert.equal(new Set(frames.values()).size, ids.length, 'every effect looks different');
+  // Welcome effects change only the colorful logo (and, for Halo Bloom, the glow around it); the sample text keeps its colors.
+  const plainText = (rows: string[]) => rows.slice(0, 4).map(row => row.split('\u001b[0m')[0]!.slice(0, 200));
+  const base = renderShaderPreview(input({kind: 'holo-foil', values: {STRENGTH: 0}, elapsed: 0, still: true}));
+  for (const id of ['holo-foil', 'shine-sweep'] as const) {
+    const frame = renderShaderPreview(input({kind: id, values: {STRENGTH: 2}, elapsed: PREVIEW_MS[id] * 0.4}));
+    assert.deepEqual(frame.rows.map(row => stripAnsi(row).slice(0, 22)), base.rows.map(row => stripAnsi(row).slice(0, 22)), `${id} keeps the text`);
+    assert.deepEqual(plainText(frame.rows).map(row => row.slice(0, 60)), plainText(base.rows).map(row => row.slice(0, 60)), `${id} keeps the text colors`);
+  }
+});
