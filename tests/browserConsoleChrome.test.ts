@@ -103,7 +103,7 @@ test('a reload starts a new document; NMSh\'s find world, web pages and the Merm
       const rendererEvents: PageEvent[] = [];
       rendererPage.onEvent(event => rendererEvents.push(event));
       const result = await renderer.render({source: 'flowchart LR\n  A --> B\n  B --> %%{init: bad}%% C\n  click A call alert()', config: mermaidConfig({scheme: 'dark', text: '#ffffff', accent: '#aaaaff', line: '#888888'}), scale: 1, timeoutMs: 10_000});
-      assert.ok(result.ok || result.code === 'syntax');
+      assert.ok(result.ok || result.code === 'syntax', result.ok ? undefined : `Mermaid ${library.version}: ${result.code}: ${result.reason}`);
       assert.equal(rendererEvents.filter(event => event.type === 'console').length, 0, 'the diagram renderer reports nothing');
       assert.ok(!entries(events).some(entry => /mermaid/iu.test(entry.message)));
       await renderer.close();
