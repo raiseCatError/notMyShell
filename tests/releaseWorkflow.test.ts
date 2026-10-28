@@ -218,3 +218,16 @@ test('release.yml: manual or release-script-PR triggers only, pinned actions, ga
   const runBodies = [...text.matchAll(/run: [|]\n((?: {10}.*\n?)+)/gu)].map(match => match[1]).join('\n');
   assert.doesNotMatch(runBodies, /\$\{\{ *inputs\./u, 'inputs reach shell only through env');
 });
+
+test('a lost gate exit status cannot publish: pipefail shell, and publish refuses provenance that lists blockers', async () => {
+  const text = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+  assert.match(text, /^defaults:\n {2}run:\n {4}shell: bash$/mu, 'every run step uses bash -eo pipefail');
+  const {provenanceRefusal} = await import('../scripts/release/lib.mjs');
+  const commit = 'a'.repeat(40);
+  const record = {version: '1.2.3', commit, mode: 'publish', blockers: [] as string[]};
+  assert.equal(provenanceRefusal(record, {version: '1.2.3', commit}), undefined);
+  assert.match(provenanceRefusal({...record, blockers: ['qa-missing']}, {version: '1.2.3', commit})!, /qa-missing/);
+  assert.match(provenanceRefusal({...record, blockers: undefined}, {version: '1.2.3', commit})!, /does not record/);
+  assert.match(provenanceRefusal({...record, mode: 'dry-run'}, {version: '1.2.3', commit})!, /publish-mode/);
+  assert.match(provenanceRefusal(record, {version: '1.2.4', commit})!, /publish-mode/);
+});

@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {basename, join, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
 import {pathToFileURL} from 'node:url';
-import {checkApproval, classifyExisting, parseSums, tagFor, validateRefs, verifySums} from './lib.mjs';
+import {checkApproval, classifyExisting, parseSums, provenanceRefusal, tagFor, validateRefs, verifySums} from './lib.mjs';
 import {gh, ghBuffer, getMasterHead, getRemoteState} from './github.mjs';
 
 function fail(message) { throw new Error(message); }
@@ -28,7 +28,8 @@ export async function publish(argv) {
   const problems = await verifySums(dir, {required: [name, 'provenance.json']});
   if (problems.length) fail(`Artifacts do not verify:\n${problems.join('\n')}`);
   const provenance = JSON.parse(await readFile(join(dir, 'provenance.json'), 'utf8'));
-  if (provenance.commit !== commit || provenance.version !== version || provenance.mode !== 'publish') fail('provenance.json is not a publish-mode record for this version and commit.');
+  const refusal = provenanceRefusal(provenance, {version, commit});
+  if (refusal) fail(refusal);
 
   const verdict = classifyExisting({commit, ...getRemoteState(repo, tag)});
   if (verdict.action === 'refuse') fail(`[${verdict.blocker.code}] ${verdict.blocker.message}`);

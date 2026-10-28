@@ -111,6 +111,8 @@ export async function prepare(argv) {
     lockfileSha256: sha256(lockText), dependencies,
     checks: checks.map(({stdout, ...rest}) => rest),
     qa: qa ? {rows: qa.rows?.length ?? 0} : null,
+    // Publish refuses a record that lists any blocker, so a lost exit status can never publish.
+    blockers: blockers.map(item => item.code),
     createdAt: new Date().toISOString(),
   };
   await writeFile(join(out, 'provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`);

@@ -32,6 +32,11 @@ on:
 
 permissions: {}
 
+# An explicit bash shell runs with -eo pipefail: a failing gate piped into tee must still fail its step.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: nmsh-release
   cancel-in-progress: false

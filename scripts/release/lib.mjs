@@ -188,3 +188,11 @@ export function summarizeBlockers(blockers, mode) {
   const failing = mode === 'publish' ? blockers : blockers.filter(item => !item.soft);
   return {failing, soft: blockers.filter(item => !failing.includes(item))};
 }
+
+/** Why a prepared provenance record may not be published (undefined when it may). */
+export function provenanceRefusal(provenance, {version, commit}) {
+  if (!provenance || provenance.commit !== commit || provenance.version !== version || provenance.mode !== 'publish') return 'provenance.json is not a publish-mode record for this version and commit.';
+  if (!Array.isArray(provenance.blockers)) return 'provenance.json does not record its release blockers.';
+  if (provenance.blockers.length) return `provenance.json records release blockers: ${provenance.blockers.join(', ')}.`;
+  return undefined;
+}
