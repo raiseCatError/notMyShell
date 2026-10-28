@@ -2,6 +2,7 @@
 import {constants, closeSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats} from 'node:fs';
 import {randomUUID, createHash} from 'node:crypto';
 import {dirname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {nmshConfigDirectory} from '../configuration/paths.js';
 import {Journal, type JournalMetadata, type JournalEntry} from '../backups/journal.js';
 
 export const digest = (content: string) => createHash('sha256').update(content).digest('hex');
@@ -10,8 +11,15 @@ export interface FileChange {before: FileSnapshot; after?: string; afterMode?: n
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const identity = (stat: Stats) => `${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}`;
 
-/** Reject every symbolic-link component. Missing descendants are allowed only below a verified directory. */
-export function checkPath(path: string, home: string, writable = false): void {
+const within = (root: string, path: string) => { const inside = relative(root, path); return !(inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)); };
+
+/**
+ * Reject every symbolic-link component. Missing descendants are allowed only below a verified directory. Paths must be inside the
+ * home, or inside NMSh's own configuration directory (XDG_CONFIG_HOME may point outside the home); the same checks apply there.
+ */
+export function checkPath(path: string, homeRoot: string, writable = false): void {
+  const own = nmshConfigDirectory();
+  const home = isAbsolute(path) && !within(homeRoot, path) && within(own, path) ? own : homeRoot;
   const inside = relative(home, path);
   if (!isAbsolute(path) || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error('The configuration path is outside your home; no changes are allowed.');
   const parts = resolve(path).split(sep).filter(Boolean);

@@ -3907,9 +3907,11 @@ export class TerminalApp {
     this.render();
   }
 
-  /** Integration hook for reviewed restore/reset writes. The host owner can add its reload callback here. */
+  /** After reviewed restore/reset writes: reload the verified terminal NMSh runs in (when it is one NMSh can reload) and reload settings. */
   private afterHostFilesChanged(paths: readonly string[]): void {
     if (!paths.length) return;
+    const host = this.cursorFacts().host;
+    if (host !== 'other') this.output.addFrontendInteraction('/changes', this.reloadNativeHost(host).message, INFO);
     // Load disk state without the settings setter: restoring files must not regenerate the files just restored.
     this.configuration=loadPromptConfiguration();
     this.effectivePromptProvider=this.configuration.provider;
