@@ -1,3 +1,5 @@
+import {snapshot, transact, type FileChange} from '../appearance/hostFiles.js';
+import type {JournalMetadata} from '../backups/journal.js';
 import {createHash} from 'node:crypto';
 import {chmodSync, mkdirSync, lstatSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync, accessSync, constants, unlinkSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -410,7 +412,18 @@ export const ABSENT = 'absent';
 /* ---------- applying and rendering ---------- */
 
 /** NMSh's own Run: the same plan, applied without a shell. Refuses if the file changed; atomic rename; mode kept. */
-export function applyPlan(plan: FileEditPlan): {ok: true} | {ok: false; reason: string} {
+export function applyPlan(plan: FileEditPlan, journal?: JournalMetadata & {home: string; companions?: FileChange[]}): {ok: true} | {ok: false; reason: string} {
+  if (journal) {
+    try {
+      const before = snapshot(plan.path, journal.home, true);
+      if ((before.content === undefined ? ABSENT : sha256(before.content)) !== plan.expectedSha256) throw new Error('Configuration changed since preview; review again.');
+      let next = before.content ?? '';
+      for (const edit of [...plan.edits].sort((a,b) => b.start - a.start)) next = next.slice(0,edit.start) + edit.text + next.slice(edit.end);
+      if (sha256(next) !== plan.resultSha256) throw new Error('The edit did not produce the previewed result.');
+      transact([{before, after:next},...(journal.companions??[])], [], journal.home, journal);
+      return {ok:true};
+    } catch (error) { return {ok:false, reason: error instanceof Error ? error.message : String(error)}; }
+  }
   if (plan.expectedSha256 === ABSENT) {
     try {
       mkdirSync(dirname(plan.resolvedPath), {recursive: true});

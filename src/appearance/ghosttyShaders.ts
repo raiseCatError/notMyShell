@@ -394,7 +394,7 @@ export function syncGhosttyShaders(settings: GhosttyShaderSettings, context: Gho
     const removals: FileChange[] = [...state.passes.values()].filter(file => file.content !== undefined).map(file => ({before: file}));
     const {trail: _trail, ...rest} = record;
     const ledgerText = `${JSON.stringify({...rest, fragmentHash: digest(INACTIVE_FRAGMENT), passes: []}, null, 2)}\n`;
-    try { transact([...removals, {before: state.fragment, after: INACTIVE_FRAGMENT}, {before: state.ledger, after: ledgerText}], [], state.paths.home); }
+    try { transact([...removals, {before: state.fragment, after: INACTIVE_FRAGMENT}, {before: state.ledger, after: ledgerText}], [], state.paths.home, {source: 'ghostty-shaders', label: 'ghostty-shaders synchronization', directory: join(state.paths.directory,'..','backups')}); }
     catch (error) { return {kind: 'review', message: error instanceof Error ? error.message : String(error)}; }
     const why = context.catalog.supported ? '' : ` (${context.catalog.capability.reason ?? 'this Ghostty version is not supported'})`;
     return {kind: 'written', message: `NMSh’s Ghostty effects are off${why} · ${ghosttyShaderGuidance(context.platform)}`, ...(record.trail ? {trailBefore: record.trail} : {})};
@@ -441,7 +441,7 @@ export function planGhosttyShaderRemoval(context: AppearanceContext, options: {l
 }
 
 export function applyGhosttyShaderPlan(plan: GhosttyShaderPlan): {ok: true} | {ok: false; error: string} {
-  try { transact(plan.changes, plan.dependencies, plan.home); return {ok: true}; }
+  try { transact(plan.changes, plan.dependencies, plan.home, {source: 'ghostty-shaders', directory: join(dirname(plan.fragmentPath),'..','backups'), label: 'ghostty-shaders configuration'}); return {ok: true}; }
   catch (error) { return {ok: false, error: error instanceof Error ? error.message : String(error)}; }
 }
 
@@ -497,7 +497,7 @@ export function setGhosttyReloadPending(context: AppearanceContext, previous: re
   const before = snapshot(paths.reload, paths.home, true);
   const after = !previous?.length ? undefined : `${JSON.stringify({version: 1, since: now, previous: [...new Set(previous)]} satisfies ReloadRecord)}\n`;
   if (before.content === after) return;
-  transact([{before, after}], [], paths.home);
+  transact([{before, after}], [], paths.home, {source: 'ghostty-shaders', label: 'Host reload state', directory: join(paths.directory,'..','backups')});
 }
 
 /**

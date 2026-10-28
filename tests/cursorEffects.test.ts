@@ -124,7 +124,7 @@ test('backends: Auto is native only when set up; forced native on another host f
 
 test('native setup: one include line through a verified plan; existing shaders kept; managed files only afterwards', () => {
   const home = mkdtempSync(join(tmpdir(), 'nmsh-cursor-native-'));
-  const env = {XDG_CONFIG_HOME: join(home, '.config'), NMSH_CONFIG_HOME: join(home, 'nmsh')} as NodeJS.ProcessEnv;
+  const env = {HOME:home, XDG_CONFIG_HOME: join(home, '.config'), NMSH_CONFIG_HOME: join(home, 'nmsh')} as NodeJS.ProcessEnv;
   try {
     mkdirSync(join(home, '.config', 'ghostty'), {recursive: true});
     const config = join(home, '.config', 'ghostty', 'config');

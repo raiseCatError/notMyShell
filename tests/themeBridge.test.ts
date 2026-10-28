@@ -35,7 +35,7 @@ function sandbox(): {env: NodeJS.ProcessEnv; home: string; root: string; done: (
   mkdirSync(home);
   // TMUX_TMPDIR keeps every tmux the product resolves (PATH falls back to standard tool directories) on a
   // socket directory this test owns: it can never reach the person's own tmux server.
-  return {root, home, env: {HOME: home, XDG_CONFIG_HOME: join(root, 'config'), PATH: '', TMUX_TMPDIR: root}, done: () => rmSync(root, {recursive: true, force: true})};
+  return {root, home, env: {HOME: home, XDG_CONFIG_HOME: join(home, '.config'), PATH: '', TMUX_TMPDIR: root}, done: () => rmSync(root, {recursive: true, force: true})};
 }
 
 function configWith(targets: Partial<Record<BridgeTargetId, {mode: 'independent' | 'follow' | 'choose'; theme?: string}>>, active = 'builtin:lavender'): PromptConfiguration {
@@ -195,7 +195,7 @@ for (const {id, bin} of shells) {
       assert.equal(lines[2], lines[1], 'an unchanged generation is not re-applied');
       assert.match(lines[3]!, id === 'fish' ? /^unset\|user-value$/u : /^\|user-value$/u, 'Independent restores the user\'s own value and removes NMSh\'s');
       assert.equal(existsSync(join(box.root, 'history')), false, 'nothing is written to history');
-      assert.deepEqual(readdirSync(box.home), [], 'no rc or dotfile was created or changed');
+      assert.deepEqual(readdirSync(box.home).filter(name => name !== '.config'), [], 'no rc or dotfile was created or changed');
     } finally { box.done(); }
   });
 }
@@ -366,7 +366,7 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
     assert.ok(existsSync(artifactPath('vim', box.env)));
     assert.equal(existsSync(artifactPath('neovim', box.env)), false, 'Independent: no artifact');
     assert.match(readFileSync(bridgeEnvPath('zsh', box.env), 'utf8'), /nmsh_bridge_apply LESS_TERMCAP_md/u);
-    assert.deepEqual(readdirSync(box.home), [], 'no user config was touched');
+    assert.deepEqual(readdirSync(box.home).filter(name => name !== '.config'), [], 'no user config was touched');
     // Switching Vim to Independent removes the owned artifact; the env clears the pager values.
     config = configWith({vim: {mode: 'independent'}});
     await applyThemeBridge(context(config, box.env));
@@ -426,7 +426,7 @@ test('delta: never managed; its status says whether git config pins the syntax t
     assert.equal(report.readiness, 'Own syntax theme');
     assert.match(report.notes[0]!, /selects delta's syntax theme \(Monokai Extended\); NMSh leaves it/u);
     assert.equal(report.mode, 'independent');
-    assert.deepEqual(readdirSync(box.home), ['.gitconfig'], 'git config is only read');
+    assert.deepEqual(readdirSync(box.home).filter(name => name !== '.config'), ['.gitconfig'], 'git config is only read');
   } finally { box.done(); }
 });
 

@@ -1,6 +1,8 @@
-import {constants, copyFileSync, lstatSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
-import {randomUUID} from 'node:crypto';
-import {dirname, join} from 'node:path';
+import {Journal, journalDirectory} from '../backups/journal.js';
+import {snapshot, transact} from '../appearance/hostFiles.js';
+import {homedir} from 'node:os';
+import {lstatSync, readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import type {Key} from '../terminal/keys.js';
 import {createConfirm, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
 import {fingerprint} from '../prompt/Powerlevel10kConfigurator.js';
@@ -28,7 +30,6 @@ export type OhMyZshView =
   | {kind: 'guided'; env: NodeJS.ProcessEnv; snapshot?: ZshrcSnapshot; verified?: string[]; unexpected?: boolean}
   | {kind: 'previous'; env: NodeJS.ProcessEnv; current: FileFacts; previous: FileFacts; diff: string[]; confirm?: ConfirmState; result?: string};
 
-const stamp = (now: Date) => now.toISOString().replace(/[:.]/gu, '-');
 const hash = (content: Buffer) => fingerprint(content);
 
 export function openGuidedInstall(env: NodeJS.ProcessEnv = process.env): OhMyZshView {
@@ -41,9 +42,13 @@ export function snapshotZshrc(env: NodeJS.ProcessEnv = process.env, now = new Da
   try {
     const info = lstatSync(path);
     if (!info.isFile()) return {path, error: `${path} is ${info.isSymbolicLink() ? 'a symlink' : 'not a regular file'}; NMSh records nothing and makes no backup. Back it up yourself before installing.`};
-    const content = readFileSync(path);
-    const backup = `${path}.nmsh-backup-${stamp(now)}-${randomUUID()}`;
-    copyFileSync(path, backup, constants.COPYFILE_EXCL);
+    const home = env.HOME || homedir();
+    const before = snapshot(path,home);
+    const content = Buffer.from(before.content ?? '', 'utf8');
+    const journal = new Journal({home,directory:journalDirectory(home,env)});
+    const entry = journal.record([{before,after:before.content}],'ohmyzsh','Before guided Oh My Zsh install');
+    journal.complete(entry);
+    const backup = join(journal.directory,entry.id,'files','0');
     return {path, sha256: hash(content), backup};
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {path};
@@ -91,15 +96,11 @@ export function restorePrevious(view: Extract<OhMyZshView, {kind: 'previous'}>, 
   if (current.sha256 !== view.current.sha256 || previous.sha256 !== view.previous.sha256) return 'A file changed since review; nothing was written. Reopen to review again.';
   if (current.symlink) return `${view.current.path} is a symlink; NMSh does not replace it. Nothing was written.`;
   if (!previous.exists) return `${view.previous.path} is gone; nothing was written.`;
-  let backup = '';
-  if (current.exists) {
-    backup = `${view.current.path}.nmsh-backup-${stamp(now)}-${randomUUID()}`;
-    copyFileSync(view.current.path, backup, constants.COPYFILE_EXCL);
-  }
-  const staged = join(dirname(view.current.path), `.zshrc.nmsh-${process.pid}.tmp`);
-  writeFileSync(staged, readFileSync(view.previous.path), {mode: 0o644, flag: 'wx'});
-  renameSync(staged, view.current.path);
-  return `Restored ${view.previous.path} to ${view.current.path}.${backup ? ` The replaced file is backed up at ${backup}.` : ''} ${view.previous.path} was left in place. New Zsh sessions use it; NMSh did not merge anything.`;
+  const home = view.env.HOME || homedir();
+  const target=snapshot(view.current.path,home,true),source=snapshot(view.previous.path,home);
+  if((target.content===undefined?undefined:hash(Buffer.from(target.content)))!==view.current.sha256 || source.content===undefined || hash(Buffer.from(source.content))!==view.previous.sha256)return 'A file changed since review; nothing was written. Reopen to review again.';
+  const entry = transact([{before:target, after:source.content}], [source], home, {source: 'restore', directory: journalDirectory(home,view.env), label: 'Restore previous .zshrc'});
+  return `Restored ${view.previous.path} to ${view.current.path}. The replaced file is backed up at ${entry ? join(journalDirectory(home,view.env),entry.id,'files','0') : '/changes'}. Undo: /changes. ${view.previous.path} was left in place. New Zsh sessions use it; NMSh did not merge anything.`;
 }
 
 /** Returns 'back' when the view should close; 'open' with the two paths for the app to open. */

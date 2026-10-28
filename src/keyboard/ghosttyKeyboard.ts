@@ -1,3 +1,5 @@
+import {journalDirectory} from '../backups/journal.js';
+import {snapshot, transact} from '../appearance/hostFiles.js';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -49,7 +51,10 @@ export async function installGhosttyKeybinding(): Promise<{success: boolean; err
        return {success: true}; // Already installed
     }
     
-    await fs.writeFile(configPath, newConfig, 'utf8');
+    const home = process.env.HOME || os.homedir();
+    const before = snapshot(configPath, home, true);
+    if (before.content !== currentConfig) throw new Error('Configuration changed since preview.');
+    transact([{before, after: newConfig}], [], home, {source: 'keyboard', directory: journalDirectory(home), label: 'Install enhanced keyboard bindings'});
     
     return {success: true};
   } catch (err: any) {

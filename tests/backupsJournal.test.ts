@@ -31,9 +31,9 @@ test('journal stores private verified before bytes, mode, hashes and after state
 });
 test('journal caps refuse before writing and prune only automatic entries', t => {
  const f = fixture(t); const journal = new Journal({home:f.home, directory:f.directory, maxEntries:2, maxBytes:4096});
- const changes = [{before:snapshot(f.path,f.home),after:'next'}];
- const reset = journal.record(changes,'reset','Reset');
- const old = journal.record(changes,'appearance','Old');
+ const changes = [{before:snapshot(f.path,f.home),after:readFileSync(f.path,'utf8')}];
+ const reset = journal.record(changes,'reset','Reset');journal.complete(reset);
+ const old = journal.record(changes,'appearance','Old');journal.complete(old);
  const recent = journal.record(changes,'appearance','New');
  assert.deepEqual(journal.list().map(x=>x.id).sort(),[reset.id,recent.id].sort());
  assert.throws(()=>journal.read(old.id));
@@ -51,4 +51,24 @@ test('transact refuses mutation when backup fails and records before successful 
  assert.equal(readFileSync(f.path,'utf8'),'before\r\n');
  transact([{before,after:'after'}],[],f.home,{source:'cursor',label:'Cursor',directory:f.directory});
  assert.equal(f.journal.list().length,1); assert.equal(f.journal.content(f.journal.list()[0],0),'before\r\n');
+});
+test('incomplete staging does not prevent subsequent verified checkpoints',t=>{
+ const f=fixture(t);mkdirSync(f.directory,{recursive:true,mode:0o700});
+ mkdirSync(join(f.directory,'.pending-interrupted'),{mode:0o700});
+ const entry=f.journal.record([{before:snapshot(f.path,f.home),after:'after'}],'cursor','Retry');
+ assert.equal(f.journal.list().length,1);assert.equal(f.journal.read(entry.id).label,'Retry');
+});
+test('oversized before/after images and a symlinked saved image fail closed',t=>{
+ const f=fixture(t);writeFileSync(f.path,'x'.repeat(2*1024*1024+1));assert.throws(()=>snapshot(f.path,f.home),/bounded/iu);
+ writeFileSync(f.path,'small');const before=snapshot(f.path,f.home);
+ assert.throws(()=>f.journal.record([{before,after:'x'.repeat(2*1024*1024+1)}],'cursor','Too large'),/limit/iu);
+ const entry=f.journal.record([{before,after:'next'}],'cursor','Small');
+ const stored=join(f.directory,entry.id,'files','0');rmSync(stored);symlinkSync(f.path,stored);
+ assert.throws(()=>f.journal.read(entry.id),/symbolic/iu);assert.equal(readFileSync(f.path,'utf8'),'small');
+});
+test('another live journal writer blocks a checkpoint without replacing its lock',t=>{
+ const f=fixture(t);mkdirSync(f.directory,{recursive:true,mode:0o700});
+ const path=join(f.directory,'.write-lock');const content=JSON.stringify({owner:'nmsh-journal',version:1,pid:process.pid,token:'live'});writeFileSync(path,content,{mode:0o600});
+ assert.throws(()=>f.journal.record([{before:snapshot(f.path,f.home),after:'after'}],'cursor','Concurrent'),/in progress/iu);
+ assert.equal(readFileSync(path,'utf8'),content);assert.equal(readFileSync(f.path,'utf8'),'before\r\n');
 });

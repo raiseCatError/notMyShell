@@ -1,6 +1,9 @@
+import {journalDirectory} from '../backups/journal.js';
+import {snapshot, transact} from '../appearance/hostFiles.js';
+import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 
@@ -118,10 +121,8 @@ export function writeEnvironmentFiles(values: BridgeEnvironment, env: NodeJS.Pro
     let current: string | undefined;
     try { current = readFileSync(path, 'utf8'); } catch { current = undefined; }
     if (current === content) continue;
-    mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-    const staged = `${path}.${process.pid}.tmp`;
-    writeFileSync(staged, content, {encoding: 'utf8', mode: 0o600});
-    renameSync(staged, path);
+    const home = env.HOME || homedir();
+    transact([{before: snapshot(path, home, true), after: content}], [], home, {source: 'theme-bridge', directory: journalDirectory(env.HOME || homedir(), env), label: `Update ${shell} environment`});
   }
 }
 

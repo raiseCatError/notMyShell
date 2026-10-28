@@ -26,7 +26,7 @@ test('Starship module changes are previewed, backed up, and preserve unrelated c
   };
   try {
     const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-      run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+      run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
     const proposal = await adapter.propose('directory', true);
     assert.equal(await readFile(path, 'utf8'), original);
     assert.match(proposal.diff.join('\n'), /disabled = true/u);
@@ -50,7 +50,7 @@ test('Starship adapter rejects intervening edits and symlink configs', async () 
     return {stdout: '[git_branch]\ndisabled = true\n', stderr: ''};
   };
   const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-    run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+    run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
   try {
     const proposal = await adapter.propose('git_branch', true);
     await writeFile(path, '# changed by user\n');
@@ -74,7 +74,7 @@ test('Starship adapter leaves the user config untouched when CLI validation fail
   };
   try {
     const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
-      run as ConstructorParameters<typeof StarshipConfigAdapter>[1]);
+      run as ConstructorParameters<typeof StarshipConfigAdapter>[1], {HOME: directory, XDG_CONFIG_HOME: join(directory,'.config')});
     await assert.rejects(adapter.propose('directory', true), /did not accept/u);
     assert.equal(await readFile(path, 'utf8'), '# keep\n');
     assert.deepEqual(await readdir(directory), ['starship.toml']);

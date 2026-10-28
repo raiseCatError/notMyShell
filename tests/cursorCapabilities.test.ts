@@ -386,7 +386,7 @@ test('cursor configuration migration: saved choices are preserved; new fields ap
 
 test('Ghostty refresh: only changed managed files are written, and the reload line is precise', () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-cursor-reload-')));
-  const environment = env({XDG_CONFIG_HOME: join(home, '.config'), NMSH_CONFIG_HOME: join(home, 'nmsh')});
+  const environment = env({HOME: home, XDG_CONFIG_HOME: join(home, '.config'), NMSH_CONFIG_HOME: join(home, 'nmsh')});
   try {
     mkdirSync(join(home, '.config', 'ghostty'), {recursive: true});
     const userConfig = 'font-size = 14\ncustom-shader = /me/crt.glsl\n';
@@ -415,7 +415,8 @@ test('Ghostty refresh: only changed managed files are written, and the reload li
 test('integrated Ghostty: settings changes refresh only NMSh\'s managed files and report a precise reload line', () => {
   const isolation = isolateConfig();
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-cursor-app-')));
-  const saved = {XDG: process.env.XDG_CONFIG_HOME, NMSH: process.env.NMSH_CONFIG_HOME};
+  const saved = {XDG: process.env.XDG_CONFIG_HOME, NMSH: process.env.NMSH_CONFIG_HOME, HOME: process.env.HOME};
+  process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = join(home, '.config');
   process.env.NMSH_CONFIG_HOME = join(home, 'nmsh');
   const app = new TerminalApp();
@@ -446,6 +447,7 @@ test('integrated Ghostty: settings changes refresh only NMSh\'s managed files an
     assert.deepEqual(writeManagedFiles('ghostty', resolveCursorSettings(app['promptConfiguration'].cursor, contextFor(app['promptConfiguration']))).changed, []);
   } finally {
     app['stop'](0); app['session'].kill();
+    if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
     if (saved.XDG === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = saved.XDG;
     if (saved.NMSH === undefined) delete process.env.NMSH_CONFIG_HOME; else process.env.NMSH_CONFIG_HOME = saved.NMSH;
     rmSync(home, {recursive: true, force: true});

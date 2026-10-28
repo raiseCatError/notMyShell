@@ -10,6 +10,8 @@ test('Ghostty keybinding installation', async () => {
   
   // Override environment to point to our temp dir
   const oldXdg = process.env.XDG_CONFIG_HOME;
+  const oldHome = process.env.HOME;
+  process.env.HOME = tmpDir;
   process.env.XDG_CONFIG_HOME = tmpDir;
   
   try {
@@ -37,6 +39,7 @@ test('Ghostty keybinding installation', async () => {
     assert.equal(installedConfig, installedConfig2, 'Config should not change on second install');
     
   } finally {
+    if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
     process.env.XDG_CONFIG_HOME = oldXdg;
     await fs.rm(tmpDir, {recursive: true, force: true});
   }

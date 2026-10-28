@@ -2,11 +2,11 @@
 import {constants, closeSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats} from 'node:fs';
 import {randomUUID, createHash} from 'node:crypto';
 import {dirname, isAbsolute, relative, resolve, sep} from 'node:path';
-import {Journal, type JournalMetadata} from '../backups/journal.js';
+import {Journal, type JournalMetadata, type JournalEntry} from '../backups/journal.js';
 
 export const digest = (content: string) => createHash('sha256').update(content).digest('hex');
 export interface FileSnapshot {path: string; content?: string; identity: string; mode: number}
-export interface FileChange {before: FileSnapshot; after?: string}
+export interface FileChange {before: FileSnapshot; after?: string; afterMode?: number}
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const identity = (stat: Stats) => `${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}`;
 
@@ -42,7 +42,10 @@ export function snapshot(path: string, home: string, writable = false): FileSnap
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('Configuration must be a bounded regular file (at most 2 MiB).');
-    return {path, content: readFileSync(fd, 'utf8'), identity: identity(stat), mode: stat.mode & 0o777};
+    const bytes=readFileSync(fd);
+    const content=bytes.toString('utf8');
+    if(bytes.length>MAX_FILE_BYTES||!Buffer.from(content,'utf8').equals(bytes))throw new Error('Configuration must be bounded UTF-8 text; no changes are allowed.');
+    return {path, content, identity: identity(stat), mode: stat.mode & 0o777};
   } finally { closeSync(fd); }
 }
 
@@ -66,13 +69,15 @@ function replace(path: string, content: string, mode: number, home: string, expe
 }
 
 /** All dependencies checked before staging or mutation. On failure restore only our unchanged writes. */
-export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string, metadata: JournalMetadata = {source: 'appearance', label: 'Host configuration change'}): void {
+export function transact(changes: readonly FileChange[], dependencies: readonly FileSnapshot[], home: string, metadata: JournalMetadata = {source: 'appearance', label: 'Host configuration change'}): JournalEntry | undefined {
   for (const dependency of dependencies) unchanged(dependency, home);
   for (const change of changes) unchanged(change.before, home, true);
-  const effective = changes.filter(change => change.after !== change.before.content);
+  const effective = ['restore','reset'].includes(metadata.source) ? [...changes] : changes.filter(change => change.after !== change.before.content || (change.afterMode!==undefined&&change.afterMode!==change.before.mode));
   if (!effective.length) return;
   const journal = new Journal({home, directory: metadata.directory});
-  const entry = journal.record(effective, metadata.source, metadata.label);
+  let entry:JournalEntry;
+  try {entry=journal.record(effective,metadata.source,metadata.label);}
+  catch(error){throw new Error(`Could not create a verified backup; configuration was not changed. ${error instanceof Error?error.message:String(error)}`);}
   // Backup I/O may take time: recheck every dependency before the first mutation.
   for (const dependency of dependencies) unchanged(dependency, home);
   for (const change of changes) unchanged(change.before, home, true);
@@ -80,12 +85,13 @@ export function transact(changes: readonly FileChange[], dependencies: readonly 
   try {
     for (const change of changes) {
       unchanged(change.before, home, true);
-      if (change.after === change.before.content) continue;
+      if (change.after === change.before.content && (change.afterMode===undefined||change.afterMode===change.before.mode)) continue;
       if (change.after === undefined) unlinkSync(change.before.path);
-      else replace(change.before.path, change.after, change.before.mode, home, change.before);
+      else replace(change.before.path, change.after, change.afterMode ?? change.before.mode, home, change.before);
       done.push(change);
     }
     journal.complete(entry);
+    return entry;
   } catch (error) {
     let incomplete = false;
     for (const change of done.reverse()) {

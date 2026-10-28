@@ -1,10 +1,13 @@
+import {snapshot as configurationSnapshot, unchanged as configurationUnchanged} from '../appearance/hostFiles.js';
+import {randomUUID} from 'node:crypto';
+import {dailySettingsCheckpoint} from '../backups/settings.js';
 import {DEFAULT_WELCOME_STUDIO, normalizeWelcomeStudio, normalizeWelcomePresets, type WelcomeStudio, type SavedWelcomePreset} from '../welcome/model.js';
 import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, moduleDefinition, type ContextModuleId} from '../context/modules.js';
 export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
 import {COLOR_PRESET_IDS, COLOR_PRESET_LABELS} from '../chroma/colorPresets.js';
 import {DEFAULT_HOST_SHADERS, normalizeHostShaders, type HostShaderSettings} from '../appearance/kittyShaderSettings.js';
-import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readFileSync, renameSync, writeFileSync, unlinkSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {UPDATE_CHECK_FREQUENCIES, migrateUpdateSettings, type UpdateCheckFrequency, type UpdateFrequency, type UpdateMode} from '../update/update.js';
@@ -1258,14 +1261,20 @@ function applyChanges(fresh: unknown, base: unknown, next: unknown): unknown {
  */
 export function savePromptConfiguration(configuration: PromptConfiguration, path = promptConfigurationPath(), base?: PromptConfiguration): void {
   mkdirSync(dirname(path), {recursive: true, mode: 0o700});
+  const before=configurationSnapshot(path,dirname(path));
   const normalized = normalizePromptConfiguration(configuration);
   const existing = readExistingConfiguration(path);
   const persisted = base
     ? applyChanges(existing ?? {}, normalizePromptConfiguration(base), normalized)
     : preserveConfiguration(existing, normalized);
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(persisted, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
-  renameSync(temporary, path);
+  const content = `${JSON.stringify(persisted, null, 2)}\n`;
+  const complete = dailySettingsCheckpoint(path, content);
+  configurationUnchanged(before,dirname(path),true);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, content, {encoding: 'utf8', mode: 0o600, flag:'wx'});
+  try {configurationUnchanged(before,dirname(path),true);renameSync(temporary,path);}
+  finally {try{unlinkSync(temporary);}catch{/* renamed or absent */}}
+  complete();
 }
 
 export function hasVisibleContextModule(

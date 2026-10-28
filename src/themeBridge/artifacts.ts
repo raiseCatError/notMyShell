@@ -1,5 +1,7 @@
+import {journalDirectory} from '../backups/journal.js';
+import {snapshot, transact, type FileChange} from '../appearance/hostFiles.js';
 import {createHash} from 'node:crypto';
-import {existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
@@ -117,6 +119,10 @@ export function saveLedger(ledger: Ledger, env: NodeJS.ProcessEnv = process.env)
   renameSync(staged, path);
 }
 
+function ledgerChange(ledger:Ledger,env:NodeJS.ProcessEnv):FileChange {
+  return {before:snapshot(ledgerPath(env),env.HOME || homedir(),true),after:`${JSON.stringify(ledger,null,2)}\n`};
+}
+
 export type Ownership = 'absent' | 'owned' | 'modified' | 'unknown';
 
 /** Owned: the ledger recorded this exact content. Modified/unknown files are never touched. */
@@ -149,22 +155,16 @@ export function writeArtifact(target: ManagedTarget, content: string, validate: 
   const hash = sha256(content);
   const previous = ledger.entries[target];
   const changed = !previous || previous.sha256 !== hash || state === 'absent';
-  if (changed) {
-    mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-    const staged = `${path}.${process.pid}.tmp`;
-    try {
-      writeFileSync(staged, content, {encoding: 'utf8', mode: 0o644});
-      if (readFileSync(staged, 'utf8') !== content || !validate(readFileSync(staged, 'utf8'))) throw new Error('staged file did not verify');
-      renameSync(staged, path);
-    } catch (error) {
-      try { unlinkSync(staged); } catch { /* nothing staged */ }
-      return {ok: false, error: `Writing ${path} failed: ${error instanceof Error ? error.message : String(error)}. The previous file was kept.`};
-    }
-  }
   ledger.entries[target] = {...record, target, artifactPath: path, sha256: hash, adapterVersion: ADAPTER_VERSION, generatedAt: now.toISOString(),
     ...(previous?.hook ? {hook: previous.hook} : {}), ...(previous?.cacheApproved ? {cacheApproved: true} : {}),
     ...(previous?.cacheBuiltFor ? {cacheBuiltFor: previous.cacheBuiltFor} : {})};
-  saveLedger(ledger, env);
+  if(changed){
+    try {
+      const home=env.HOME || homedir();
+      transact([{before:snapshot(path,home,true),after:content},ledgerChange(ledger,env)],[],home,
+        {source:target==='tmuxConfig'?'tmux':'theme-bridge',directory:journalDirectory(home,env),label:`Generate ${target}`});
+    }catch(error){return {ok:false,error:`Writing ${path} failed: ${error instanceof Error?error.message:String(error)}. The previous file was kept.`};}
+  }else saveLedger(ledger,env);
   return {ok: true, path, changed};
 }
 
@@ -174,12 +174,16 @@ export function removeArtifact(target: ManagedTarget, env: NodeJS.ProcessEnv = p
   const state = ownership(target, ledger, env);
   const path = artifactPath(target, env);
   if (state === 'modified' || state === 'unknown') return {ok: false, error: `${path} was not removed: NMSh cannot confirm it is unchanged since NMSh wrote it.`};
-  if (state === 'owned') unlinkSync(path);
-  // A recorded include stays recorded (it is harmless without the file: every include tolerates a missing file) until it is removed explicitly.
-  const hook = ledger.entries[target]?.hook;
-  if (hook) ledger.entries[target] = {...ledger.entries[target]!, sha256: sha256(''), hook};
+  // Keep an existing hook recorded while its optional artifact is absent.
+  const hook=ledger.entries[target]?.hook;
+  if(hook)ledger.entries[target]={...ledger.entries[target]!,sha256:sha256(''),hook};
   else delete ledger.entries[target];
-  saveLedger(ledger, env);
+  if(state==='owned'){
+    try {const home=env.HOME || homedir();
+      transact([{before:snapshot(path,home,true)},ledgerChange(ledger,env)],[],home,
+        {source:'theme-bridge',directory:journalDirectory(home,env),label:`Remove ${target}`});
+    }catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
+  }else saveLedger(ledger,env);
   return {ok: true, removed: state === 'owned'};
 }
 
@@ -276,10 +280,11 @@ export function applyHook(target: HookTarget, plan: FileEditPlan, spec: HookSpec
   const owner = hookOwner(target);
   const entry = ledger.entries[owner];
   if (!entry) return {ok: false, error: 'Generate the managed file first.'};
-  const result = applyPlan(plan);
-  if (!result.ok) return {ok: false, error: result.reason};
   ledger.entries[owner] = {...entry, hook: {configPath: spec.configPath, lines: [...spec.lines], insertedAt: now.toISOString()}};
-  saveLedger(ledger, env);
+  try {
+    const result=applyPlan(plan,{home:env.HOME || homedir(),source:'theme-bridge',directory:journalDirectory(env.HOME || homedir(),env),label:plan.reason,companions:[ledgerChange(ledger,env)]});
+    if(!result.ok)return {ok:false,error:result.reason};
+  }catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
   return {ok: true};
 }
 
@@ -298,12 +303,13 @@ export function planHookRemoval(target: HookTarget, home: string, env: NodeJS.Pr
 }
 
 export function applyHookRemoval(target: HookTarget, plan: FileEditPlan | undefined, env: NodeJS.ProcessEnv = process.env): {ok: true} | {ok: false; error: string} {
-  if (plan) {
-    const result = applyPlan(plan);
-    if (!result.ok) return {ok: false, error: result.reason};
-  }
-  const ledger = loadLedger(env);
-  const entry = ledger.entries[hookOwner(target)];
-  if (entry) { delete entry.hook; saveLedger(ledger, env); }
+  const ledger=loadLedger(env);const entry=ledger.entries[hookOwner(target)];
+  if(entry)delete entry.hook;
+  try {
+    if(plan){
+      const result=applyPlan(plan,{home:env.HOME || homedir(),source:'theme-bridge',directory:journalDirectory(env.HOME || homedir(),env),label:plan.reason,companions:[ledgerChange(ledger,env)]});
+      if(!result.ok)return {ok:false,error:result.reason};
+    }else if(entry)saveLedger(ledger,env);
+  }catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
   return {ok: true};
 }
