@@ -11,7 +11,7 @@ import type {WelcomeCapabilities, WelcomeFacts} from './compose.js';
 import {loadWelcomeAsset, listWelcomeAssets, resolveWelcomePath, type WelcomeAsset} from './assets.js';
 import {createWelcomeEditor, renderWelcomeEditor, welcomeEditorKey, type WelcomeEditor} from './editor.js';
 import {exportWelcomePreset, importWelcomePreset, normalizeWelcomeStudio, type WelcomeStudio} from './model.js';
-import {inlineWelcomeReason, assetCapabilities, paintWelcome, type WelcomeOverlay} from './render.js';
+import {inlineWelcomeReason, assetCapabilities, motionAsset, paintWelcome, type WelcomeOverlay} from './render.js';
 import {renderControlRows} from '../ui/controls.js';
 
 export interface StudioHost {
@@ -178,11 +178,13 @@ export class WelcomeStudioController {
   render(columns: number, height: number): string[] {
     const decision = this.host.decision();
     const caps = this.host.capabilities();
-    const asset = this.state.before ? this.beforeAsset : this.asset;
+    const still = this.state.before ? this.beforeAsset : this.asset;
+    // The preview animates the logo exactly as startup does (same generated frames, same gates).
+    const asset = motionAsset(still, this.state.before ? this.state.original : this.state.draft, {...caps, reducedMotion: caps.reducedMotion || this.state.reduced});
     const reason = asset?.kind === 'image' && (decision.inline !== 'placeholder' && !['kitty', 'iterm2', 'sixel'].includes(decision.backend)) ? decision.reason : undefined;
     this.overlay = undefined;
     const rows = renderWelcomeEditor(this.state, columns, height, this.host.facts(this.state.before ? this.state.original : this.state.draft), {...caps, asset: assetCapabilities(asset, reason)}, Date.now(), frame => {
-      const painted = paintWelcome(frame, asset, this.host.graphics(), this.owner, 'viewer', this.host.background());
+      const painted = paintWelcome(frame, frame.active || this.state.paused ? asset : still, this.host.graphics(), this.owner, 'viewer', this.host.background());
       if (painted.overlay) this.overlay = {...painted.overlay, y: painted.overlay.y + (this.state.previewTop ?? 0), x: painted.overlay.x + (this.state.previewLeft ?? 0)};
       return painted.rows;
     });

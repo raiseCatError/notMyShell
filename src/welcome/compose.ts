@@ -11,9 +11,13 @@ export interface WelcomeCapabilities {
   accent?: {red: number; green: number; blue: number};
   chroma?: {red: number; green: number; blue: number};
   legacy?: WelcomeSnapshot; catFrame?: WelcomeCatFrame;
+  /** The terminal window is not focused: generated logo motion rests on the still. */
+  hidden?: boolean;
   /** The startup asset is still being read: say so rather than asking the person to choose one. */
   loading?: boolean;
-  asset?: {rows?: string[]; width: number; height: number; reason?: string; frameDelays?: readonly number[]; loopCount?: number; truncated?: boolean};
+  asset?: {rows?: string[]; width: number; height: number; reason?: string; frameDelays?: readonly number[]; loopCount?: number; truncated?: boolean;
+    /** A generated logo animation: frames from `loopFrom` repeat after the intro, for at most `playMs`. */
+    loopFrom?: number; playMs?: number};
 }
 export interface WelcomeImagePlacement {
   row: number; column: number; columns: number; rows: number;
@@ -90,6 +94,18 @@ export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: 
   const delays = capabilities.asset?.frameDelays?.slice(0, 75).map(delay => Number.isFinite(delay) ? Math.max(1, Math.min(5000, delay)) : 100) ?? [];
   const duration = delays.reduce((sum, delay) => sum + delay, 0);
   const plays = capabilities.asset?.loopCount ?? 1;
+  const loopFrom = capabilities.asset?.loopFrom;
+  if (animated && loopFrom !== undefined && loopFrom > 0 && loopFrom < delays.length) {
+    // A generated logo animation: an intro, then a gentle loop until `playMs`, then its last frame (the still).
+    const playMs = Math.max(0, Math.min(60_000, capabilities.asset?.playMs ?? 5000));
+    const at = Number.isFinite(time) ? Math.max(0, Math.min(time, playMs)) : playMs;
+    const sampled = at >= playMs ? {index: delays.length - 1, remaining: Infinity} : sampleIntroLoop(delays, loopFrom, at);
+    const playing = at < playMs;
+    const effectActive = moving && t < 5000;
+    const nextFrameMs = Math.min(effectActive ? 100 : 5000, playing ? Math.max(1, Math.min(sampled.remaining, playMs - at)) : 5000);
+    return {rows: lines.slice(0, height).map(line => { const ansi = truncateAnsi(capabilities.color ? line : stripAnsi(line), width); return {ansi, plain: stripAnsi(ansi)}; }), images,
+      active: effectActive || playing, frameIndex: sampled.index, nextFrameMs};
+  }
   const animationEnd = plays > 0 ? Math.min(5000, duration * plays) : 5000;
   const animationActive = animated && t < animationEnd;
   const frameIndex = animated ? sampleFrame(delays, t >= animationEnd ? Infinity : t, plays) : 0;
@@ -97,6 +113,19 @@ export function composeWelcome(model: WelcomeStudio, facts: WelcomeFacts, size: 
   const effectActive = moving && t < 5000;
   const nextFrameMs = Math.min(moving ? 100 : 5000, animationActive ? Math.max(1, nextBoundary) : 5000, Math.max(1, 5000 - t));
   return {rows: lines.slice(0, height).map(line => { const ansi = truncateAnsi(capabilities.color ? line : stripAnsi(line), width); return {ansi, plain: stripAnsi(ansi)}; }), images, active: effectActive || animationActive, frameIndex, nextFrameMs};
+}
+
+/** Intro frames once, then frames from `loopFrom` repeating; also how long the sampled frame still shows. */
+function sampleIntroLoop(delays: readonly number[], loopFrom: number, time: number): {index: number; remaining: number} {
+  const intro = delays.slice(0, loopFrom).reduce((sum, delay) => sum + delay, 0);
+  const cycle = delays.slice(loopFrom).reduce((sum, delay) => sum + delay, 0);
+  let start = 0, position = time;
+  if (time >= intro && cycle > 0) { start = loopFrom; position = (time - intro) % cycle; }
+  for (let i = start; i < delays.length; i++) {
+    if (position < delays[i]!) return {index: i, remaining: delays[i]! - position};
+    position -= delays[i]!;
+  }
+  return {index: delays.length - 1, remaining: 1};
 }
 
 /** Delays already passed decoder admission. Cap work again so callers cannot supply an unbounded schedule. */

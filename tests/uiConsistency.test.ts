@@ -85,3 +85,25 @@ test('syntax theme family can move from NMSh to Catppuccin with a real preview',
   assert.match(state.draft.theme, /^catppuccin/u);
   assert.match(renderSyntaxPanel(state, 120, 'lavender').map(stripAnsi).join('\n'), /Family\s+‹ Catppuccin/u);
 });
+
+test('modern controls only: no hand-drawn [x]/[ ] checkboxes or (*)/( ) radios in UI code', async () => {
+  const {readdirSync, readFileSync, statSync} = await import('node:fs');
+  const {join, relative} = await import('node:path');
+  // Content renderers and game art may draw these on purpose (Markdown task syntax, the browser's literal [ and ] keys);
+  // the shared mark owns the Safe-Glyph fallback.
+  const allowed = new Set(['src/ui/glyphs.ts', 'src/markdown/render.ts', 'src/agents/workspace/sidePanel.ts', 'src/viewer/markdownEdit.ts', 'src/browser/BrowserPanel.ts']);
+  const legacy = /(['"`])\s*(?:\[x\]|\[ \]|\(\*\)|\( \))\s*\1/u;
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) { if (name !== 'arcade') walk(path); continue; }
+      if (!name.endsWith('.ts')) continue;
+      const file = relative(process.cwd(), path);
+      if (allowed.has(file)) continue;
+      readFileSync(path, 'utf8').split('\n').forEach((line, index) => { if (!/^\s*(?:\/\/|\*|\/\*)/u.test(line) && legacy.test(line)) offenders.push(`${file}:${index + 1}`); });
+    }
+  };
+  walk(join(process.cwd(), 'src'));
+  assert.deepEqual(offenders, [], 'use checkMark / renderToggle / renderMultiSelect from the shared UI components');
+});

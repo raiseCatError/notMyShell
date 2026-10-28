@@ -3,7 +3,7 @@ import type {WelcomeSnapshot} from './legacy.js';
 import {renderWelcome} from '../output/Welcome.js';
 import type {GraphicsService} from '../graphics/service.js';
 import {composeWelcome, type WelcomeCapabilities} from './compose.js';
-import {assetCapabilities, paintWelcome} from './render.js';
+import {assetCapabilities, motionAsset, paintWelcome} from './render.js';
 import {loadWelcomeAsset, type WelcomeAsset} from './assets.js';
 import {stripAnsi} from '../util/text.js';
 
@@ -44,7 +44,9 @@ export class NativeWelcomePresentation {
     if (!model?.customized || snapshot.captured) return {rows: renderWelcome(snapshot, columns).slice(0, height), images: [], active: false};
     const capabilities = this.caps();
     const caps = {...capabilities, effectsOff: capabilities.effectsOff || this.waitingForAsset, loading: this.waitingForAsset, asset: assetCapabilities(this.asset, this.reason ?? reason)};
-    const frame = composeWelcome(model, snapshot.facts ?? {}, {columns, rows: height}, caps, this.still ? 5000 : elapsed);
+    // A generated logo animation plays only while motion is live; every still (and the durable card) is the admitted asset.
+    const live = this.still ? this.asset : motionAsset(this.asset, model, caps);
+    const frame = composeWelcome(model, snapshot.facts ?? {}, {columns, rows: height}, live === this.asset ? caps : {...caps, asset: assetCapabilities(live, this.reason ?? reason)}, this.still ? 5000 : elapsed);
     // Durable stills are sampled independently of playback and always rendered as portable cells.
     // A small key (not the art rows or legacy card) so playback frames do not serialize the whole capability set.
     const finalKey = JSON.stringify([columns, height, caps.color, caps.level, caps.safeGlyphs, caps.reducedMotion, caps.effectsOff, caps.accent, caps.chroma, caps.catFrame,
@@ -57,7 +59,7 @@ export class NativeWelcomePresentation {
     }
     // At most ~30 repaints a second: very short GIF delays play slightly slower rather than driving 60 fps app renders.
     this.sequence.sync(!this.still && frame.active, this.repaint, frame.nextFrameMs === undefined ? undefined : Math.max(33, frame.nextFrameMs));
-    const painted = paintWelcome(frame, this.asset, this.service, this.owner, 'inline', this.background(), this.still);
+    const painted = paintWelcome(frame, frame.active ? live : this.asset, this.service, this.owner, 'inline', this.background(), this.still);
     return {...frame, active: !this.still && frame.active, rows: painted.rows.map(ansi => ({ansi, plain: stripAnsi(ansi)}))};
   }
   rows(snapshot: WelcomeSnapshot, columns: number, reason?: string) {

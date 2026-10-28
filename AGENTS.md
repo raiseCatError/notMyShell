@@ -43,6 +43,14 @@ Any actual image goes through the shared graphics service (`src/graphics/`, [gra
 ## UI consistency (permanent rule)
 All new NMSh UI reuses the established components and interaction patterns before anything is drawn by hand: `framePanel`, the tab strip (`renderTabStrip`), the selected-row band (`selectedRowBand`), `renderControlRows`, `groupedList`, the Settings and row panels, the palette and glyph tables (`UI_COLORS`, `GLYPHS`, Safe Glyphs, NO_COLOR rules) and the shared panel keys (↑↓ select, ←→/Tab switch, Enter confirm, Esc back). Ad hoc bracketed menus (`[1 Option]`), one-off boxes and private color tables are not the default; a new surface that cannot reuse a component first extends the shared one. Menus, text, selection controls and chrome stay terminal text: graphics protocols and text sizing are for real images and document or celebration typography, never a replacement for ordinary menus. Reviews check this the same way they check input ownership. The multiline paste review (`src/input/BatchReview.ts`) is the reference: [multiline execution modes](docs/design/multiline-execution-modes.md).
 
+Modern controls only (permanent rule): never hand-draw legacy widgets. No hard-coded `[x]` / `[ ]` checkboxes, `(*)` / `( )`
+radios, `y/N` prompts or bracketed key hints in UI code. Use the shared pieces instead: `checkMark` (src/ui/glyphs.ts; it falls
+back to `[x]`/`[ ]` only under Safe Glyphs), `renderToggle`, `renderSelect`, `renderMultiSelect`, `renderTextValue`,
+`renderConfirm`/`renderConfirmButtons` (src/ui/formControls.ts), `renderValueControl` (src/ui/controls.ts), `selectedRowBand`,
+`renderControlRows`, and for editors and reviews `renderStudioLayout`/`renderStudioReview` (src/ui/StudioLayout.ts). Before adding a
+picker, menu or confirmation, find the existing one that does the job (Settings, /tools, /theme, the command palette, BatchReview)
+and reuse or extend it. tests/uiConsistency.test.ts enforces the widget part of this rule.
+
 ## Input invariants
 - `Shift+Enter`: newline (multiline)
 - `Ctrl+J`: fallback newline
