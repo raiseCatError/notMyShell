@@ -38,7 +38,7 @@ test('history requires a shown review and a separate confirmation for later edit
  assert.equal(readFileSync(f.path,'utf8'),'before');assert.equal(state.view,'result');
 });
 test('reset cannot write without selected areas, impact, backup and exact typed word',t=>{
- const f=fixture(t);let state=createResetPanel({env:f.env,platform:'linux'},f.journal);
+ const f=fixture(t);const config=join(f.home,'.config/nmsh/config.json');writeFileSync(config,'{"composerPosition":"top"}\n');let state=createResetPanel({env:f.env,platform:'linux'},f.journal);
  assert.equal(state.selected.size,0);resetKey(state,enter);assert.equal(state.step,'choose');
  const settings=state.areas.findIndex(x=>x.id==='settings');state.index=settings;resetKey(state,{kind:'text',value:' '});
  resetKey(state,enter);assert.equal(state.step,'impact');
@@ -46,13 +46,13 @@ test('reset cannot write without selected areas, impact, backup and exact typed 
  renderResetPanel(state,80,24);resetKey(state,enter);assert.equal(state.step,'backup');
  renderResetPanel(state,80,24);resetKey(state,enter);assert.equal(state.step,'confirm');
  renderResetPanel(state,80,24);resetKey(state,{kind:'text',value:'RESET'});resetKey(state,enter);
- assert.equal(existsSync(join(f.home,'.config/nmsh/config.json')),false);
+ assert.equal(readFileSync(config,'utf8'),'{"composerPosition":"top"}\n');
  assert.equal(state.step,'result');
  state=createResetPanel({env:f.env,platform:'linux'},f.journal);state.index=settings;resetKey(state,{kind:'text',value:' '});resetKey(state,enter);
  renderResetPanel(state,80,24);resetKey(state,enter);renderResetPanel(state,80,24);resetKey(state,enter);renderResetPanel(state,80,24);
  resetKey(state,{kind:'text',value:'reset'});resetKey(state,enter);
  assert.equal(state.step,'result');assert.match(state.message,/Undo: \/changes/u);
- assert.equal(existsSync(join(f.home,'.config/nmsh/config.json')),true);
+ assert.equal(JSON.parse(readFileSync(config,'utf8')).composerPosition,'bottom');
 });
 test('reset preserves user lines with overlapping owned plans, reports skips and stale review',t=>{
  const f=fixture(t);const context={env:f.env,platform:'linux' as const};
@@ -63,6 +63,7 @@ test('reset preserves user lines with overlapping owned plans, reports skips and
  resetKey(state,enter);renderResetPanel(state,120,40);assert.match(state.review!.plan.preview.join('\n'),/kept|skipped/u);
  resetKey(state,enter);renderResetPanel(state,120,40);resetKey(state,enter);renderResetPanel(state,120,40);resetKey(state,{kind:'text',value:'reset'});resetKey(state,enter);
  assert.equal(readFileSync(plan.plan.hostPath,'utf8'),'# personal\r\n');assert.match(state.results.join('\n'),/done|skipped/u);
+ writeFileSync(join(f.home,'.config/nmsh/config.json'),'{"composerPosition":"top"}\n');
  const stale=createResetPanel(context,f.journal);stale.selected.add('settings');resetKey(stale,enter);
  renderResetPanel(stale,80,24);resetKey(stale,enter);renderResetPanel(stale,80,24);resetKey(stale,enter);renderResetPanel(stale,80,24);
  writeFileSync(join(f.home,'.config/nmsh/config.json'),'concurrent');resetKey(stale,{kind:'text',value:'reset'});resetKey(stale,enter);

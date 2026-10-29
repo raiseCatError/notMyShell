@@ -52,5 +52,16 @@ Automated tests use private HOMEs, headless host parsers and proxy compiles. Non
 6. Export a preset. The file has no image path unless you opted in, and never contains image bytes. Import it again.
 7. On a host without verified inline graphics (for example Terminal.app), the image falls back to cell art with the reason shown.
 
+## Backups, /changes and /nmsh reset (current build; headless-covered, physical NOT RUN)
+
+Use a disposable HOME/XDG_CONFIG_HOME (see `scripts/qa/` fixtures); never the real configuration.
+1. Launch NMSh three times with Theme Bridge on. `theme-bridge/ledger.json` keeps its bytes and inode; `/changes` gains no entries and older entries stay "unchanged since".
+2. `/changes`: rows read `HH:MM <Application> · <file> · <created/changed/removed> · <status>`; the details show the full path, local time and the original label as "Recorded as". A file NMSh rewrote later says "changed later by NMSh", not "edited since".
+3. Restore an older Theme Bridge entry while a newer Vim file is managed: the review says the Vim record is kept; afterwards `/theme-bridge` still manages Vim.
+4. Replace a recorded config directory with a plain file: other appearance changes still save; that entry's row says "unsafe file"; Enter names the entry, the path and the reason, and changes nothing.
+5. Footers: restore review says "Enter restore now" (or "next: confirm overwrite"); reset Impact says "Enter next: backup", Backup says "Enter next: type reset"; only the typed word writes.
+6. `/nmsh reset` → "NMSh preferences": the impact lists `key: before → after` and "Kept: first-run state …, update policy …"; after the reset, onboarding does not reappear and `updateMode` is unchanged. Undo through `/changes`.
+7. Check every step at 80×24 and 60×20, with NO_COLOR=1.
+
 ## Record
 Note the host, version, OS, and pass/fail per item. Attach screenshots for anything visual. Report anything that writes outside NMSh's own files.

@@ -203,6 +203,13 @@ export class Journal {
     const record = JSON.parse(text);
     return Number.isSafeInteger(record.count) && record.count >= 0 ? record.count : 0;
   }
+  /** Original backups (the earliest kept copy of a file) that capacity pressure removed, newest last. Shown in /changes. */
+  lostOriginals(): Array<{path: string; time: string}> {
+    const text = snapshot(join(this.directory, '.pruned.json'), this.options.home).content;
+    if (text === undefined) return [];
+    const record = JSON.parse(text);
+    return Array.isArray(record?.lostOriginals) ? record.lostOriginals.filter((item: {path?: unknown; time?: unknown}) => typeof item?.path === 'string' && typeof item?.time === 'string').slice(-50) : [];
+  }
   provenanceComplete(source:string,path:string):boolean {
     return !this.prunedKeys().has(digest(`${source}:${path}`));
   }
@@ -319,11 +326,14 @@ export class Journal {
     }
     // The oldest backup of each file holds what it was before NMSh first changed it: a burst of automatic writes to other
     // files (cursor shaders regenerate often) must not push that original out. It goes only when nothing else can.
-    const originals = new Set<string>(), originalPaths = new Set<string>();
+    const originals = new Set<string>(), originalOf = new Map<string, string>();
     for (const item of [...existing].reverse()) for (const file of item.files) {
-      if (!originalPaths.has(file.path)) { originals.add(item.id); originalPaths.add(file.path); }
+      if (!originalOf.has(file.path)) { originals.add(item.id); originalOf.set(file.path, item.id); }
     }
-    const markerText = () => JSON.stringify({keys:[...pruned],count:previousCount+victims.length});
+    const previousLost = this.lostOriginals();
+    // Losing an original is never silent: the path and the time of the copy that went are kept (bounded) and shown in /changes.
+    const lost = () => victims.flatMap(old => old.files.filter(file => originalOf.get(file.path) === old.id).map(file => ({path: file.path, time: old.time})));
+    const markerText = () => JSON.stringify({keys:[...pruned],count:previousCount+victims.length,lostOriginals:[...previousLost,...lost()].slice(-50)});
     const fits = () => used + size + (victims.length ? Buffer.byteLength(markerText()) - oldMarker : 0) <= maxBytes && count + 1 <= maxEntries;
     for (const lastResort of [false, true]) for (const old of [...existing].reverse()) {
       if (fits()) break;

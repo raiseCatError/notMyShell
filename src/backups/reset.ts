@@ -10,12 +10,16 @@ import {planGhosttyShaderRemoval,ghosttyShaderPaths} from '../appearance/ghostty
 import {planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
 import {artifactPath, ledgerPath, loadLedger, ownership, planHookRemoval, type ManagedTarget, type HookTarget} from '../themeBridge/artifacts.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
-import {DEFAULT_PROMPT_CONFIGURATION} from '../prompt/configuration.js';
+import {planSettingsReset, SCOPE_LABELS, SETTINGS_SCOPES, type SettingsScope} from './settingsReset.js';
 import {Journal, type JournalEntry} from './journal.js';
 import {changeDiff} from './diff.js';
 import type {FileEditPlan} from '../ask/fileEdit.js';
 
-export interface ResetArea {id: string; label: string; status: 'set up' | 'not set up' | 'nothing to reset'; changes: FileChange[]; dependencies: FileSnapshot[]; reason?: string}
+export interface ResetArea {id: string; label: string; status: 'set up' | 'not set up' | 'nothing to reset'; changes: FileChange[]; dependencies: FileSnapshot[]; reason?: string;
+  /** Readable before → after values shown above the exact diff. */
+  summary?: string[];
+  /** NMSh's own settings: scopes selected together are planned as one change to config.json. */
+  settingsScope?: SettingsScope}
 export interface ResetPlan {areas: ResetArea[]; changes: FileChange[]; dependencies: FileSnapshot[]; preview: string[]; steps: Array<{area: ResetArea; changes: FileChange[]}>}
 const homeOf = (context: AppearanceContext) => context.env.HOME || homedir();
 function editChange(plan: FileEditPlan, home: string): FileChange {
@@ -26,9 +30,9 @@ function editChange(plan: FileEditPlan, home: string): FileChange {
   if (digest(after) !== plan.resultSha256) throw new Error('Removal did not match the reviewed result.');
   return {before,after};
 }
-function area(id: string,label: string,build:()=>{changes: readonly FileChange[]; dependencies?: readonly FileSnapshot[]}): ResetArea {
+function area(id: string,label: string,build:()=>{changes: readonly FileChange[]; dependencies?: readonly FileSnapshot[]; summary?: string[]}): ResetArea {
   try {const plan=build();const changes=plan.changes.filter(change=>change.after!==change.before.content);
-    return {id,label,status:changes.length?'set up':'nothing to reset',changes,dependencies:[...(plan.dependencies??[])]};
+    return {id,label,status:changes.length?'set up':'nothing to reset',changes,dependencies:[...(plan.dependencies??[])],...(plan.summary?{summary:plan.summary}:{})};
   } catch(error) {return {id,label,status:'not set up',changes:[],dependencies:[],reason:error instanceof Error?error.message:String(error)};}
 }
 /** A legacy adapter without a ledger can be reset only with an applied journal record and an exact after hash. */
@@ -112,8 +116,18 @@ export function discoverResetAreas(context: AppearanceContext,journal: Journal):
       const result=planClaudeBridgeRemoval(env);if('refuse' in result)throw new Error(result.refuse);if('noop' in result)return {changes:[]};
       return {changes:[editChange(result.plan,home),{before:snapshot(join(nmshConfigDirectory(env),'agent-context/claude-status-line.json'),home,true)}]};
     }),
-    area('settings','NMSh settings (config.json) → defaults',()=>({changes:[{before:snapshot(join(nmshConfigDirectory(env),'config.json'),home,true),after:`${JSON.stringify(DEFAULT_PROMPT_CONFIGURATION,null,2)}\n`}]})),
+    ...SETTINGS_SCOPES.map(scope=>({...settingsArea(env,home,new Set([scope])),settingsScope:scope})),
   ];
+}
+const settingsId=(scope:SettingsScope)=>scope==='preferences'?'settings':`settings-${scope}`;
+function settingsArea(env:NodeJS.ProcessEnv,home:string,scopes:ReadonlySet<SettingsScope>):ResetArea {
+  const list=SETTINGS_SCOPES.filter(scope=>scopes.has(scope));
+  const label=list.length===1?SCOPE_LABELS[list[0]!]:`NMSh settings: ${list.map(scope=>({preferences:'preferences',onboarding:'first-run state',updates:'update policy'})[scope]).join(', ')} → defaults`;
+  return area(list.map(settingsId).join('+'),label,()=>{
+    const before=snapshot(join(nmshConfigDirectory(env),'config.json'),home,true);
+    const plan=planSettingsReset(before.content,scopes);
+    return {changes:[{before,after:plan.after,afterMode:0o600}],summary:plan.summary};
+  });
 }
 interface Splice {start:number;end:number;text:string}
 function splice(before:string,after:string):Splice {
@@ -126,7 +140,14 @@ function splice(before:string,after:string):Splice {
 }
 /** Merge disjoint edits against the same captured file, so two areas can remove two includes safely. */
 export function planReset(areas: ResetArea[], selected: ReadonlySet<string>, context: AppearanceContext): ResetPlan {
-  const chosen=areas.filter(item=>selected.has(item.id));const byPath=new Map<string,{before:FileSnapshot;patches:Splice[];mode?:number}>();
+  let chosen=areas.filter(item=>selected.has(item.id));
+  // Several settings scopes edit the same file: plan them together, so their before → after values are exact and never overlap.
+  const scopes=chosen.filter(item=>item.settingsScope);
+  if(scopes.length>1){
+    const merged=settingsArea(context.env,homeOf(context),new Set(scopes.map(item=>item.settingsScope!)));
+    const at=chosen.indexOf(scopes[0]!);
+    chosen=chosen.filter(item=>!item.settingsScope);chosen.splice(at,0,merged);
+  }const byPath=new Map<string,{before:FileSnapshot;patches:Splice[];mode?:number}>();
   const steps:ResetPlan['steps']=[];const preview:string[]=[];const virtual=new Map<string,string|undefined>();
   for(const item of chosen){
     if(item.reason||!item.changes.length){preview.push(`${item.label}: skipped: ${item.reason??'nothing to reset'}`);continue;}
@@ -143,7 +164,7 @@ export function planReset(areas: ResetArea[], selected: ReadonlySet<string>, con
       stepChanges.push({before,after,afterMode:change.afterMode});virtual.set(change.before.path,after);
       byPath.set(change.before.path,{before:prior?.before??change.before,patches,mode:change.afterMode});
     }
-    steps.push({area:item,changes:stepChanges});preview.push(item.label,...stepChanges.flatMap(change=>changeDiff(change).lines));
+    steps.push({area:item,changes:stepChanges});preview.push(item.label,...(item.summary??[]),...stepChanges.flatMap(change=>changeDiff(change).lines));
   }
   const changes=[...byPath].map(([path,value])=>({before:value.before,after:virtual.get(path),afterMode:value.mode}));
   return {areas:chosen,changes,dependencies:chosen.flatMap(item=>item.dependencies),preview,steps};
@@ -151,23 +172,35 @@ export function planReset(areas: ResetArea[], selected: ReadonlySet<string>, con
 export function applyReset(plan:ResetPlan,journal:Journal):{entry?:JournalEntry;results:string[];paths:string[]} {
   if(!plan.steps.length||!plan.changes.length)return {results:['Nothing to reset'],paths:[]};
   for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
-  const entry=journal.record(plan.changes,'reset',`Reset ${plan.steps.map(step=>step.area.label).join(', ')}`);
-  for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
   const results=plan.areas.filter(area=>area.reason||!area.changes.length).map(area=>`${area.label}: skipped: ${area.reason??'nothing to reset'}`);
   const paths:string[]=[];
+  const current=(step:ResetPlan['steps'][number])=>step.changes.map(change=>{
+    const now=snapshot(change.before.path,journal.options.home,true);
+    if(now.content!==change.before.content)throw new Error('Configuration changed during reset; remaining areas were kept.');
+    return {...change,before:now};
+  });
+  // One area is one transaction: its own entry is the checkpoint (a separate checkpoint would only duplicate it).
+  if(plan.steps.length===1){
+    const step=plan.steps[0]!;
+    const entry=transact(current(step),plan.dependencies,journal.options.home,{source:'reset',label:`Reset ${step.area.label}`,directory:journal.directory});
+    results.push(`${step.area.label}: done`);
+    return {entry,results,paths:[...new Set(step.changes.map(change=>change.before.path))]};
+  }
+  // Several areas: one checkpoint of every file first, then one linked stage per area (each stage has its own before-images,
+  // because an earlier stage may have changed the same file).
+  const entry=journal.record(plan.changes,'reset',`Reset checkpoint: ${plan.steps.map(step=>step.area.label).join(', ')}`);
+  for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
+  let failed=false;
   for(const [stepIndex,step] of plan.steps.entries()){
     try {
-      const changes=step.changes.map(change=>{
-        const current=snapshot(change.before.path,journal.options.home,true);
-        if(current.content!==change.before.content)throw new Error('Configuration changed during reset; remaining areas were kept.');
-        return {...change,before:current};
-      });
-      transact(changes,[],journal.options.home,{source:'reset',label:step.area.label,directory:journal.directory});
+      const changes=current(step);
+      transact(changes,[],journal.options.home,{source:'reset',label:`Reset stage ${stepIndex+1}/${plan.steps.length}: ${step.area.label}`,directory:journal.directory,group:entry.id});
       results.push(`${step.area.label}: done`);paths.push(...changes.map(change=>change.before.path));
-    }catch(error){results.push(`${step.area.label}: failed: ${error instanceof Error?error.message:String(error)}`);results.push(...plan.steps.slice(stepIndex+1).map(next=>`${next.area.label}: skipped: an earlier area failed`));break;}
+    }catch(error){failed=true;results.push(`${step.area.label}: failed: ${error instanceof Error?error.message:String(error)}`);results.push(...plan.steps.slice(stepIndex+1).map(next=>`${next.area.label}: skipped: an earlier area failed`));break;}
   }
-  // A partially applied reset remains a prepared checkpoint, and is still restorable.
-  try {journal.complete(entry);}catch{/* per-area results remain authoritative */}
+  // A partially applied reset stays restorable and says so; a complete one verifies every file.
+  try {if(failed)throw new Error('partial');journal.complete(entry);}
+  catch{try{journal.resolve(entry,{state:'partial',detail:results.join('; ')});}catch{/* per-area results remain authoritative */}}
   return {entry,results,paths:[...new Set(paths)]};
 }
 export function ownedSnapshotPaths(context:AppearanceContext,journal:Journal):string[] {
