@@ -14,7 +14,7 @@ import {
 } from './model.js';
 import {bridgeEnvPath, writeEnvironmentFiles, type BridgeEnvironment, type ListingWrapper} from './environment.js';
 import {
-  artifactPath, batConfigDirectory, helixConfigDirectory, hookSpec, recordedHook, ledgerPath, loadLedger, ownership, removeArtifact, saveLedger, sha256, writeArtifact,
+  artifactPath, batConfigDirectory, helixConfigDirectory, hookSpec, recordedHook, ledgerPath, loadLedger, ownership, removeArtifact, commitLedger, sha256, writeArtifact,
   type HookTarget, type ManagedTarget,
 } from './artifacts.js';
 import {loadTmuxModel} from '../tools/config/tmux.js';
@@ -493,7 +493,8 @@ export async function buildBatCache(env: NodeJS.ProcessEnv = process.env, approv
   if (!list.stdout.split('\n').some(line => line.trim() === BAT_THEME_NAME)) return {ok: false, message: 'bat rebuilt its cache but does not list the NMSh theme; BAT_THEME stays unset.'};
   const fresh = loadLedger(env);
   fresh.entries.bat = {...fresh.entries.bat!, cacheBuiltFor: fresh.entries.bat!.sha256, ...(approve || fresh.entries.bat!.cacheApproved ? {cacheApproved: true} : {})};
-  saveLedger(fresh, env);
+  try { commitLedger(fresh, env, 'Record bat theme cache'); }
+  catch (error) { return {ok: false, message: `bat rebuilt its cache, but NMSh could not record it: ${error instanceof Error ? error.message : String(error)}`}; }
   return {ok: true, message: 'bat rebuilt its theme cache and lists nmsh-bridge; NMSh shells use it from their next prompt.'};
 }
 

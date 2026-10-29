@@ -17,11 +17,22 @@ const within = (root: string, path: string) => { const inside = relative(root, p
  * Reject every symbolic-link component. Missing descendants are allowed only below a verified directory. Paths must be inside the
  * home, or inside NMSh's own configuration directory (XDG_CONFIG_HOME may point outside the home); the same checks apply there.
  */
-export function checkPath(path: string, homeRoot: string, writable = false): void {
+function containingRoot(path: string, homeRoot: string): string {
   const own = nmshConfigDirectory();
   const home = isAbsolute(path) && !within(homeRoot, path) && within(own, path) ? own : homeRoot;
   const inside = relative(home, path);
-  if (!isAbsolute(path) || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error('The configuration path is outside your home; no changes are allowed.');
+  if (!isAbsolute(path) || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error(`The configuration path is outside your home; no changes are allowed: ${path}`);
+  return home;
+}
+
+/** The lexical half of checkPath: an absolute path inside the home (or NMSh's own directory). Reads nothing on disk. */
+export function checkContained(path: string, homeRoot: string): void {
+  if (typeof path !== 'string' || path.includes('\0')) throw new Error('A recorded configuration path is not a plain absolute path.');
+  containingRoot(path, homeRoot);
+}
+
+export function checkPath(path: string, homeRoot: string, writable = false): void {
+  const home = containingRoot(path, homeRoot);
   const parts = resolve(path).split(sep).filter(Boolean);
   let current: string = sep;
   for (let index = 0; index < parts.length; index++) {
@@ -29,12 +40,12 @@ export function checkPath(path: string, homeRoot: string, writable = false): voi
     let stat;
     try { stat = lstatSync(current); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
     if (stat.isSymbolicLink()) throw new Error(`A symbolic link prevents safe configuration access: ${current}`);
-    if (index < parts.length - 1 && !stat.isDirectory()) throw new Error('A configuration parent is not a directory.');
+    if (index < parts.length - 1 && !stat.isDirectory()) throw new Error(`A configuration parent is not a directory: ${current} is a ${stat.isFile() ? 'regular file' : 'special file'} (needed for ${path}).`);
     // System ancestors need not belong to this user; the home and its descendants must.
     if (current === home || current.startsWith(`${home}${sep}`)) {
-      if (process.getuid && stat.uid !== process.getuid()) throw new Error('The configuration path is owned by another user.');
-      if (writable && (stat.mode & 0o222) === 0) throw new Error('The configuration path is read-only.');
-      if (writable && (stat.mode & 0o022) !== 0) throw new Error('The configuration path is writable by a group or everyone.');
+      if (process.getuid && stat.uid !== process.getuid()) throw new Error(`The configuration path is owned by another user: ${current}`);
+      if (writable && (stat.mode & 0o222) === 0) throw new Error(`The configuration path is read-only: ${current}`);
+      if (writable && (stat.mode & 0o022) !== 0) throw new Error(`The configuration path is writable by a group or everyone: ${current}`);
     }
   }
 }
@@ -49,7 +60,7 @@ export function snapshot(path: string, home: string, writable = false): FileSnap
   }
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('Configuration must be a bounded regular file (at most 2 MiB).');
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error(`Configuration must be a bounded regular file (at most 2 MiB): ${path} is ${stat.isDirectory() ? 'a directory' : stat.isFile() ? 'too large' : 'not a regular file'}.`);
     const bytes=readFileSync(fd);
     const content=bytes.toString('utf8');
     if(bytes.length>MAX_FILE_BYTES||!Buffer.from(content,'utf8').equals(bytes))throw new Error('Configuration must be bounded UTF-8 text; no changes are allowed.');
@@ -84,20 +95,23 @@ export function transact(changes: readonly FileChange[], dependencies: readonly 
   if (!effective.length) return;
   const journal = new Journal({home, directory: metadata.directory});
   let entry:JournalEntry;
-  try {entry=journal.record(effective,metadata.source,metadata.label);}
+  try {entry=journal.record(effective,metadata.source,metadata.label,metadata.group?{group:metadata.group}:{});}
   catch(error){throw new Error(`Could not create a verified backup; configuration was not changed. ${error instanceof Error?error.message:String(error)}`);}
   // Backup I/O may take time: recheck every dependency before the first mutation.
   for (const dependency of dependencies) unchanged(dependency, home);
   for (const change of changes) unchanged(change.before, home, true);
   const done: FileChange[] = [];
   try {
-    for (const change of changes) {
+    metadata.fault?.('recorded');
+    for (const [index, change] of changes.entries()) {
       unchanged(change.before, home, true);
       if (change.after === change.before.content && (change.afterMode===undefined||change.afterMode===change.before.mode)) continue;
       if (change.after === undefined) unlinkSync(change.before.path);
       else replace(change.before.path, change.after, change.afterMode ?? change.before.mode, home, change.before);
       done.push(change);
+      metadata.fault?.(`written:${index}`);
     }
+    metadata.fault?.('before-complete');
     journal.complete(entry);
     return entry;
   } catch (error) {
@@ -110,6 +124,11 @@ export function transact(changes: readonly FileChange[], dependencies: readonly 
         else replace(change.before.path, change.before.content, change.before.mode, home, current);
       } catch { incomplete = true; }
     }
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${incomplete ? ' Recovery is incomplete; preserve the files and inspect the preview before retrying.' : ' Applied file changes were rolled back.'}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    // The entry records how the write ended, so /changes never shows a rolled-back write as pending or applied.
+    try { journal.resolve(entry, incomplete ? {state: 'rollback-incomplete', detail: `${reason} Some files could not be returned to their backed-up state.`}
+      : {state: 'reverted', detail: `${reason} ${done.length ? 'Applied file changes were rolled back.' : 'No file was changed.'}`}); }
+    catch { /* the write's own error stays authoritative; /changes classifies the entry from the files */ }
+    throw new Error(`${reason}${incomplete ? ' Recovery is incomplete; preserve the files and inspect the preview before retrying.' : ' Applied file changes were rolled back.'}`);
   }
 }
