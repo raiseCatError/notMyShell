@@ -1606,8 +1606,8 @@ export class TerminalApp {
     const late = takeLateProbeReplies(data, this.host.capabilities);
     if (late.done) this.lateProbeUntil = 0;
     if (late.capabilities) {
+      // Images read the live host capabilities; the renderer's own copy only chose input modes at entry and stays as is.
       this.host.capabilities = late.capabilities;
-      this.renderer.setCapabilities(late.capabilities);
       if (!this.stopped) setImmediate(() => { if (!this.stopped) this.render(); });
     }
     return late.input;

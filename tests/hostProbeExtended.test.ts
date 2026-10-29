@@ -101,3 +101,18 @@ test('replies later than the probe never become typing and still count as eviden
   const error = takeLateProbeReplies(`\u001b_Gi=31;ENOTSUPPORTED:x\u001b\\`, {...BASELINE_CAPABILITIES, graphicsProtocol: 'kitty'});
   assert.equal(error.input, ''); assert.equal(error.capabilities, undefined); assert.equal(error.done, false);
 });
+
+test('a late graphics reply after the screen is entered enables native images without restarting the renderer', async () => {
+  const {TerminalApp} = await import('../src/app/TerminalApp.js');
+  const app = new TerminalApp();
+  try {
+    Object.defineProperty(app, 'render', {value: () => {}});
+    app['host'].capabilities = {...app['host'].capabilities, graphicsProtocol: 'none'};
+    app['renderer']['active'] = true;
+    app['lateProbeUntil'] = Date.now() + 1000;
+    assert.doesNotThrow(() => app['onInput']('\u001b_Gi=31;OK\u001b\\\u001b[?62;4c'));
+    assert.equal(app['host'].capabilities.graphicsProtocol, 'kitty');
+    assert.equal(app['lateProbeUntil'], 0, 'DA1 closed the late window');
+    app['onInput']('ls'); assert.equal(app['editor'].text, 'ls', 'only the real keys were typed');
+  } finally { app['renderer']['active'] = false; app['stop'](0); app['session'].kill(); }
+});
