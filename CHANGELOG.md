@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Backups keep the oldest copy of every file NMSh changed (what it was before NMSh first touched it). Frequent automatic writes, such as cursor shaders regenerating, no longer push it out of `/changes`.
 - On a slow terminal connection or a busy machine, the terminal's reply to NMSh's startup image check no longer appears in the composer as `_Gi=31;OK\` and no longer turns images into character art. NMSh's startup check now ends as soon as the terminal has answered (instead of always waiting 80 ms), waits up to 0.75 s for a slow one, and still uses an answer that comes later.
 - A Kitty or Ghostty image drawn before NMSh had taken the screen (a welcome image that loaded during startup) is sent again instead of leaving blank space where the picture belongs.
 - A native welcome image (Kitty, Ghostty) stays a native image after the first key press, scroll or resize instead of turning into character art. A logo animation still stops at once and its frames are deleted; only the still remains.

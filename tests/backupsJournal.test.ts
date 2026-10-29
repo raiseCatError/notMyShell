@@ -141,3 +141,15 @@ test('the newest source/path anchor is retained even if its write was interrupte
  assert.ok(journal.list().some(entry=>entry.id===newest.id));assert.throws(()=>journal.read(old.id));
  assert.equal(journal.provenanceComplete('cursor',f.path),false);
 });
+test('a burst of automatic writes to another file never prunes the original backup of a config file', t => {
+ const f=fixture(t);const journal=new Journal({home:f.home,directory:f.directory,maxEntries:10});
+ const shader=join(f.home,'cursor.glsl');writeFileSync(shader,'rev start');
+ const write=(path:string,after:string,source:string,label:string)=>{const entry=journal.record([{before:snapshot(path,f.home),after}],source,label);writeFileSync(path,after);journal.complete(entry);return entry;};
+ const original=write(f.path,'appearance 1','appearance','First appearance edit');
+ write(f.path,'appearance 2','appearance','Second appearance edit');
+ for(let n=0;n<40;n++)write(shader,`rev ${n}`,'cursor','Cursor shader');
+ const kept=journal.list();
+ assert.ok(kept.length<=10);
+ assert.ok(kept.some(entry=>entry.id===original.id),'the first backup of the config file (its pre-NMSh content) is kept');
+ assert.equal(journal.content(journal.read(original.id),0),'before\r\n');
+});
