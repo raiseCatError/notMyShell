@@ -22,7 +22,7 @@ function box(t: T) {
 }
 const meta = (themeRef = 'one') => ({mode: 'follow' as const, themeRef, format: 'vim', formatVersion: 1});
 const write = (path: string, text: string) => { mkdirSync(dirname(path), {recursive: true}); writeFileSync(path, text); };
-const plainRender = (lines: string[]) => lines.join('\n').replace(/\x1b\[[0-9;]*m/gu, '');
+const plainRender = (lines: string[]) => lines.join('\n').replace(/\x1b\[[0-9;]*m/gu, '').replace(/\s+/gu, ' ');
 
 // ---- D2: Theme Bridge ledger --------------------------------------------------------------------------------------------
 
