@@ -1,6 +1,15 @@
 import type {TerminalCapabilities} from './capabilities.js';
 
 export const HOST_PROBE_TIMEOUT_MS = 80;
+/**
+ * The extended batch ends with DA1, which every VT-style terminal answers, and answers in order: its reply means every
+ * earlier reply has arrived, so the probe ends at once. This is only the wait for a terminal that is slow to answer (SSH,
+ * a busy machine); replies later than this are still recognized (see `takeLateProbeReplies`) and never become typing.
+ */
+export const HOST_PROBE_REPLY_TIMEOUT_MS = 750;
+/** How long after startup a reply to the startup probe is still recognized as one. */
+export const LATE_PROBE_WINDOW_MS = 10_000;
+const DA1_REPLY = /\u001b\[\?[\d;]{1,64}c/u;
 export const HOST_QUERY = '\u001b[?u\u001b[?2026$p';
 /**
  * Kitty graphics support query: a 1×1 RGB direct-data query (a=q) that the
@@ -16,8 +25,8 @@ export const GRAPHICS_QUERY = '\u001b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u001b\\';
  * alternate screen and leaves it, so nothing the person sees is touched, and it is sent only when asked for.
  */
 export const TEXT_SIZING_QUERY = '\u001b[?1049h\u001b[2J\u001b[H\u001b[6n\u001b]66;w=2; \u001b\\\u001b[6n\u001b]66;s=2; \u001b\\\u001b[6n\u001b[?1049l';
-/** DA1 (device attributes: `4` is Sixel), the cell size in pixels and the text area in pixels. */
-export const DISPLAY_QUERY = '\u001b[c\u001b[16t\u001b[14t';
+/** The cell size in pixels, the text area in pixels and DA1 (device attributes: `4` is Sixel), last as the end marker. */
+export const DISPLAY_QUERY = '\u001b[16t\u001b[14t\u001b[c';
 
 export interface ProbeOptions {
   graphics?: boolean;
@@ -84,9 +93,18 @@ export interface ProbeTransport {
   listen(receive: (data: string) => void): () => void;
 }
 
-/** One bounded parallel query batch per attachment; caller owns raw mode. */
+/** Whether the DA1 end marker is in `input` (outside a bracketed paste). */
+function sawEndMarker(input: string): boolean {
+  return DA1_REPLY.test(input.replace(/\u001b\[200~[\s\S]*?(?:\u001b\[201~|$)/gu, ''));
+}
+
+/**
+ * One bounded parallel query batch per attachment; caller owns raw mode. The extended batch ends as soon as the DA1 end
+ * marker arrives; `pending` says it did not arrive in time, so later replies may still come (see `takeLateProbeReplies`).
+ */
 export function probeHost(hints: Readonly<TerminalCapabilities>, transport: ProbeTransport,
-  timeoutMs = HOST_PROBE_TIMEOUT_MS, options: ProbeOptions = {}): Promise<ReturnType<typeof resolveProbeReplies>> {
+  timeoutMs?: number, options: ProbeOptions = {}): Promise<ReturnType<typeof resolveProbeReplies> & {pending: boolean}> {
+  const limit = options.extended ? HOST_PROBE_REPLY_TIMEOUT_MS : HOST_PROBE_TIMEOUT_MS;
   return new Promise(resolve => {
     let input = '';
     let finished = false;
@@ -96,14 +114,15 @@ export function probeHost(hints: Readonly<TerminalCapabilities>, transport: Prob
       finished = true;
       clearTimeout(timer);
       remove();
-      resolve(resolveProbeReplies(input, hints, options));
+      resolve({...resolveProbeReplies(input, hints, options), pending: Boolean(options.extended) && !sawEndMarker(input)});
     };
-    const timer = setTimeout(finish, Math.max(0, Math.min(HOST_PROBE_TIMEOUT_MS, timeoutMs)));
+    // A timer that fires late (a blocked event loop) runs before that turn's reads: let input already waiting arrive first.
+    const timer = setTimeout(() => setImmediate(finish), Math.max(0, Math.min(limit, timeoutMs ?? limit)));
     try {
       remove = transport.listen(data => {
         input += data;
-        // Stop collecting promptly for large paste/input bursts.
-        if (input.length >= 65536) finish();
+        // Stop collecting promptly for large paste/input bursts, and as soon as the end marker answers.
+        if (input.length >= 65536 || (options.extended && sawEndMarker(input))) finish();
       });
       // A transport can deliver buffered input synchronously from listen().
       if (finished) { remove(); return; }
@@ -111,4 +130,22 @@ export function probeHost(hints: Readonly<TerminalCapabilities>, transport: Prob
       transport.write(options.extended ? `${TEXT_SIZING_QUERY}${base}${DISPLAY_QUERY}` : base);
     } catch { finish(); }
   });
+}
+
+/** The Kitty graphics reply to the startup query (image id 31), whole. */
+const LATE_GRAPHICS_REPLY = /\u001b_Gi=31;([^\u001b]{0,128})\u001b\\/gu;
+
+/**
+ * Replies to the startup probe that arrive after it gave up: removed from `input` so they never become typing, with the
+ * evidence they carry. `done` means the DA1 end marker arrived (nothing more is outstanding).
+ */
+export function takeLateProbeReplies(input: string, capabilities: Readonly<TerminalCapabilities>): {input: string; capabilities?: TerminalCapabilities; done: boolean} {
+  let next: TerminalCapabilities | undefined;
+  const done = sawEndMarker(input);
+  const rest = input.replace(LATE_GRAPHICS_REPLY, (_match, message: string) => {
+    if (message === 'OK' && capabilities.graphicsProtocol !== 'kitty') next = {...(next ?? capabilities), graphicsProtocol: 'kitty'};
+    return '';
+  // DA1 and the pixel-size reports are never keys; removed, they cannot reach a program that has the screen by now.
+  }).replace(/\u001b\[\?[\d;]{1,64}c|\u001b\[[46];\d{1,5};\d{1,5}t/gu, '');
+  return {input: rest, ...(next ? {capabilities: next} : {}), done};
 }

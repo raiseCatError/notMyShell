@@ -179,8 +179,11 @@ export class TerminalRenderer {
   }
 
   /** Raw bytes for an owner of terminal-side objects (the graphics service uploading an image). Nothing while a program owns the screen. */
-  sendRaw(data: string): void {
-    if (this.active && !this.suspended && data) this.write(data);
+  /** Writes `data` now; false when nothing was written (not entered yet, or suspended), so callers can send it again later. */
+  sendRaw(data: string): boolean {
+    if (!this.active || this.suspended || !data) return false;
+    this.write(data);
+    return true;
   }
 
   /** The rows last written to the screen, for presentation-only captures (screen savers). Never sent anywhere. */

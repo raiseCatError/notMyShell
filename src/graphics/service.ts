@@ -31,7 +31,8 @@ import {renderCells} from './unicode.js';
 export interface GraphicsHost {
   decision(): GraphicsDecision;
   /** Raw terminal bytes (an upload or a delete). Nothing may be written while a program owns the screen. */
-  send(data: string): void;
+  /** False when the bytes could not be written (the screen is not NMSh's yet): an upload is then not recorded. */
+  send(data: string): void | boolean;
   /** A private directory for converters (WebP). */
   scratchDir(): string;
   color(): ColorLevel;
@@ -248,10 +249,10 @@ export class GraphicsService {
       const png = encodePng(scaleBox(source, target.width, target.height), {level: 3});
       const id = this.allocateId();
       this.makeRoom(png.length);
-      this.host.send(`${kittyTransmit(png, id)}${kittyVirtualPlacement(id, box.columns, box.rows)}`);
+      const delivered = this.host.send(`${kittyTransmit(png, id)}${kittyVirtualPlacement(id, box.columns, box.rows)}`) !== false;
       upload = {id, bytes: png.length, owners: new Set(), at: 0};
-      this.uploads.set(key, upload);
-      this.uploadSize += png.length;
+      // An upload the terminal never received is not remembered: the next paint sends it again instead of empty cells.
+      if (delivered) { this.uploads.set(key, upload); this.uploadSize += png.length; }
     }
     upload.owners.add(request.owner);
     upload.at = ++this.clock;
