@@ -41,6 +41,9 @@ export function changesKey(state:ChangesPanel,key:Key):{close?:true;paths?:strin
         state.message=`Snapshot ${entry.id} saved.${skipped.length?` Skipped (unsafe to read): ${skipped.join('; ')}`:''}`;
       }
       const selected=state.entries[state.selected];
+      if(key.kind==='text'&&key.value.toLowerCase()==='d'&&selected&&needsReview(state.states.get(selected.id)!.state)){
+        state.journal.dismiss(selected);refresh(state);state.message=`Set ${selected.id} aside as reviewed; your files were not changed.`;
+      }
       if(key.kind==='text'&&key.value.toLowerCase()==='f'&&selected){
         // Finalize only records what the files already prove; it writes no configuration.
         state.journal.finalize(selected);refresh(state);state.message=`Marked ${selected.id} as applied: every file holds the bytes it wrote.`;
@@ -91,7 +94,7 @@ export function renderChangesPanel(state:ChangesPanel,columns:number,height:numb
     selected:state.selected,notice:state.message,details:(width,budget)=>entry?[...studioWrap(`${entry.time} · ${entry.source} · ${entry.label}`,width),
       ...stateDetails(state,entry).flatMap(line=>studioWrap(line,width)),
       ...entry.files.flatMap(file=>studioWrap(`${file.path}: ${state.statuses.get(`${entry.id}:${file.path}`)}`,width))].slice(0,budget):[],
-    controls:[['↑↓','select'],['Enter','review restore'],['S','snapshot now'],...(entry&&state.states.get(entry.id)?.state==='applied-unfinalized'?[['F','mark applied'] as const]:[]),['Esc','close']]},columns,height);
+    controls:[['↑↓','select'],['Enter','review restore'],['S','snapshot now'],...(entry&&state.states.get(entry.id)?.state==='applied-unfinalized'?[['F','mark applied'] as const]:[]),...(entry&&needsReview(state.states.get(entry.id)?.state??'applied')?[['D','set aside'] as const]:[]),['Esc','close']]},columns,height);
 }
 
 function stateDetails(state:ChangesPanel,entry:JournalEntry):string[] {
@@ -102,6 +105,7 @@ function stateDetails(state:ChangesPanel,entry:JournalEntry):string[] {
   if(report.writer)lines.push(`Writer process ${report.writer} is still running; wait for it before restoring.`);
   if(report.state==='applied-unfinalized')lines.push('F marks it applied (nothing is written to your files). Enter reviews a rollback instead.');
   else if(needsReview(report.state))lines.push('Enter reviews a rollback to the backed-up files; a newer edit needs an explicit second confirmation.');
+  if(needsReview(report.state))lines.push('D sets it aside as reviewed: files stay as they are and the entry can later be pruned.');
   lines.push(...report.reasons);
   return lines;
 }

@@ -11,14 +11,16 @@ export interface JournalFile {path: string; existed: boolean; mode: number; befo
  * How an unfinished write ended. `outcome` keeps only 'prepared' | 'applied' so older NMSh builds can still read every entry;
  * the resolution is extra evidence they ignore.
  */
-export interface JournalResolution {state: 'reverted' | 'rollback-incomplete' | 'finalized' | 'partial'; at: string; detail?: string}
+export interface JournalResolution {state: 'reverted' | 'rollback-incomplete' | 'finalized' | 'partial' | 'reviewed'; at: string; detail?: string}
 export interface JournalEntry {version: 1; id: string; time: string; source: string; label: string; files: JournalFile[]; outcome: 'prepared' | 'applied'; resolution?: JournalResolution; group?: string}
 /** What the files on disk say about an entry. Computed from bytes and hashes only; never assumed. */
-export type TransactionState = 'applied' | 'in-progress' | 'not-applied' | 'partially-applied' | 'applied-unfinalized' | 'conflicted' | 'reverted' | 'rollback-incomplete' | 'partial' | 'indeterminate';
+export type TransactionState = 'applied' | 'in-progress' | 'not-applied' | 'partially-applied' | 'applied-unfinalized' | 'conflicted' | 'reverted' | 'rollback-incomplete' | 'partial' | 'indeterminate' | 'reviewed';
 export type FileEvidence = 'before' | 'after' | 'neither' | 'unsafe';
 export interface TransactionReport {state: TransactionState; files: FileEvidence[]; reasons: string[]; writer?: number}
 export interface FileInspection {status: 'unchanged since' | 'edited since' | 'missing' | 'unsafe'; reason?: string}
-const RESOLUTIONS = ['reverted', 'rollback-incomplete', 'finalized', 'partial'];
+const RESOLUTIONS = ['reverted', 'rollback-incomplete', 'finalized', 'partial', 'reviewed'];
+/** A journal write takes well under a second; a "live" writer of an older entry is a reused process id, not the writer. */
+const LIVE_WRITER_MS = 10 * 60 * 1000;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 export interface JournalMetadata {
   source: string; label: string; directory?: string;
@@ -143,6 +145,7 @@ export class Journal {
     try { owner = JSON.parse(snapshot(join(this.directory, entry.id, 'owner.json'), this.options.home).content ?? '{}'); } catch { return undefined; }
     const pid = owner.pid;
     if (!Number.isSafeInteger(pid) || pid! <= 0 || pid === process.pid) return undefined;
+    if (!(Date.now() - Date.parse(entry.time) < LIVE_WRITER_MS)) return undefined;
     try { process.kill(pid!, 0); return pid; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' ? pid : undefined; }
   }
   /**
@@ -172,6 +175,13 @@ export class Journal {
       resolution: {state: resolution.state, at: new Date().toISOString(), ...(resolution.detail ? {detail: resolution.detail.slice(0, 2048)} : {})}};
     this.atomic(join(this.directory, entry.id, 'manifest.json'), `${JSON.stringify(next, null, 2)}\n`);
     return this.read(entry.id);
+  }
+  /** Set an unfinished entry aside after review: files are left exactly as they are, the evidence stays, and it becomes prunable. */
+  dismiss(entry: JournalEntry): JournalEntry {
+    const report = this.transactionState(this.read(entry.id));
+    if (report.state === 'in-progress') throw new Error('Another NMSh process is still writing this change; wait for it to finish.');
+    if (report.state === 'applied' || report.state === 'reverted' || report.state === 'reviewed') throw new Error('This change is already settled.');
+    return this.resolve(entry, {state: 'reviewed', detail: `Reviewed and set aside while ${report.state}; files were left as they were.`});
   }
   /** Mark an interrupted entry finished, only when every file verifiably holds the bytes it was meant to write. */
   finalize(entry: JournalEntry): JournalEntry {
@@ -281,8 +291,12 @@ export class Journal {
     const existing = this.list();
     const damaged = [...this.unreadable];
     // Fail closed only for the file a damaged backup names: its history needs review before NMSh changes it again.
+    // NMSh's own JSON records (settings, ownership) ride along with many writes; they are always re-captured in full, so a damaged
+    // older copy of one never blocks them. Each named user file does fail closed.
+    const own = dirname(this.directory);
+    const bookkeeping = (path: string) => path.endsWith('.json') && path.startsWith(`${own}/`);
     for (const name of damaged) {
-      const path = changes.map(change => change.before.path).find(candidate => this.unreadablePaths.get(name)!.includes(candidate));
+      const path = changes.map(change => change.before.path).find(candidate => !bookkeeping(candidate) && this.unreadablePaths.get(name)!.includes(candidate));
       if (path) throw new Error(`Backup ${name} of ${path} failed verification (${this.unreadableReasons.get(name)}); review it in /changes. `
         + `To continue, move ${join(this.directory, name)} out of the backups folder. Other files can still be changed.`);
     }
@@ -296,7 +310,7 @@ export class Journal {
     const victims: JournalEntry[] = [];
     const keep = new Set(existing.filter(item=>protectedSource(item.source)).slice(0,protectedSource(source)?19:20).map(item=>item.id));
     // An unfinished write is evidence for recovery (or still in flight in another process): never pruned automatically.
-    for (const item of existing) if (item.outcome==='prepared'&&!item.resolution) keep.add(item.id);
+    for (const item of existing) if ((item.outcome==='prepared'&&!item.resolution)||item.resolution?.state==='rollback-incomplete') keep.add(item.id);
     // The incoming entry anchors its source/paths; retain the newest anchor for every other pair.
     const anchored = new Set(changes.map(change=>`${source}:${change.before.path}`));
     for (const item of existing) for(const file of item.files) {

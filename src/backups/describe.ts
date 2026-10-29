@@ -5,7 +5,7 @@ export function describeState(state: TransactionState): string {
   switch (state) {
     case 'applied': return 'applied';
     case 'in-progress': return 'still being written by another NMSh process';
-    case 'not-applied': return 'interrupted before any file was written (nothing changed)';
+    case 'not-applied': return 'interrupted before any file was written (the files still hold their backed-up bytes)';
     case 'partially-applied': return 'interrupted part-way: some files were written, others were not';
     case 'applied-unfinalized': return 'interrupted after every file was written, before it was marked done';
     case 'conflicted': return 'interrupted, and a file was changed by something else since';
@@ -13,8 +13,9 @@ export function describeState(state: TransactionState): string {
     case 'rollback-incomplete': return 'failed, and its rollback was incomplete';
     case 'partial': return 'partly applied (some areas failed or were skipped)';
     case 'indeterminate': return 'unfinished, and a file cannot be read safely to check it';
+    case 'reviewed': return 'reviewed and set aside (files left as they were)';
   }
 }
 
 /** Whether an entry needs the user's review before it can be trusted as finished. */
-export const needsReview = (state: TransactionState) => !['applied', 'reverted', 'in-progress'].includes(state);
+export const needsReview = (state: TransactionState) => !['applied', 'reverted', 'in-progress', 'reviewed'].includes(state);

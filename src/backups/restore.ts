@@ -37,6 +37,9 @@ function reconcileBridgeLedger(journal: Journal, entry: JournalEntry, changes: F
   const change = changes.find(item => item.before.path === path);
   if (!change) return [];
   const restoredPaths = new Set(entry.files.map(file => file.path));
+  // A record-only change (bat cache, a theme reference, a forgotten include) touches no tool file: restore each tool's record
+  // where it still describes the same file bytes, so ownership stays exact.
+  const recordOnly = entry.files.every(file => file.path === path || file.path === join(dirname(journal.directory), 'config.json'));
   const backup = rawLedger(change.after), current = rawLedger(change.before.content);
   const merged: Record<string, RawRecord> = {};
   const notes: string[] = [];
@@ -50,7 +53,8 @@ function reconcileBridgeLedger(journal: Journal, entry: JournalEntry, changes: F
     const hook = touches(old, 'hook') || touches(now, 'hook');
     let next: RawRecord | undefined;
     if (artifact && hook) next = old;
-    else if (!artifact && !hook) next = now;
+    else if (!artifact && !hook) next = recordOnly && old && now && old.sha256 === now.sha256 && old.artifactPath === now.artifactPath
+      ? (() => { const kept = {...old}; if (now.hook) kept.hook = now.hook; else delete kept.hook; return kept; })() : now;
     else if (artifact) {
       // The backup's file record, with the include NMSh records now (this backup does not restore the include's file).
       const keptHook = now?.hook;
@@ -62,10 +66,12 @@ function reconcileBridgeLedger(journal: Journal, entry: JournalEntry, changes: F
       else if (restoredHook) next = old;
     }
     if (next) merged[target] = next;
-    if (!artifact && !hook && JSON.stringify(old) !== JSON.stringify(now)) notes.push(`Theme Bridge: keeps NMSh's current ownership record for ${target}; this backup does not restore its files.`);
+    if (!artifact && !hook && JSON.stringify(next) !== JSON.stringify(old)) notes.push(`Theme Bridge: keeps NMSh's current ownership record for ${target}; this backup does not restore its files.`);
   }
-  const after = `${JSON.stringify({...current.root, version: 1, entries: merged}, null, 2)}\n`;
+  // A backup from before the record existed, with nothing left to own, removes the record again.
+  const after = change.after === undefined && !Object.keys(merged).length ? undefined : `${JSON.stringify({...current.root, version: 1, entries: merged}, null, 2)}\n`;
   if (after === change.after) return [];
+  if (recordOnly && JSON.stringify(merged) === JSON.stringify(current.entries)) throw new Error(`Restoring "${entry.label}" would change nothing: every tool's current record describes files this backup does not restore. Nothing was changed.`);
   change.after = after;
   return notes.length ? notes : ['Theme Bridge: the ownership record is reconciled with files this backup does not restore.'];
 }
@@ -73,6 +79,8 @@ function reconcileBridgeLedger(journal: Journal, entry: JournalEntry, changes: F
 export function planRestore(journal: Journal, id: string): RestorePlan {
   const entry = journal.read(id);
   const home = journal.options.home;
+  const live = journal.transactionState(entry);
+  if (live.state === 'in-progress') throw new Error(`NMSh process ${live.writer} is still writing "${entry.label}"; wait for it to finish, then review again. Nothing was changed.`);
   const changes: FileChange[] = entry.files.map((file,index) => ({before:checkedSnapshot(entry,file.path,home),after:journal.content(entry,index),afterMode:file.mode}));
   // Only a file this restore would actually change can lose later edits: one already holding its backed-up bytes is not edited.
   const edited = changes.filter((change,index)=>{
@@ -81,12 +89,13 @@ export function planRestore(journal: Journal, id: string): RestorePlan {
     return now !== file.afterHash || (file.afterMode!==undefined && change.before.content!==undefined && change.before.mode!==file.afterMode);
   }).map(change=>change.before.path);
   const settings=join(dirname(journal.directory),'config.json');
-  if(!changes.some(change=>change.before.path===settings)){const before=checkedSnapshot(entry,settings,home);changes.push({before,after:before.content,afterMode:before.mode});}
+  // The settings checkpoint is a courtesy: an unreadable settings file is left out rather than blocking an unrelated restore.
+  if(!changes.some(change=>change.before.path===settings)){try{const before=snapshot(settings,home,true);changes.push({before,after:before.content,afterMode:before.mode});}catch{/* not part of this backup */}}
   const reconciled = reconcileBridgeLedger(journal, entry, changes);
   const ledger = join(dirname(journal.directory), 'theme-bridge', 'ledger.json');
   // The reconciled ownership record is NMSh's own bookkeeping, not a user edit that would be lost.
   const warnings = reconciled.length ? edited.filter(path => path !== ledger) : edited;
-  const state = journal.transactionState(entry);
+  const state = live;
   const plan: RestorePlan = {entry,changes,edited:warnings,preview:[
     `${entry.time} · ${entry.source} · ${entry.label}`,
     ...(state.state === 'applied' ? [] : [`This change is ${describeState(state.state)}. Restoring returns its files to their backed-up state (a rollback).`]),

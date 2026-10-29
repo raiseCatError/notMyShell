@@ -97,12 +97,12 @@ export function transact(changes: readonly FileChange[], dependencies: readonly 
   let entry:JournalEntry;
   try {entry=journal.record(effective,metadata.source,metadata.label,metadata.group?{group:metadata.group}:{});}
   catch(error){throw new Error(`Could not create a verified backup; configuration was not changed. ${error instanceof Error?error.message:String(error)}`);}
-  // Backup I/O may take time: recheck every dependency before the first mutation.
-  for (const dependency of dependencies) unchanged(dependency, home);
-  for (const change of changes) unchanged(change.before, home, true);
   const done: FileChange[] = [];
   try {
     metadata.fault?.('recorded');
+    // Backup I/O may take time: recheck every dependency before the first mutation (a failure here settles the entry as reverted).
+    for (const dependency of dependencies) unchanged(dependency, home);
+    for (const change of changes) unchanged(change.before, home, true);
     for (const [index, change] of changes.entries()) {
       unchanged(change.before, home, true);
       if (change.after === change.before.content && (change.afterMode===undefined||change.afterMode===change.before.mode)) continue;

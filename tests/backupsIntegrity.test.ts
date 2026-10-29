@@ -8,7 +8,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {Journal} from '../src/backups/journal.js';
 import {snapshot, transact} from '../src/appearance/hostFiles.js';
 import {planRestore, restore, manualSnapshot} from '../src/backups/restore.js';
-import {createChangesPanel, renderChangesPanel} from '../src/backups/ChangesPanel.js';
+import {createChangesPanel, changesKey, renderChangesPanel} from '../src/backups/ChangesPanel.js';
 import {ledgerPath, loadLedger, ownership, writeArtifact, applyHook, hookSpec, planHook, removeArtifact} from '../src/themeBridge/artifacts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -274,4 +274,57 @@ test('D4: unresolved interrupted entries are never pruned, even under a tiny cap
   }
   assert.ok(small.list().some(entry => entry.id === interrupted.id));
   assert.ok(readdirSync(small.directory).filter(name => /^\d{8}T/u.test(name)).length <= 5);
+});
+
+// ---- Review follow-ups ------------------------------------------------------------------------------------------------
+
+test('an edit that lands while the backup is written settles the entry as reverted, never as an orphan', t => {
+  const f = twoFiles(t);
+  assert.throws(() => transact(f.files.map(([path, after]) => ({before: snapshot(path, f.home, true), after})), [], f.home,
+    {source: 'appearance', label: 'Raced', directory: f.journal.directory, fault: stage => { if (stage === 'recorded') writeFileSync(f.one, 'user typed this\n'); }}), /changed since the preview/u);
+  assert.equal(readFileSync(f.one, 'utf8'), 'user typed this\n');
+  const [entry] = f.journal.list();
+  assert.equal(entry!.resolution?.state, 'reverted'); assert.match(entry!.resolution!.detail!, /No file was changed/u);
+});
+
+test('a conflicted interrupted entry can be set aside without touching files; a live writer blocks restore', async t => {
+  const f = twoFiles(t);
+  await killAt(f.home, f.journal.directory, 'written:0', f.files);
+  writeFileSync(f.one, 'later edit\n');
+  const [entry] = f.journal.list();
+  const panel = createChangesPanel(f.journal, []);
+  assert.match(plainRender(renderChangesPanel(panel, 160, 30)), /D set aside/u);
+  changesKey(panel, {kind: 'text', value: 'd'});
+  assert.equal(f.journal.transactionState(f.journal.read(entry!.id)).state, 'reviewed');
+  assert.equal(readFileSync(f.one, 'utf8'), 'later edit\n'); assert.equal(readFileSync(f.two, 'utf8'), 'two-before\n');
+  assert.doesNotMatch(createChangesPanel(f.journal, []).message, /unfinished/u);
+  const sleeper = spawn('sleep', ['30']); t.after(() => sleeper.kill());
+  const pending = f.journal.record([{before: snapshot(f.two, f.home), after: 'x'}], 'appearance', 'Live writer');
+  writeFileSync(join(f.journal.directory, pending.id, 'owner.json'), JSON.stringify({owner: 'nmsh-journal', version: 1, pid: sleeper.pid}));
+  assert.throws(() => planRestore(f.journal, pending.id), new RegExp(`process ${sleeper.pid} is still writing`, 'u'));
+});
+
+test('a damaged backup of NMSh settings never blocks later settings or ownership writes', t => {
+  const b = box(t);
+  const config = join(b.home, '.config/nmsh/config.json'); write(config, '{}\n');
+  transact([{before: snapshot(config, b.home), after: '{"a":1}\n'}], [], b.home, {source: 'settings', label: 'settings', directory: b.journal.directory});
+  const damaged = b.journal.list()[0]!;
+  rmSync(join(b.journal.directory, damaged.id, 'files', '0'));
+  transact([{before: snapshot(config, b.home, true), after: '{"a":2}\n'}], [], b.home, {source: 'settings', label: 'again', directory: b.journal.directory});
+  assert.equal(readFileSync(config, 'utf8'), '{"a":2}\n');
+  assert.equal(writeArtifact('vim', 'v', () => true, meta(), b.env).ok, true);
+});
+
+test('restoring a record-only Theme Bridge change restores that record; restoring the first record removes it', t => {
+  const b = box(t);
+  writeArtifact('vim', 'colors', () => true, meta('one'), b.env);
+  const created = b.journal.list()[0]!;
+  writeArtifact('vim', 'colors', () => true, meta('two'), b.env);
+  const recordOnly = b.journal.list()[0]!;
+  restore(b.journal, planRestore(b.journal, recordOnly.id), {reviewed: true, overwrite: false});
+  assert.equal(loadLedger(b.env).entries.vim!.themeRef, 'one');
+  assert.equal(ownership('vim', loadLedger(b.env), b.env), 'owned');
+  restore(b.journal, planRestore(b.journal, created.id), {reviewed: true, overwrite: true});
+  assert.equal(existsSync(ledgerPath(b.env)), false, 'no empty record is left behind');
+  assert.equal(existsSync(join(b.home, '.config/nmsh/theme-bridge/vim/colors/nmsh-bridge.vim')), false);
 });

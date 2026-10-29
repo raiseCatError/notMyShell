@@ -117,14 +117,6 @@ export function loadLedgerText(text: string, env: NodeJS.ProcessEnv = process.en
   return {version: 1, entries};
 }
 
-export function saveLedger(ledger: Ledger, env: NodeJS.ProcessEnv = process.env): void {
-  const path = ledgerPath(env);
-  mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-  const staged = `${path}.${process.pid}.tmp`;
-  writeFileSync(staged, `${JSON.stringify(ledger, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
-  renameSync(staged, path);
-}
-
 function ledgerChange(ledger:Ledger,env:NodeJS.ProcessEnv):FileChange {
   return {before:snapshot(ledgerPath(env),env.HOME || homedir(),true),after:`${JSON.stringify(ledger,null,2)}\n`};
 }
