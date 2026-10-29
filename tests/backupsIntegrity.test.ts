@@ -109,8 +109,10 @@ test('D3: a recorded directory replaced by a regular file blocks only its own re
   assert.throws(() => planRestore(f.journal, f.entry.id), (error: Error) =>
     error.message.includes(f.entry.id) && error.message.includes(f.kitty) && /Kitty appearance/u.test(error.message) && /Nothing was changed/u.test(error.message));
   assert.equal(readFileSync(dirname(f.kitty), 'utf8'), 'not a directory', 'never written through');
+  // List and details render side by side, so check the reported status itself plus the row marker (wrapping varies with path length).
   const panel = createChangesPanel(f.journal, []); panel.selected = 1;
-  assert.match(plainRender(renderChangesPanel(panel, 160, 30)), /unsafe: A configuration parent is not a directory/u);
+  assert.match(panel.statuses.get(`${f.entry.id}:${f.kitty}`)!, /^unsafe: A configuration parent is not a directory: /u);
+  assert.match(plainRender(renderChangesPanel(panel, 160, 30)), /unsafe file/u);
 });
 
 test('D3: symlinks, file↔directory swaps, inaccessible parents and missing files stay isolated', t => {
