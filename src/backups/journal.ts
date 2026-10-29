@@ -198,11 +198,17 @@ export class Journal {
       const key=`${item.source}:${file.path}`;
       if(!anchored.has(key)){keep.add(item.id);anchored.add(key);}
     }
+    // The oldest backup of each file holds what it was before NMSh first changed it: a burst of automatic writes to other
+    // files (cursor shaders regenerate often) must not push that original out. It goes only when nothing else can.
+    const originals = new Set<string>(), originalPaths = new Set<string>();
+    for (const item of [...existing].reverse()) for (const file of item.files) {
+      if (!originalPaths.has(file.path)) { originals.add(item.id); originalPaths.add(file.path); }
+    }
     const markerText = () => JSON.stringify({keys:[...pruned],count:previousCount+victims.length});
     const fits = () => used + size + (victims.length ? Buffer.byteLength(markerText()) - oldMarker : 0) <= maxBytes && count + 1 <= maxEntries;
-    for (const old of [...existing].reverse()) {
+    for (const lastResort of [false, true]) for (const old of [...existing].reverse()) {
       if (fits()) break;
-      if (keep.has(old.id)) continue;
+      if (keep.has(old.id) || victims.includes(old) || (!lastResort && originals.has(old.id))) continue;
       used -= cost(old); count--; victims.push(old);
       for(const file of old.files)pruned.add(digest(`${old.source}:${file.path}`));
     }
