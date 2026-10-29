@@ -19,13 +19,13 @@ export function resetKey(state:ResetPanel,key:Key):{close?:true;paths?:string[]}
       if(key.kind==='up'||key.kind==='down')state.index=Math.max(0,Math.min(state.areas.length-1,state.index+(key.kind==='up'?-1:1)));
       if(key.kind==='text'&&key.value===' '){const id=state.areas[state.index]!.id;if(state.selected.has(id))state.selected.delete(id);else state.selected.add(id);}
       if(key.kind==='enter'&&state.selected.size){
-        state.plan=planReset(state.areas,state.selected,state.context);state.review={offset:0,plan:{preview:state.plan.preview,guidance:'Only recorded NMSh changes are reset. User lines are kept. Enter advances to Backup; nothing is written.'}};
+        state.plan=planReset(state.areas,state.selected,state.context);state.review={offset:0,plan:{preview:state.plan.preview,guidance:'Only recorded NMSh changes are reset. User lines are kept. Enter advances to Backup; nothing is written.'},controls:[['↑↓','scroll'],['Enter','next: backup'],['Esc','cancel']]};
         state.step='impact';state.shown=false;
       }
     }else if(state.step==='impact'){
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));
       if(key.kind==='enter'&&state.review?.shown){state.step='backup';state.shown=false;state.review={offset:0,plan:{preview:[`Backup directory: ${state.journal.directory}`, 'Includes files changed by the reset and their ownership records.',
-        ...state.plan!.changes.map(change=>change.before.path)],guidance:'Backup must be written, read back and hash verified before any reset. Enter advances to final typed confirmation.'}};}
+        ...state.plan!.changes.map(change=>change.before.path)],guidance:'Backup must be written, read back and hash verified before any reset. Enter advances to final typed confirmation; nothing is written yet.'},controls:[['↑↓','scroll'],['Enter','next: type reset'],['Esc','cancel']]};}
     }else if(state.step==='backup'){
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));
       if(key.kind==='enter'&&state.review?.shown){state.step='confirm';state.shown=false;state.message='Review complete. Type reset exactly, then Enter; Esc cancels.';}
@@ -61,8 +61,9 @@ export function renderResetPanel(state:ResetPanel,columns:number,height:number):
     controls:[['Enter','reset if word matches'],['Esc','cancel']]},columns,height);
   if(state.step==='result')return renderStudioReview(state.review!,'Reset · results',columns,height);
   return renderStudioLayout({title:'Step 1 · Choose reset areas',subtitle:'Space toggles · nothing is selected by default',selected:state.index,
-    entries:state.areas.map(item=>({group:item.id==='settings'?'NMSh settings':'Owned integrations',label:item.label,
+    entries:state.areas.map(item=>({group:item.settingsScope?'NMSh settings':'Owned integrations',label:item.label,
       render:()=>`${checkMark(state.selected.has(item.id))} ${item.label} · ${item.status}`})),
-    notice:state.message,details:width=>studioWrap(state.areas[state.index]?.reason??'Only NMSh-owned changes are offered; unrelated user lines are kept.',width),
+    notice:state.message,details:(width,budget)=>{const item=state.areas[state.index];
+      return (item?.reason?[item.reason]:item?.summary??['Only NMSh-owned changes are offered; unrelated user lines are kept.']).flatMap(line=>studioWrap(line,width)).slice(0,budget);},
     controls:[['↑↓','select'],['Space','toggle'],['Enter','impact'],['Esc','cancel']]},columns,height);
 }

@@ -3,14 +3,15 @@ import {dirname,join} from 'node:path';
 import type {Key} from '../terminal/keys.js';
 import {renderStudioLayout, renderStudioReview, studioWrap, type StudioReview} from '../ui/StudioLayout.js';
 import {Journal, type JournalEntry, type TransactionReport} from './journal.js';
-import {describeState, needsReview} from './describe.js';
+import {applicationOf, describeEntry, describeState, displayPath, fileAction, localDay, needsReview} from './describe.js';
+import {digest, snapshot} from '../appearance/hostFiles.js';
 import {manualSnapshot, planRestore, restore, type RestorePlan} from './restore.js';
 export interface ChangesPanel {
   journal:Journal;ownershipPaths:string[];entries:JournalEntry[];statuses:Map<string,string>;states:Map<string,TransactionReport>;
   selected:number;view:'list'|'review'|'confirm'|'result';review?:StudioReview;restore?:RestorePlan;message:string;shown:boolean;
 }
 export function createChangesPanel(journal:Journal,ownershipPaths:readonly string[]):ChangesPanel {
-  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),states:new Map(),selected:0,view:'list',message:'History is capped at 200 entries / 64 MiB; newest 20 protected checkpoints and source/path anchors are kept.',shown:false};
+  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),states:new Map(),selected:0,view:'list',message:RETENTION,shown:false};
   refresh(state);return state;
 }
 function refresh(state:ChangesPanel):void {
@@ -19,10 +20,19 @@ function refresh(state:ChangesPanel):void {
   // A damaged entry is kept on disk for review and named with its reason; it no longer blocks other backups or writes.
   const damaged=[...state.journal.unreadableReasons];
   if(damaged.length)notices.push(`${damaged.length} unreadable backup ${damaged.length===1?'entry needs':'entries need'} review and ${damaged.length===1?'is':'are'} not listed: ${damaged.slice(0,3).map(([id,reason])=>`${id}: ${reason}`).join('; ')}${damaged.length>3?'; …':''} (kept in ${state.journal.directory}).`);
-  try {const count=state.journal.prunedCount();if(count)notices.push(`${count} old backup entries pruned.`);}catch{notices.push('Backup pruning record unreadable.');}
+  try {
+    const count=state.journal.prunedCount();if(count)notices.push(`${count} old backup entries pruned.`);
+    const lost=[...new Map(state.journal.lostOriginals().map(item=>[item.path,item])).values()];
+    if(lost.length)notices.unshift(`Retention warning: to stay within the backup limits, the earliest backup of ${lost.length} file${lost.length===1?' was':'s were'} removed: ${lost.slice(-3).reverse().map(item=>`${displayPath(item.path,state.journal.options.home)} (from ${new Date(item.time).toLocaleString()})`).join('; ')}${lost.length>3?'; …':''}. Press S to keep a snapshot of the current files.`);
+  }catch{notices.push('Backup pruning record unreadable.');}
   const failure=takeSettingsCheckpointFailure(state.journal.directory);if(failure)notices.push(failure);
   for(const entry of state.entries){
-    for(const file of entry.files){const seen=state.journal.inspect(file);state.statuses.set(`${entry.id}:${file.path}`,seen.reason?`unsafe: ${seen.reason}`:seen.status);}
+    for(const file of entry.files){
+      const seen=state.journal.inspect(file);
+      // "Edited since" only when something other than NMSh changed it: a later NMSh write is named as such.
+      const later=seen.status==='edited since'&&laterWrite(state,entry,file.path);
+      state.statuses.set(`${entry.id}:${file.path}`,seen.reason?`unsafe: ${seen.reason}`:later?`changed later by NMSh (${later})`:seen.status);
+    }
     state.states.set(entry.id,state.journal.transactionState(entry));
   }
   const unfinished=state.entries.filter(entry=>needsReview(state.states.get(entry.id)!.state)).length;
@@ -50,7 +60,7 @@ export function changesKey(state:ChangesPanel,key:Key):{close?:true;paths?:strin
       }
       if(key.kind==='enter'&&state.entries[state.selected]){
         state.restore=planRestore(state.journal,state.entries[state.selected]!.id);
-        state.review={plan:state.restore,offset:0};state.view='review';state.shown=false;
+        state.review={plan:state.restore,offset:0,controls:[['↑↓','scroll diff'],state.restore.edited.length?['Enter','next: confirm overwrite']:['Enter','restore now'],['Esc','cancel']]};state.view='review';state.shown=false;
       }
     }else if(state.view==='review'){
       if(key.kind==='up'||key.kind==='down')state.review!.offset=Math.max(0,state.review!.offset+(key.kind==='up'?-1:1));
@@ -83,17 +93,21 @@ export function renderChangesPanel(state:ChangesPanel,columns:number,height:numb
   if(state.view==='confirm')return renderStudioReview(state.review!,'Confirm loss of later edits',columns,height);
   if(state.view==='result')return renderStudioReview(state.review!,'Changes · result',columns,height);
   return renderStudioLayout({title:'Changes & backups',subtitle:'Newest first · Enter reviews a restore · S snapshots known managed files',
-    entries:state.entries.length?state.entries.map(item=>({group:item.time.slice(0,10),label:item.label,
+    entries:state.entries.length?state.entries.map(item=>({group:localDay(item.time),label:item.label,
       render:width=>{
-        const states=item.files.map(file=>state.statuses.get(`${item.id}:${file.path}`));
+        const states=item.files.map(file=>state.statuses.get(`${item.id}:${file.path}`)?.replace(/ \(.*$/u,''));
+        const described=describeEntry(item,configDirectory(state));
         const report=state.states.get(item.id);
         const summary=report&&report.state!=='applied'?`${needsReview(report.state)?'! ':''}${describeState(report.state)}`
-          :states.includes('edited since')?'edited since':states.includes('missing')?'missing':states.some(value=>value!=='unchanged since')?'unsafe file':'unchanged since';
-        return studioWrap(`${item.time.slice(11,16)} ${item.source} · ${summary} · ${item.files.length} files · ${item.label}`,width)[0]!;
+          :states.includes('edited since')?'edited since':states.includes('missing')?'missing':states.some(value=>value?.startsWith('unsafe'))?'unsafe file'
+          :states.includes('changed later by NMSh')?'changed later by NMSh':'unchanged since';
+        return studioWrap(`${described.when} ${described.what} · ${described.action} · ${summary}`,width)[0]!;
       }})):[{group:'History',label:'No backups yet'}],
-    selected:state.selected,notice:state.message,details:(width,budget)=>entry?[...studioWrap(`${entry.time} · ${entry.source} · ${entry.label}`,width),
+    selected:state.selected,notice:state.message,details:(width,budget)=>entry?[
+      ...studioWrap(`${describeEntry(entry,configDirectory(state)).what} · ${new Date(entry.time).toLocaleString()} · ${entry.id.slice(0,15)}`,width),
+      ...studioWrap(`Recorded as: ${entry.source} · ${entry.label}`,width),
       ...stateDetails(state,entry).flatMap(line=>studioWrap(line,width)),
-      ...entry.files.flatMap(file=>studioWrap(`${file.path}: ${state.statuses.get(`${entry.id}:${file.path}`)}`,width))].slice(0,budget):[],
+      ...entry.files.flatMap(file=>studioWrap(`${displayPath(file.path,state.journal.options.home)} · ${applicationOf(file.path,configDirectory(state))} · ${fileAction(file)} · ${state.statuses.get(`${entry.id}:${file.path}`)}`,width))].slice(0,budget):[],
     controls:[['↑↓','select'],['Enter','review restore'],['S','snapshot now'],...(entry&&state.states.get(entry.id)?.state==='applied-unfinalized'?[['F','mark applied'] as const]:[]),...(entry&&needsReview(state.states.get(entry.id)?.state??'applied')?[['D','set aside'] as const]:[]),['Esc','close']]},columns,height);
 }
 
@@ -108,4 +122,15 @@ function stateDetails(state:ChangesPanel,entry:JournalEntry):string[] {
   if(needsReview(report.state))lines.push('D sets it aside as reviewed: files stay as they are and the entry can later be pruned.');
   lines.push(...report.reasons);
   return lines;
+}
+
+const configDirectory=(state:ChangesPanel)=>dirname(state.journal.directory);
+/** What history keeps, stated as the pruner implements it (see docs/development/native-appearance-welcome/BACKUPS_AND_RESET.md). */
+export const RETENTION='Keeps up to 200 entries / 64 MiB: each file\'s earliest backup, unfinished changes, the newest backup per file and the 20 newest resets, restores and snapshots. Anything else oldest-first; a removed earliest backup is reported here.';
+/** When the file now holds exactly what a newer NMSh entry wrote, the local time of that entry. */
+function laterWrite(state:ChangesPanel,entry:JournalEntry,path:string):string|undefined {
+  let now:string;
+  try {const current=snapshot(path,state.journal.options.home);now=current.content===undefined?'absent':digest(current.content);}catch{return undefined;}
+  const newer=state.entries.find(other=>other.time>entry.time&&other.files.some(file=>file.path===path&&file.afterHash===now));
+  return newer?new Date(newer.time).toLocaleString():undefined;
 }
