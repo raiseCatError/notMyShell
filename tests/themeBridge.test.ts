@@ -17,7 +17,7 @@ import {
   validateVimColorscheme, vimColorscheme, withFzfTheme, TMUX_STYLE_OPTIONS,
 } from '../src/themeBridge/targets.js';
 import {
-  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, saveLedger, writeArtifact,
+  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, commitLedger, writeArtifact,
 } from '../src/themeBridge/artifacts.js';
 import {resolveCommand} from '../src/providers/providers.js';
 import {execFileSync} from 'node:child_process';
@@ -414,7 +414,7 @@ test('delta: never managed; its status says whether git config pins the syntax t
     assert.ok(written.ok);
     const ledger = loadLedger(box.env);
     ledger.entries.bat = {...ledger.entries.bat!, cacheBuiltFor: ledger.entries.bat!.sha256};
-    saveLedger(ledger, box.env);
+    commitLedger(ledger, box.env);
     report = delta(follow);
     assert.equal(report.readiness, 'Syntax via bat', 'BAT_THEME=nmsh-bridge reaches NMSh shells, and delta reads it');
     assert.match(report.notes.join(' '), /BAT_THEME[\s\S]*bat's theme cache[\s\S]*different bat version/u);

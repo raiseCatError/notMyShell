@@ -2,24 +2,32 @@ import {takeSettingsCheckpointFailure} from './settings.js';
 import {dirname,join} from 'node:path';
 import type {Key} from '../terminal/keys.js';
 import {renderStudioLayout, renderStudioReview, studioWrap, type StudioReview} from '../ui/StudioLayout.js';
-import {Journal, type JournalEntry} from './journal.js';
+import {Journal, type JournalEntry, type TransactionReport} from './journal.js';
+import {describeState, needsReview} from './describe.js';
 import {manualSnapshot, planRestore, restore, type RestorePlan} from './restore.js';
 export interface ChangesPanel {
-  journal:Journal;ownershipPaths:string[];entries:JournalEntry[];statuses:Map<string,string>;
+  journal:Journal;ownershipPaths:string[];entries:JournalEntry[];statuses:Map<string,string>;states:Map<string,TransactionReport>;
   selected:number;view:'list'|'review'|'confirm'|'result';review?:StudioReview;restore?:RestorePlan;message:string;shown:boolean;
 }
 export function createChangesPanel(journal:Journal,ownershipPaths:readonly string[]):ChangesPanel {
-  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),selected:0,view:'list',message:'History is capped at 200 entries / 64 MiB; newest 20 protected checkpoints and source/path anchors are kept.',shown:false};
+  const state:ChangesPanel={journal,ownershipPaths:[...new Set([join(dirname(journal.directory),'config.json'),...ownershipPaths])],entries:[],statuses:new Map(),states:new Map(),selected:0,view:'list',message:'History is capped at 200 entries / 64 MiB; newest 20 protected checkpoints and source/path anchors are kept.',shown:false};
   refresh(state);return state;
 }
 function refresh(state:ChangesPanel):void {
-  state.entries=state.journal.list();state.statuses.clear();
+  state.entries=state.journal.list();state.statuses.clear();state.states.clear();
   const notices:string[]=[];
-  if(state.journal.unreadable.length)notices.push(`${state.journal.unreadable.length} unreadable backup entries skipped.`);
+  // A damaged entry is kept on disk for review and named with its reason; it no longer blocks other backups or writes.
+  const damaged=[...state.journal.unreadableReasons];
+  if(damaged.length)notices.push(`${damaged.length} unreadable backup ${damaged.length===1?'entry needs':'entries need'} review and ${damaged.length===1?'is':'are'} not listed: ${damaged.slice(0,3).map(([id,reason])=>`${id}: ${reason}`).join('; ')}${damaged.length>3?'; …':''} (kept in ${state.journal.directory}).`);
   try {const count=state.journal.prunedCount();if(count)notices.push(`${count} old backup entries pruned.`);}catch{notices.push('Backup pruning record unreadable.');}
   const failure=takeSettingsCheckpointFailure(state.journal.directory);if(failure)notices.push(failure);
+  for(const entry of state.entries){
+    for(const file of entry.files){const seen=state.journal.inspect(file);state.statuses.set(`${entry.id}:${file.path}`,seen.reason?`unsafe: ${seen.reason}`:seen.status);}
+    state.states.set(entry.id,state.journal.transactionState(entry));
+  }
+  const unfinished=state.entries.filter(entry=>needsReview(state.states.get(entry.id)!.state)).length;
+  if(unfinished)notices.unshift(`${unfinished} unfinished ${unfinished===1?'change needs':'changes need'} review (marked !).`);
   if(notices.length)state.message=notices.join(' ');
-  for(const entry of state.entries)for(const file of entry.files){try{state.statuses.set(`${entry.id}:${file.path}`,state.journal.status(file));}catch{state.statuses.set(`${entry.id}:${file.path}`,'unreadable / unsafe path');}}
   state.selected=Math.max(0,Math.min(state.selected,state.entries.length-1));
 }
 export function changesKey(state:ChangesPanel,key:Key):{close?:true;paths?:string[]}|undefined {
@@ -28,7 +36,17 @@ export function changesKey(state:ChangesPanel,key:Key):{close?:true;paths?:strin
     if(state.view==='list'){
       if(key.kind==='up'||key.kind==='down')state.selected=Math.max(0,Math.min(state.entries.length-1,state.selected+(key.kind==='up'?-1:1)));
       if(key.kind==='text'&&key.value.toLowerCase()==='s'){
-        const entry=manualSnapshot(state.journal,state.ownershipPaths);refresh(state);state.message=`Snapshot ${entry.id} saved.`;
+        const skipped:string[]=[];
+        const entry=manualSnapshot(state.journal,state.ownershipPaths,skipped);refresh(state);
+        state.message=`Snapshot ${entry.id} saved.${skipped.length?` Skipped (unsafe to read): ${skipped.join('; ')}`:''}`;
+      }
+      const selected=state.entries[state.selected];
+      if(key.kind==='text'&&key.value.toLowerCase()==='d'&&selected&&needsReview(state.states.get(selected.id)!.state)){
+        state.journal.dismiss(selected);refresh(state);state.message=`Set ${selected.id} aside as reviewed; your files were not changed.`;
+      }
+      if(key.kind==='text'&&key.value.toLowerCase()==='f'&&selected){
+        // Finalize only records what the files already prove; it writes no configuration.
+        state.journal.finalize(selected);refresh(state);state.message=`Marked ${selected.id} as applied: every file holds the bytes it wrote.`;
       }
       if(key.kind==='enter'&&state.entries[state.selected]){
         state.restore=planRestore(state.journal,state.entries[state.selected]!.id);
@@ -68,10 +86,26 @@ export function renderChangesPanel(state:ChangesPanel,columns:number,height:numb
     entries:state.entries.length?state.entries.map(item=>({group:item.time.slice(0,10),label:item.label,
       render:width=>{
         const states=item.files.map(file=>state.statuses.get(`${item.id}:${file.path}`));
-        const summary=states.includes('edited since')?'edited since':states.includes('missing')?'missing':states.some(value=>value!=='unchanged since')?'unsafe file':'unchanged since';
+        const report=state.states.get(item.id);
+        const summary=report&&report.state!=='applied'?`${needsReview(report.state)?'! ':''}${describeState(report.state)}`
+          :states.includes('edited since')?'edited since':states.includes('missing')?'missing':states.some(value=>value!=='unchanged since')?'unsafe file':'unchanged since';
         return studioWrap(`${item.time.slice(11,16)} ${item.source} · ${summary} · ${item.files.length} files · ${item.label}`,width)[0]!;
       }})):[{group:'History',label:'No backups yet'}],
     selected:state.selected,notice:state.message,details:(width,budget)=>entry?[...studioWrap(`${entry.time} · ${entry.source} · ${entry.label}`,width),
+      ...stateDetails(state,entry).flatMap(line=>studioWrap(line,width)),
       ...entry.files.flatMap(file=>studioWrap(`${file.path}: ${state.statuses.get(`${entry.id}:${file.path}`)}`,width))].slice(0,budget):[],
-    controls:[['↑↓','select'],['Enter','review restore'],['S','snapshot now'],['Esc','close']]},columns,height);
+    controls:[['↑↓','select'],['Enter','review restore'],['S','snapshot now'],...(entry&&state.states.get(entry.id)?.state==='applied-unfinalized'?[['F','mark applied'] as const]:[]),...(entry&&needsReview(state.states.get(entry.id)?.state??'applied')?[['D','set aside'] as const]:[]),['Esc','close']]},columns,height);
+}
+
+function stateDetails(state:ChangesPanel,entry:JournalEntry):string[] {
+  const report=state.states.get(entry.id);
+  if(!report||report.state==='applied')return [];
+  const lines=[`State: ${describeState(report.state)}.`];
+  if(entry.resolution?.detail)lines.push(entry.resolution.detail);
+  if(report.writer)lines.push(`Writer process ${report.writer} is still running; wait for it before restoring.`);
+  if(report.state==='applied-unfinalized')lines.push('F marks it applied (nothing is written to your files). Enter reviews a rollback instead.');
+  else if(needsReview(report.state))lines.push('Enter reviews a rollback to the backed-up files; a newer edit needs an explicit second confirmation.');
+  if(needsReview(report.state))lines.push('D sets it aside as reviewed: files stay as they are and the entry can later be pruned.');
+  lines.push(...report.reasons);
+  return lines;
 }

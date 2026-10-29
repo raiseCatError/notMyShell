@@ -3,12 +3,32 @@ import {constants, closeSync, fchmodSync, fsyncSync, mkdirSync, openSync, readdi
 import {randomUUID} from 'node:crypto';
 import {join, dirname} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
-import {checkPath, digest, snapshot, unchanged, type FileChange} from '../appearance/hostFiles.js';
+import {checkContained, checkPath, digest, snapshot, unchanged, type FileChange} from '../appearance/hostFiles.js';
 
 export interface JournalOptions {home: string; directory?: string; maxEntries?: number; maxBytes?: number}
 export interface JournalFile {path: string; existed: boolean; mode: number; beforeHash: string; afterHash: string; bytes: number; afterBytes?: number; afterMode?: number}
-export interface JournalEntry {version: 1; id: string; time: string; source: string; label: string; files: JournalFile[]; outcome: 'prepared' | 'applied'}
-export interface JournalMetadata {source: string; label: string; directory?: string}
+/**
+ * How an unfinished write ended. `outcome` keeps only 'prepared' | 'applied' so older NMSh builds can still read every entry;
+ * the resolution is extra evidence they ignore.
+ */
+export interface JournalResolution {state: 'reverted' | 'rollback-incomplete' | 'finalized' | 'partial' | 'reviewed'; at: string; detail?: string}
+export interface JournalEntry {version: 1; id: string; time: string; source: string; label: string; files: JournalFile[]; outcome: 'prepared' | 'applied'; resolution?: JournalResolution; group?: string}
+/** What the files on disk say about an entry. Computed from bytes and hashes only; never assumed. */
+export type TransactionState = 'applied' | 'in-progress' | 'not-applied' | 'partially-applied' | 'applied-unfinalized' | 'conflicted' | 'reverted' | 'rollback-incomplete' | 'partial' | 'indeterminate' | 'reviewed';
+export type FileEvidence = 'before' | 'after' | 'neither' | 'unsafe';
+export interface TransactionReport {state: TransactionState; files: FileEvidence[]; reasons: string[]; writer?: number}
+export interface FileInspection {status: 'unchanged since' | 'edited since' | 'missing' | 'unsafe'; reason?: string}
+const RESOLUTIONS = ['reverted', 'rollback-incomplete', 'finalized', 'partial', 'reviewed'];
+/** A journal write takes well under a second; a "live" writer of an older entry is a reused process id, not the writer. */
+const LIVE_WRITER_MS = 10 * 60 * 1000;
+const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+export interface JournalMetadata {
+  source: string; label: string; directory?: string;
+  /** Links an entry to the reset checkpoint it is a stage of. */
+  group?: string;
+  /** Test seam: called at each transaction boundary ('recorded', 'written:<index>', 'before-complete'). */
+  fault?: (stage: string) => void;
+}
 const protectedSource = (source: string) => ['reset', 'restore', 'manual'].includes(source);
 export const ABSENT_HASH = 'absent';
 const hash = (text: string | undefined) => text === undefined ? ABSENT_HASH : digest(text);
@@ -47,11 +67,16 @@ export class Journal {
     const value = JSON.parse(this.file(join(base, 'manifest.json'))) as JournalEntry;
     if (value.version !== 1 || value.id !== id || !['prepared','applied'].includes(value.outcome) || typeof value.source !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(value.source) || typeof value.label !== 'string' || value.label.length>512
       || typeof value.time !== 'string' || !Array.isArray(value.files) || value.files.length > 512) throw new Error('Backup manifest failed verification.');
+    if (value.resolution !== undefined && (typeof value.resolution !== 'object' || value.resolution === null || !RESOLUTIONS.includes(value.resolution.state)
+      || typeof value.resolution.at !== 'string' || (value.resolution.detail !== undefined && (typeof value.resolution.detail !== 'string' || value.resolution.detail.length > 2048)))) throw new Error('Backup resolution failed verification.');
+    if (value.group !== undefined && (typeof value.group !== 'string' || !/^\d{8}T\d{9}Z-[a-f0-9-]{36}$/u.test(value.group))) throw new Error('Backup group failed verification.');
     value.files.forEach((file, index) => {
       if (typeof file.path !== 'string' || typeof file.existed !== 'boolean' || !Number.isInteger(file.mode) || file.mode < 0 || file.mode > 0o777
         || (file.afterMode!==undefined&&(!Number.isInteger(file.afterMode)||file.afterMode<0||file.afterMode>0o777))
         || typeof file.afterHash !== 'string' || !/^(?:absent|[a-f0-9]{64})$/u.test(file.afterHash)) throw new Error('Backup file metadata failed verification.');
-      this.checked(file.path);
+      // Only the recorded path's shape is checked here. Its current filesystem state belongs to whoever reads or writes that file,
+      // so a damaged target never makes the journal (and every unrelated configuration write) unreadable.
+      checkContained(file.path, this.options.home);
       const content = this.file(join(base, 'files', String(index)));
       if (file.afterBytes !== undefined) {
         const after = this.file(join(base,'after',String(index)));
@@ -62,8 +87,18 @@ export class Journal {
     return value;
   }
   readonly unreadable: string[] = [];
+  /** Why each unreadable entry failed verification, by id. Such entries are kept for review and never pruned automatically. */
+  readonly unreadableReasons = new Map<string, string>();
+  /** Paths an unreadable entry's manifest still names (best effort), so writes to those files can fail closed. */
+  readonly unreadablePaths = new Map<string, string[]>();
+  private damagedPaths(id: string): string[] {
+    try {
+      const manifest = JSON.parse(this.file(join(this.directory, id, 'manifest.json'))) as {files?: Array<{path?: unknown}>};
+      return Array.isArray(manifest.files) ? manifest.files.flatMap(file => typeof file?.path === 'string' ? [file.path] : []).slice(0, 512) : [];
+    } catch { return []; }
+  }
   list(options: {strict?: boolean} = {}): JournalEntry[] {
-    this.unreadable.length = 0;
+    this.unreadable.length = 0; this.unreadableReasons.clear(); this.unreadablePaths.clear();
     this.checked(this.directory);
     let names: string[];
     try { names = readdirSync(this.directory); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
@@ -71,7 +106,7 @@ export class Journal {
     const entries: JournalEntry[] = [];
     for (const name of names.filter(name => /^\d{8}T/u.test(name)).sort().reverse()) {
       try { entries.push(this.read(name)); }
-      catch (error) { if (options.strict) throw error; this.unreadable.push(name); }
+      catch (error) { if (options.strict) throw new Error(`Backup ${name} needs review: ${message(error)}`); this.unreadable.push(name); this.unreadableReasons.set(name, message(error)); this.unreadablePaths.set(name, this.damagedPaths(name)); }
     }
     return entries;
   }
@@ -91,6 +126,69 @@ export class Journal {
     const current = snapshot(file.path, this.options.home);
     return current.content === undefined ? 'missing' : hash(current.content) === file.afterHash && (file.afterMode===undefined||current.mode===file.afterMode) ? 'unchanged since' : 'edited since';
   }
+  /** Like status, but an unsafe or unreadable path is reported with its exact reason instead of throwing. */
+  inspect(file: JournalFile): FileInspection {
+    try { return {status: this.status(file)}; } catch (error) { return {status: 'unsafe', reason: message(error)}; }
+  }
+  private evidence(file: JournalFile): FileEvidence {
+    let current;
+    try { current = snapshot(file.path, this.options.home); } catch { return 'unsafe'; }
+    const now = hash(current.content);
+    const modeMatches = (mode: number | undefined) => current.content === undefined || mode === undefined || current.mode === mode;
+    if (now === file.afterHash && modeMatches(file.afterMode)) return 'after';
+    if (now === file.beforeHash && (!file.existed || current.mode === file.mode)) return 'before';
+    return 'neither';
+  }
+  /** The live writer of an unfinished entry, if its recorded process still runs. This process never has one in flight between calls. */
+  private writer(entry: JournalEntry): number | undefined {
+    let owner: {pid?: number} = {};
+    try { owner = JSON.parse(snapshot(join(this.directory, entry.id, 'owner.json'), this.options.home).content ?? '{}'); } catch { return undefined; }
+    const pid = owner.pid;
+    if (!Number.isSafeInteger(pid) || pid! <= 0 || pid === process.pid) return undefined;
+    if (!(Date.now() - Date.parse(entry.time) < LIVE_WRITER_MS)) return undefined;
+    try { process.kill(pid!, 0); return pid; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' ? pid : undefined; }
+  }
+  /**
+   * Reconcile an entry against the bytes on disk. A prepared entry is never assumed to have succeeded: it is classified from each
+   * file's hash as not applied, partially applied, applied but not finalized, or conflicted (edited by something else since).
+   */
+  transactionState(entry: JournalEntry): TransactionReport {
+    const files = entry.files.map(file => this.evidence(file));
+    const reasons = entry.files.flatMap((file, index) => files[index] === 'unsafe' ? [`${file.path}: ${this.inspect(file).reason ?? 'unreadable'}`] : []);
+    if (entry.resolution) return {state: entry.resolution.state === 'finalized' ? 'applied' : entry.resolution.state, files, reasons};
+    if (entry.outcome === 'applied') return {state: 'applied', files, reasons};
+    const writer = this.writer(entry);
+    if (writer !== undefined) return {state: 'in-progress', files, reasons, writer};
+    if (files.includes('unsafe')) return {state: 'indeterminate', files, reasons};
+    if (files.includes('neither')) return {state: 'conflicted', files, reasons};
+    // A file whose before and after are identical matches both; it never decides the state alone.
+    const same = entry.files.map(file => file.beforeHash === file.afterHash && (file.afterMode === undefined || file.afterMode === file.mode));
+    const decisive = files.filter((_, index) => !same[index]);
+    if (!decisive.length || decisive.every(value => value === 'after')) return {state: 'applied-unfinalized', files, reasons};
+    if (decisive.every(value => value === 'before')) return {state: 'not-applied', files, reasons};
+    return {state: 'partially-applied', files, reasons};
+  }
+  /** Record how an unfinished entry ended. Only the manifest changes; before- and after-images stay as evidence. */
+  resolve(entry: JournalEntry, resolution: Omit<JournalResolution, 'at'>): JournalEntry {
+    const verified = this.read(entry.id);
+    const next: JournalEntry = {...verified, ...(resolution.state === 'finalized' ? {outcome: 'applied' as const} : {}),
+      resolution: {state: resolution.state, at: new Date().toISOString(), ...(resolution.detail ? {detail: resolution.detail.slice(0, 2048)} : {})}};
+    this.atomic(join(this.directory, entry.id, 'manifest.json'), `${JSON.stringify(next, null, 2)}\n`);
+    return this.read(entry.id);
+  }
+  /** Set an unfinished entry aside after review: files are left exactly as they are, the evidence stays, and it becomes prunable. */
+  dismiss(entry: JournalEntry): JournalEntry {
+    const report = this.transactionState(this.read(entry.id));
+    if (report.state === 'in-progress') throw new Error('Another NMSh process is still writing this change; wait for it to finish.');
+    if (report.state === 'applied' || report.state === 'reverted' || report.state === 'reviewed') throw new Error('This change is already settled.');
+    return this.resolve(entry, {state: 'reviewed', detail: `Reviewed and set aside while ${report.state}; files were left as they were.`});
+  }
+  /** Mark an interrupted entry finished, only when every file verifiably holds the bytes it was meant to write. */
+  finalize(entry: JournalEntry): JournalEntry {
+    const report = this.transactionState(this.read(entry.id));
+    if (report.state !== 'applied-unfinalized') throw new Error(`Only an entry whose files all hold the written bytes can be finalized (this one is ${report.state}).`);
+    return this.resolve(entry, {state: 'finalized', detail: 'Every file held the bytes this change wrote; finalized after an interruption.'});
+  }
   private prunedKeys():Set<string> {
     const text=snapshot(join(this.directory,'.pruned.json'),this.options.home).content;
     if(text===undefined)return new Set();
@@ -109,7 +207,7 @@ export class Journal {
     return !this.prunedKeys().has(digest(`${source}:${path}`));
   }
   /** Serialize writers across frontend processes; a crashed writer's verified lock can be recovered. */
-  record(changes: readonly FileChange[], source: string, label: string): JournalEntry {
+  record(changes: readonly FileChange[], source: string, label: string, options: {group?: string} = {}): JournalEntry {
     this.checked(this.directory,true);mkdirSync(this.directory,{recursive:true,mode:0o700});this.checked(this.directory,true);
     if((lstatSync(this.directory).mode&0o077)!==0)throw new Error('Backup directory must be private (0700); configuration was not changed.');
     const path=join(this.directory,'.write-lock');const token=randomUUID();
@@ -129,10 +227,10 @@ export class Journal {
       renameSync(path, stale);
       try { fd=acquire(); } finally { rmSync(stale); }
     }
-    try {writeFileSync(fd,content);fsyncSync(fd);return this.recordLocked(changes,source,label);}
+    try {writeFileSync(fd,content);fsyncSync(fd);return this.recordLocked(changes,source,label,options.group);}
     finally {closeSync(fd);try{if(this.file(path)===content)rmSync(path);}catch{/* preserve an unexpected replacement */}}
   }
-  private incompleteUsage():{bytes:number;count:number} {
+  private incompleteUsage(damaged: readonly string[] = []):{bytes:number;count:number} {
     const pending=readdirSync(this.directory).filter(name=>name.startsWith('.pending-'));
     let files=0;
     const size=(path:string,depth:number):number=>{
@@ -159,9 +257,15 @@ export class Journal {
       }
       bytes+=usage;count++;
     }
+    // Entries that failed verification stay where they are for review: they count toward the limits and are never pruned.
+    for (const name of damaged) {
+      const path=join(this.directory,name);
+      try {bytes+=size(path,0);} catch {/* an unmeasurable entry still counts once */}
+      count++;
+    }
     return {bytes,count};
   }
-  private recordLocked(changes: readonly FileChange[], source: string, label: string): JournalEntry {
+  private recordLocked(changes: readonly FileChange[], source: string, label: string, group?: string): JournalEntry {
     if(!/^[a-z][a-z0-9-]{0,63}$/u.test(source)||label.length>512)throw new Error('Backup source or label is invalid.');
     if (changes.length > 512 || new Set(changes.map(change => change.before.path)).size !== changes.length) throw new Error('Backup file limit or duplicate path.');
     for (const change of changes) {
@@ -170,7 +274,8 @@ export class Journal {
     }
     const now = new Date();
     const id = `${now.toISOString().replace(/[-:.]/gu, '')}-${randomUUID()}`;
-    const entry: JournalEntry = {version: 1, id, time: now.toISOString(), source, label, outcome: 'prepared', files: changes.map(change => ({
+    if (group !== undefined && !/^\d{8}T\d{9}Z-[a-f0-9-]{36}$/u.test(group)) throw new Error('Backup group is invalid.');
+    const entry: JournalEntry = {version: 1, id, time: now.toISOString(), source, label, outcome: 'prepared', ...(group ? {group} : {}), files: changes.map(change => ({
       path: change.before.path, existed: change.before.content !== undefined, mode: change.before.mode,
       beforeHash: hash(change.before.content), afterHash: hash(change.after), bytes: Buffer.byteLength(change.before.content ?? ''),
       ...(change.after===undefined?{}:{afterBytes:Buffer.byteLength(change.after),afterMode:change.afterMode??change.before.mode}),
@@ -182,9 +287,21 @@ export class Journal {
     const maxEntries = this.options.maxEntries ?? 200;
     if (size > maxBytes || maxEntries < 1) throw new Error('Backup capacity limit reached; configuration was not changed.');
     this.checked(this.directory, true);
-    const existing = this.list({strict:true});
+    // A damaged entry is kept for review; it must not block unrelated configuration writes.
+    const existing = this.list();
+    const damaged = [...this.unreadable];
+    // Fail closed only for the file a damaged backup names: its history needs review before NMSh changes it again.
+    // NMSh's own JSON records (settings, ownership) ride along with many writes; they are always re-captured in full, so a damaged
+    // older copy of one never blocks them. Each named user file does fail closed.
+    const own = dirname(this.directory);
+    const bookkeeping = (path: string) => path.endsWith('.json') && path.startsWith(`${own}/`);
+    for (const name of damaged) {
+      const path = changes.map(change => change.before.path).find(candidate => !bookkeeping(candidate) && this.unreadablePaths.get(name)!.includes(candidate));
+      if (path) throw new Error(`Backup ${name} of ${path} failed verification (${this.unreadableReasons.get(name)}); review it in /changes. `
+        + `To continue, move ${join(this.directory, name)} out of the backups folder. Other files can still be changed.`);
+    }
     const cost = (item: JournalEntry) => Buffer.byteLength(snapshot(join(this.directory,item.id,'owner.json'),this.options.home).content??'') + Buffer.byteLength(this.file(join(this.directory,item.id,'manifest.json'))) + item.files.reduce((n,f)=>n+f.bytes+(f.afterBytes??0),0);
-    const incomplete=this.incompleteUsage();
+    const incomplete=this.incompleteUsage(damaged);
     const pruned=this.prunedKeys();
     const oldMarker=Buffer.byteLength(snapshot(join(this.directory,'.pruned.json'),this.options.home).content??'');
     const previousCount=this.prunedCount();
@@ -192,6 +309,8 @@ export class Journal {
     let count = existing.length + incomplete.count;
     const victims: JournalEntry[] = [];
     const keep = new Set(existing.filter(item=>protectedSource(item.source)).slice(0,protectedSource(source)?19:20).map(item=>item.id));
+    // An unfinished write is evidence for recovery (or still in flight in another process): never pruned automatically.
+    for (const item of existing) if ((item.outcome==='prepared'&&!item.resolution)||item.resolution?.state==='rollback-incomplete') keep.add(item.id);
     // The incoming entry anchors its source/paths; retain the newest anchor for every other pair.
     const anchored = new Set(changes.map(change=>`${source}:${change.before.path}`));
     for (const item of existing) for(const file of item.files) {

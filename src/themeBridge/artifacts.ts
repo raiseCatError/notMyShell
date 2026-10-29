@@ -90,8 +90,14 @@ const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'ba
 
 /** A malformed or stale ledger yields no ownership (so nothing can be deleted on its say-so). */
 export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
+  let text: string;
+  try { text = readFileSync(ledgerPath(env), 'utf8'); } catch { return {version: 1, entries: {}}; }
+  return loadLedgerText(text, env);
+}
+
+export function loadLedgerText(text: string, env: NodeJS.ProcessEnv = process.env): Ledger {
   let parsed: unknown;
-  try { parsed = JSON.parse(readFileSync(ledgerPath(env), 'utf8')); } catch { return {version: 1, entries: {}}; }
+  try { parsed = JSON.parse(text); } catch { return {version: 1, entries: {}}; }
   const entries: Ledger['entries'] = {};
   const raw = isRecord(parsed) && isRecord(parsed.entries) ? parsed.entries : {};
   for (const target of TARGETS) {
@@ -111,16 +117,32 @@ export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
   return {version: 1, entries};
 }
 
-export function saveLedger(ledger: Ledger, env: NodeJS.ProcessEnv = process.env): void {
-  const path = ledgerPath(env);
-  mkdirSync(dirname(path), {recursive: true, mode: 0o700});
-  const staged = `${path}.${process.pid}.tmp`;
-  writeFileSync(staged, `${JSON.stringify(ledger, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
-  renameSync(staged, path);
-}
-
 function ledgerChange(ledger:Ledger,env:NodeJS.ProcessEnv):FileChange {
   return {before:snapshot(ledgerPath(env),env.HOME || homedir(),true),after:`${JSON.stringify(ledger,null,2)}\n`};
+}
+
+/**
+ * The one way to change the ownership record on its own: nothing is written when the record already says this, and a real change
+ * goes through the verified journal like every other configuration write (so /changes can restore it and later entries stay
+ * "unchanged since").
+ */
+export function commitLedger(ledger: Ledger, env: NodeJS.ProcessEnv = process.env, label = 'Update Theme Bridge ownership record'): void {
+  const home = env.HOME || homedir();
+  const change = ledgerChange(ledger, env);
+  if (change.before.content === change.after) return;
+  if (change.before.content !== undefined && equalLedgers(change.before.content, ledger)) return;
+  transact([change], [], home, {source: 'theme-bridge', directory: journalDirectory(home, env), label});
+}
+
+/** Same ownership facts, ignoring formatting, unknown fields and key order. */
+function equalLedgers(text: string, ledger: Ledger): boolean {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return false; }
+  if (!isRecord(parsed) || !isRecord(parsed.entries) || Object.keys(parsed.entries).some(key => !TARGETS.includes(key as ManagedTarget))) return false;
+  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable)
+    : isRecord(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+  // Any extra, dropped or normalized field counts as a change, so the stored record always ends up exactly what NMSh trusts.
+  return JSON.stringify(stable(parsed)) === JSON.stringify(stable(JSON.parse(JSON.stringify(ledger))));
 }
 
 export type Ownership = 'absent' | 'owned' | 'modified' | 'unknown';
@@ -155,7 +177,8 @@ export function writeArtifact(target: ManagedTarget, content: string, validate: 
   const hash = sha256(content);
   const previous = ledger.entries[target];
   const changed = !previous || previous.sha256 !== hash || state === 'absent';
-  ledger.entries[target] = {...record, target, artifactPath: path, sha256: hash, adapterVersion: ADAPTER_VERSION, generatedAt: now.toISOString(),
+  // An unchanged artifact keeps its generation time: re-applying the same colors on every launch must not rewrite the record.
+  ledger.entries[target] = {...record, target, artifactPath: path, sha256: hash, adapterVersion: ADAPTER_VERSION, generatedAt: changed || !previous ? now.toISOString() : previous.generatedAt,
     ...(previous?.hook ? {hook: previous.hook} : {}), ...(previous?.cacheApproved ? {cacheApproved: true} : {}),
     ...(previous?.cacheBuiltFor ? {cacheBuiltFor: previous.cacheBuiltFor} : {})};
   if(changed){
@@ -164,7 +187,10 @@ export function writeArtifact(target: ManagedTarget, content: string, validate: 
       transact([{before:snapshot(path,home,true),after:content},ledgerChange(ledger,env)],[],home,
         {source:target==='tmuxConfig'?'tmux':'theme-bridge',directory:journalDirectory(home,env),label:`Generate ${target}`});
     }catch(error){return {ok:false,error:`Writing ${path} failed: ${error instanceof Error?error.message:String(error)}. The previous file was kept.`};}
-  }else saveLedger(ledger,env);
+  }else{
+    try {commitLedger(ledger,env,`Update ${target} record`);}
+    catch(error){return {ok:false,error:`Updating the Theme Bridge record for ${path} failed: ${error instanceof Error?error.message:String(error)}.`};}
+  }
   return {ok: true, path, changed};
 }
 
@@ -183,7 +209,9 @@ export function removeArtifact(target: ManagedTarget, env: NodeJS.ProcessEnv = p
       transact([{before:snapshot(path,home,true)},ledgerChange(ledger,env)],[],home,
         {source:'theme-bridge',directory:journalDirectory(home,env),label:`Remove ${target}`});
     }catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
-  }else saveLedger(ledger,env);
+  }else{
+    try {commitLedger(ledger,env,`Forget ${target} record`);}catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
+  }
   return {ok: true, removed: state === 'owned'};
 }
 
@@ -309,7 +337,7 @@ export function applyHookRemoval(target: HookTarget, plan: FileEditPlan | undefi
     if(plan){
       const result=applyPlan(plan,{home:env.HOME || homedir(),source:'theme-bridge',directory:journalDirectory(env.HOME || homedir(),env),label:plan.reason,companions:[ledgerChange(ledger,env)]});
       if(!result.ok)return {ok:false,error:result.reason};
-    }else if(entry)saveLedger(ledger,env);
+    }else if(entry)commitLedger(ledger,env,`Forget ${target} include record`);
   }catch(error){return {ok:false,error:error instanceof Error?error.message:String(error)};}
   return {ok: true};
 }
