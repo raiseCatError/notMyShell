@@ -22,7 +22,7 @@ function refresh(state:ChangesPanel):void {
   if(damaged.length)notices.push(`${damaged.length} unreadable backup ${damaged.length===1?'entry needs':'entries need'} review and ${damaged.length===1?'is':'are'} not listed: ${damaged.slice(0,3).map(([id,reason])=>`${id}: ${reason}`).join('; ')}${damaged.length>3?'; …':''} (kept in ${state.journal.directory}).`);
   try {
     const count=state.journal.prunedCount();if(count)notices.push(`${count} old backup entries pruned.`);
-    const lost=state.journal.lostOriginals();
+    const lost=[...new Map(state.journal.lostOriginals().map(item=>[item.path,item])).values()];
     if(lost.length)notices.unshift(`Retention warning: to stay within the backup limits, the earliest backup of ${lost.length} file${lost.length===1?' was':'s were'} removed: ${lost.slice(-3).reverse().map(item=>`${displayPath(item.path,state.journal.options.home)} (from ${new Date(item.time).toLocaleString()})`).join('; ')}${lost.length>3?'; …':''}. Press S to keep a snapshot of the current files.`);
   }catch{notices.push('Backup pruning record unreadable.');}
   const failure=takeSettingsCheckpointFailure(state.journal.directory);if(failure)notices.push(failure);

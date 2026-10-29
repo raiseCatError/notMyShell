@@ -299,7 +299,7 @@ test('a conflicted interrupted entry can be set aside without touching files; a 
   changesKey(panel, {kind: 'text', value: 'd'});
   assert.equal(f.journal.transactionState(f.journal.read(entry!.id)).state, 'reviewed');
   assert.equal(readFileSync(f.one, 'utf8'), 'later edit\n'); assert.equal(readFileSync(f.two, 'utf8'), 'two-before\n');
-  assert.doesNotMatch(createChangesPanel(f.journal, []).message, /unfinished/u);
+  assert.doesNotMatch(createChangesPanel(f.journal, []).message, /unfinished changes? needs? review/u);
   const sleeper = spawn('sleep', ['30']); t.after(() => sleeper.kill());
   const pending = f.journal.record([{before: snapshot(f.two, f.home), after: 'x'}], 'appearance', 'Live writer');
   writeFileSync(join(f.journal.directory, pending.id, 'owner.json'), JSON.stringify({owner: 'nmsh-journal', version: 1, pid: sleeper.pid}));

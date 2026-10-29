@@ -3,7 +3,7 @@
  * reset of visual and general preferences never also re-runs onboarding or changes the update policy. Everything else in
  * config.json (the user's themes and presets, fields this version does not know) is kept byte-for-value.
  */
-import {DEFAULT_PROMPT_CONFIGURATION} from '../prompt/configuration.js';
+import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../prompt/configuration.js';
 
 export type SettingsScope = 'preferences' | 'onboarding' | 'updates';
 export const SETTINGS_SCOPES: readonly SettingsScope[] = ['preferences', 'onboarding', 'updates'];
@@ -45,7 +45,7 @@ export interface SettingsResetPlan {after: string | undefined; summary: string[]
 /** Pure: plans the selected scopes against the current file text. Malformed settings are never guessed at. */
 export function planSettingsReset(text: string | undefined, scopes: ReadonlySet<SettingsScope>): SettingsResetPlan {
   if (text === undefined) return {after: undefined, summary: ['There is no config.json yet: NMSh already uses its defaults.'], changed: 0};
-  let current: Record<string, unknown> = {};
+  let current: Record<string, unknown>;
   {
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch { throw new Error('config.json is not valid JSON; NMSh will not guess at a reset. Fix or move it first.'); }
@@ -54,6 +54,13 @@ export function planSettingsReset(text: string | undefined, scopes: ReadonlySet<
   }
   const next: Record<string, unknown> = structuredClone(current);
   const keys = [...scopes].flatMap(scopeKeys);
+  // A kept scope keeps its meaning, not only its bytes: an absent key whose effective value is derived from other settings
+  // (legacy update or onboarding fields) is written out as the value it has now, so the reset cannot change it indirectly.
+  const effective = normalizePromptConfiguration(current) as unknown as Record<string, unknown>;
+  const pinned: string[] = [];
+  for (const scope of ['onboarding', 'updates'] as const) if (!scopes.has(scope)) for (const key of scopeKeys(scope)) {
+    if (!(key in current) && effective[key] !== undefined) { next[key] = structuredClone(effective[key]); pinned.push(key); }
+  }
   for (const key of keys) {
     if (key in DEFAULTS) next[key] = structuredClone(DEFAULTS[key]);
     else delete next[key];
@@ -73,5 +80,6 @@ export function planSettingsReset(text: string | undefined, scopes: ReadonlySet<
     ...(unknown.length ? [`Kept: ${unknown.length} field${unknown.length === 1 ? '' : 's'} this version does not know (${unknown.slice(0, 6).join(', ')}${unknown.length > 6 ? ', …' : ''}).`] : []),
   ];
   const after = `${JSON.stringify(next, null, 2)}\n`;
+  if (changes.length && pinned.length) summary.push(`Written out to keep their current meaning: ${pinned.map(key => `${key} ${show(effective[key])}`).join(', ')}.`);
   return {after: changes.length ? after : text, summary, changed: changes.length};
 }

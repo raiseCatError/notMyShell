@@ -189,7 +189,8 @@ export function applyReset(plan:ResetPlan,journal:Journal):{entry?:JournalEntry;
   // Several areas: one checkpoint of every file first, then one linked stage per area (each stage has its own before-images,
   // because an earlier stage may have changed the same file).
   const entry=journal.record(plan.changes,'reset',`Reset checkpoint: ${plan.steps.map(step=>step.area.label).join(', ')}`);
-  for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);
+  try {for(const file of [...plan.dependencies,...plan.changes.map(change=>change.before)])unchanged(file,journal.options.home,true);}
+  catch(error){try{journal.resolve(entry,{state:'reverted',detail:`${error instanceof Error?error.message:String(error)} No file was changed.`});}catch{/* original error wins */}throw error;}
   let failed=false;
   for(const [stepIndex,step] of plan.steps.entries()){
     try {

@@ -169,3 +169,15 @@ test('Retention: a burst of hundreds of automatic writes keeps every original; a
   const notice = createChangesPanel(small, []).message;
   assert.match(notice, /Retention warning: .*earliest backup of 1 file was removed: ~\/a \(from /u);
 });
+
+test('D7: a sparse or legacy settings file keeps its effective update policy and first-run state through a preferences reset', t => {
+  for (const settings of [{composerPosition: 'top'}, {onboardingComplete: true, composerPosition: 'top'}, {updateMode: 'off', composerPosition: 'top'}]) {
+    const before = normalizePromptConfiguration(settings);
+    const plan = planSettingsReset(JSON.stringify(settings), new Set(['preferences']));
+    const after = normalizePromptConfiguration(JSON.parse(plan.after!));
+    assert.equal(after.updateMode, before.updateMode, JSON.stringify(settings));
+    assert.equal(after.updateFrequency, before.updateFrequency);
+    assert.equal(after.onboardingComplete, before.onboardingComplete); assert.equal(after.toolsSetupComplete, before.toolsSetupComplete);
+    assert.equal(after.composerPosition, 'bottom');
+  }
+});
