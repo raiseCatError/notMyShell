@@ -41,6 +41,8 @@ export function semanticSupport(env: NodeJS.ProcessEnv = process.env): SemanticS
   if (env.NMSH_SEMANTIC === '1') return {marks: true, cwd: true};
   if (env.TMUX || /^(tmux|screen)/u.test(env.TERM ?? '')) return {marks: Boolean(env.TMUX), cwd: true};
   if (env.TERM_PROGRAM === 'Apple_Terminal') return {marks: false, cwd: true};
+  // Rex documents OSC 133 prompt zones (its program-status lifetime) and reports OSC 7 as the block's directory.
+  if (env.TERM_PROGRAM === 'rex') return {marks: true, cwd: true};
   const profile = terminalProfile(env);
   const known = profile === 'ghostty' || profile === 'kitty' || profile === 'wezterm' || profile === 'iterm2' || profile === 'windows-terminal';
   return {marks: known, cwd: known};

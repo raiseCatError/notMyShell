@@ -85,6 +85,8 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
   // terminal, so sessions beyond the first use /resume or `nmsh --attach`.
   if (program === 'zed' || env.ZED_TERM) return {capabilities, integration, keyboardGuidance: guidance, name: 'Zed',
     appearanceGuidance: 'Appearance is configured by Zed.'};
+  // Rex keeps its own sessions; NMSh opens no Rex blocks or windows and never changes Rex's configuration.
+  if (program === 'rex') return {capabilities, integration, keyboardGuidance: guidance, name: 'Rex'};
   return {capabilities, integration, keyboardGuidance: guidance, name: program || 'this terminal'};
 }
 
