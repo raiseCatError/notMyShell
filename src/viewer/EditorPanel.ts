@@ -693,12 +693,27 @@ function footerRows(state: EditorState, columns: number): string[] {
     const actions = renderActionRow(dialogControls(dialog), {columns: width, keys: true, color: colorLevel() !== 'none'}).rows;
     const stale = dialog.kind === 'recover' && dialog.offer && draftIsStale(state, dialog.offer) ? 'The file changed on disk since this draft was saved. ' : '';
     const detail = dialog.detail || stale ? [`${foreground(UI_COLORS.subtle)}${truncateText(inert(`${stale}${dialog.detail ?? ''}`.trim()), width)}${RESET}`] : [];
-    return [`${accent}${truncateText(message, width)}${RESET}`, ...detail, ...actions];
+    return [`${accent}${fitFileMessage(message, state.file.title, width)}${RESET}`, ...detail, ...actions];
   }
   if (state.input) return renderControlRows([['Enter', state.input.kind === 'saveas' ? 'save here' : 'find'], ['Esc', 'cancel']], width);
   return renderControlRows([['Ctrl+S', 'save'], ['Esc', 'close'], ['Ctrl+Z', 'undo'], ['Ctrl+Y', 'redo'], ['Ctrl+F', 'find'], ['Ctrl+C', 'copy'], ['Ctrl+X', 'cut'],
     ...(isMarkdownFile(state) ? [['F1', 'Markdown']] as Array<[string, string]> : paletteFormat(state) ? [['F1', 'Snippets']] as Array<[string, string]> : []),
     ...(state.workspace ? [['F2', 'split']] as Array<[string, string]> : [])], width);
+}
+
+/**
+ * A dialog message that starts with the file's path keeps what it says when the path is long: the path gives way from
+ * the left, keeping its file name, so "has unsaved changes." or "changed on disk" is never the part that is cut.
+ */
+function fitFileMessage(message: string, title: string, width: number): string {
+  if (displayWidth(message) <= width || !title || !message.startsWith(title)) return truncateText(message, width);
+  const rest = message.slice(title.length);
+  const room = width - displayWidth(rest);
+  if (room < 8) return truncateText(message, width);
+  const parts = graphemes(title);
+  let kept = '';
+  for (let index = parts.length - 1; index >= 0 && displayWidth(`…${parts[index]}${kept}`) <= room; index -= 1) kept = parts[index] + kept;
+  return `…${kept}${rest}`;
 }
 
 export function renderEditor(state: EditorState, columns: number, height: number): string[] {

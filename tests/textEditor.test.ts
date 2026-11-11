@@ -319,6 +319,31 @@ test('panel: Esc with unsaved changes asks; Discard, Save and Keep editing do wh
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
+test('panel: a long file path gives way from the left, so the unsaved and on-disk questions stay readable', async () => {
+  const root = scratch();
+  try {
+    // Longer than an 80-column panel on its own, whatever the temp folder's length.
+    const folder = join(root, 'a-deliberately-long-folder-name-that-fills-the-panel-by-itself-alone');
+    mkdirSync(folder);
+    writeFileSync(join(folder, 'notes.txt'), 'b\n');
+    const state = createEditor(await opened(join(folder, 'notes.txt')));
+    assert.ok(displayWidth(state.file.title) > 80);
+    press(state, 'x');
+    press(state, {kind: 'escape'});
+    assert.equal(state.dialog?.kind, 'unsaved');
+    for (const columns of [80, 40]) {
+      const rows = renderEditor(state, columns, 24).map(row => stripAnsi(row));
+      assert.ok(rows.every(row => displayWidth(row) <= columns), `fits ${columns} columns`);
+      assert.ok(rows.some(row => /…[^\s]*\/notes\.txt has unsaved changes\.$/u.test(row.trimEnd())), `the question is whole at ${columns} columns`);
+    }
+    state.dialog = {kind: 'conflict', focus: 0, conflict: 'changed', reason: `${state.file.title} changed on disk since you opened it.`};
+    const rows = renderEditor(state, 80, 24).map(row => stripAnsi(row));
+    assert.ok(rows.some(row => /…[^\s]*\/notes\.txt changed on disk since you opened it\.$/u.test(row.trimEnd())));
+    state.dialog = {kind: 'conflict', focus: 0, conflict: 'changed'};
+    assert.ok(renderEditor(state, 80, 24).map(row => stripAnsi(row)).some(row => /…[^\s]*\/notes\.txt changed on disk\.$/u.test(row.trimEnd())));
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
 test('panel: hostile file content is drawn inert, the caret and selection are visible without color, and it fits narrow panels', async () => {
   const root = scratch();
   try {
