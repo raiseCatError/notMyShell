@@ -287,17 +287,20 @@ Settings: Config → Sessions → *Clean up unused sessions* and *End idle sessi
 ```bash
 t7run --check
 cd /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/queue-input-20261111 && git fetch origin && git status && git log --oneline -1
-grep -n "Can.t tell whether \(read\|sleep\|(?:sleep|for)\)" tests/inputOwnershipRaceLive.test.ts tests/inputOwnershipSecretsLive.test.ts tests/inputOwnershipLive.test.ts
+grep -nE "Can.t tell whether" tests/inputOwnershipRaceLive.test.ts tests/inputOwnershipSecretsLive.test.ts tests/inputOwnershipLive.test.ts
 uptime
 NMSH_TEST_TMPDIR=/Volumes/T7Tmp/ai-dev LANG=en_US.UTF-8 t7run node /Volumes/T7Tmp/ai-dev/nq/run.mjs . tests/inputOwnershipRaceLive.test.ts tests/inputOwnershipSecretsLive.test.ts tests/inputOwnershipLive.test.ts tests/queueComposer.test.ts tests/queueComposerLive.test.ts tests/queueComposerRaceLive.test.ts
-cd /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/integration-20261111 && git fetch origin && git reset --hard origin/dev && git merge --no-edit <#513 head> <#541 head> ...
+git -C /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/integration-20261111 fetch origin
+git -C /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/integration-20261111 worktree add -b integration/<date> /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/integration-<date> origin/dev
+cd /Volumes/T7Tmp/ai-dev/worktrees/notMyShell/integration-<date> && git merge --no-ff --no-edit <#513 head>   # then each head in §3 order, one merge at a time
 NMSH_TEST_TMPDIR=/Volumes/T7Tmp/ai-dev LANG=en_US.UTF-8 t7run npm run verify > /Volumes/T7Tmp/ai-dev/nq/evidence/candidate-verify.txt 2>&1
-gh workflow run CI --ref integration/20261111
+gh workflow run CI --ref integration/<date>
 ```
 
 Notes:
 - Before the `uptime` step, edit the three live files, commit and push.
 - Run the focused live tests only when load is under about 10.
+- Build the new candidate on a **new** branch and worktree. Don't reset `integration/20261111`: it holds this handoff.
 - Merge the candidate heads in the order of §3, keeping both CHANGELOG entries and both `SetupCat` rows.
 - `gh workflow run` dispatches the comprehensive run; dispatch it once only, and read failed logs before any rerun.
 
