@@ -173,3 +173,171 @@ export function commandPrompt(request: CommandRequest): string {
     `Request: ${text}`,
   ].join('\n\n');
 }
+
+/**
+ * A general answer: the conversational task behind Ask's questions. The model gets the question, a bounded recent
+ * history from this one Ask conversation, the shell and OS family, and, only when the person asked about it, one
+ * bounded, redacted excerpt of terminal output that NMSh selected and labelled. Never the environment, files or
+ * credentials. Its reply is untrusted text: sanitized here, rendered by NMSh as plain text with NMSh's own styling,
+ * never run and never turned into an action.
+ */
+export interface AnswerTurn {role: 'user' | 'assistant'; text: string}
+export interface AnswerContext {
+  /** What the excerpt is, as shown to the person ("output of npm test · exit 1 · last 40 lines, redacted"). */
+  label: string;
+  /** NMSh's own observation (a deterministic diagnosis), kept apart from the model's interpretation. */
+  observed?: string;
+  /** The bounded, redacted excerpt itself. */
+  excerpt: string;
+}
+export interface AnswerRequest {
+  question: string;
+  history: AnswerTurn[];
+  context?: AnswerContext;
+  shell: 'zsh' | 'bash' | 'fish';
+  os: 'macOS' | 'Linux';
+}
+export interface Answer {text: string; truncated: boolean}
+/** Measured per answer by the runtime when it reports them (llama.cpp does); diagnostics only. */
+export interface AnswerStats {promptTokens?: number; outputTokens?: number; promptMs?: number; generateMs?: number; tokensPerSecond?: number}
+
+/**
+ * Character budgets that keep the whole prompt well inside the runtime's context window (CONTEXT_TOKENS) with room
+ * for the answer: question first, then the context excerpt, then as much recent history as still fits.
+ */
+export const ANSWER_LIMITS = {question: 1200, context: 2000, observed: 600, history: 2400, historyTurns: 6, turnChars: 900, output: 6000} as const;
+export const ANSWER_TOKENS = {fast: 512, thinking: 900} as const;
+
+const ESCAPES = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[P^_X][^\u001b]*(?:\u001b\\)?|[@-Z\\-_]|.)?|\u009b[0-?]*[ -/]*[@-~]/gu;
+
+/**
+ * Model or request text made presentation-safe: any reasoning block, escape or control sequence, C1 control,
+ * invisible format character (bidi overrides, zero-width) or carriage return is removed; tabs become spaces and
+ * line/paragraph separators become newlines. Only plain printable text and newlines remain.
+ */
+export function sanitizeModelText(raw: string): string {
+  return stripThinkBlocks(raw)
+    .replace(ESCAPES, '')
+    .replace(/[\u2028\u2029]/gu, '\n')
+    .replace(/\t/gu, '  ')
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Cf}]/gu, '')
+    .replace(/[  ]+$/gmu, '')
+    .replace(/\n{3,}/gu, '\n\n');
+}
+
+/** A closed reasoning block, or one left open by the token budget, is never shown or kept. */
+export function stripThinkBlocks(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gu, '').replace(/<think>[\s\S]*$/u, '').replace(/^\s*<\/think>/u, '');
+}
+
+/**
+ * Strict: exactly {text, truncated}; the text is sanitized and bounded. An empty answer (nothing left once any
+ * reasoning is removed) is unusable, so undefined.
+ */
+export function validateAnswer(raw: unknown): Answer | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (!exactKeys(value, ['text', 'truncated'], ['text', 'truncated'])) return undefined;
+  if (typeof value.text !== 'string' || typeof value.truncated !== 'boolean') return undefined;
+  let text = sanitizeModelText(value.text).trim();
+  let truncated = value.truncated;
+  if (!text) return undefined;
+  if (text.length > ANSWER_LIMITS.output) { text = text.slice(0, ANSWER_LIMITS.output).trimEnd(); truncated = true; }
+  return {text, truncated};
+}
+
+const clip = (text: string, limit: number) => (text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`);
+const plain = (text: string) => sanitizeModelText(text).trim();
+
+/**
+ * The request a service accepts, bounded again on the service side: oversized fields are clipped, history keeps
+ * the newest whole turns that fit, and anything malformed rejects the request.
+ */
+export function boundAnswerRequest(raw: unknown): AnswerRequest | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (!exactKeys(value, ['question', 'history', 'context', 'shell', 'os'], ['question', 'history', 'shell', 'os'])) return undefined;
+  if (typeof value.question !== 'string' || !Array.isArray(value.history)) return undefined;
+  if (!['zsh', 'bash', 'fish'].includes(value.shell as string) || !['macOS', 'Linux'].includes(value.os as string)) return undefined;
+  const question = clip(plain(value.question), ANSWER_LIMITS.question);
+  if (!question) return undefined;
+  const turns: AnswerTurn[] = [];
+  for (const item of value.history) {
+    if (!item || typeof item !== 'object') return undefined;
+    const turn = item as Record<string, unknown>;
+    if (!exactKeys(turn, ['role', 'text'], ['role', 'text']) || (turn.role !== 'user' && turn.role !== 'assistant') || typeof turn.text !== 'string') return undefined;
+    turns.push({role: turn.role, text: turn.text});
+  }
+  let context: AnswerContext | undefined;
+  if (value.context !== undefined) {
+    const item = value.context as Record<string, unknown>;
+    if (!item || typeof item !== 'object' || !exactKeys(item, ['label', 'observed', 'excerpt'], ['label', 'excerpt'])
+      || typeof item.label !== 'string' || typeof item.excerpt !== 'string' || (item.observed !== undefined && typeof item.observed !== 'string')) return undefined;
+    context = {label: clip(plain(item.label), 160), excerpt: clip(plain(item.excerpt), ANSWER_LIMITS.context),
+      ...(typeof item.observed === 'string' && plain(item.observed) ? {observed: clip(plain(item.observed), ANSWER_LIMITS.observed)} : {})};
+  }
+  return {question, history: trimHistory(turns, context ? ANSWER_LIMITS.history - Math.min(ANSWER_LIMITS.history / 2, context.excerpt.length / 2) : ANSWER_LIMITS.history),
+    ...(context ? {context} : {}), shell: value.shell as AnswerRequest['shell'], os: value.os as AnswerRequest['os']};
+}
+
+/**
+ * Predictable trimming: each turn is clipped to ANSWER_LIMITS.turnChars, then the oldest turns are dropped, whole
+ * user/assistant exchanges first, until at most historyTurns turns and `budget` characters remain. The history
+ * always starts with a user turn.
+ */
+export function trimHistory(turns: readonly AnswerTurn[], budget: number = ANSWER_LIMITS.history): AnswerTurn[] {
+  let kept = turns.map(turn => ({role: turn.role, text: clip(plain(turn.text), ANSWER_LIMITS.turnChars)})).filter(turn => turn.text);
+  const size = () => kept.reduce((sum, turn) => sum + turn.text.length, 0);
+  while (kept.length && (kept.length > ANSWER_LIMITS.historyTurns || size() > budget || kept[0]!.role !== 'user')) {
+    kept = kept.slice(kept[0]!.role === 'user' && kept[1]?.role === 'assistant' ? 2 : 1);
+  }
+  return kept;
+}
+
+export interface ChatMessage {role: 'system' | 'user' | 'assistant'; content: string}
+
+/**
+ * The conversation as chat messages. Tuned for a small model: a short system prompt with its limits stated
+ * plainly (offline, no current events, sees only what is quoted, cannot act), brevity, Markdown code blocks for
+ * code, and saying when it is unsure. A context excerpt is quoted in the newest user turn, with NMSh's own
+ * observation kept separate so the answer can tell what was seen from what it thinks.
+ */
+export function answerMessages(request: AnswerRequest): ChatMessage[] {
+  const system = [
+    'You are Ask, a small offline assistant inside NMSh, a terminal app. You run on a small local language model.',
+    `The user works in ${request.shell} on ${request.os}.`,
+    'Answer the question directly and briefly: a few sentences, or a short list. Put commands and code in Markdown code blocks.',
+    'You have no internet access and no news: you cannot know current events, today\'s date, prices, weather or anything recent. Say so when asked.',
+    'You cannot see the user\'s files, screen, settings or environment, and you cannot run commands or change anything. You only see what is quoted in the conversation.',
+    'If you are not sure, say so. Never invent facts, commands, options or file names.',
+    // Both measured against the real 0.6B model (scripts/local-model): without them it claimed to have checked a
+    // file it cannot see and answered rewrite requests as if they were addressed to it.
+    'When asked to rewrite, correct, shorten or translate some text, reply with only the new text.',
+    'If asked about the user\'s own files, settings, screen, clipboard or history, say you cannot see them.',
+  ].join('\n');
+  const messages: ChatMessage[] = [{role: 'system', content: system}];
+  for (const turn of request.history) messages.push({role: turn.role, content: turn.text});
+  const context = request.context;
+  const question = context
+    ? [`Terminal context (${context.label}):`, '```', context.excerpt, '```',
+      ...(context.observed ? [`NMSh observed: ${context.observed}`] : []),
+      '', request.question, '',
+      'First say briefly what the output shows, then what you think it means and how sure you are. Do not claim more than the output shows.'].join('\n')
+    : rewriteFraming(request.question);
+  messages.push({role: 'user', content: question});
+  return messages;
+}
+
+const REWRITE = /^((?:please |can you |could you )?(?:rewrite|rephrase|reword|paraphrase|improve|shorten|simplify|summari[sz]e|translate|make (?:this|it)|turn (?:this|it))\b[^:\n]{0,80}):\s+(\S[\s\S]*)$/iu;
+
+/**
+ * "Rewrite this more politely: send me the report now": the instruction and the text to work on, quoted apart, so a
+ * small model rewrites the text instead of answering it as if it were addressed to itself (measured: 5 of 5 rewrites
+ * instead of replies like "Sure! Let me know when you're ready"). Corrections ("correct the grammar: …") measured
+ * slightly better as typed, so they are left alone.
+ */
+export function rewriteFraming(question: string): string {
+  const match = REWRITE.exec(question.trim());
+  return match ? `${match[1]!.trim()}.\nReply with only the new text.\n\nText: """${match[2]!.trim()}"""` : question;
+}
