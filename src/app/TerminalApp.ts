@@ -153,6 +153,7 @@ import {CommandEditor} from '../input/CommandEditor.js';
 import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
 import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
 import {HostTitle, composeTitle, sessionTitleName, titleSupport} from '../host/terminalTitle.js';
+import {HostProgramStatus, programStatusSupported, type ProgramStatus} from '../host/programStatus.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -1119,11 +1120,14 @@ export class TerminalApp {
         }
         // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
         this.hostSemantics.prompt(marker.cwd, marker.exitCode);
+        this.hostProgramStatus.forget();
         this.completedInputTiming = marker.inputWaits ? {waitedMs: marker.inputWaitMs ?? 0, waits: marker.inputWaits} : undefined;
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed, stamp.queued); } });
+    this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed, stamp.queued);
+      // Like the OSC 133 C mark: written at once, ahead of the output of a program that may be taking the screen.
+      if (this.presentationStarted && !this.frontendSuspended && !this.replaying) this.hostProgramStatus.set(this.desiredProgramStatus(), true); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputState', state => this.onInputState(state));
     this.session.on('queueState', (state, news) => this.onQueueState(state, news));
@@ -1645,6 +1649,8 @@ export class TerminalApp {
 
   private readonly onProcessExit = (): void => {
     if (!this.stopped) {
+      // The frontend ends without stop() (an uncaught error): NMSh's host status record must not stay behind.
+      this.hostProgramStatus.end();
       if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
       this.terminalFocus = 'unknown';
       this.renderer.leave();
@@ -1663,6 +1669,7 @@ export class TerminalApp {
   private readonly onSuspend = (): void => {
     if (this.stopped || this.externalPassthrough) return;
     this.cancelPresentation();
+    this.hostProgramStatus.end();
     this.frontendSuspended = true;
     this.noteForeignScreen();
     this.terminalFocus = 'unknown';
@@ -7084,6 +7091,26 @@ export class TerminalApp {
   private readonly hostTitle = new HostTitle(titleSupport(), data => { process.stdout.write(data); },
     () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && !this.replaying);
 
+  /** Opt-in OSC 7501 status for hosts that document it (Rex): written only on change, from NMSh's own evidence. */
+  private readonly hostProgramStatus = new HostProgramStatus(programStatusSupported(), data => { process.stdout.write(data); },
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && !this.replaying);
+
+  /** What NMSh can say for certain about this terminal, or nothing (the prompt is free). */
+  private desiredProgramStatus(): ProgramStatus | undefined {
+    if (this.shellEnded) return undefined;
+    if (this.running) {
+      const request = this.inputState?.request;
+      if (request?.confidence === 'confirmed' && request.mode === 'hidden') return {state: 'blocked', kind: 'auth', message: 'A program is waiting for hidden input'};
+      if (request?.confidence === 'confirmed') return {state: 'blocked', kind: 'question', message: 'A program is waiting for input'};
+      return {state: 'working'};
+    }
+    const queue = this.queueState;
+    if (queue.paused?.reason === 'failed' && queue.entries.length) return {state: 'error', message: 'A queued command failed; the queue is paused'};
+    const head = queue.entries[0];
+    if (head && head.condition === 'approve' && !head.approved) return {state: 'blocked', kind: 'permission', message: 'A queued command waits for your approval'};
+    return undefined;
+  }
+
   /** A program, a nested shell or another frontend owned the terminal: cwd and title are re-asserted when NMSh has it back. */
   private noteForeignScreen(): void {
     this.hostSemantics.foreignScreen();
@@ -12128,6 +12155,7 @@ export class TerminalApp {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
+    this.hostProgramStatus.set(this.desiredProgramStatus());
     if (this.idle) { this.paintIdle(); return; }
     // A real frame (a key, a prompt) ends the Arcade's recede at once; output chunks and the shell's clocks never do (below).
     this.arcadeClosing = undefined;
@@ -14177,6 +14205,7 @@ export class TerminalApp {
     this.restoreWindowAfterEnding = false;
     this.firstRunWindow?.restoreNow();
     this.hostTitle.end();
+    this.hostProgramStatus.end();
     this.stopped = true;
     this.cancelOutputRender();
     this.endOutputNavigation(false);
