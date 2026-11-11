@@ -2,6 +2,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import {formatAge, sessionText, tildePath} from './sessionList.js';
 import {liveStatusParts} from './liveStatus.js';
+import type {EndOutcome} from './liveSessions.js';
 import {GLYPHS, checkMark} from '../ui/glyphs.js';
 
 // Launch-time restore screens, shown before any session is attached. Each has
@@ -24,7 +25,7 @@ const identity = (session: SessionInfo) => sessionText(session.name ?? session.s
 /** resume: attach · not-now: fresh session, this launch only · always/never: also persist the startup setting. */
 export type SinglePromptChoice = 'resume' | 'not-now' | 'always' | 'never' | 'kill';
 
-export function renderSinglePrompt(session: SessionInfo, columns: number, now: number): string[] {
+export function renderSinglePrompt(session: SessionInfo, columns: number, now: number, message?: string): string[] {
   const clip = clipTo(columns);
   const name = identity(session);
   return ['NMSh · 1 detached live session', '',
@@ -34,7 +35,7 @@ export function renderSinglePrompt(session: SessionInfo, columns: number, now: n
     '  R  Resume', '  N  Not now (start a new session; it keeps running)',
     '  X  Kill session (ends the shell; transcript stays in /resume)',
     '  A  Always resume', '  D  Don\'t resume at startup (it keeps running)', '',
-    clip('Enter resume · Esc not now · sessions stay in /resume')];
+    clip('Enter resume · Esc not now · sessions stay in /resume'), ...(message ? ['', clip(message)] : [])];
 }
 
 export function singlePromptKey(key: Key): SinglePromptChoice | undefined {
@@ -50,19 +51,17 @@ export function renderKillConfirm(target: SessionInfo | readonly SessionInfo[], 
   const clip = clipTo(columns);
   const sessions = Array.isArray(target) ? target as readonly SessionInfo[] : [target as SessionInfo];
   const many = sessions.length > 1;
-  const shown = sessions.slice(0, KILL_LIST_LIMIT);
+  // Every target is named on its own line (the service caps live sessions, so the list is bounded): the confirmation
+  // is the exact set that will be ended, never "and N more", and two sessions in one directory stay distinguishable.
+  const named = (session: SessionInfo) => { const name = identity(session); return name ? `${name} · ` : ''; };
   return [many ? `Kill ${sessions.length} detached sessions?` : 'Kill detached session?', '',
-    ...shown.flatMap(session => many
-      ? [clip(`  ${tildePath(session.cwd)} · ${activity(session, now)}`)]
-      : [clip(`  ${tildePath(session.cwd)} · ${shellName(session)}`), clip(`  ${spelledActivity(session, now)}`)]),
-    ...(sessions.length > shown.length ? [`  and ${sessions.length - shown.length} more`] : []), '',
+    ...sessions.flatMap(session => many
+      ? [clip(`  ${named(session)}${tildePath(session.cwd)} · ${shellName(session)} · ${activity(session, now)}`)]
+      : [clip(`  ${named(session)}${tildePath(session.cwd)} · ${shellName(session)}`), clip(`  ${spelledActivity(session, now)}`)]), '',
     many ? `  This ends ${sessions.length} live shells and whatever runs in them.` : '  This ends the live shell and whatever runs in it.',
     `  ${many ? 'Their transcripts remain' : 'Its transcript will remain'} available in /resume. Sessions open in another window are not touched.`, '',
     clip(`Enter/Y kill${many ? ` all ${sessions.length}` : ''} · Esc/N cancel`)];
 }
-
-/** Sessions named one per line in a kill confirmation; the rest are counted. */
-const KILL_LIST_LIMIT = 6;
 
 /** Enter/Y confirm, Esc/N/Ctrl+C cancel; anything else is ignored. */
 export function killConfirmKey(key: Key): 'confirm' | 'cancel' | undefined {
@@ -153,7 +152,7 @@ export function removeFromMultiPicker(state: MultiPickerState, id: string): void
   state.cursor = Math.max(0, Math.min(state.cursor, state.sessions.length - 1));
 }
 
-export type KillResult = 'killed' | 'gone' | 'attached';
+export type KillResult = EndOutcome;
 
 /**
  * The multi-session screen with in-place kill. `run` shows one screen until
@@ -174,7 +173,7 @@ export async function pickWithKill(sessions: SessionInfo[], io: {
     const targets = state.sessions.filter(session => result.kill.includes(session.id));
     if (!targets.length) continue;
     // One at a time, each re-checked by the service: a session attached elsewhere meanwhile is left alone.
-    const tally = {killed: 0, gone: 0, attached: 0, failed: [] as string[]};
+    const tally: KillTally = {killed: 0, 'killed-unarchived': 0, gone: 0, attached: 0, failed: []};
     for (const target of targets) {
       let outcome: KillResult;
       try { outcome = await io.kill(target); }
@@ -188,16 +187,27 @@ export async function pickWithKill(sessions: SessionInfo[], io: {
   }
 }
 
-/** One factual line about what a kill did, session by session. */
-function killSummary(tally: {killed: number; gone: number; attached: number; failed: string[]}): string {
-  const parts: string[] = [];
+type KillTally = Record<EndOutcome, number> & {failed: string[]};
+
+/** One factual line about what a kill did, session by session; what failed comes first, so a narrow screen never clips it. */
+function killSummary(tally: KillTally): string {
   const sessions = (count: number) => `${count} session${count === 1 ? '' : 's'}`;
-  if (tally.killed) parts.push(tally.killed === 1 && !tally.gone && !tally.attached && !tally.failed.length ? 'Session ended; its transcript is in /resume.' : `${sessions(tally.killed)} ended`);
-  if (tally.gone) parts.push(tally.gone === 1 && parts.length === 0 && !tally.attached && !tally.failed.length ? 'That session had already ended; it is in /resume.' : `${sessions(tally.gone)} had already ended`);
-  if (tally.attached) parts.push(tally.attached === 1 && parts.length === 0 && !tally.failed.length ? 'That session is attached in another window and was not touched.' : `${sessions(tally.attached)} attached in another window ${tally.attached === 1 ? 'was' : 'were'} not touched`);
-  if (tally.failed.length) parts.push(tally.failed.length === 1 && parts.length === 0 ? `Could not end that session: ${tally.failed[0]}` : `${sessions(tally.failed.length)} could not be ended (${tally.failed[0]})`);
-  const line = parts.join('; ');
-  return /[.)]$/u.test(line) ? line : `${line}; transcripts stay in /resume.`;
+  const unarchived = tally['killed-unarchived'];
+  const kinds = [tally.failed.length, tally.attached, tally.killed, unarchived, tally.gone].filter(Boolean).length;
+  if (kinds === 1) {
+    const one = (count: number) => count === 1;
+    if (one(tally.failed.length)) return `Could not end that session: ${tally.failed[0]}`;
+    if (one(tally.attached)) return 'That session is attached in another window and was not touched.';
+    if (one(tally.killed)) return 'Session ended; its transcript is in /resume.';
+    if (one(tally.gone)) return 'That session had already ended; it is in /resume.';
+  }
+  const parts: string[] = [];
+  if (tally.failed.length) parts.push(`${sessions(tally.failed.length)} could not be ended (${tally.failed[0]})`);
+  if (tally.attached) parts.push(`${sessions(tally.attached)} attached in another window ${tally.attached === 1 ? 'was' : 'were'} not touched`);
+  if (tally.killed) parts.push(`${sessions(tally.killed)} ended`);
+  if (unarchived) parts.push(`${sessions(unarchived)} ended but ${unarchived === 1 ? 'its transcript was' : 'their transcripts were'} not archived yet (kept; the next launch archives ${unarchived === 1 ? 'it' : 'them'})`);
+  if (tally.gone) parts.push(`${sessions(tally.gone)} had already ended`);
+  return `${parts.join('; ')}${tally.killed || tally.gone ? '; transcripts stay in /resume.' : '.'}`;
 }
 
 /** The one-session prompt with in-place kill; confirmation cancels back to the prompt. */
@@ -207,12 +217,18 @@ export async function askWithKill(session: SessionInfo, io: {
   now?: () => number;
 }): Promise<SinglePromptChoice> {
   const now = io.now ?? Date.now;
+  let message: string | undefined;
   for (;;) {
-    const choice = await io.run<SinglePromptChoice>(columns => renderSinglePrompt(session, columns, now()), singlePromptKey);
+    const choice = await io.run<SinglePromptChoice>(columns => renderSinglePrompt(session, columns, now(), message), singlePromptKey);
+    message = undefined;
     if (choice !== 'kill') return choice;
     const decision = await io.run<'confirm' | 'cancel'>(columns => renderKillConfirm(session, columns, now()), killConfirmKey);
     if (decision === 'cancel') continue;
-    try { await io.kill(session); } catch { continue; }
+    // Only an ended session lets startup go on fresh; anything else is said on the prompt, never treated as killed.
+    let outcome: KillResult;
+    try { outcome = await io.kill(session); }
+    catch (error) { message = `Could not end that session: ${error instanceof Error ? error.message : String(error)}`; continue; }
+    if (outcome === 'attached') { message = 'That session is attached in another window and was not touched.'; continue; }
     return 'kill';
   }
 }

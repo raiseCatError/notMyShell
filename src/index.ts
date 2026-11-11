@@ -174,16 +174,14 @@ if (args[0] === 'packs') {
     const config = loadPromptConfiguration();
     // Same confirmed termination as /resume. Service truth is re-read first: a session that ended
     // meanwhile is simply gone, and one attached elsewhere is never touched.
-    const killDetached = async (session: (typeof live)[number]): Promise<'killed' | 'gone' | 'attached'> => {
-      const [{killAndArchive}, {TranscriptStore}] = await Promise.all([import('./session/liveSessions.js'), import('./sessions/TranscriptStore.js')]);
-      const current = (await listLiveSessions().catch(() => [])).find(item => item.id === session.id);
-      if (!current) return 'gone';
-      if (current.state !== 'detached') return 'attached';
-      try { await killAndArchive(current, {store: new TranscriptStore(), origin: 'the startup picker'}); return 'killed'; }
-      catch (error) {
-        if (!(await listLiveSessions().catch(() => [current])).some(item => item.id === session.id)) return 'gone';
-        throw error;
-      }
+    // An unreachable service is a failure, never "already ended"; only a shell this call ended counts as killed.
+    const killDetached = async (session: (typeof live)[number]) => {
+      const [{endDetachedSession, archiveKilled}, {killSession}, {defaultRuntimeDir, socketPathFor}, {TranscriptStore}] = await Promise.all([
+        import('./session/liveSessions.js'), import('./session/SocketSessionClient.js'), import('./session/runtimeDir.js'), import('./sessions/TranscriptStore.js')]);
+      const store = new TranscriptStore();
+      return endDetachedSession(session, {list: () => listLiveSessions(),
+        kill: current => killSession(socketPathFor(defaultRuntimeDir()), current.id),
+        archive: current => archiveKilled(current, {store, origin: 'the startup picker'})});
     };
     const restored = await restoreAtStartup(live, {
       // After a failed return, never silently attach a different session: ask instead of Always.

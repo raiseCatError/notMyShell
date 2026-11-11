@@ -328,7 +328,7 @@ test('multi picker: X with a selection asks once for all of them, naming the cou
   const ids = await pickWithKill(three(), {run, now: () => 0, kill: async session => { killed.push(session.id); return outcomes.shift()!; }});
   assert.deepEqual(killed, ['a', 'b', 'c']);
   assert.deepEqual(ids, []);
-  assert.ok(screens.some(screen => /2 sessions ended; 1 session attached in another window was not touched/.test(screen)), screens.at(-1));
+  assert.ok(screens.some(screen => /1 session attached in another window was not touched; 2 sessions ended/.test(screen)), screens.at(-1));
   assert.ok(screens.some(screen => /\/w\/b/.test(screen) && /1 detached live session\b/.test(screen)), 'the attached one is still listed');
 });
 
