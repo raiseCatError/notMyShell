@@ -65,6 +65,8 @@ test('Review Idle Sessions selects the long-idle ones; X then confirms exactly t
   multiPickerKey(state, text('x'));
   assert.deepEqual(state.confirming, ['old', 'older']);
   assert.match(renderMultiPicker(state, 200, 0).join('\n'), /Kill 2 detached sessions\?/);
+  // Suggested from a listing that cannot see child processes: the service re-checks each before ending it.
+  assert.deepEqual(multiPickerKey(state, key('enter')), {kill: ['old', 'older'], recheck: ['old', 'older']});
 });
 
 test('End All Eligible through the picker: kills go out in eligible mode; a session the service kept stays listed', async () => {

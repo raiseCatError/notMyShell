@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmodSync, existsSync, mkdtempSync, realpathSync, rmSync} from 'node:fs';
+import {chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {connect, type Socket} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -310,5 +310,49 @@ test('an explicit end of a shell that ignores SIGHUP escalates, so End never lea
     await killer.waitFor('killed', 1, 10000);
     assert.equal(fixture.alive(id), false);
     assert.ok(existsSync(spoolPathFor(fixture.runtimeDir, id)), 'the spool stays for archiving');
+  });
+});
+
+test('a policy stated by another window never makes an older frontend\'s new session timer-eligible', async () => {
+  await withService({childCount: async () => 0}, async fixture => {
+    const newer = new Peer(fixture.service.socketPath, {lifecycle: 'unused=60;idle=0'});
+    newer.send({type: 'list'});
+    await newer.waitFor('sessions');
+    // An older frontend (no lifecycle in its hello) creates a session after the policy reached the service.
+    const {peer, id} = await fixture.create();
+    await detach(fixture, peer, id);
+    const listed = (await fixture.list()).find(session => session.id === id)!;
+    assert.equal(listed.cleanup, 'never used', 'offered for review only; no countdown');
+    assert.equal(listed.cleanupAt, undefined);
+  });
+});
+
+test('an unknown kill condition is refused, never read as an unconditional kill', async () => {
+  await withService({}, async fixture => {
+    const {peer, id} = await fixture.create();
+    await detach(fixture, peer, id);
+    const killer = new Peer(fixture.service.socketPath);
+    killer.send({type: 'kill', sessionId: id, when: 'someday'});
+    const refused = await killer.waitFor('error');
+    assert.equal(refused.type === 'error' && refused.code, 'unsupported');
+    await pause(200);
+    assert.ok(fixture.alive(id));
+  });
+});
+
+test('a shell still in its startup (an rc file waiting on a question) is busy, never an unused session to clean up', async () => {
+  await withService({lifecycle: {unusedMs: SHORT, idleExpiryMs: 0}, childCount: async () => 0}, async fixture => {
+    // The person's own .zshrc asks something before the first prompt, like an update check does.
+    writeFileSync(join(fixture.home, '.zshrc'), 'read -r answer\n');
+    const peer = new Peer(fixture.service.socketPath);
+    peer.send({type: 'create', cwd: fixture.home, env: {HOME: fixture.home, PATH: process.env.PATH ?? ''}, columns: 80, rows: 24});
+    const created = await peer.waitFor('created');
+    const id = created.type === 'created' ? created.sessionId : '';
+    await pause(300);
+    assert.equal(peer.count('prompt'), 0, 'the shell is still in its startup');
+    await detach(fixture, peer, id);
+    await pause(SHORT * 4);
+    assert.ok(fixture.alive(id), 'never ended while its startup waits');
+    assert.equal((await fixture.list()).find(session => session.id === id)!.lifecycle, 'executing');
   });
 });

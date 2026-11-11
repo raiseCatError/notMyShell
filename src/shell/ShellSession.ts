@@ -1,3 +1,4 @@
+import {execFileSync} from 'node:child_process';
 import {shellAdapter} from './adapters/registry.js';
 import type {ShellAdapter, ShellId} from './adapters/ShellAdapter.js';
 import { randomBytes } from 'node:crypto';
@@ -282,11 +283,17 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   }
 
   /**
-   * After kill(): SIGKILL to the same PTY child when it ignored SIGHUP. Only meaningful before node-pty reports the
-   * exit, while the child is unreaped and its pid cannot have been reused.
+   * After kill(): SIGKILL to the same PTY child when it ignored SIGHUP. node-pty may already have reaped the child
+   * (it reports the exit a moment later), so the pid is signalled only while it is still this process's child: a pid
+   * that is gone, or was reused by anything else, is never touched. Returns whether the signal was sent.
    */
-  forceKill(): void {
-    try { this.pty.kill('SIGKILL'); } catch { /* already gone */ }
+  forceKill(): boolean {
+    const pid = this.pty.pid;
+    let parent: number | undefined;
+    try { parent = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {encoding: 'utf8', timeout: 1000}).trim()); }
+    catch { return false; }
+    if (parent !== process.pid) return false;
+    try { process.kill(pid, 'SIGKILL'); return true; } catch { return false; }
   }
 
   private receive(data: string): void {

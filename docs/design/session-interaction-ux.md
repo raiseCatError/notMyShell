@@ -169,7 +169,7 @@ States, from observed facts only:
 | State | Facts |
 |---|---|
 | attached | a window controls it |
-| executing (detached) | a command runs, or there are queued commands, background tasks or shell jobs |
+| executing (detached) | a command runs, a fullscreen program holds the screen, the shell is still in its startup (an rc file waiting on a question), or there are queued commands, background tasks or shell jobs |
 | waiting (detached) | the running command credibly waits for input |
 | idle (detached) | at its prompt, has run at least one command |
 | unused (detached) | at its prompt and never ran a command, queued one or started a task |
@@ -178,7 +178,7 @@ States, from observed facts only:
 | ended / stale | the service no longer lists it; its spool and journal are archived at the next launch or `/resume` (by service listing, never by PID) |
 | unknown | the service cannot be reached, or another protocol version owns it: nothing is touched |
 
-Idle output never makes a session disposable. Child processes are read with one bounded `pgrep -P <shell pid>` only when cleanup is about to act; the shell is the service's own unreaped PTY child, so the PID cannot have been reused. If the read fails, the session is kept.
+Idle output never makes a session disposable. Child processes are read with one bounded `pgrep -P <shell pid>` only when cleanup is about to act; the shell is the service's own PTY child, and a shell switch during the read is detected. If the read fails, the session is kept.
 
 Policy:
 
@@ -194,7 +194,7 @@ Policy:
 | Protected (P) | Never ended by cleanup or End All Eligible; X still ends it after its confirmation. | Protected |
 | X (End Selected) | The confirmation lists every target by name; each is re-read from the service and ended by id; attached ones are never touched. | Needs confirmation |
 | E (End All Eligible) | Lists exactly the eligible sessions with their reasons; the service re-verifies each (work, protection, children) and keeps any that changed. | Needs confirmation |
-| A shell ignores SIGHUP on an explicit end | After 3 s the service sends SIGKILL to that same unreaped child. | Part of the confirmed end |
+| A shell ignores SIGHUP on an explicit end | After 3 s the service sends SIGKILL to that shell, only after confirming its pid is still the service's own child (a reaped or reused pid is left alone). | Part of the confirmed end |
 | Shell exits on its own | The session ends; detached, the next launch archives it. | Yes |
 | Service crash or SIGKILL | Shells lose their PTY and end; the next launch archives each with a "service stopped" note. No automatic restart. | Yes |
 | Service SIGTERM/SIGHUP | Ends every shell and task, archives on next launch. | Yes |

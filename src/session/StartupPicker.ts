@@ -99,6 +99,8 @@ export interface MultiPickerState {
   confirming?: string[];
   /** What the open confirmation is: End Selected (default) or End All Eligible. */
   confirmMode?: 'selected' | 'eligible';
+  /** Sessions selected by Review Idle Sessions: ending them goes through the service's eligibility re-check. */
+  reviewed?: Set<string>;
   /** Other live sessions worth counting in the header: attached in another window, and archived at this launch. */
   context?: PickerContext;
   /** One factual line about the last kill, shown under the list. */
@@ -106,7 +108,8 @@ export interface MultiPickerState {
 }
 
 /** Returned by multiPickerKey once a kill is confirmed; the caller performs it and re-enters the picker. */
-export interface KillRequest {kill: string[]; mode?: 'eligible'}
+/** mode 'eligible' re-checks every target; `recheck` names the ones (from Review Idle Sessions) that are re-checked in an End Selected. */
+export interface KillRequest {kill: string[]; mode?: 'eligible'; recheck?: string[]}
 /** P: protect or unprotect the highlighted session (the service records it). */
 export interface ProtectRequest {protect: string; on: boolean}
 /** C: open the cleanup settings. */
@@ -173,7 +176,8 @@ export function multiPickerKey(state: MultiPickerState, key: Key): string[] | Pi
     const ids = state.confirming;
     const mode = state.confirmMode;
     if (decision) { state.confirming = undefined; state.confirmMode = undefined; }
-    return decision === 'confirm' ? {kill: [...ids], ...(mode === 'eligible' ? {mode} : {})} : undefined;
+    const recheck = mode === 'eligible' ? [] : ids.filter(id => state.reviewed?.has(id));
+    return decision === 'confirm' ? {kill: [...ids], ...(mode === 'eligible' ? {mode} : {}), ...(recheck.length ? {recheck} : {})} : undefined;
   }
   state.message = undefined;
   const highlighted = state.sessions[state.cursor];
@@ -211,6 +215,8 @@ function lifecycleKey(state: MultiPickerState, letter: string): PickerRequest | 
     const idle = state.sessions.filter(session => session.lifecycle === 'idle' && eligible(session));
     if (!idle.length) { state.message = 'No session has been idle for over a day.'; return undefined; }
     state.selected = new Set(idle.map(session => session.id));
+    // Suggested from the listing, which cannot see child processes: the service checks each again before ending it.
+    state.reviewed = new Set(state.selected);
     state.cursor = state.sessions.indexOf(idle[0]!);
     state.message = `Selected ${idle.length} session${idle.length === 1 ? '' : 's'} idle for over a day: Space keeps one, X ends the selected after a confirmation.`;
     return undefined;
@@ -286,7 +292,7 @@ export async function pickWithKill(sessions: SessionInfo[], io: {
     const tally: KillTally = {killed: 0, 'killed-unarchived': 0, gone: 0, attached: 0, kept: 0, failed: []};
     for (const target of targets) {
       let outcome: KillResult;
-      try { outcome = await io.kill(target, result.mode); }
+      try { outcome = await io.kill(target, result.mode ?? (result.recheck?.includes(target.id) ? 'eligible' : undefined)); }
       catch (error) { tally.failed.push(error instanceof Error ? error.message : String(error)); continue; }
       tally[outcome] += 1;
       if (outcome !== 'attached' && outcome !== 'kept') removeFromMultiPicker(state, target.id);

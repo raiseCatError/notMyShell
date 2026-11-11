@@ -109,7 +109,7 @@ export interface SessionServiceOptions {
   build?: string;
   /** Initial lifecycle policy (tests); otherwise the first frontend that states one sets it, and until then nothing is automatic. */
   lifecycle?: LifecyclePolicy;
-  /** Child processes of a shell (its own unreaped PTY child, so the pid cannot be reused); undefined when unreadable. */
+  /** Child processes of a shell (its own PTY child; a shell switch during the read is detected); undefined when unreadable. */
   childCount?: (pid: number) => Promise<number | undefined>;
   /** How long a confirmed end waits for the shell to exit on SIGHUP before it sends SIGKILL to that same child. */
   killEscalationMs?: number;
@@ -231,7 +231,9 @@ export class SessionService {
     const tasks = session.tasks.list().filter(task => task.state === 'running' || task.state === 'stopping' || task.leftovers).length;
     const jobs = knowledgeJobCount(session.knowledge);
     return {attached: Boolean(session.controller), ending: Boolean(session.ending), protected: Boolean(session.record.protected),
-      running: Boolean(session.running), waiting: Boolean(session.running && session.input?.request), queued: session.queue.queue.size,
+      // A shell still in its startup (an rc file asking a question, or exec'ing tmux) or a fullscreen program is busy, never unused.
+      running: Boolean(session.running) || !session.shell.isReady || session.screen.ownsTerminal,
+      waiting: Boolean(session.running && session.input?.request), queued: session.queue.queue.size,
       tasks, ...(jobs === undefined ? {} : {jobs}), ...(children === undefined ? {} : {children}), used: session.used,
       ...(session.detachedSince === undefined ? {} : {detachedSince: session.detachedSince}),
       lastActivity: Math.max(session.idleSince, session.evidence.snapshot().lastOutputAt ?? 0, session.detachedSince ?? 0),
@@ -247,7 +249,7 @@ export class SessionService {
   private scheduleCleanup(session: ManagedSession): void {
     if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
     const policy = this.policy;
-    if (!policy || this.closed || session.controller || session.ending || !session.policyAware || session.verifying) return;
+    if (!policy || this.closed || session.controller || session.ending || !session.policyAware || session.verifying || session.record.protected) return;
     if (!policy.idleExpiryMs && (session.used || !policy.unusedMs)) return;
     const result = eligibility(this.facts(session), policy, this.now());
     const due = result.kind === 'automatic' ? this.now() : result.at ?? this.now() + LIFECYCLE_RECHECK_MS;
@@ -262,12 +264,14 @@ export class SessionService {
     const policy = this.policy;
     if (!policy || eligibility(this.facts(session), policy, this.now()).kind !== 'automatic') { this.scheduleCleanup(session); return; }
     session.verifying = true;
+    const shell = session.shell;
     let children: number | undefined;
     try { children = await (this.options.childCount ?? shellChildCount)(session.record.pid); }
     catch { children = undefined; }
     finally { session.verifying = false; }
-    // Everything is read again after the wait: an attach, a command, a policy change or a kill may have happened.
+    // Everything is read again after the wait: an attach, a command, a policy change, a shell switch or a kill may have happened.
     if (this.sessions.get(session.record.id) !== session || !this.policy) return;
+    if (session.shell !== shell) { this.scheduleCleanup(session); return; }
     const result = children === undefined ? undefined : eligibility(this.facts(session, children), this.policy, this.now());
     if (!result || result.kind !== 'automatic') {
       // Something changed during the check (attach, a command, a policy): the ordinary schedule applies.
@@ -284,7 +288,8 @@ export class SessionService {
 
   /**
    * End one session's shell: SIGHUP through node-pty, then, if the shell ignores it, SIGKILL to the same PTY child.
-   * node-pty has not reported the exit yet, so that child is unreaped and its pid cannot belong to anything else.
+   * node-pty reaps the child shortly before it reports the exit, so the escalation first confirms that the pid is
+   * still a child of this service (ShellSession.forceKill); a pid that is gone or belongs to anything else is left alone.
    */
   private end(session: ManagedSession, reason?: string): void {
     if (session.ending) return;
@@ -332,6 +337,8 @@ export class SessionService {
     let greeted = false;
     let owned: ManagedSession | undefined;
     let features: ReadonlySet<ClientFeature> = new Set();
+    // Whether this connection's own hello stated a lifecycle policy: only its sessions may ever be ended by a timer.
+    let statedPolicy = false;
 
     socket.on('data', chunk => {
       for (const result of decoder.push(chunk as unknown as string)) {
@@ -352,6 +359,7 @@ export class SessionService {
           features = parseClientFeatures(message.features);
           // The person's policy as this frontend knows it; an older frontend says nothing and changes nothing.
           const stated = decodePolicy(message.lifecycle);
+          statedPolicy = stated !== undefined;
           if (stated && (stated.unusedMs !== this.policy?.unusedMs || stated.idleExpiryMs !== this.policy?.idleExpiryMs)) {
             this.policy = stated;
             for (const session of this.sessions.values()) this.scheduleCleanup(session);
@@ -370,7 +378,8 @@ export class SessionService {
             try {
               const backend = message.shell === undefined ? 'zsh' : message.shell;
               if (!isShellId(backend)) throw new Error(`unknown shell backend ${backend}`);
-              owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend);
+              owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend,
+                this.policy !== undefined && (statedPolicy || this.options.lifecycle !== undefined));
               owned.controllerFeatures = features;
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid, shell: owned.backend});
               this.attachTasks(owned, send, features);
@@ -506,12 +515,16 @@ export class SessionService {
             if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
             // Never pull a shell out from under a frontend that is using it.
             if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            // An unknown condition is refused, never read as an unconditional kill.
+            if (message.when !== undefined && message.when !== 'eligible') { send({type: 'error', code: 'unsupported', message: `unsupported kill condition ${message.when.slice(0, 20)}`}); break; }
             if (message.when === 'eligible' && !target.ending) {
               // End All Eligible: the service re-verifies, with child processes, right before ending; work or doubt keeps it.
               void (async () => {
+                const shell = target.shell;
                 let children: number | undefined;
                 try { children = await (this.options.childCount ?? shellChildCount)(target.record.pid); } catch { children = undefined; }
                 if (this.sessions.get(target.record.id) !== target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); return; }
+                if (target.shell !== shell) { send({type: 'error', code: 'busy', message: 'its shell changed while it was being checked'}); return; }
                 if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); return; }
                 const result = eligibility(this.facts(target, children), this.policy ?? {unusedMs: 0, idleExpiryMs: 0}, this.now());
                 if (children === undefined && !target.ending) { send({type: 'error', code: 'busy', message: 'its child processes could not be checked'}); return; }
@@ -579,7 +592,7 @@ export class SessionService {
     session.controller = undefined;
     session.controllerFeatures = undefined;
     session.record.state = 'detached';
-    session.detachedSince = this.now();
+    session.detachedSince = Date.now();
     session.queue.onOwnershipChanged();
     this.scheduleCleanup(session);
   }
@@ -646,7 +659,7 @@ export class SessionService {
     }
   }
 
-  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh'): ManagedSession {
+  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh', policyAware = false): ManagedSession {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
     const id = randomUUID();
@@ -658,7 +671,7 @@ export class SessionService {
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
       evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell),
-      tasks: undefined as unknown as SessionTasks, used: false, policyAware: this.policy !== undefined};
+      tasks: undefined as unknown as SessionTasks, used: false, policyAware};
     // The session's own shell runs each task's command; the launch environment is used for the spawn only.
     session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
     session.queue.on('state', (state, event) => {
