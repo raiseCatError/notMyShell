@@ -66,9 +66,10 @@ export async function archiveKilled(session: SessionInfo, options: KillOptions =
  * - killed: this call ended its shell and the transcript was archived;
  * - killed-unarchived: this call ended its shell; the transcript stays in the spool and a later launch archives it;
  * - gone: the service no longer had it before this call could end it;
- * - attached: it is attached in a window (or became attached), and was not touched.
+ * - attached: it is attached in a window (or became attached), and was not touched;
+ * - kept: End All Eligible only: the service re-verified it and found work, protection or doubt, so it was not ended.
  */
-export type EndOutcome = 'killed' | 'killed-unarchived' | 'gone' | 'attached';
+export type EndOutcome = 'killed' | 'killed-unarchived' | 'gone' | 'attached' | 'kept';
 
 export interface EndDetachedDeps {
   /** The service's current list. Throws when the service cannot be asked: that is never "already ended". */
@@ -92,6 +93,7 @@ export async function endDetachedSession(session: SessionInfo, deps: EndDetached
     const code = (error as {code?: string}).code;
     if (code === 'attached') return 'attached';
     if (code === 'unknown') return 'gone';
+    if (code === 'busy') return 'kept';
     throw error;
   }
   try { await deps.archive(current); return 'killed'; }

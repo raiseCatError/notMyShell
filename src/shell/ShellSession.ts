@@ -281,6 +281,14 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
+  /**
+   * After kill(): SIGKILL to the same PTY child when it ignored SIGHUP. Only meaningful before node-pty reports the
+   * exit, while the child is unreaped and its pid cannot have been reused.
+   */
+  forceKill(): void {
+    try { this.pty.kill('SIGKILL'); } catch { /* already gone */ }
+  }
+
   private receive(data: string): void {
     // Before readiness nothing answers the shell's startup queries, so input is never held for them.
     if (this.ready) this.order.observeOutput(data);

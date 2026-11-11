@@ -34,7 +34,7 @@ export const PORTABLE_CATEGORIES = {
   idle: ['idleVisuals', 'liveActivity'],
   notifications: ['notifications', 'sessionNotices'],
   tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateMode', 'updateFrequency'],
-  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention', 'terminalTitle', 'commandQueue', 'queueFailurePolicy', 'queue'],
+  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionCleanup', 'sessionIdleExpiry', 'sessionRetention', 'terminalTitle', 'commandQueue', 'queueFailurePolicy', 'queue'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],
   editor: ['openWith'],

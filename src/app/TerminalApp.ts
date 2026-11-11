@@ -377,6 +377,8 @@ import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABE
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
 import {OLDER_SERVICE_SWITCH, serviceBuildNotice, serviceInputNotice} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
+import {setHelloLifecycle} from '../session/SocketSessionClient.js';
+import {encodePolicy, policyFromSettings} from '../session/lifecycle.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {AgentSessions, normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import type {AgentSession} from '../agents/sessions/model.js';
@@ -5115,6 +5117,12 @@ export class TerminalApp {
     this.stop(0);
   }
 
+  /** Session Lifecycle settings changed: say so in every hello from now on, and tell the service at once with one listing. */
+  private statePolicyToService(): void {
+    setHelloLifecycle(encodePolicy(policyFromSettings(this.promptConfiguration)));
+    if (this.sessionMode === 'service') void listLiveSessions().catch(() => undefined);
+  }
+
   private async killSelectedLiveSession(): Promise<void> {
     const browser = this.resumeBrowser;
     const target = browser?.live.find(session => session.id === browser.confirmKill);
@@ -6261,7 +6269,9 @@ export class TerminalApp {
     state.draft.onboardingComplete = true;
     try {
       savePromptConfiguration(state.draft, undefined, this.promptConfiguration);
+      const lifecycleChanged = state.draft.sessionCleanup !== this.promptConfiguration.sessionCleanup || state.draft.sessionIdleExpiry !== this.promptConfiguration.sessionIdleExpiry;
       this.promptConfiguration = structuredClone(state.draft);
+      if (lifecycleChanged) this.statePolicyToService();
       this.promptPanelState = undefined;
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
       this.panelExternalPrompt = undefined;

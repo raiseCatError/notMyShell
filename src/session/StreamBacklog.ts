@@ -12,7 +12,7 @@ export type BacklogEvent =
 type SpoolRecord = BacklogEvent
   | {kind: 'ack'; seq: number; journalId: string}
   | {kind: 'truncated'; bytes: number}
-  | {kind: 'exit'; exitCode: number; at: number};
+  | {kind: 'exit'; exitCode: number; at: number; reason?: string};
 
 export interface BacklogLimits {
   /** Unacknowledged bytes kept in memory before spilling to the spool file. */
@@ -44,7 +44,7 @@ function validEvent(value: unknown): value is SpoolRecord {
       && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= MAX_SHELL_KNOWLEDGE_BYTES);
     case 'ack': return int('seq') && typeof record.journalId === 'string';
     case 'truncated': return int('bytes');
-    case 'exit': return int('exitCode') && int('at');
+    case 'exit': return int('exitCode') && int('at') && (record.reason === undefined || typeof record.reason === 'string' && record.reason.length <= 300);
     default: return false;
   }
 }
@@ -54,7 +54,7 @@ export interface SpoolContents {
   ackedSeq: number;
   journalId?: string;
   truncatedBytes: number;
-  exit?: {exitCode: number; at: number};
+  exit?: {exitCode: number; at: number; reason?: string};
 }
 
 /**
@@ -74,7 +74,7 @@ export function readSpool(path: string): SpoolContents {
     if (record.kind === 'ack') {
       if (record.seq >= contents.ackedSeq) { contents.ackedSeq = record.seq; contents.journalId = record.journalId; }
     } else if (record.kind === 'truncated') contents.truncatedBytes += record.bytes;
-    else if (record.kind === 'exit') contents.exit = {exitCode: record.exitCode, at: record.at};
+    else if (record.kind === 'exit') contents.exit = {exitCode: record.exitCode, at: record.at, ...(record.reason ? {reason: record.reason} : {})};
     else contents.events.push(record);
   }
   contents.events = contents.events.filter(event => event.seq > contents.ackedSeq);
@@ -136,9 +136,9 @@ export class StreamBacklog {
    * later. Always written: the exit record is how recovery tells an ordinary
    * exit from a service that died.
    */
-  finish(exitCode: number, at: number): void {
+  finish(exitCode: number, at: number, reason?: string): void {
     this.spill();
-    this.write([{kind: 'exit', exitCode, at}]);
+    this.write([{kind: 'exit', exitCode, at, ...(reason ? {reason: reason.slice(0, 300)} : {})}]);
   }
 
   dispose(): void {
