@@ -72,6 +72,8 @@ interface ManagedSession {
   tasks: SessionTasks;
   /** The attached frontend's task listener, when it listed 'background-tasks'. */
   taskListener?: TaskListener;
+  /** A confirmed kill was sent and the shell has not reported its exit yet: nothing may attach to it now. */
+  ending?: true;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -247,6 +249,7 @@ export class SessionService {
             const session = this.sessions.get(message.sessionId);
             if (!session) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
             if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            if (session.ending) { send({type: 'error', code: 'unknown', message: 'that session is ending'}); break; }
             owned = session;
             this.bind(session, send, features);
             // Opening a session is focusing it: its notice is no longer news in any window.
@@ -369,6 +372,9 @@ export class SessionService {
             // Never pull a shell out from under a frontend that is using it.
             if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
             target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            // Between the kill and the shell's exit event no window may attach; a second kill just waits for the same exit.
+            if (target.ending) break;
+            target.ending = true;
             target.shell.kill();
             break;
           }

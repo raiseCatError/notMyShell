@@ -59,7 +59,7 @@ test('one-session prompt: identifying details, and R/Enter, N/Esc, A, D, and X t
   assert.equal(singlePromptKey(key('down')), undefined);
 });
 
-test('multi picker: move, Space toggles, A selects all then clears, Enter resumes selected in order, Esc none', () => {
+test('multi picker: move, Space toggles, A selects all then clears, Enter resumes selected in order or else the highlighted one; N and Esc start new', () => {
   const sessions = [info('s1', 'detached'), info('s2', 'detached', {running: 'npm test'}), info('s3', 'detached')];
   const state = createMultiPicker(sessions);
   assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /3 detached live sessions[\s\S]*› · \/w\/s1[\s\S]*npm test/);
@@ -77,9 +77,11 @@ test('multi picker: move, Space toggles, A selects all then clears, Enter resume
   assert.equal(state.selected.size, 3);
   multiPickerKey(state, text('A'));
   assert.equal(state.selected.size, 0, 'A again clears everything');
-  assert.deepEqual(multiPickerKey(state, key('enter')), [], 'Enter with nothing selected resumes none');
+  assert.deepEqual(multiPickerKey(state, key('enter')), ['s1'], 'Enter with nothing selected resumes the highlighted session, as the footer says');
+  assert.match(renderMultiPicker(state, 100, 61_000).join('\n'), /Enter resume this · N new session/);
   multiPickerKey(state, text('a'));
-  assert.deepEqual(multiPickerKey(state, key('escape')), [], 'Esc resumes none even with a selection');
+  assert.deepEqual(multiPickerKey(state, key('escape')), [], 'Esc starts a new session even with a selection');
+  assert.deepEqual(multiPickerKey(state, text('n')), [], 'N starts a new session; every listed one keeps running');
   assert.equal(multiPickerKey(state, text('k')), undefined, 'K is not a key');
 });
 
@@ -207,7 +209,7 @@ test('multi picker: X only opens a confirmation; Esc, N and Ctrl+C cancel; Enter
   for (const cancel of [key('escape'), text('n'), text('N'), key('interrupt')]) {
     const state = createMultiPicker(three());
     assert.equal(multiPickerKey(state, text('x')), undefined, 'X alone kills nothing');
-    assert.equal(state.confirming, 'a');
+    assert.deepEqual(state.confirming, ['a'], 'nothing selected: the highlighted session');
     assert.match(renderMultiPicker(state, 80, 5_000).join('\n'), /Kill detached session\?[\s\S]*remain available in \/resume[\s\S]*Enter\/Y kill · Esc\/N cancel/);
     assert.equal(multiPickerKey(state, cancel), undefined);
     assert.equal(state.confirming, undefined); assert.equal(state.sessions.length, 3);
@@ -215,14 +217,14 @@ test('multi picker: X only opens a confirmation; Esc, N and Ctrl+C cancel; Enter
   for (const confirm of [key('enter'), text('y'), text('Y')]) {
     const state = createMultiPicker(three()); state.cursor = 1;
     multiPickerKey(state, text('X'));
-    assert.deepEqual(multiPickerKey(state, confirm), {kill: 'b'});
+    assert.deepEqual(multiPickerKey(state, confirm), {kill: ['b']});
   }
   const state = createMultiPicker(three());
   multiPickerKey(state, text('x'));
   assert.equal(multiPickerKey(state, text(' ')), undefined, 'Space is inert while confirming');
   assert.equal(multiPickerKey(state, text('a')), undefined, 'A is inert while confirming');
   assert.equal(state.selected.size, 0);
-  assert.match(renderMultiPicker(createMultiPicker(three()), 100, 0).join('\n'), /↑↓ move · Space select · A all · X kill · Enter resume none · Esc none/);
+  assert.match(renderMultiPicker(createMultiPicker(three()), 100, 0).join('\n'), /Enter resume this · N new session · ↑↓ move · Space select · A all[\s\S]*X kill this · Esc new session/);
   assert.equal(killConfirmKey(text('k')), undefined);
 });
 
@@ -246,7 +248,8 @@ test('pickWithKill: kills through the injected path, drops selection, and a fina
     throw new Error('script ended without a result');
   };
   const ids = await pickWithKill(three(), {run, kill: async session => { killed.push(session.id); return 'killed'; }, now: () => 5_000});
-  assert.deepEqual(killed, ['b', 'c', 'a'], 'every kill went through the injected kill, in order');
+  // The first X has a selection (a), so it kills the selection, not the highlighted b; then the highlighted ones.
+  assert.deepEqual(killed, ['a', 'c', 'b'], 'every kill went through the injected kill, in order');
   assert.deepEqual(ids, [], 'no sessions left: resolves with none so startup continues fresh');
   assert.ok(screens.some(screen => /Session ended; its transcript is in \/resume/.test(screen)));
 });
@@ -255,7 +258,7 @@ test('pickWithKill: already-gone and attached-elsewhere sessions refresh safely;
   const outcomes: KillResult[] = ['gone', 'attached'];
   let call = 0;
   const run = async <T,>(_render: unknown, onKey: (key: Key) => T | undefined): Promise<T> => {
-    const keys = call === 0 ? [text('x'), text('y')] : call === 1 ? [text('x'), key('enter')] : call === 2 ? [text('x'), text('y')] : [key('enter')];
+    const keys = call === 0 ? [text('x'), text('y')] : call === 1 ? [text('x'), key('enter')] : call === 2 ? [text('x'), text('y')] : [text('n')];
     call += 1;
     for (const k of keys) { const result = onKey(k); if (result !== undefined) return result; }
     throw new Error('no result');
@@ -268,7 +271,7 @@ test('pickWithKill: already-gone and attached-elsewhere sessions refresh safely;
     throw new Error('permission denied');
   }});
   assert.equal(attempts, 3);
-  assert.deepEqual(ids, [], 'Enter with nothing selected; the failed row was kept, not lost');
+  assert.deepEqual(ids, [], 'N: a new session; the failed row was kept, not lost');
 });
 
 test('one-session prompt: X confirms before killing; cancel returns to the prompt; Enter is still Resume', async () => {
@@ -289,4 +292,55 @@ test('restoreAtStartup: a killed single session starts fresh and attaches nothin
   const deps: StartupRestoreDeps = {policy: {startup: 'ask', multiple: 'ask'}, saveStartup: () => assert.fail('no setting change'),
     askOne: async () => 'kill', pick: async () => assert.fail('not used'), host: detectTerminalHost({}), selfCommand: ['nmsh']};
   assert.deepEqual(await restoreAtStartup([info('a', 'detached')], deps), {});
+});
+
+test('multi picker: X with a selection asks once for all of them, naming the count; A then X is Kill all', async () => {
+  const state = createMultiPicker(three());
+  multiPickerKey(state, text(' '));
+  multiPickerKey(state, key('down'));
+  multiPickerKey(state, key('down'));
+  multiPickerKey(state, text(' '));
+  assert.match(renderMultiPicker(state, 100, 0).join('\n'), /Enter resume 2 selected[\s\S]*X kill 2 selected/);
+  multiPickerKey(state, text('x'));
+  assert.deepEqual(state.confirming, ['a', 'c'], 'the selected sessions, never the highlighted one alone');
+  const screen = renderMultiPicker(state, 100, 0).join('\n');
+  assert.match(screen, /Kill 2 detached sessions\?/);
+  assert.match(screen, /\/w\/a[\s\S]*\/w\/c/);
+  assert.match(screen, /ends 2 live shells[\s\S]*not touched[\s\S]*Enter\/Y kill all 2 · Esc\/N cancel/);
+  assert.deepEqual(multiPickerKey(state, text('y')), {kill: ['a', 'c']});
+  const all = createMultiPicker(three());
+  multiPickerKey(all, text('a'));
+  multiPickerKey(all, text('x'));
+  assert.match(renderMultiPicker(all, 100, 0).join('\n'), /Kill 3 detached sessions\?[\s\S]*Enter\/Y kill all 3/);
+  assert.deepEqual(multiPickerKey(all, key('enter')), {kill: ['a', 'b', 'c']});
+  // Performed one at a time; an attached-elsewhere one stays listed, and the line says what happened to each.
+  const outcomes: KillResult[] = ['killed', 'attached', 'killed'];
+  const screens: string[] = [];
+  let call = 0;
+  const run = async <T,>(render: (columns: number) => string[], onKey: (key: Key) => T | undefined): Promise<T> => {
+    const keys = call === 0 ? [text('a'), text('x'), text('y')] : [text('n')];
+    call += 1;
+    for (const k of keys) { screens.push(render(100).join('\n')); const result = onKey(k); if (result !== undefined) return result; }
+    screens.push(render(100).join('\n'));
+    throw new Error('no result');
+  };
+  const killed: string[] = [];
+  const ids = await pickWithKill(three(), {run, now: () => 0, kill: async session => { killed.push(session.id); return outcomes.shift()!; }});
+  assert.deepEqual(killed, ['a', 'b', 'c']);
+  assert.deepEqual(ids, []);
+  assert.ok(screens.some(screen => /1 session attached in another window was not touched; 2 sessions ended/.test(screen)), screens.at(-1));
+  assert.ok(screens.some(screen => /\/w\/b/.test(screen) && /1 detached live session\b/.test(screen)), 'the attached one is still listed');
+});
+
+test('picker rows name the shell and say what the service saw: idle, running, waiting for input; never a guessed zsh', () => {
+  const sessions = [info('a', 'detached', {shell: 'fish', idleSince: 1, lastExit: 0, signature: 'Lemon'}),
+    info('b', 'detached', {shell: 'bash', running: 'read -r name', runningSince: 0, inputSince: 0, inputConfidence: 'likely'}),
+    info('c', 'detached', {running: 'npm test', runningSince: 0, lastOutputAt: 59_000})];
+  const screen = renderMultiPicker(createMultiPicker(sessions), 120, 60_001).join('\n');
+  assert.match(screen, /Lemon\s+\/w\/a\s+fish\s+idle 1m/);
+  assert.match(screen, /\/w\/b\s+bash\s+running read -r name · 1m · probably waiting for input 1m/);
+  assert.match(screen, /\/w\/c\s+zsh\s+running npm test · 1m · active/);
+  const single = renderSinglePrompt(sessions[0]!, 100, 60_001).join('\n');
+  assert.match(single, /Lemon · \/w\/a · fish/);
+  assert.match(single, /idle at the prompt · 1m/);
 });
