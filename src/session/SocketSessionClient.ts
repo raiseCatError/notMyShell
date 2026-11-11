@@ -88,16 +88,22 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     };
     const onError = (error: NodeJS.ErrnoException) => fail(`session service unreachable (${error.code ?? 'error'})`, error.code ?? 'error');
     const onClose = () => fail('session service closed the connection', 'closed');
-    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.filter(feature => feature !== 'deferred-attach-resize' || deferAttachResize).join(',')}));
+    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.filter(feature => feature !== 'deferred-attach-resize' || deferAttachResize).join(','),
+      ...(helloLifecycle ? {lifecycle: helloLifecycle} : {})}));
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.on('data', onData);
   });
 }
 
-/** End a detached session; resolves once the shell has exited and its spool is final. */
-export async function killSession(socketPath: string, sessionId: string, timeoutMs = 5000): Promise<void> {
-  const {socket} = await request(socketPath, timeoutMs, {type: 'kill', sessionId},
+let helloLifecycle: string | undefined;
+
+/** The person's session cleanup policy (lifecycle.ts encodePolicy), stated in every hello from now on. */
+export function setHelloLifecycle(policy: string | undefined): void { helloLifecycle = policy; }
+
+/** End a detached session; resolves once the shell has exited and its spool is final. With when='eligible' the service re-verifies eligibility and may refuse ('busy'). */
+export async function killSession(socketPath: string, sessionId: string, timeoutMs = 5000, when?: 'eligible'): Promise<void> {
+  const {socket} = await request(socketPath, timeoutMs, {type: 'kill', sessionId, ...(when ? {when} : {})},
     message => (message.type === 'killed' ? true : undefined));
   socket.end();
 }
@@ -116,6 +122,14 @@ export async function listSessionsWithNotices(socketPath: string, timeoutMs = 30
     message => (message.type === 'sessions' ? {sessions: message.sessions, ended: message.ended ?? []} : undefined));
   socket.end();
   return value;
+}
+
+/** Protect or unprotect a live session (services that advertise 'lifecycle'); resolves with its updated record. */
+export async function protectSession(socketPath: string, sessionId: string, on: boolean, timeoutMs = 3000): Promise<SessionInfo | undefined> {
+  const {value, socket} = await request(socketPath, timeoutMs, {type: 'protect', sessionId, on: on ? 1 : 0},
+    message => (message.type === 'sessions' ? message.sessions.find(session => session.id === sessionId) ?? null : undefined));
+  socket.end();
+  return value ?? undefined;
 }
 
 /** Rename a live session (display only); an empty name returns to its signature. */

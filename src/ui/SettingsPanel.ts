@@ -26,7 +26,7 @@ import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES, UPDATE_FREQUENCIES, UPDATE_MODES} from '../update/update.js';
-import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
+import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, SESSION_CLEANUP, SESSION_IDLE_EXPIRY, TRANSCRIPT_PRESENTATIONS,
   TRANSCRIPT_PRESENTATION_LABELS} from '../prompt/configuration.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
@@ -438,6 +438,12 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'liveSessionMultiple', level: 'advanced', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
     values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
     get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
+  enumRow({id: 'sessionCleanup', label: 'Clean up unused sessions', description: 'End a detached session that never ran a command after it has been detached this long. Checked again just before; attached, protected or busy sessions are never ended, and the transcript is kept', category: 'Sessions',
+    values: SESSION_CLEANUP, labels: ['Off', '10 minutes', '30 minutes', '1 hour'],
+    get: config => config.sessionCleanup, set: (config, sessionCleanup) => ({...config, sessionCleanup})}),
+  enumRow({id: 'sessionIdleExpiry', level: 'advanced', label: 'End idle sessions', description: 'End a detached session after this long with no activity and no work (no command, input wait, queue, task, job or child process). Off by default; idle sessions are otherwise only suggested for review after a day', category: 'Sessions',
+    values: SESSION_IDLE_EXPIRY, labels: ['Off', 'After 1 day', 'After 3 days', 'After 7 days'],
+    get: config => config.sessionIdleExpiry, set: (config, sessionIdleExpiry) => ({...config, sessionIdleExpiry})}),
   {id: 'sessionNotices', label: 'Session notices', description: 'Brief factual lines (up to three) above the composer when other sessions finish, fail, ask for attention or end; each fades on its own, and /sessions keeps the state', category: 'Sessions',
     control: 'boolean', get: config => config.sessionNotices, set: (config, sessionNotices) => ({...config, sessionNotices})},
   enumRow({id: 'terminalTitle', label: 'Terminal title', description: 'Set the window/tab title while NMSh owns the screen; programs set their own while they run and NMSh restores its title after them. Off leaves the title to the terminal', category: 'Sessions',

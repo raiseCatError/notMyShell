@@ -163,7 +163,9 @@ export async function recoverEndedSessions(runtimeDir: string, store: Transcript
     if (live.has(sessionId) || !/^[\w-]+$/u.test(sessionId)) continue;
     try {
       const outcome = await finalizeLiveSession({store, runtimeDir, sessionId, journalId: linked.get(sessionId), cwd: '/',
-        note: spool => spool.exit
+        note: spool => spool.exit?.reason
+          ? `${spool.exit.reason} No NMSh window was attached; the transcript is kept.`
+          : spool.exit
           ? `The shell exited while no NMSh window was attached (exit code ${spool.exit.exitCode}).`
           : SERVICE_STOPPED_NOTE});
       if (outcome.kind === 'archived') archived.push(outcome.session.id);

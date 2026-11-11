@@ -26,7 +26,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result', 'deferred-attach-resize'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks', 'input-look', 'queue-timeline', 'queue-history', 'input-look-result', 'deferred-attach-resize', 'lifecycle'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -47,7 +47,8 @@ export function parseFeatures(text: string | undefined): Set<ServiceFeature> {
 
 export type ClientMessage =
   /** features: comma-separated CLIENT_FEATURES this frontend understands; absent from older frontends. */
-  | {type: 'hello'; version: number; client: string; features?: string}
+  /** lifecycle: the person's session cleanup policy (`unused=<s>;idle=<s>`, bounded); absent from older frontends. */
+  | {type: 'hello'; version: number; client: string; features?: string; lifecycle?: string}
   /** shell: backend id (zsh, fish, bash); absent means zsh (older frontends). */
   | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number; shell?: string}
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
@@ -59,7 +60,10 @@ export type ClientMessage =
   /** Everything up to seq is durable in the frontend journal journalId. */
   | {type: 'ack'; seq: number; journalId: string}
   /** End a detached session this connection does not control (Kill Session). */
-  | {type: 'kill'; sessionId: string}
+  /** when='eligible': End All Eligible; the service re-verifies eligibility (work, protection, children) and refuses with 'busy'. Only to services that advertised 'lifecycle'. */
+  | {type: 'kill'; sessionId: string; when?: string}
+  /** Protect (on=1) or unprotect a live session: protected sessions are never ended by cleanup or End All Eligible. Only to services that advertised 'lifecycle'. */
+  | {type: 'protect'; sessionId: string; on: number}
   /** Clear a session's cross-session notice everywhere (it was opened/focused). */
   | {type: 'dismiss'; sessionId: string}
   /** Replace this session's shell backend in place, starting it in cwd. Refused while anything would be lost. */
@@ -175,6 +179,21 @@ export interface SessionInfo {
   /** Commands queued in this session, and why they wait, if paused (only to frontends that listed 'queue'). */
   queued?: number;
   queuePaused?: string;
+  // Lifecycle (services that advertise 'lifecycle'); the service's own reading of its facts, never a guess here.
+  /** attached, ending, executing, waiting, unused or idle. */
+  lifecycle?: string;
+  /** Why it is kept, or why cleanup would apply. */
+  cleanup?: string;
+  /** automatic, review or kept (see lifecycle.ts). */
+  eligibility?: string;
+  /** When the service's pending check would end it, if nothing changes. */
+  cleanupAt?: number;
+  used?: number;
+  detachedSince?: number;
+  tasks?: number;
+  jobs?: number;
+  protected?: number;
+  ending?: number;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -191,7 +210,7 @@ type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions' | 'notice
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
-  hello: {version: 'int', client: 'string', features: 'string?'},
+  hello: {version: 'int', client: 'string', features: 'string?', lifecycle: 'string?'},
   create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int', shell: 'string?'},
   'switch-shell': {shell: 'string', cwd: 'string'},
   rename: {sessionId: 'string', name: 'string'},
@@ -202,7 +221,8 @@ const SHAPES: Record<string, Shape> = {
   input: {data: 'string', submission: 'int?'},
   resize: {columns: 'int', rows: 'int', repaint: 'int?'},
   ack: {seq: 'int', journalId: 'string'},
-  kill: {sessionId: 'string'},
+  kill: {sessionId: 'string', when: 'string?'},
+  protect: {sessionId: 'string', on: 'int'},
   dismiss: {sessionId: 'string'},
   queue: {change: 'string'},
   'input-look': {id: 'int'},
@@ -239,7 +259,9 @@ function isEnv(value: unknown): value is Record<string, string> {
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
   process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?',
-  inputSince: 'int?', inputConfidence: 'string?', inputMode: 'string?', inputPrompt: 'string?', queued: 'int?', queuePaused: 'string?'};
+  inputSince: 'int?', inputConfidence: 'string?', inputMode: 'string?', inputPrompt: 'string?', queued: 'int?', queuePaused: 'string?',
+  lifecycle: 'string?', cleanup: 'string?', eligibility: 'string?', cleanupAt: 'int?', used: 'int?', detachedSince: 'int?', tasks: 'int?', jobs: 'int?',
+  protected: 'int?', ending: 'int?'};
 
 const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
   durationMs: 'int?', cwd: 'string?', confidence: 'string?'};

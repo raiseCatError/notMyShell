@@ -17,6 +17,8 @@ import {SESSION_ID_ENV, SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
 import {EndedNotices, INPUT_NOTICE_DELAY_MS, SessionNoticeTracker} from './SessionNotices.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
+import {decodePolicy, eligibility, lifecycleState, type LifecycleFacts, type LifecyclePolicy} from './lifecycle.js';
+import {execFile} from 'node:child_process';
 
 export const SERVICE_NAME = 'nmshd';
 
@@ -31,6 +33,8 @@ export interface SessionRecord {
   signature?: string;
   /** The person's own name for the session, when they renamed it. */
   name?: string;
+  /** Protected: never ended by cleanup or End All Eligible (an explicit End still asks and works). */
+  protected?: true;
 }
 
 type Send = (message: ServerMessage) => void;
@@ -74,6 +78,18 @@ interface ManagedSession {
   taskListener?: TaskListener;
   /** A confirmed kill was sent and the shell has not reported its exit yet: nothing may attach to it now. */
   ending?: true;
+  /** Why the service ended it, when it was cleanup rather than a person; written with the spool's exit record. */
+  endReason?: string;
+  /** At least one command ran (typed, queued) or a background task was requested. */
+  used: boolean;
+  /** When it last lost its window. */
+  detachedSince?: number;
+  /** A lifecycle policy was in effect when it was created; only such sessions are ever ended by a timer. */
+  policyAware: boolean;
+  /** The one pending lifecycle check for this session, if any. */
+  cleanupTimer?: NodeJS.Timeout;
+  /** A cleanup re-verification is in flight. */
+  verifying?: boolean;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -91,6 +107,29 @@ export interface SessionServiceOptions {
   maxSessions?: number;
   /** Build identity reported in the welcome (informational). */
   build?: string;
+  /** Initial lifecycle policy (tests); otherwise the first frontend that states one sets it, and until then nothing is automatic. */
+  lifecycle?: LifecyclePolicy;
+  /** Child processes of a shell (its own PTY child; a shell switch during the read is detected); undefined when unreadable. */
+  childCount?: (pid: number) => Promise<number | undefined>;
+  /** How long a confirmed end waits for the shell to exit on SIGHUP before it sends SIGKILL to that same child. */
+  killEscalationMs?: number;
+  /** Clock for lifecycle decisions (tests). */
+  now?: () => number;
+}
+
+/** A detached session holding work is looked at again this often while a policy could end it later; nothing else polls. */
+const LIFECYCLE_RECHECK_MS = 60 * 60_000;
+const MAX_TIMER_MS = 24 * 60 * 60_000;
+
+/** `pgrep -P <pid>`: one bounded process-table read, only when a cleanup or End All Eligible is about to act. */
+export function shellChildCount(pid: number): Promise<number | undefined> {
+  return new Promise(resolve => {
+    execFile('pgrep', ['-P', String(pid)], {timeout: 2000}, (error, stdout) => {
+      if (!error) { resolve(stdout.split('\n').filter(line => /^\d+$/u.test(line.trim())).length); return; }
+      // pgrep exits 1 when nothing matched; anything else (missing tool, timeout) is unknown, and unknown preserves.
+      resolve((error as {code?: unknown}).code === 1 ? 0 : undefined);
+    });
+  });
 }
 
 export const DEFAULT_MAX_SESSIONS = 16;
@@ -132,12 +171,15 @@ export class SessionService {
   private readonly endedNotices = new EndedNotices();
   private idleTimer: NodeJS.Timeout | undefined;
   private closed = false;
+  /** The person's lifecycle policy, as the most recent frontend stated it; undefined until one does. */
+  private policy: LifecyclePolicy | undefined;
   readonly done: Promise<void>;
   private resolveDone!: () => void;
 
   constructor(private readonly options: SessionServiceOptions) {
     this.socketPath = socketPathFor(options.runtimeDir);
     this.done = new Promise(resolve => { this.resolveDone = resolve; });
+    this.policy = options.lifecycle;
   }
 
   get registry(): SessionRecord[] {
@@ -169,7 +211,98 @@ export class SessionService {
       ...(request ? {inputSince: request.since, inputConfidence: request.confidence, inputMode: request.mode,
         ...(request.prompt ? {inputPrompt: request.prompt.slice(0, 120)} : {})} : {}),
       ...(features.has('queue') && session.queue.queue.size ? {queued: session.queue.queue.size,
-        ...(session.queue.state.paused ? {queuePaused: session.queue.state.paused.reason} : {})} : {})};
+        ...(session.queue.state.paused ? {queuePaused: session.queue.state.paused.reason} : {})} : {}),
+      ...this.lifecycleInfo(session)};
+  }
+
+  /** What the lifecycle policy sees, for every surface: facts, the state they make, and what cleanup would do. */
+  private lifecycleInfo(session: ManagedSession): Partial<SessionInfo> {
+    const facts = this.facts(session);
+    const now = this.now();
+    const result = eligibility(facts, this.policy ?? {unusedMs: 0, idleExpiryMs: 0}, now);
+    const tasks = facts.tasks;
+    return {lifecycle: lifecycleState(facts), cleanup: result.reason, eligibility: result.kind,
+      ...(result.kind !== 'automatic' && result.at !== undefined && session.cleanupTimer ? {cleanupAt: result.at} : {}),
+      ...(session.used ? {used: 1} : {}), ...(session.detachedSince !== undefined ? {detachedSince: session.detachedSince} : {}),
+      ...(tasks ? {tasks} : {}), ...(facts.jobs ? {jobs: facts.jobs} : {}),
+      ...(session.record.protected ? {protected: 1} : {}), ...(session.ending ? {ending: 1} : {})};
+  }
+
+  private facts(session: ManagedSession, children?: number): LifecycleFacts {
+    const tasks = session.tasks.list().filter(task => task.state === 'running' || task.state === 'stopping' || task.leftovers).length;
+    const jobs = knowledgeJobCount(session.knowledge);
+    return {attached: Boolean(session.controller), ending: Boolean(session.ending), protected: Boolean(session.record.protected),
+      // A shell still in its startup (an rc file asking a question, or exec'ing tmux) or a fullscreen program is busy, never unused.
+      running: Boolean(session.running) || !session.shell.isReady || session.screen.ownsTerminal,
+      waiting: Boolean(session.running && session.input?.request), queued: session.queue.queue.size,
+      tasks, ...(jobs === undefined ? {} : {jobs}), ...(children === undefined ? {} : {children}), used: session.used,
+      ...(session.detachedSince === undefined ? {} : {detachedSince: session.detachedSince}),
+      lastActivity: Math.max(session.idleSince, session.evidence.snapshot().lastOutputAt ?? 0, session.detachedSince ?? 0),
+      policyAware: session.policyAware};
+  }
+
+  private now(): number { return (this.options.now ?? Date.now)(); }
+
+  /**
+   * Arm this session's single lifecycle check, or none. Event driven: detach, prompt, a policy or protection change.
+   * Only a detached, policy-aware session whose policy could end it gets a timer, at the moment it could become eligible.
+   */
+  private scheduleCleanup(session: ManagedSession): void {
+    if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
+    const policy = this.policy;
+    if (!policy || this.closed || session.controller || session.ending || !session.policyAware || session.verifying || session.record.protected) return;
+    if (!policy.idleExpiryMs && (session.used || !policy.unusedMs)) return;
+    const result = eligibility(this.facts(session), policy, this.now());
+    const due = result.kind === 'automatic' ? this.now() : result.at ?? this.now() + LIFECYCLE_RECHECK_MS;
+    session.cleanupTimer = setTimeout(() => { session.cleanupTimer = undefined; void this.verifyAndEnd(session); },
+      Math.min(MAX_TIMER_MS, Math.max(0, due - this.now())));
+    session.cleanupTimer.unref?.();
+  }
+
+  /** Re-verify everything right before ending, including child processes; anything uncertain keeps the session. */
+  private async verifyAndEnd(session: ManagedSession): Promise<void> {
+    if (this.sessions.get(session.record.id) !== session || session.verifying) return;
+    const policy = this.policy;
+    if (!policy || eligibility(this.facts(session), policy, this.now()).kind !== 'automatic') { this.scheduleCleanup(session); return; }
+    session.verifying = true;
+    const shell = session.shell;
+    let children: number | undefined;
+    try { children = await (this.options.childCount ?? shellChildCount)(session.record.pid); }
+    catch { children = undefined; }
+    finally { session.verifying = false; }
+    // Everything is read again after the wait: an attach, a command, a policy change, a shell switch or a kill may have happened.
+    if (this.sessions.get(session.record.id) !== session || !this.policy) return;
+    if (session.shell !== shell) { this.scheduleCleanup(session); return; }
+    const result = children === undefined ? undefined : eligibility(this.facts(session, children), this.policy, this.now());
+    if (!result || result.kind !== 'automatic') {
+      // Something changed during the check (attach, a command, a policy): the ordinary schedule applies.
+      if (children === 0) { this.scheduleCleanup(session); return; }
+      // Child processes, or an unreadable process table: kept, looked at again only after a long interval.
+      if (!session.controller && !session.ending) {
+        session.cleanupTimer = setTimeout(() => { session.cleanupTimer = undefined; this.scheduleCleanup(session); }, LIFECYCLE_RECHECK_MS);
+        session.cleanupTimer.unref?.();
+      }
+      return;
+    }
+    this.end(session, `Ended by NMSh session cleanup: ${result.reason}.`);
+  }
+
+  /**
+   * End one session's shell: SIGHUP through node-pty, then, if the shell ignores it, SIGKILL to the same PTY child.
+   * node-pty reaps the child shortly before it reports the exit, so the escalation first confirms that the pid is
+   * still a child of this service (ShellSession.forceKill); a pid that is gone or belongs to anything else is left alone.
+   */
+  private end(session: ManagedSession, reason?: string): void {
+    if (session.ending) return;
+    session.ending = true;
+    if (reason) session.endReason = reason;
+    if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
+    const shell = session.shell;
+    const escalate = setTimeout(() => { if (this.sessions.get(session.record.id) === session && session.shell === shell) shell.forceKill(); },
+      this.options.killEscalationMs ?? 3000);
+    escalate.unref?.();
+    shell.once('exit', () => clearTimeout(escalate));
+    shell.kill();
   }
 
   async start(): Promise<void> {
@@ -205,6 +338,8 @@ export class SessionService {
     let greeted = false;
     let owned: ManagedSession | undefined;
     let features: ReadonlySet<ClientFeature> = new Set();
+    // Whether this connection's own hello stated a lifecycle policy: only its sessions may ever be ended by a timer.
+    let statedPolicy = false;
 
     socket.on('data', chunk => {
       for (const result of decoder.push(chunk as unknown as string)) {
@@ -223,6 +358,13 @@ export class SessionService {
           }
           greeted = true;
           features = parseClientFeatures(message.features);
+          // The person's policy as this frontend knows it; an older frontend says nothing and changes nothing.
+          const stated = decodePolicy(message.lifecycle);
+          statedPolicy = stated !== undefined;
+          if (stated && (stated.unusedMs !== this.policy?.unusedMs || stated.idleExpiryMs !== this.policy?.idleExpiryMs)) {
+            this.policy = stated;
+            for (const session of this.sessions.values()) this.scheduleCleanup(session);
+          }
           send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1, features: SERVICE_FEATURES.join(','),
             ...(this.options.build ? {build: this.options.build} : {})});
           continue;
@@ -237,7 +379,8 @@ export class SessionService {
             try {
               const backend = message.shell === undefined ? 'zsh' : message.shell;
               if (!isShellId(backend)) throw new Error(`unknown shell backend ${backend}`);
-              owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend);
+              owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend,
+                this.policy !== undefined && (statedPolicy || this.options.lifecycle !== undefined));
               owned.controllerFeatures = features;
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid, shell: owned.backend});
               this.attachTasks(owned, send, features);
@@ -299,6 +442,7 @@ export class SessionService {
             if (!owned || !features.has('background-tasks')) send({type: 'error', code: 'state', message: 'no background tasks for this connection'});
             else if (!change) send({type: 'error', code: 'task', message: 'not a background task request'});
             else {
+              owned.used = true;
               const refused = owned.tasks.request(change);
               if (refused) send({type: 'error', code: 'task', message: refused});
             }
@@ -310,7 +454,7 @@ export class SessionService {
             else if (!change) send({type: 'error', code: 'queue', message: 'not a queue change'});
             else if ((change.op === 'failure-policy' || change.expectedRevision !== undefined) && !features.has('queue-timeline')) send({type: 'error', code: 'queue', message: 'queue timeline review not negotiated'});
             else if ((change.op === 'history-detail' || change.op === 'save-summary' || change.op === 'summaries-auto') && !features.has('queue-history')) send({type: 'error', code: 'queue', message: 'queue history review not negotiated'});
-            else owned.queue.request(change);
+            else { if (change.op === 'add') owned.used = true; owned.queue.request(change); }
             break;
           }
           case 'input-look': {
@@ -372,11 +516,36 @@ export class SessionService {
             if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
             // Never pull a shell out from under a frontend that is using it.
             if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
-            target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            // An unknown condition is refused, never read as an unconditional kill.
+            if (message.when !== undefined && message.when !== 'eligible') { send({type: 'error', code: 'unsupported', message: `unsupported kill condition ${message.when.slice(0, 20)}`}); break; }
+            if (message.when === 'eligible' && !target.ending) {
+              // End All Eligible: the service re-verifies, with child processes, right before ending; work or doubt keeps it.
+              void (async () => {
+                const shell = target.shell;
+                let children: number | undefined;
+                try { children = await (this.options.childCount ?? shellChildCount)(target.record.pid); } catch { children = undefined; }
+                if (this.sessions.get(target.record.id) !== target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); return; }
+                if (target.shell !== shell) { send({type: 'error', code: 'busy', message: 'its shell changed while it was being checked'}); return; }
+                if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); return; }
+                const result = eligibility(this.facts(target, children), this.policy ?? {unusedMs: 0, idleExpiryMs: 0}, this.now());
+                if (children === undefined && !target.ending) { send({type: 'error', code: 'busy', message: 'its child processes could not be checked'}); return; }
+                if (result.kind === 'kept' && !target.ending) { send({type: 'error', code: 'busy', message: result.reason}); return; }
+                target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+                this.end(target);
+              })();
+              break;
+            }
             // Between the kill and the shell's exit event no window may attach; a second kill just waits for the same exit.
-            if (target.ending) break;
-            target.ending = true;
-            target.shell.kill();
+            target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            this.end(target);
+            break;
+          }
+          case 'protect': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            if (message.on) target.record.protected = true; else delete target.record.protected;
+            this.scheduleCleanup(target);
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session, features)), ended: this.endedNotices.list(Date.now())});
             break;
           }
           case 'terminate': owned?.shell.kill(); break;
@@ -399,6 +568,8 @@ export class SessionService {
     session.controller = send;
     session.controllerFeatures = features;
     session.record.state = 'attached';
+    session.detachedSince = undefined;
+    if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
     session.queue.onOwnershipChanged();
   }
 
@@ -422,7 +593,9 @@ export class SessionService {
     session.controller = undefined;
     session.controllerFeatures = undefined;
     session.record.state = 'detached';
+    session.detachedSince = Date.now();
     session.queue.onOwnershipChanged();
+    this.scheduleCleanup(session);
   }
 
   /**
@@ -489,7 +662,7 @@ export class SessionService {
     }
   }
 
-  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh'): ManagedSession {
+  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh', policyAware = false): ManagedSession {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
     const id = randomUUID();
@@ -501,7 +674,7 @@ export class SessionService {
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
       evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell),
-      tasks: undefined as unknown as SessionTasks};
+      tasks: undefined as unknown as SessionTasks, used: false, policyAware};
     // The session's own shell runs each task's command; the launch environment is used for the spawn only.
     session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
     session.queue.on('state', (state, event) => {
@@ -537,6 +710,8 @@ export class SessionService {
       // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.
       const queued = session.queue.onExec(command, at, historyAllowed)?.text;
       session.running = {command, since: at, ...(queued === undefined ? {} : {queued})};
+      session.used = true;
+      if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
       session.evidence.onExec();
       session.notices.onExec(command, at);
       emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed}), ...(queued === undefined ? {} : {queued})});
@@ -555,6 +730,7 @@ export class SessionService {
         ...(marker.incomplete ? {incomplete: true} : {})});
       // After the prompt is on its way: the next queued command, if any, starts from this evidence only.
       session.queue.onPrompt(marker.exitCode, session.idleSince, marker);
+      if (!session.controller) this.scheduleCleanup(session);
     });
     shell.on('exit', event => {
       session.queue.onShellExit();
@@ -562,12 +738,13 @@ export class SessionService {
       void session.tasks.shutdown();
       this.sessions.delete(record.id);
       if (session.inputNoticeTimer) { clearTimeout(session.inputNoticeTimer); session.inputNoticeTimer = undefined; }
+      if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
       // Ending with no window attached is news; with one attached, that window saw it.
       if (!session.controller) this.endedNotices.add(session.notices.ended(event.exitCode, Date.now(), record.cwd));
       // Detached: keep what the journal lacks on disk for archiving. Attached:
       // the frontend journal is authoritative and the backlog goes.
       if (session.controller) session.backlog.dispose();
-      else session.backlog.finish(event.exitCode, Date.now());
+      else session.backlog.finish(event.exitCode, Date.now(), session.endReason);
       session.controller?.({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
       session.controller = undefined;
       this.maybeShutdown();
@@ -623,7 +800,10 @@ export class SessionService {
     if (this.closed) return;
     this.closed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    for (const session of this.sessions.values()) session.shell.kill();
+    for (const session of this.sessions.values()) {
+      if (session.cleanupTimer) { clearTimeout(session.cleanupTimer); session.cleanupTimer = undefined; }
+      session.shell.kill();
+    }
     await Promise.all([...this.sessions.values()].map(session => session.tasks.shutdown()));
     this.sessions.clear();
     for (const socket of this.connections) socket.destroy();
