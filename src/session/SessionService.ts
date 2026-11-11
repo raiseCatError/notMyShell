@@ -429,6 +429,8 @@ export class SessionService {
     // Preserve explicit reader ownership for detach/reattach and transcript cuts,
     // even on Fish versions that send no terminal input-mode escape.
     if (state.terminalOwner) session.screen.interactive = true;
+    // Before any window hears of the request: lines queued while it ran may be its reply and stop running by themselves.
+    if (state.request) session.queue.onInputRequest(state.request, state.request.program ?? 'the command');
     if (session.controllerFeatures?.has('input-state')) session.controller?.(inputStateMessage(state));
     const request = state.request;
     if (!request) {

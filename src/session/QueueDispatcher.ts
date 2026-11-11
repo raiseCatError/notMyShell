@@ -82,6 +82,10 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   private autoSummaries = false;
   private summaries: QueueSummary[] = [];
   private detailChain?: number;
+  /** When the current command was submitted (or, if NMSh did not submit it, started); cleared at its prompt. */
+  private commandSince?: number;
+  /** The input request of the current command already checked (its `since`); each is checked once. */
+  private askedSince?: number;
 
   constructor(shell: QueueShell, queue = new CommandQueue(), private readonly clock: QueueClock = systemQueueClock) {
     super();
@@ -125,6 +129,7 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
   /** Claim a manual submission synchronously, before an asynchronous shell exec marker can arrive. */
   onSubmission(): void {
     if (this.atPrompt && !this.ran && !this.sent) this.manualStarting = true;
+    if (this.atPrompt) this.commandSince = this.clock.now();
     this.atPrompt = false;
     this.queue.invalidateReviews();
   }
@@ -137,6 +142,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.atPrompt = false;
     this.ran = true;
     this.lastCommand = command;
+    this.commandSince = Math.min(this.commandSince ?? at, at);
+    this.askedSince = undefined;
     const entry = this.sent;
     this.sent = undefined;
     const summaryEligible = historyAllowed === 1 && !isPrivateCommand(entry?.text ?? command, ignorePatternFromEnv());
@@ -152,6 +159,20 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     if (!this.atPrompt) this.interrupted = true;
   }
 
+  /**
+   * The running command asked for input (InputWatch reported a request; `program` names it). A line queued while it
+   * ran, before this was known, may be its reply: in Queue Mode Enter queues without approval, and an Enter pressed
+   * before the reader could be seen (an echoing terminal is no evidence, #514) queues it as a command. Those entries now
+   * wait for approval, decided here beside the prompt so the next dispatch can never overtake a frontend's request;
+   * hidden input also hides their text. Each request is checked once, when first reported: what the person queues
+   * while it is shown stays as queued.
+   */
+  onInputRequest(request: {since: number; mode: string}, program: string): number {
+    if (this.atPrompt || this.commandSince === undefined || this.askedSince === request.since) return 0;
+    this.askedSince = request.since;
+    return this.queue.holdAddedSince(this.commandSince, request.mode === 'hidden' ? program.slice(0, 64) || 'the command' : undefined);
+  }
+
   onPrompt(exitCode: number, at = this.clock.now(), waits?: {inputWaitMs?: number; incomplete?: boolean}): void {
     // The entry it submitted was a line the shell could not finish; the session cancelled it before anything ran. It is
     // a mistake in the queued text, not a result: what follows waits for the person, whatever the failure policy.
@@ -161,6 +182,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     const belongs = this.timeline.running;
     if (this.ran && belongs) this.timeline.complete(exitCode, this.interrupted || exitCode === 130, at, waits?.inputWaitMs);
     this.foreground = undefined;
+    this.commandSince = undefined;
+    this.askedSince = undefined;
     // A submission that started no command (a comment, an empty block) is not owed to the next command.
     this.sent = undefined;
     const finished = this.ran;
@@ -286,6 +309,7 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     // Leaves the prompt now: a second dispatch cannot happen before this entry's own prompt.
     this.atPrompt = false;
     this.sent = entry;
+    this.commandSince = this.clock.now();
     this.emit('state', this.state, {dispatched: entry});
     // Exactly as the composer submits it: a multi-line entry runs as one block.
     this.shell.submit(shellSubmission(entry.text, this.shell.adapter.id));

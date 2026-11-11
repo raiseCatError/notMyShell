@@ -60,7 +60,11 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     });
     shell.on('startup', tail => this.emit('startup', tail));
     shell.on('inputRejected', (data, submission) => this.emit('inputRejected', data, submission));
-    shell.on('inputState', state => this.emit('inputState', state));
+    shell.on('inputState', state => {
+      // As in the session service: before the frontend hears of it, lines queued while the command ran stop running by themselves.
+      if (state.request) this.dispatcher.onInputRequest(state.request, state.request.program ?? 'the command');
+      this.emit('inputState', state);
+    });
     shell.on('unread', (text, program) => { this.dispatcher.holdUnread(text, program); });
     shell.on('exit', event => { this.dispatcher.onShellExit(); void this.tasks.shutdown(); this.emit('exit', event); });
   }

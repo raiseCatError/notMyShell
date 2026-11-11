@@ -177,6 +177,12 @@ typed is drawn, not even as dots.
   makes Enter do what Ctrl+Q does. It changes only this case: the look before typing is drawn, Enter to a program that
   waits, hidden input and the held state when a look cannot tell are all as above. Its accepted cost is the prompt-less
   read NMSh cannot see (an external program reading with no prompt): in Queue Mode the line is queued, visibly, instead.
+  A reader seen late (#514: an echoing terminal is no evidence, and a loaded machine can delay the follow-up sample) is
+  caught by the owner: when the running command is first reported asking for input, every entry queued since it was
+  submitted waits for approval (hidden input also hides their text). The session service decides this beside the
+  prompt, so the next dispatch cannot overtake it. What remains is a reader NMSh never sees before it ends (on macOS
+  there is no kernel read report: a prompt-less external reader, or a timed read that gives up within a second): its
+  queued line runs after it, as a Ctrl+Q line always has.
   At the prompt, Queue Mode keeps order: a line never runs ahead of entries already waiting (a held head included);
   only a paused queue gives the prompt back.
 - **Unfinished command lines.** NMSh draws no continuation prompt, so zsh and Bash print PS2 as an invisible marker.
