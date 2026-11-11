@@ -11,6 +11,8 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {applyEditingKey} from '../input/editingKeys.js';
 import {graphemes} from '../input/inputLayout.js';
+import type {AnswerContext, AnswerTurn} from '../understanding/tasks.js';
+import {modelTextRows} from './conversation.js';
 
 /**
  * The Ask surface. Each turn advances structured state (pending outcome,
@@ -18,7 +20,24 @@ import {graphemes} from '../input/inputLayout.js';
  * bounded and in memory only. `/ask` and `/ask <text>` open this same state;
  * with text, the request is submitted at once.
  */
-export interface AskTurn {role: 'you' | 'ask'; text: string; block?: CommandBlock}
+export interface AskTurn {role: 'you' | 'ask'; text: string; block?: CommandBlock;
+  /** An answer from the person's local model: untrusted text, labelled as such, rendered by NMSh. */
+  model?: ModelTurn}
+
+export interface ModelTurn {
+  label: string;
+  reasoning: 'fast' | 'thinking';
+  /** Which terminal context was sent with the question, as shown to the person. */
+  context?: string;
+  /** Still generating (streamed text so far). */
+  streaming?: boolean;
+  /** Stopped by the person (Esc) before it finished. */
+  stopped?: boolean;
+  /** Cut off at the length limit. */
+  truncated?: boolean;
+  /** NMSh's own check of each shell code block, index-aligned with the answer's code blocks. */
+  checks?: Array<string | undefined>;
+}
 
 export interface AskState {
   /** The request being typed: a real editor (caret, selection, word movement), shared with the shell composer. */
@@ -49,10 +68,23 @@ export interface AskState {
   previous?: AskOutcome;
   /** An action is running inside Ask ("Running git add…"); input waits until its result turn arrives. */
   working?: string;
+  /**
+   * The general conversation with the local model: the newest few exchanges, trimmed predictably, sent with each
+   * follow-up. In memory, per Ask in this window only; never persisted and never shared with another window.
+   */
+  history: AnswerTurn[];
+  /** The local model is generating an answer: Esc stops it (and keeps Ask open). */
+  generating?: {since: number; controller: AbortController};
+  /** The newest question the model answered and the context sent with it, so "think it through" asks it again. */
+  lastQuestion?: {text: string; context?: AnswerContext};
 }
 
 export type AskEvent =
-  | {kind: 'resolve'; text: string}
+  | {kind: 'resolve'; text: string; converse?: {reasoning?: 'fast' | 'thinking'; again?: boolean}}
+  /** Stop the answer being generated; Ask stays open. */
+  | {kind: 'cancel'}
+  /** Copy plain text (an answer or its code): never runs anything. */
+  | {kind: 'copyText'; text: string; what: string}
   | {kind: 'execute'; action: AskAction; outcome: AskOutcome}
   /** Copy or insert a shown command block: never executes. */
   | {kind: 'copy'; block: CommandBlock}
@@ -61,13 +93,13 @@ export type AskEvent =
   | {kind: 'complete'; text: string; caret: number}
   | {kind: 'close'};
 
-const MAX_TURNS = 24;
+export const MAX_TURNS = 24;
 export const ASK_GREETING = 'What can I help you with?';
 export const ASK_STARTERS = ['open package.json', 'show my sessions', 'switch to fish', 'check git diff', 'find errors in the transcript', 'resume yesterday\'s session'];
 
 export function createAskState(): AskState {
   const editor = new CommandEditor();
-  const state = {editor, turns: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false, scroll: 0} as unknown as AskState;
+  const state = {editor, turns: [], history: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false, scroll: 0} as unknown as AskState;
   Object.defineProperty(state, 'input', {enumerable: true, get: () => editor.text, set: (value: string) => editor.replaceText(value)});
   return state;
 }
@@ -190,8 +222,19 @@ export function submitText(state: AskState, text: string): AskEvent | undefined 
     pushTurn(state, 'ask', block.risk === 'destructive' ? 'Ask won\'t run that: it is destructive. Copy or insert it to run it yourself.' : 'That command can\'t be run from Ask; copy or insert it instead.');
     return undefined;
   }
+  // "copy it" after a local-model answer: its Copy option (plain text; nothing runs).
+  if (!block && /^(?:please )?copy (?:it|that|this|the answer|the code)(?: please)?$/iu.test(reply)) {
+    const copy = visibleOptions(state).find(option => option.copy && (/code/iu.test(reply) ? option.key === 'answer:code' : option.key === 'answer:copy'))
+      ?? visibleOptions(state).find(option => option.copy);
+    if (copy?.copy) return {kind: 'copyText', text: copy.copy.text, what: copy.copy.what};
+  }
   const options = visibleOptions(state);
-  if (options.length) {
+  // After a local-model answer the next words are usually a new question: only a number or an option's exact
+  // label picks one ("explain the last error" must never fuzzy-match "Think it through").
+  if (options.length && pending?.kind === 'answer' && pending.capability === 'chat.answer') {
+    const exact = /^\d+$/u.test(reply) ? Number(reply) - 1 : options.findIndex(option => option.label.toLowerCase() === reply.toLowerCase());
+    if (exact >= 0 && exact < options.length) return chooseOption(state, options[exact]!, options);
+  } else if (options.length) {
     const index = pickOption(reply, options);
     if (index !== undefined) return chooseOption(state, options[index]!, options);
   }
@@ -223,6 +266,11 @@ function chooseOption(state: AskState, option: AskOption, shown: AskOption[]): A
     pushTurn(state, 'ask', 'None of those, then. Tell me a little more about what you want.');
     return undefined;
   }
+  if (option.copy) return {kind: 'copyText', text: option.copy.text, what: option.copy.what};
+  if (option.converse) {
+    state.busy = true;
+    return {kind: 'resolve', text: option.converse.text, converse: {...(option.converse.reasoning ? {reasoning: option.converse.reasoning} : {}), ...(option.converse.again ? {again: true} : {})}};
+  }
   if (option.fill !== undefined) { state.input = option.fill; state.pending = state.previous; state.previous = undefined; return undefined; }
   if (option.outcome) return receiveOutcome(state, option.outcome);
   if (option.refine !== undefined) {
@@ -244,6 +292,15 @@ function confirmProposal(state: AskState, choice: 'yes' | 'no'): AskEvent | unde
 }
 
 export function askKey(state: AskState, key: Key, columnsHint = 80): AskEvent | undefined {
+  // While the model generates, Esc (or Ctrl+C) stops it and Ask stays open; the next request can be typed meanwhile.
+  if (state.generating) {
+    if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'cancel'};
+    if (key.kind === 'enter' || key.kind === 'complete') return undefined;
+    if (key.kind === 'pageUp' || key.kind === 'wheelUp') { state.scroll += key.kind === 'pageUp' ? ASK_PAGE : 3; return undefined; }
+    if (key.kind === 'pageDown' || key.kind === 'wheelDown') { state.scroll = Math.max(0, state.scroll - (key.kind === 'pageDown' ? ASK_PAGE : 3)); return undefined; }
+    applyEditingKey(state.editor, key, Math.max(20, columnsHint - 6));
+    return undefined;
+  }
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (state.busy || state.working) return undefined;
   const pending = state.pending;
@@ -290,7 +347,10 @@ export function askTranscriptText(state: AskState, shell: ShellId = 'zsh'): {req
   const first = state.turns.findIndex(turn => turn.role === 'you');
   if (first === -1) return undefined;
   // Only the visible role and text are kept: no outcomes, options, rejected keys or model data.
-  const turns = state.turns.slice(first + 1).map(turn => ({role: turn.role, text: turn.block ? `${turn.text}\n  ${turn.block.literal ?? turn.block.script ?? renderCommand(turn.block, shell)}` : turn.text}));
+  // A local-model answer is recorded as plain text and says where it came from.
+  const turns = state.turns.slice(first + 1).filter(turn => !turn.model?.streaming).map(turn => ({role: turn.role,
+    text: turn.model ? `Local model (${turn.model.label}${turn.model.reasoning === 'thinking' ? ', thought it through' : ''}):${turn.model.context ? ` [context: ${turn.model.context}]` : ''}\n${turn.text}${turn.model.stopped ? '\n(stopped)' : turn.model.truncated ? '\n(cut off at the length limit)' : ''}`
+      : turn.block ? `${turn.text}\n  ${turn.block.literal ?? turn.block.script ?? renderCommand(turn.block, shell)}` : turn.text}));
   const body = turns.map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n');
   return {request: state.turns[first]!.text, body, turns};
 }
@@ -356,6 +416,8 @@ export function askConversationRows(turns: readonly AskTurn[], columns: number, 
         const left = 2 + inner - widest;
         rows.push(`${' '.repeat(left + widest - 3)}${subtle}You${reset}`);
         for (const line of lines) rows.push(`${' '.repeat(left + widest - displayWidth(line))}${primary}${line}${reset}`);
+      } else if (turn.model) {
+        rows.push(...modelTurnRows(turn, inner));
       } else {
         rows.push(`  ${you ? subtle : accent}${you ? 'You' : 'Ask'}${reset}`);
         for (const line of turn.text.split('\n').flatMap(part => wrapText(part, inner))) rows.push(`  ${you ? primary : secondary}${line}${reset}`);
@@ -363,6 +425,25 @@ export function askConversationRows(turns: readonly AskTurn[], columns: number, 
       }
     }
   });
+  return rows;
+}
+
+/**
+ * A local-model answer: labelled as the person's local model (never as NMSh), the context it was given, the
+ * answer rendered from sanitized text, and how it ended (stopped, cut off). While streaming, a caret follows.
+ */
+export function modelTurnRows(turn: AskTurn, inner: number): string[] {
+  const subtle = foreground(UI_COLORS.subtle);
+  const accent = foreground(UI_COLORS.accent);
+  const reset = '\u001b[0m';
+  const model = turn.model!;
+  const rows = [`  ${accent}Ask${reset}${subtle} · local model · ${model.label}${model.reasoning === 'thinking' ? ' · thought it through' : ''}${reset}`];
+  if (model.context) for (const line of wrapText(`Context sent: ${model.context}`, inner)) rows.push(`  ${subtle}${line}${reset}`);
+  const body = modelTextRows(turn.text, inner, model.checks).map(row => `  ${row}`);
+  if (model.streaming && !turn.text) body.push(`  ${subtle}…${reset}`);
+  rows.push(...body);
+  if (model.stopped) rows.push(`  ${subtle}Stopped.${reset}`);
+  else if (model.truncated) rows.push(`  ${subtle}(Cut off at the length limit.)${reset}`);
   return rows;
 }
 
@@ -412,13 +493,14 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
     bottom.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);
   }
   bottom.push('', ...(state.working ? [`  ${subtle}${state.working}${reset}`] : askInputRows(state, columns - 4, options.activity)));
+  if (state.generating && options.activity) bottom.push(`  ${options.activity}`);
   // The footer lists only what works right now.
-  const controls: Array<[string, string]> = [['Enter', 'send']];
+  const controls: Array<[string, string]> = state.generating ? [] : [['Enter', 'send']];
   if (choices.length || confirming) controls.push(['←→/↑↓', 'choose']);
   const room = options.height === undefined ? Infinity : Math.max(3, options.height - top.length - bottom.length - 2);
   const overflow = conversation.length > room;
   if (overflow) controls.push(['PgUp/PgDn', 'scroll']);
-  controls.push(['Esc', 'close']);
+  controls.push(['Esc', state.generating ? 'stop' : 'close']);
   let visible = conversation;
   if (overflow) {
     // Offset from the newest row: redraws keep the reader's place; a resize clamps it.

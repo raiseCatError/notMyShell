@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {defaultRuntimeDir, ensurePrivateRuntimeDir, RUNTIME_DIR_ENV} from '../session/runtimeDir.js';
 import type {LocalModelChoice, LocalUnderstandingMode} from '../prompt/configuration.js';
 import {lineChannel, MODEL_PROTOCOL, modelSocketPath, type ClientMessage, type Priority, type ServiceMessage} from './ModelService.js';
-import type {CommandRequest, FoldRequest, IntentRequest} from './tasks.js';
+import type {AnswerRequest, AnswerStats, CommandRequest, FoldRequest, IntentRequest} from './tasks.js';
 
 export interface ModelStatus {state: string; model?: string; runtime?: string; clients: number; queued: number; error?: string}
 
@@ -21,6 +21,8 @@ export class ModelClient {
   private connecting?: Promise<boolean>;
   private nextId = 1;
   private readonly pending = new Map<number, (message: ServiceMessage | undefined) => void>();
+  /** Partial-text listeners for streamed answers, by request id. */
+  private readonly partials = new Map<number, (text: string) => void>();
   /** Protocol of the connected service; a different one is never spoken to. */
   protocol?: number;
   /** What the connected service says it can do (an older service lacks newer tasks, such as 'command'). */
@@ -43,6 +45,7 @@ export class ModelClient {
           this.socket = undefined; this.send = undefined; this.protocol = undefined; this.features = new Set();
           for (const resolveRequest of this.pending.values()) resolveRequest(undefined);
           this.pending.clear();
+          this.partials.clear();
         });
         this.send({type: 'hello', protocol: MODEL_PROTOCOL} satisfies ClientMessage);
         resolve(true);
@@ -57,6 +60,7 @@ export class ModelClient {
       for (const done of this.welcomeWaiters.splice(0)) done();
       return;
     }
+    if (message.type === 'partial') { this.partials.get(message.id)?.(message.text); return; }
     const resolveRequest = this.pending.get(message.id);
     if (!resolveRequest) return;
     this.pending.delete(message.id);
@@ -113,6 +117,49 @@ export class ModelClient {
     const reply = await this.request({type: 'infer', task, input, priority: options.priority, mode: options.mode, model: options.model, ...(options.reasoning ? {reasoning: options.reasoning} : {})} as never, options.timeoutMs);
     if (reply?.type === 'result' && reply.ok) { this.lastReasoning = reply.reasoning ?? 'fast'; return reply.output; }
     return undefined;
+  }
+
+  /**
+   * One general answer. `onPartial` receives the sanitized answer so far while it streams; aborting `signal` sends
+   * a cancel for this request only and resolves at once as cancelled. Never throws: every failure is a reason.
+   */
+  async answer(input: AnswerRequest, options: {mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning: Reasoning; signal?: AbortSignal; onPartial?: (text: string) => void}):
+    Promise<{ok: true; output: unknown; reasoning: Reasoning; stats?: AnswerStats} | {ok: false; reason: 'unavailable' | 'old-service' | 'timeout' | 'cancelled' | 'failed'; error?: string}> {
+    if (options.signal?.aborted) return {ok: false, reason: 'cancelled'};
+    if (!(await this.ensure()) || (this.protocol !== undefined && this.protocol !== MODEL_PROTOCOL)) return {ok: false, reason: 'unavailable'};
+    if (!(await this.welcomed(1500))) return {ok: false, reason: 'unavailable'};
+    if (!this.features.has('answer')) return {ok: false, reason: 'old-service'};
+    if (!this.send) return {ok: false, reason: 'unavailable'};
+    // Cancelled while connecting: nothing is sent.
+    if (options.signal?.aborted) return {ok: false, reason: 'cancelled'};
+    const id = this.nextId++;
+    const stream = Boolean(options.onPartial) && this.features.has('stream');
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (value: Awaited<ReturnType<ModelClient['answer']>>) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        this.pending.delete(id);
+        this.partials.delete(id);
+        resolve(value);
+      };
+      const abort = () => {
+        if (this.features.has('cancel')) this.send?.({type: 'cancel', id} satisfies ClientMessage);
+        finish({ok: false, reason: 'cancelled'});
+      };
+      const timer = setTimeout(() => { if (this.features.has('cancel')) this.send?.({type: 'cancel', id} satisfies ClientMessage); finish({ok: false, reason: 'timeout'}); }, options.timeoutMs);
+      timer.unref?.();
+      options.signal?.addEventListener('abort', abort, {once: true});
+      if (stream) this.partials.set(id, text => { if (!settled) options.onPartial!(text); });
+      this.pending.set(id, reply => {
+        if (reply?.type === 'result' && reply.ok) { this.lastReasoning = reply.reasoning ?? 'fast'; finish({ok: true, output: reply.output, reasoning: reply.reasoning ?? 'fast', ...(reply.stats ? {stats: reply.stats} : {})}); return; }
+        finish(reply?.type === 'result' && !reply.ok ? {ok: false, reason: reply.error === 'cancelled' ? 'cancelled' : reply.error === 'timed out' ? 'timeout' : 'failed', error: reply.error}
+          : {ok: false, reason: 'unavailable'});
+      });
+      this.send!({type: 'infer', task: 'answer', id, input, priority: 'interactive', mode: options.mode, model: options.model, reasoning: options.reasoning, ...(stream ? {stream: true} : {})} satisfies ClientMessage);
+    });
   }
 
   /** The mode the service actually used for the newest successful result (diagnostics only). */

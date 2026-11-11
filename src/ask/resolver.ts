@@ -183,6 +183,8 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   return retry;
 }
 
+/** An outcome that doesn't really place the request: unclear, a guess among readings, or "I don't know". */
+export const weakOutcome = (outcome: AskOutcome): boolean => weak(outcome);
 const weak = (outcome: AskOutcome) => outcome.kind === 'unclear' || (outcome.kind === 'answer' && /is not an NMSh command/u.test(outcome.text)) || (outcome.kind === 'choose' && outcome.reason === 'ambiguous')
   || (outcome.kind === 'answer' && /^No file matching|doesn't know|I don't know|not a .* subcommand NMSh knows/u.test(outcome.text))
   || (outcome.kind === 'answer' && /\(\S+ is not a .+ subcommand NMSh knows\)/u.test(outcome.text));
@@ -508,6 +510,8 @@ export function build(id: CapabilityId, text: string, context: AskContext, raw: 
       return {kind: 'answer', capability: id, text: `Ask finds, opens, shows and switches things in NMSh. For example:\n${['open package.json', 'show my sessions', 'switch to fish',
         'check git diff', 'find error in the transcript', 'resume yesterday\'s session', 'what providers are installed'].map(example => `  ${example}`).join('\n')}\nIt never runs destructive or arbitrary commands.`};
     case 'help.guide': return guideOutcome(context);
+    // Never a capability the resolver or the intent model can choose: only the planner routes to the model's answers.
+    case 'chat.answer': return unclear(context, 'I\'m not sure what you mean yet.');
     case 'help.feature': case 'feature.open':
       return resolveConcepts(text, context, raw, []) ?? unclear(context, 'I\'m not sure which part of NMSh you mean.');
     case 'help.command': {

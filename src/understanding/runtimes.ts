@@ -1,6 +1,7 @@
 import {spawn, type ChildProcess} from 'node:child_process';
 import {createServer} from 'node:net';
 import type {LocalModelChoice} from '../prompt/configuration.js';
+import type {AnswerStats, ChatMessage} from './tasks.js';
 
 /**
  * One loaded model behind a small interface. Every adapter talks only to
@@ -13,8 +14,17 @@ export interface ModelRuntime {
   readonly loaded: boolean;
   load(signal?: AbortSignal): Promise<void>;
   infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal, options?: InferOptions): Promise<unknown>;
+  /**
+   * Free text for a conversation (the general-answer task). `onText` receives each new piece as it streams;
+   * aborting the signal stops generation (the runtime drops the request when its connection closes).
+   * The text is untrusted: the caller validates and sanitizes it.
+   */
+  generate?(messages: ChatMessage[], maxTokens: number, signal: AbortSignal, options?: GenerateOptions): Promise<Generated>;
   unload(): Promise<void>;
 }
+
+export interface GenerateOptions extends InferOptions {onText?: (piece: string) => void}
+export interface Generated {text: string; truncated: boolean; stats?: AnswerStats}
 
 /**
  * Qwen3 runs in one of its two officially supported modes. Fast (non-thinking)
@@ -26,6 +36,11 @@ export interface InferOptions {reasoning?: Reasoning; qwen3?: boolean}
 
 /** Qwen's published sampling per mode (Qwen3 model card): thinking 0.6/0.95/20, non-thinking 0.7/0.8/20; never greedy for thinking. */
 export const QWEN3_SAMPLING = {thinking: {temperature: 0.6, top_p: 0.95, top_k: 20}, fast: {temperature: 0.7, top_p: 0.8, top_k: 20}} as const;
+/**
+ * Free-text answers follow the same published settings with min_p 0 (llama.cpp's own default is 0.05), and the
+ * model card's presence penalty against the endless repetition small quantized models fall into.
+ */
+export const QWEN3_ANSWER_SAMPLING = {thinking: {...QWEN3_SAMPLING.thinking, min_p: 0, presence_penalty: 1.5}, fast: {...QWEN3_SAMPLING.fast, min_p: 0, presence_penalty: 1.5}} as const;
 
 export function isQwen3(model: {label: string; name?: string; path?: string}): boolean {
   // Qwen3 text models (not Qwen3-VL or Qwen3-Coder, whose templates differ).
@@ -40,6 +55,15 @@ export function isQwen3(model: {label: string; name?: string; path?: string}): b
  */
 export function qwen3Prompt(prompt: string, reasoning: Reasoning): string {
   return `<|im_start|>user\n${prompt}<|im_end|>\n<|im_start|>assistant\n${reasoning === 'fast' ? '<think>\n\n</think>\n\n' : ''}`;
+}
+
+/**
+ * A whole conversation in Qwen3's ChatML. History carries final answers only (the model card's multi-turn advice:
+ * no reasoning in history); non-thinking prefills the empty think block, thinking leaves it open.
+ */
+export function qwen3ChatPrompt(messages: readonly ChatMessage[], reasoning: Reasoning): string {
+  const turns = messages.map(message => `<|im_start|>${message.role}\n${message.content}<|im_end|>\n`).join('');
+  return `${turns}<|im_start|>assistant\n${reasoning === 'fast' ? '<think>\n\n</think>\n\n' : ''}`;
 }
 
 /** Remove any reasoning block (closed, or cut off by the token budget) before JSON is looked for. */
@@ -62,6 +86,46 @@ export function parseJsonText(raw: unknown): unknown {
   const end = text.lastIndexOf('}');
   if (start === -1 || end < start) throw new Error('no JSON object');
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/** Read a streamed reply line by line (server-sent `data:` lines or NDJSON), handing each parsed JSON object on. */
+export async function readStream(response: Response, onObject: (value: Record<string, unknown>) => void): Promise<void> {
+  if (!response.body) throw new Error('no stream');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const line = (raw: string) => {
+    const text = raw.startsWith('data:') ? raw.slice(5).trim() : raw.trim();
+    if (!text || text === '[DONE]' || text.startsWith(':') || text.startsWith('event:')) return;
+    let value: unknown;
+    try { value = JSON.parse(text); } catch { return; }
+    if (value && typeof value === 'object' && !Array.isArray(value)) onObject(value as Record<string, unknown>);
+  };
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, {stream: true});
+    if (buffer.length > 4 * 1024 * 1024) throw new Error('runtime stream too large');
+    let index;
+    while ((index = buffer.indexOf('\n')) !== -1) { line(buffer.slice(0, index)); buffer = buffer.slice(index + 1); }
+  }
+  line(buffer);
+}
+
+async function postStream(url: string, body: unknown, signal: AbortSignal, onObject: (value: Record<string, unknown>) => void): Promise<void> {
+  const response = await fetch(url, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body), signal});
+  if (!response.ok) throw new Error(`runtime answered ${response.status}`);
+  await readStream(response, onObject);
+}
+
+/** Text a streamed answer collects; the budget is a hard stop even if a runtime ignores its own limit. */
+class Collector {
+  text = '';
+  truncated = false;
+  constructor(private readonly onText?: (piece: string) => void, private readonly limit = 24_000) {}
+  add(piece: unknown): void {
+    if (typeof piece !== 'string' || !piece) return;
+    if (this.text.length + piece.length > this.limit) { this.truncated = true; return; }
+    this.text += piece;
+    this.onText?.(piece);
+  }
 }
 
 function freePort(): Promise<number> {
@@ -113,6 +177,31 @@ export class LlamaServerRuntime implements ModelRuntime {
     return parseJsonText(reply.content);
   }
 
+  async generate(messages: ChatMessage[], maxTokens: number, signal: AbortSignal, options: GenerateOptions = {}): Promise<Generated> {
+    const reasoning = options.reasoning ?? 'fast';
+    const collector = new Collector(options.onText);
+    let stats: AnswerStats | undefined;
+    // Qwen3 gets its own template and published sampling; other models use the server's chat endpoint and template.
+    if (options.qwen3) {
+      await postStream(`http://127.0.0.1:${this.port}/completion`, {prompt: qwen3ChatPrompt(messages, reasoning), n_predict: maxTokens, stream: true,
+        ...QWEN3_ANSWER_SAMPLING[reasoning], cache_prompt: false}, signal, value => {
+        collector.add(value.content);
+        if (value.stop === true) {
+          if (value.stop_type === 'limit' || value.truncated === true) collector.truncated = true;
+          const timings = value.timings as Record<string, number> | undefined;
+          if (timings) stats = {promptTokens: timings.prompt_n, outputTokens: timings.predicted_n, promptMs: timings.prompt_ms, generateMs: timings.predicted_ms, tokensPerSecond: timings.predicted_per_second};
+        }
+      });
+    } else {
+      await postStream(`http://127.0.0.1:${this.port}/v1/chat/completions`, {messages, max_tokens: maxTokens, stream: true, temperature: 0.7, top_p: 0.8, cache_prompt: false}, signal, value => {
+        const choice = (value.choices as Array<{delta?: {content?: string}; finish_reason?: string}> | undefined)?.[0];
+        collector.add(choice?.delta?.content);
+        if (choice?.finish_reason === 'length') collector.truncated = true;
+      });
+    }
+    return {text: collector.text, truncated: collector.truncated, ...(stats ? {stats} : {})};
+  }
+
   async unload(): Promise<void> {
     const child = this.child;
     this.child = undefined;
@@ -137,6 +226,24 @@ export class OllamaRuntime implements ModelRuntime {
       options: {...sampling, num_predict: maxTokens, num_ctx: CONTEXT_TOKENS}, keep_alive: '5m'}, signal);
     return parseJsonText(reply.response);
   }
+  async generate(messages: ChatMessage[], maxTokens: number, signal: AbortSignal, options: GenerateOptions = {}): Promise<Generated> {
+    const reasoning = options.reasoning ?? 'fast';
+    // Qwen3's documented soft switch on the newest user turn, plus Ollama's own `think` flag where it knows it.
+    const sent = options.qwen3 ? softSwitch(messages, reasoning) : messages;
+    const collector = new Collector(options.onText);
+    let stats: AnswerStats | undefined;
+    await postStream(`${this.base}/api/chat`, {model: this.model, messages: sent, stream: true, ...(options.qwen3 ? {think: reasoning === 'thinking'} : {}),
+      options: {...(options.qwen3 ? QWEN3_ANSWER_SAMPLING[reasoning] : {temperature: 0.7, top_p: 0.8}), num_predict: maxTokens, num_ctx: CONTEXT_TOKENS}, keep_alive: '5m'}, signal, value => {
+      collector.add((value.message as {content?: string} | undefined)?.content);
+      if (value.done === true) {
+        if (value.done_reason === 'length') collector.truncated = true;
+        if (typeof value.eval_count === 'number') stats = {outputTokens: value.eval_count, ...(typeof value.prompt_eval_count === 'number' ? {promptTokens: value.prompt_eval_count} : {}),
+          ...(typeof value.eval_duration === 'number' && value.eval_duration > 0 ? {generateMs: value.eval_duration / 1e6, tokensPerSecond: value.eval_count / (value.eval_duration / 1e9)} : {})};
+      }
+    });
+    this.warm = true;
+    return {text: collector.text, truncated: collector.truncated, ...(stats ? {stats} : {})};
+  }
   async unload(): Promise<void> {
     this.warm = false;
     try { await postJson(`${this.base}/api/generate`, {model: this.model, prompt: '', keep_alive: 0}, AbortSignal.timeout(3000)); } catch { /* Ollama gone */ }
@@ -156,7 +263,26 @@ export class LmStudioRuntime implements ModelRuntime {
     const choices = reply.choices as Array<{message?: {content?: string}}> | undefined;
     return parseJsonText(choices?.[0]?.message?.content);
   }
+  async generate(messages: ChatMessage[], maxTokens: number, signal: AbortSignal, options: GenerateOptions = {}): Promise<Generated> {
+    const reasoning = options.reasoning ?? 'fast';
+    const sent = options.qwen3 ? softSwitch(messages, reasoning) : messages;
+    const sampling = options.qwen3 ? QWEN3_ANSWER_SAMPLING[reasoning] : {temperature: 0.7, top_p: 0.8};
+    const collector = new Collector(options.onText);
+    await postStream(`${this.base}/v1/chat/completions`, {model: this.model, messages: sent, stream: true, temperature: sampling.temperature, top_p: sampling.top_p, max_tokens: maxTokens}, signal, value => {
+      // Only the answer: a separate reasoning field (reasoning_content) is never collected.
+      const choice = (value.choices as Array<{delta?: {content?: string}; finish_reason?: string}> | undefined)?.[0];
+      collector.add(choice?.delta?.content);
+      if (choice?.finish_reason === 'length') collector.truncated = true;
+    });
+    return {text: collector.text, truncated: collector.truncated};
+  }
   async unload(): Promise<void> { /* not NMSh's to unload */ }
+}
+
+/** Qwen3's /think and /no_think soft switch on the newest user message, for runtimes that apply their own template. */
+export function softSwitch(messages: readonly ChatMessage[], reasoning: Reasoning): ChatMessage[] {
+  const last = messages.map(message => message.role).lastIndexOf('user');
+  return messages.map((message, index) => index === last ? {...message, content: `${message.content} ${reasoning === 'thinking' ? '/think' : '/no_think'}`} : message);
 }
 
 export function runtimeFor(choice: LocalModelChoice, which: (name: string) => string | undefined): ModelRuntime | undefined {

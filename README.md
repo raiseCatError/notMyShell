@@ -47,7 +47,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 - **Not a shell.** It does not reimplement zsh, Bash or Fish; it runs them.
 - **Not a terminal emulator.** Keep Ghostty, Terminal.app, VS Code, Zed or whatever you use.
 - **Not a prompt theme.** The Native prompt is optional; Starship, Oh My Posh or Powerlevel10k can supply the prompt instead, or none at all.
-- **Not an AI terminal.** `/btw` (legacy alias `/ask`) maps plain requests onto typed NMSh actions locally, with an optional local model; nothing needs an account.
+- **Not an AI terminal.** `/btw` (legacy alias `/ask`) maps plain requests onto typed NMSh actions locally, with an optional local model that can also answer general questions offline; nothing needs an account.
 
 ## Highlights
 

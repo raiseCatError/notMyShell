@@ -2,7 +2,7 @@ import type {Reasoning} from './runtimes.js';
 import type {LocalUnderstandingSettings} from '../prompt/configuration.js';
 import {discoverLocal, systemDiscoveryAdapters, type DiscoveryAdapters, type FoundModel, type FoundRuntime} from './discovery.js';
 import {ModelClient, type ModelStatus} from './ModelClient.js';
-import {validateCommandSuggestion, validateFoldHint, validateInterpretation, type CommandRequest, type CommandSuggestion, type FoldHint, type FoldRequest, type IntentInterpretation, type IntentRequest} from './tasks.js';
+import {validateAnswer, validateCommandSuggestion, validateFoldHint, validateInterpretation, type Answer, type AnswerRequest, type AnswerStats, type CommandRequest, type CommandSuggestion, type FoldHint, type FoldRequest, type IntentInterpretation, type IntentRequest} from './tasks.js';
 
 export type UnderstandingScope = 'ask' | 'folding';
 export const SCOPE_LABELS: Record<UnderstandingScope, string> = {ask: 'Ask', folding: 'Smart Folding'};
@@ -84,6 +84,49 @@ export class LocalUnderstanding {
       const suggestion = validateCommandSuggestion(output);
       this.lastInference = {label: 'Ask command suggestion · non-thinking', at: Date.now(), ok: suggestion !== undefined};
       return suggestion === undefined ? {unavailable: 'The local model\'s answer was not a single plain command; nothing is shown.'} : {suggestion};
+    } finally { this.activeSince = undefined; }
+  }
+
+  /** Why a general answer can't use the model right now, in the person's terms; undefined when it can. */
+  answerUnavailable(): string | undefined {
+    const settings = this.settings();
+    if (settings.mode === 'off') return 'Local understanding is Off. Turn it on in /llm.';
+    if (!settings.ask) return 'Local understanding is not enabled for Ask. Turn it on in /llm.';
+    if (!settings.model) return 'No local model is chosen yet. Choose one in /llm.';
+    return undefined;
+  }
+
+  /**
+   * One general answer from the person's local model (offline for local runtimes). Non-thinking by default; a
+   * bounded thinking pass only when the person asks for it. `onPartial` streams the sanitized answer so far;
+   * aborting `signal` cancels this request only. Returns the validated answer, cancelled, or a reason.
+   */
+  async answer(request: AnswerRequest, options: {reasoning?: Reasoning; signal?: AbortSignal; onPartial?: (text: string) => void} = {}):
+    Promise<{answer: Answer; model: string; reasoning: Reasoning; stats?: AnswerStats} | {cancelled: true} | {unavailable: string}> {
+    const why = this.answerUnavailable();
+    if (why) return {unavailable: why};
+    const settings = this.settings();
+    const reasoning = options.reasoning ?? 'fast';
+    this.requests += 1;
+    this.activeSince = Date.now();
+    try {
+      const client = this.connection();
+      // Room for a first load plus generation; the service enforces its own, shorter generation limit.
+      const result = await client.answer(request, {mode: settings.mode, model: settings.model!, timeoutMs: reasoning === 'thinking' ? 120_000 : 90_000, reasoning,
+        ...(options.signal ? {signal: options.signal} : {}), ...(options.onPartial ? {onPartial: options.onPartial} : {})});
+      const label = `Ask answer · ${reasoning === 'thinking' ? 'thinking' : 'non-thinking'}`;
+      if (!result.ok) {
+        this.lastInference = {label, at: Date.now(), ok: false};
+        if (result.reason === 'cancelled') return {cancelled: true};
+        return {unavailable: result.reason === 'old-service' ? 'The local model service was started by an older NMSh and cannot answer questions; it restarts on its own once idle, or use Stop model in /llm.'
+          : result.reason === 'timeout' ? 'The local model did not finish in time.'
+          : result.reason === 'failed' ? `The local model could not answer${result.error ? ` (${result.error.slice(0, 120)})` : ''}.`
+          : 'The local model service is not reachable.'};
+      }
+      const answer = validateAnswer(result.output);
+      this.lastInference = {label: `Ask answer · ${result.reasoning === 'thinking' ? 'thinking' : 'non-thinking'}`, at: Date.now(), ok: Boolean(answer)};
+      if (!answer) return {unavailable: 'The local model returned nothing usable.'};
+      return {answer, model: settings.model!.label, reasoning: result.reasoning, ...(result.stats ? {stats: result.stats} : {})};
     } finally { this.activeSince = undefined; }
   }
 

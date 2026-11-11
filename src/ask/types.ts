@@ -25,7 +25,9 @@ export type CapabilityId =
   | 'git.status' | 'git.diff' | 'git.branch' | 'git.log' | 'git.worktrees'
   | 'settings.open' | 'theme.open' | 'prompt.open' | 'tools.open' | 'screensaver.open' | 'providers.open'
   | 'provider.status' | 'provider.switch' | 'understanding.set'
-  | 'help.capabilities' | 'help.command' | 'help.feature' | 'feature.open' | 'help.guide';
+  | 'help.capabilities' | 'help.command' | 'help.feature' | 'feature.open' | 'help.guide'
+  /** A general answer from the person's local model: text only, never an action. */
+  | 'chat.answer';
 
 /** Fixed read-only commands. The argv is built by NMSh; the request contributes at most a factual path. */
 export type ReadCommand =
@@ -142,6 +144,10 @@ export interface AskOption {
   refine?: string;
   /** Put this text in the Ask input (caret at the end) without sending it: path completion, "open " prefixes. */
   fill?: string;
+  /** Ask the local model this text as a general question (the person chose it; it never acts). */
+  converse?: {text: string; reasoning?: 'fast' | 'thinking'; again?: boolean};
+  /** Copy this plain text (an answer or its code); never runs anything. */
+  copy?: {text: string; what: string};
 }
 
 /**

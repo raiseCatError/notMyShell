@@ -274,8 +274,10 @@ import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
 import {askStarters} from '../ask/guide.js';
-import {applyAskCompletion, pushTurn, ASK_GREETING, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
-import {readArgv, resolveRequest} from '../ask/resolver.js';
+import {applyAskCompletion, pushTurn, ASK_GREETING, MAX_TURNS, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState, type AskTurn} from '../ask/AskPanel.js';
+import {readArgv, resolveRequest, weakOutcome} from '../ask/resolver.js';
+import {answerCodeText, answerCopyText, appendHistory, conversationSignals, outputContext, questionOutranks, replaceLastAnswer, SECRET_REPLY, SENSITIVE_REPLY, shellChecks, VAGUE_REQUEST} from '../ask/conversation.js';
+import type {AnswerContext} from '../understanding/tasks.js';
 import {completePath, listProjectFiles} from '../ask/files.js';
 import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
@@ -301,7 +303,7 @@ import {clipboardCounter, ClipboardChangeWatch} from '../clipboard/ClipboardChan
 import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
 import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
-import {WHY_FAILED} from '../ask/failure.js';
+import {failureOutcome, WHY_FAILED} from '../ask/failure.js';
 import {nmshCacheDirectory, nmshConfigDirectory} from '../configuration/paths.js';
 import {configureTextSizing, describeTextSizing, textSizingEnabled} from '../ui/textSizing.js';
 import {BrowserHost} from '../browser/host.js';
@@ -10764,12 +10766,21 @@ export class TerminalApp {
     const started = this.askStage?.started ?? Date.now();
     this.askStage = {label, since: Date.now(), started};
     // A clock only while Ask works; it stops with the stage.
-    this.askClock ??= presentationClock.subscribe(() => { if (!this.stopped && this.askState?.busy) this.render(); }, 100);
+    this.askClock ??= presentationClock.subscribe(() => { if (!this.stopped && (this.askState?.busy || this.askState?.generating)) this.render(); }, 100);
   }
 
   /** The live line under Ask's input: shown only after ~300 ms, so instant answers never flash. */
   private askActivityLine(): string | undefined {
     const stage = this.askStage;
+    const generating = this.askState?.generating;
+    if (generating) {
+      // The local model's own line: who is answering, what it is doing, and how to stop it.
+      const still = this.promptConfiguration.presentation.reducedMotion || this.promptConfiguration.presentation.effectsOff || isReducedMotion();
+      const turn = this.askState!.turns.at(-1);
+      const label = this.configuration.localUnderstanding.model?.label ?? 'local model';
+      const doing = turn?.model?.reasoning === 'thinking' && !turn.text ? 'Thinking it through' : turn?.text ? 'Answering' : 'Starting';
+      return liveLine(`${doing} · ${label}`, 'Esc stops', generating.since, Date.now(), {still});
+    }
     if (!stage || !this.askState?.busy) return undefined;
     const now = Date.now();
     if (now - stage.started < 300) return undefined;
@@ -10810,6 +10821,14 @@ export class TerminalApp {
     const state = this.askState;
     if (!state) return;
     if (event.kind === 'close') { this.closeAsk(); this.render(); return; }
+    if (event.kind === 'cancel') { state.generating?.controller.abort(); this.render(); return; }
+    if (event.kind === 'copyText') {
+      // Plain text only: the answer as the model wrote it (sanitized), never NMSh's styling; nothing runs.
+      try { await writeClipboard(event.text); pushTurn(state, 'ask', `Copied the ${event.what}. Nothing was run.`); } catch { pushTurn(state, 'ask', 'The clipboard isn\'t available here.'); }
+      state.scroll = 0;
+      this.render();
+      return;
+    }
     if (event.kind === 'complete') {
       // Paths only after the request's first word ("open pa", "find src/"): the same directory facts the composer completes from.
       const before = [...event.text].slice(0, event.caret).join('');
@@ -10823,10 +10842,13 @@ export class TerminalApp {
       const generation = this.askGeneration;
       let outcome: AskOutcome;
       this.setAskStage('Resolving locally');
-      try { outcome = await this.resolveAsk(event.text, state); } catch {
-        outcome = {kind: 'unclear', text: 'Something went wrong while looking that up.', categories: []};
+      let plan: Awaited<ReturnType<TerminalApp['planAsk']>>;
+      try { plan = await this.planAsk(event.text, state, event.converse); } catch {
+        plan = {outcome: {kind: 'unclear', text: 'Something went wrong while looking that up.', categories: []}};
       } finally { this.setAskStage(undefined); }
       if (this.askState !== state || generation !== this.askGeneration || this.stopped) return;
+      if ('converse' in plan) { await this.converse(state, plan.converse); this.render(); return; }
+      outcome = plan.outcome;
       const next = receiveOutcome(state, outcome);
       if (next) await this.handleAskEvent(next);
       this.render();
@@ -11073,6 +11095,8 @@ export class TerminalApp {
     this.askState = undefined;
     this.askGeneration += 1;
     if (!state) return;
+    // Closing stops an answer still being generated; nothing of it continues in the background.
+    state.generating?.controller.abort();
     this.recordAsk(state);
     this.returnFromPanel();
   }
@@ -11105,7 +11129,11 @@ export class TerminalApp {
    * on (#432). The suggestion is Copy/Insert only, labelled by NMSh; the model gets the request, shell and OS family.
    */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
-    const outcome = await this.resolveAskOwn(text, state);
+    return this.suggestAfter(await this.resolveAskOwn(text, state), text, state);
+  }
+
+  /** The #432 step after Ask's own answer: a command suggestion for what it could not place, when turned on. */
+  private async suggestAfter(outcome: AskOutcome, text: string, state: AskState): Promise<AskOutcome> {
     if (outcome.kind !== 'unclear' && outcome.kind !== 'unsupported') return outcome;
     if (this.promptConfiguration.askCommandSuggestions !== 'local' || this.askState !== state) {
       return outcome.kind === 'unsupported' && outcome.shellTask
@@ -11123,7 +11151,152 @@ export class TerminalApp {
       block: suggestionBlock(result.suggestion, model)};
   }
 
-  private async resolveAskOwn(text: string, state: AskState): Promise<AskOutcome> {
+  /**
+   * Where a request goes. Fail-closed checks first: a request that seems to contain a secret, or asks for
+   * credentials or the environment, never reaches a model. Ask's own deterministic resolver then answers what it can
+   * place: NMSh actions keep their confirmation rules, refusals stand, and shell tasks keep the Copy/Insert
+   * suggestion path. A question it can't place (or a follow-up to a model answer) goes to the local model as a
+   * general answer; a request that is merely unclear gets a clarifying question that offers the model as one choice.
+   * Terminal output is attached only when the request asks about it.
+   */
+  private async planAsk(text: string, state: AskState, converse?: {reasoning?: 'fast' | 'thinking'; again?: boolean}):
+    Promise<{outcome: AskOutcome} | {converse: {question: string; reasoning: 'fast' | 'thinking'; context?: AnswerContext; again?: boolean; observed?: {text: string; next?: AskOption[]}}}> {
+    const signals = conversationSignals(text);
+    if (signals.sensitive) return {outcome: {kind: 'answer', capability: 'chat.answer', text: SENSITIVE_REPLY}};
+    if (signals.secretSeeking) return {outcome: {kind: 'unsafe', text: SECRET_REPLY}};
+    if (converse) {
+      const last = converse.again ? state.lastQuestion : undefined;
+      return {converse: {question: last?.text ?? text, reasoning: converse.reasoning ?? 'fast', ...(last?.context ? {context: last.context} : {}), ...(converse.again ? {again: true} : {})}};
+    }
+    const unavailable = this.understanding.answerUnavailable();
+    if (signals.context && !unavailable) {
+      const record = this.askContextRecord(signals.context);
+      if (!record) return {outcome: {kind: 'answer', capability: 'chat.answer', text: signals.context === 'error' ? 'No command has failed in this session, so there is no error to explain.' : 'No command has finished in this session yet, so there is no output to look at.'}};
+      const kind = record.exitCode !== 0 ? 'error' : signals.context;
+      const context = outputContext(record, kind);
+      // What NMSh itself observed comes first and stays NMSh's: the deterministic diagnosis and its own next steps.
+      const diagnosis = kind === 'error' ? failureOutcome(record, {editor: {label: this.hostActions().label, available: true}}) : undefined;
+      const observed = diagnosis?.kind === 'answer' ? {text: diagnosis.text, ...(diagnosis.next?.length ? {next: diagnosis.next} : {})}
+        : {text: `${record.command.split(/\s+/u).slice(0, 3).join(' ')} finished with exit code ${record.exitCode}; its last lines (redacted) go to your local model below.`};
+      return {converse: {question: text, reasoning: 'fast', context, observed}};
+    }
+    const lastAsk = [...state.turns].reverse().find(turn => turn.role === 'ask' && !turn.text.startsWith('Copied the '));
+    const followUp = state.history.length > 0 && Boolean(lastAsk?.model);
+    // A question never goes to the intent model: a small model maps "what is the capital of France" to a file listing.
+    const own = await this.resolveAskOwn(text, state, {intent: !signals.question && !followUp});
+    if (this.askState !== state) return {outcome: own};
+    const guessed = this.understanding.lastRoute?.route === 'model' && !this.understanding.prefersModel;
+    const shellTask = own.kind === 'unsupported' && own.shellTask;
+    const answerable = (own.kind === 'unsafe' && signals.conceptual)
+      || (!shellTask && (signals.question || followUp) && (weakOutcome(own) && own.kind !== 'choose' || own.kind === 'unsupported' || questionOutranks(own, text, followUp)));
+    if (answerable) {
+      if (unavailable) {
+        return {outcome: {kind: 'answer', capability: 'chat.answer', text: `Ask answers general questions with your local model, offline. ${unavailable}`,
+          follow: {key: 'llm:open', label: 'Open /llm', outcome: {kind: 'proposal', capability: 'understanding.set', safety: 'navigate', confidence: 1, text: 'Opening /llm.', action: {kind: 'slash', slash: {kind: 'llm'}, label: '/llm'}}}}};
+      }
+      return {converse: {question: text, reasoning: 'fast'}};
+    }
+    // Unsure between readings, or unclear: the clarifying question also offers a plain answer from the model.
+    const offer = !unavailable && !shellTask ? {key: 'chat:answer', label: 'Answer it as a question (local model)', converse: {text}} : undefined;
+    if (VAGUE_REQUEST.test(text.trim()) && own.kind !== 'proposal' && own.kind !== 'unsafe') {
+      // "fix it": say what "it" could be, from what actually happened here; never a guess acted on.
+      const records = this.output.view().completed.filter(record => !record.frontend);
+      const categories: AskOption[] = [
+        ...(records.some(record => (record.exitCode ?? 0) !== 0) ? [{key: 'clarify:error', label: 'Explain the last error', refine: 'explain the last error'}] : []),
+        ...(records.length ? [{key: 'clarify:output', label: 'Summarise the last output', refine: 'summarise the last output'}] : []),
+        ...(offer ? [offer] : []), {key: 'clarify:open', label: 'Open a file in your editor', refine: 'open '}];
+      return {outcome: {kind: 'unclear', text: 'What should I look at? Ask can\'t change files or code itself, but I can:', categories}};
+    }
+    // Auto: the intent model only reads what Ask found unclear, and a small model guesses with high confidence
+    // ("flibbertigibbet" → which shell). Its reading is offered as one choice of a clarifying question, never acted on.
+    if (guessed && (own.kind === 'answer' || own.kind === 'proposal')) {
+      const title = CAPABILITIES.find(item => item.id === own.capability)?.title ?? (own.kind === 'proposal' ? own.text.split('\n')[0]! : 'That');
+      return {outcome: {kind: 'choose', reason: 'ambiguous', question: 'I\'m not sure what you mean. Did you mean:',
+        options: [{key: `intent:${own.capability}`, label: title, outcome: own}, ...(offer ? [offer] : [])]}};
+    }
+    const outcome = await this.suggestAfter(own, text, state);
+    if (offer && outcome.kind === 'choose' && outcome.reason === 'ambiguous') return {outcome: {...outcome, options: [...outcome.options, offer]}};
+    if (offer && outcome.kind === 'unclear') return {outcome: {...outcome, categories: [offer, ...outcome.categories]}};
+    return {outcome};
+  }
+
+  /**
+   * The block a context question is about: the one chosen with Explain (the output selection), else the newest
+   * failed block for an error, else the newest finished block. NMSh-owned rows are never context.
+   */
+  private askContextRecord(kind: 'error' | 'output'): {command: string; exitCode: number; output: string} | undefined {
+    const records = this.output.view().completed.filter(record => !record.frontend);
+    const chosen = this.explainBlock !== undefined ? records.find(item => item.startId === this.explainBlock) : undefined;
+    this.explainBlock = undefined;
+    const record = chosen ?? (kind === 'error' ? records.find(item => (item.exitCode ?? 0) !== 0) : records[0]);
+    return record ? {command: record.command, exitCode: record.exitCode ?? 0, output: record.output.split('\n').slice(-400).join('\n')} : undefined;
+  }
+
+  /**
+   * One general answer, in the conversation: NMSh's own observation first (for a context question), then the
+   * model's answer as a labelled turn that streams while it generates. Esc stops it; closing Ask stops it. The
+   * finished answer joins the bounded history; its options copy it or ask again with a bounded thinking pass.
+   * Nothing the model writes becomes an action.
+   */
+  private async converse(state: AskState, plan: {question: string; reasoning: 'fast' | 'thinking'; context?: AnswerContext; again?: boolean; observed?: {text: string; next?: AskOption[]}}): Promise<void> {
+    state.busy = false;
+    state.pending = undefined;
+    state.selected = 0;
+    state.scroll = 0;
+    if (plan.observed) pushTurn(state, 'ask', plan.observed.text);
+    const label = this.configuration.localUnderstanding.model?.label ?? 'local model';
+    const turn: AskTurn = {role: 'ask', text: '', model: {label, reasoning: plan.reasoning, streaming: true, ...(plan.context ? {context: plan.context.label} : {})}};
+    state.turns.push(turn);
+    if (state.turns.length > MAX_TURNS) state.turns.splice(0, state.turns.length - MAX_TURNS);
+    const controller = new AbortController();
+    state.generating = {since: Date.now(), controller};
+    this.setAskStage('Generating');
+    this.render();
+    const history = plan.again ? state.history.slice(0, -2) : state.history;
+    const request = {question: plan.question, history, ...(plan.context ? {context: plan.context} : {}), shell: this.shellId, os: process.platform === 'darwin' ? 'macOS' as const : 'Linux' as const};
+    let result: Awaited<ReturnType<LocalUnderstanding['answer']>>;
+    try {
+      result = await this.understanding.answer(request, {reasoning: plan.reasoning, signal: controller.signal, onPartial: text => { if (state.generating?.controller === controller) turn.text = text; }});
+    } catch { result = {unavailable: 'The local model could not answer.'}; }
+    finally {
+      if (state.generating?.controller === controller) state.generating = undefined;
+      this.setAskStage(undefined);
+    }
+    turn.model!.streaming = false;
+    if (this.stopped) return;
+    if ('cancelled' in result) {
+      turn.model!.stopped = true;
+      turn.text = turn.text.trim();
+      state.pending = {kind: 'answer', capability: 'chat.answer', text: '', next: [{key: 'answer:again', label: 'Ask it again', converse: {text: plan.question, reasoning: plan.reasoning, again: false}}]};
+      state.lastQuestion = {text: plan.question, ...(plan.context ? {context: plan.context} : {})};
+      return;
+    }
+    if ('unavailable' in result) {
+      // Not an answer from the model: an ordinary Ask turn that says why.
+      delete turn.model;
+      turn.text = result.unavailable;
+      state.pending = {kind: 'answer', capability: 'chat.answer', text: result.unavailable,
+        follow: {key: 'llm:open', label: 'Open /llm', outcome: {kind: 'proposal', capability: 'understanding.set', safety: 'navigate', confidence: 1, text: 'Opening /llm.', action: {kind: 'slash', slash: {kind: 'llm'}, label: '/llm'}}}};
+      return;
+    }
+    turn.text = result.answer.text;
+    turn.model = {...turn.model!, reasoning: result.reasoning, truncated: result.answer.truncated, checks: shellChecks(result.answer.text)};
+    this.lastAnswerStats = result.stats;
+    state.history = plan.again ? replaceLastAnswer(state.history, result.answer.text) : appendHistory(state.history, plan.question, result.answer.text);
+    state.lastQuestion = {text: plan.question, ...(plan.context ? {context: plan.context} : {})};
+    const code = answerCodeText(result.answer.text);
+    const next = [{key: 'answer:copy', label: 'Copy answer', copy: {text: answerCopyText(result.answer.text), what: 'answer'}},
+      ...(code ? [{key: 'answer:code', label: 'Copy code', copy: {text: code, what: 'code'}}] : []),
+      ...(result.reasoning === 'fast' && this.configuration.localUnderstanding.model?.runtime !== 'lmstudio'
+        ? [{key: 'answer:think', label: 'Think it through (slower)', converse: {text: plan.question, reasoning: 'thinking' as const, again: true}}] : []),
+      ...(plan.observed?.next ?? [])].slice(0, 6);
+    state.pending = {kind: 'answer', capability: 'chat.answer', text: result.answer.text, next};
+  }
+
+  /** The newest answer's runtime measurements, when the runtime reports them (diagnostics only). */
+  lastAnswerStats?: import('../understanding/tasks.js').AnswerStats;
+
+  private async resolveAskOwn(text: string, state: AskState, options: {intent?: boolean} = {}): Promise<AskOutcome> {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
     const commands = this.askCommands();
@@ -11132,7 +11305,7 @@ export class TerminalApp {
     const deterministicRoute = () => { this.understanding.lastRoute = {route: 'deterministic', at: Date.now()}; return deterministic; };
     // A refusal, or something Ask does not do (a shell task), is an answer, not uncertainty: in any mode the intent
     // model never re-reads it into the nearest capability it was offered (QA F04).
-    if (!this.understanding.eligible('ask') || deterministic.kind === 'unsafe' || deterministic.kind === 'unsupported') return deterministicRoute();
+    if (options.intent === false || !this.understanding.eligible('ask') || deterministic.kind === 'unsafe' || deterministic.kind === 'unsupported') return deterministicRoute();
     // Auto: deterministic first; the model only when it is unsure. Always: the model first, still feeding deterministic builders.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
     if (!this.understanding.prefersModel && !unsure) return deterministicRoute();
