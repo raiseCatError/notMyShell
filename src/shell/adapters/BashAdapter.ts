@@ -126,7 +126,8 @@ __nmsh_precmd() {
     __nmsh_user_prompt_command=("\${PROMPT_COMMAND[@]/__nmsh_precmd/}")
     PROMPT_COMMAND=__nmsh_precmd
   fi
-  PS1='' PS2=''
+  # The continuation prompt draws nothing; its marker tells NMSh the shell is waiting for the rest of a line.
+  PS1='' PS2='\\e]777;nmsh;${token};continue\\a'
   __nmsh_tty -echo
   __nmsh_history_last=$(HISTTIMEFORMAT= builtin history 1)
   __nmsh_knowledge${context.bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
@@ -148,7 +149,7 @@ __nmsh_ps0() {
 }
 
 PROMPT_COMMAND=__nmsh_precmd
-PS1='' PS2=''
+PS1='' PS2='\\e]777;nmsh;${token};continue\\a'
 PS0='$(__nmsh_ps0)'
 `;
 }
@@ -235,6 +236,7 @@ export const bashAdapter: ShellAdapter = {
   capabilities: {completion: 'basic', completionDescriptions: false, liveNames: true, historyImport: true,
     privateHistory: 'Bash\'s own HISTCONTROL/HISTIGNORE decide; lines Bash does not record are not recorded by NMSh either', jobCount: true},
   editorChrome: 'none',
+  cancelContinuation: '\u0003',
   builtins: BASH_BUILTINS,
   resolveExecutable: resolveBash,
   unavailableReason(env) {

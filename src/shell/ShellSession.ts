@@ -68,6 +68,14 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly order: QueryOrder;
   /** The last composer submission, used when a shell cannot report a command's text (Bash, unrecorded lines). */
   private lastSubmitted = '';
+  /**
+   * The submission the shell has not started yet: how many continuation prompts its own line breaks explain, and how
+   * many the shell asked for. One more than its line breaks means the shell is waiting for the rest of a command line
+   * NMSh sent whole (an unmatched quote, or zsh's `!"` history expansion removing a closing quote): it is cancelled
+   * at the continuation prompt, where nothing has run, and the next prompt says why.
+   */
+  private submission?: {breaks: number; continued: number; cancelled: boolean};
+  private incomplete = false;
   /** One authoritative input-awareness state per session, next to the PTY. */
   readonly inputWatch: InputWatch;
   /**
@@ -198,6 +206,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
    */
   private send(data: string, submission = false): void {
     if (submission) this.lastSubmitted = data.replace(/\r$/u, '');
+    // A command line submitted at the prompt: its line breaks are the continuation prompts it explains (onContinue).
+    if (submission && this.ready && this.atPrompt) this.submission = {breaks: (data.replace(/\r$/u, '').match(/\n/gu) ?? []).length, continued: 0, cancelled: false};
     if (this.ready && !submission && !this.atPrompt) {
       // The command is done (its prompt hooks run): nothing can read this for it, and the shell's command reader is
       // next. It is held for the person, never written (#426).
@@ -232,6 +242,24 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     const text = this.heldAfterDone;
     this.heldAfterDone = '';
     if (text && !this.exited) this.emit('unread', text, this.program);
+  }
+
+  /**
+   * The shell asked for another line before starting the command NMSh submitted. Its own line breaks explain that many
+   * requests; one more is a command line left open, which the shell would wait on forever behind NMSh's blank
+   * continuation prompt. Ctrl+C there drops the unfinished line (nothing of it ran) and brings the prompt back.
+   */
+  private onContinue(): void {
+    const submission = this.submission;
+    if (!this.ready || !submission || submission.cancelled) return;
+    submission.continued += 1;
+    if (submission.continued <= submission.breaks) return;
+    const cancel = this.adapter.cancelContinuation;
+    if (!cancel) return;
+    submission.cancelled = true;
+    this.incomplete = true;
+    this.order.discard();
+    if (!this.exited) this.pty.write(cancel);
   }
 
   interrupt(): void {
@@ -294,11 +322,14 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         }
       } else if (event.kind === 'reader') {
         if (this.ready && !this.atPrompt) this.inputWatch.onReader();
+      } else if (event.kind === 'continue') {
+        this.onContinue();
       } else if (event.kind === 'done') {
         if (this.ready && !this.atPrompt) { this.done = true; this.inputWatch.onDone(); }
       } else if (event.kind === 'unread') {
         if (this.ready && event.text) this.emit('unread', event.text, this.program);
       } else if (event.kind === 'exec') {
+        this.submission = undefined;
         this.atPrompt = false;
         this.done = false;
         this.delivered = false;
@@ -324,10 +355,14 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         this.atPrompt = true;
         this.done = false;
         this.delivered = false;
+        const incomplete = this.incomplete;
+        this.incomplete = false;
+        this.submission = undefined;
         // Final waiting time first, so it travels with the prompt that completes the command.
         this.inputWatch.onPrompt();
         const {waitedMs, waits} = this.inputWatch.state.timing;
-        this.emit('prompt', {...this.withKnowledge(event.marker), ...(waits ? {inputWaitMs: Math.round(waitedMs), inputWaits: waits} : {})});
+        this.emit('prompt', {...this.withKnowledge(event.marker), ...(waits ? {inputWaitMs: Math.round(waitedMs), inputWaits: waits} : {}),
+          ...(incomplete ? {incomplete: true} : {})});
       }
     }
   }

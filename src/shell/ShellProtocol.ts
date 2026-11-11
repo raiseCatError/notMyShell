@@ -5,6 +5,11 @@ export interface ShellMarker {
   /** Time the finished command spent waiting for input, and how many waits (see InputWatch); absent when none. */
   inputWaitMs?: number;
   inputWaits?: number;
+  /**
+   * The shell asked for more input to finish the submitted command line (an unmatched quote, bracket or heredoc;
+   * zsh's `!"` history expansion), so NMSh cancelled the line before anything ran.
+   */
+  incomplete?: boolean;
 }
 
 export type ProtocolEvent =
@@ -22,7 +27,12 @@ export type ProtocolEvent =
    */
   | {kind: 'unread'; text: string}
   /** zsh preexec: a command line is about to run in the foreground. */
-  | {kind: 'exec'; command: string; historyAllowed?: number};
+  | {kind: 'exec'; command: string; historyAllowed?: number}
+  /**
+   * The shell's continuation prompt (PS2): it read a line that does not finish a command and asks for the next one.
+   * Expected between the lines of a multi-line submission; one more than that means the submitted text was incomplete.
+   */
+  | {kind: 'continue'};
 
 /**
  * Bound on one marker's payload (a command line can be long; a cwd cannot).
@@ -92,6 +102,7 @@ export class ShellProtocolDecoder {
   private emit(payload: string, events: ProtocolEvent[]): void {
     if (payload === 'reader') { events.push({kind: 'reader'}); return; }
     if (payload === 'done') { events.push({kind: 'done'}); return; }
+    if (payload === 'continue') { events.push({kind: 'continue'}); return; }
     if (payload.startsWith('unread;')) {
       const hex = payload.slice(7);
       // Exactly the bytes, or nothing: a malformed payload is never guessed at, and never output either.

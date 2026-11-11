@@ -75,19 +75,17 @@ first key of a draft and an Enter that would queue, and asks the session to look
 The hold ends when the look answers or evidence arrives. Until then nothing typed is drawn, sent or queued: the keys
 may be a hidden reply, and an Enter may answer the command or queue the next one (#426). The look says what it saw:
 `hidden` (echo off for line input), `visible` (the terminal echoes), `unknown` (no sample said how it echoes: a probe
-failed or timed out), `idle` (nothing runs) or `unavailable` (no way to look on this platform). `visible` routes the
-keys as before (a terminal would show them too); `hidden` comes with a hidden request, so they go straight to the
+failed or timed out), `idle` (nothing runs) or `unavailable` (no way to look on this platform). `visible` permits draft editing (a terminal would show it too), but says nothing about a reader. If the held keys include Enter and no reader was established, the entire draft moves into a confirmation hold, never the command-approval queue; `hidden` comes with a hidden request, so they go straight to the
 program. Echo off with line input is a hidden request whatever else is known (confirmed when the group is idle,
 likely when it computes or the kernel says it is blocked elsewhere), so NMSh never draws what the terminal would not
 echo. An `unknown` answer gets one more look; if that is blind too, or no answer comes within 5 s, the keys stay held
 and hidden: the activity rows say `Can't tell whether <program> is reading your typing` and Ctrl+S sends it to the
-program, Tab shows it in the composer (for review; a final Enter is not replayed), Esc discards it. Later evidence
-decides it the same way. A look still running after 800 ms says `Checking whether … · your typing is kept`.
+program, Tab shows it in the composer (for review; a final Enter is not replayed), Esc discards it. Later reliable reader evidence can resolve an ordinary lookup hold. A held Enter with only later likely evidence requires confirmation; once Enter is in confirmation quarantine, no later result sends it automatically. Ctrl+S explicitly sends all captured bytes in order to the same still-running command. Tab or Ctrl+Q restores the editable text for queue review, without replaying the final Enter; a fresh Enter explicitly queues it. Esc and Ctrl+C discard the entire capture. Completion/done, a different command, terminal handover and shutdown invalidate confirmation holds; stale decisions cannot recover them. After completion/done, confirmation typing stays hidden in the existing prompt hold for Tab/Esc review, with Ctrl+S disabled; it is never sent to a later command. Existing approval-queue entries are never sent automatically. A look still running after 800 ms says `Checking whether … · your typing is kept`.
 
-A command that ends while its typing was held past 800 ms never runs it: NMSh never learned whether it was a reply
+An ordinary lookup hold (not confirmation quarantine) that ends while its typing was held past 800 ms never runs it: NMSh never learned whether it was a reply
 (a timed `read -s` that gave up), so it is discarded with a note. A quick end (type-ahead after a short command) runs
 it as before. Ctrl+C discards held typing, as a terminal flushes its input queue on an interrupt, and is itself
-never held. A program that took the terminal meanwhile (Fish's reader) gets the keys as raw keys. An older service
+never held. An ordinary lookup hold can follow authenticated native-reader ownership as raw keys. Confirmation quarantine is cancelled at terminal handover, before newer keys reach the new owner. An older service
 does not say what its look saw; its answers are routed as before. Typing right after Ctrl+C or Ctrl+Z stays
 type-ahead for the prompt. Both ends negotiate the feature; an older service is never asked and behaves as before.
 
@@ -171,6 +169,31 @@ typed is drawn, not even as dots.
   - NMSh gestures and pointer events are never sent.
   - Nothing typed is shown, journaled, put in history or written to the key-debug log.
 - **There are no answer buttons.** NMSh never submits an answer on your behalf.
+- **No question in sight** (nothing waits that NMSh can see): Enter holds a line for approval and shows it by where it
+  came from, because a prompt-less read is indistinguishable from a command NMSh cannot see (#426). Ctrl+Q queues it
+  as typed. **The queue composer** (#473): Ctrl+Q on an empty line while a command runs opens it for that command
+  only; each line entered in it is queued as typed, without approval, until Esc, a second Ctrl+Q on the empty line,
+  or the end of that command. It is the person's explicit choice, made after seeing what runs, and it never carries
+  over to the next command, so a reflexive Enter there gets the rules above. Plain Enter is never made to queue by a
+  standing mode: on macOS nothing proves that a program does not read, so no setting can make Enter safe for every
+  command (#514's boundary stays).
+  - Hidden input closes it before anything is drawn: its first key is looked at like the composer's, and a hidden
+    look closes it and holds the typing unseen; a request reported while it is open and empty closes it, so the
+    keys go where ownership sends them. A line already begun in it stays a queued command, then it closes.
+  - A reader seen late (an echoing terminal is no evidence, and a loaded machine delays the follow-up sample) is
+    caught by the owner: when the running command is first reported asking for input, every entry queued since it
+    was submitted waits for approval (hidden input also hides their text), decided by the session service beside the
+    prompt, so the next dispatch cannot overtake it.
+  - Unavoidable limit: a reader NMSh never sees before it ends (a prompt-less external reader on macOS, or a timed
+    read that gives up within about a second) — a line typed for it into the queue composer runs after it as a
+    command, exactly as a Ctrl+Q line always has. A secret typed with echo on into the composer is shown and queued
+    like any queued text. Tests: `queueComposer.test.ts`, `queueComposerRaceLive.test.ts`, `queueReplyHold.test.ts`.
+- **Unfinished command lines.** NMSh draws no continuation prompt, so zsh and Bash print PS2 as an invisible marker.
+  The session counts the continuation prompts a submission's own line breaks explain; one more, before the command
+  starts, means the shell is waiting for the rest of a line NMSh sent whole (an unclosed quote, bracket or heredoc;
+  zsh's `!"` history expansion). The session cancels it there (zsh needs Ctrl+C then Enter: it acts on the interrupt
+  only when its read returns; Bash needs Ctrl+C), nothing of it has run, and the next prompt carries `incomplete` so
+  every window explains it and the queue pauses before what follows. Fish keeps unfinished lines in its own reader.
 
 ## Other sessions
 

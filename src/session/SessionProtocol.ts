@@ -107,7 +107,7 @@ export type ServerMessage =
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
   | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number; queued?: string}
-  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number; inputWaitMs?: number; inputWaits?: number}
+  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number; inputWaitMs?: number; inputWaits?: number; incomplete?: number}
   /**
    * The running command's input state (see InputWatch), sent on every change to frontends that support it: a
    * request (since/confidence/mode, with the open prompt and program when known) or none, plus waiting time so far.
@@ -224,7 +224,7 @@ const SHAPES: Record<string, Shape> = {
   dismissed: {sessionId: 'string'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?', queued: 'string?'},
-  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
+  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?', incomplete: 'int?'},
   'input-state': {terminalOwner: 'int?', done: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},

@@ -107,6 +107,13 @@ export interface ShellAdapter {
   /** The mark the shell's editor writes once it has drawn its prompt (see QueryOrder): input waits for it after NMSh answers the editor. */
   readonly editorSettled?: RegExp;
   /**
+   * The bytes that abandon a command line the shell is still reading at its continuation prompt (PS2), so that it
+   * returns to its prompt at once and runs nothing of it. Bash acts on Ctrl+C there; zsh without its line editor only
+   * acts on the interrupt once its read returns, so Enter follows (the interrupt is applied first and the line is
+   * dropped). Absent: the shell reports no continuation prompt (Fish's reader keeps an unfinished line itself).
+   */
+  readonly cancelContinuation?: string;
+  /**
    * Terminal-mode bytes the shell's own editor emits as it hands the terminal
    * to a command (Fish turns bracketed paste off). They are editor chrome and
    * must not reach the host terminal during passthrough; removed from the start
