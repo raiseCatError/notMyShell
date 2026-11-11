@@ -990,8 +990,11 @@ export class TerminalApp {
   private staleStopReport?: () => void;
   /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
   private replayTypedWhile?: string;
-  /** This window's Queue Mode choice (Ctrl+Q on an empty line, /queue mode); undefined follows Settings. */
-  private queueModeChoice?: boolean;
+  /**
+   * The command (startId) for which the person opened the queue composer with Ctrl+Q on an empty line: until Esc, or
+   * until that command ends, each Enter adds the line to the queue (see openQueueComposer).
+   */
+  private queueComposeFor?: number;
   /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
   private readonly revealedQueue = new Set<number>();
   /** Held lines this window added and has not yet seen in the owner's state (so others are the owner's, #426). */
@@ -2566,6 +2569,7 @@ export class TerminalApp {
     if (key.kind === 'escape' && this.stopAhead && !this.editor.text) { this.settleStopAhead('cancel'); return; }
     if (key.kind === 'escape' && this.queueCompose) {
       this.queueCompose = false;
+      this.queueComposeFor = undefined;
       this.editor.clear();
       this.render();
       return;
@@ -2876,7 +2880,7 @@ export class TerminalApp {
     else if (key.kind === 'deleteLineAfter') this.editor.deleteLineAfter();
     else if (key.kind === 'delete') this.editor.delete();
     else if (key.kind === 'newline') this.editor.insert('\n');
-    else if (key.kind === 'queueCommand' && !this.editor.text.trim() && !this.queueCompose && !this.queueEdit && this.queueAvailable()) this.setQueueMode('Ctrl+Q');
+    else if (key.kind === 'queueCommand' && !this.editor.text.trim() && !this.queueEdit && this.running && !this.passthrough && this.queueAvailable()) this.openQueueComposer();
     else if (key.kind === 'queueCommand') this.routeComposer('queue');
     else if (key.kind === 'sendToProgram') this.routeComposer('send');
     else if (key.kind === 'enter') this.routeComposer('enter');
@@ -3316,7 +3320,6 @@ export class TerminalApp {
     else if (slash.kind === 'doctor') void this.openDoctor();
     else if (slash.kind === 'watch') this.handleWatch(command.trim(), slash.op, slash.arguments, slash.track === true);
     else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
-    else if (slash.kind === 'queueMode') this.setQueueMode(command.trim(), slash.value);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
       else {
@@ -5621,6 +5624,7 @@ export class TerminalApp {
     this.running = undefined;
     this.inputState = undefined;
     this.queueCompose = false;
+    this.queueComposeFor = undefined;
     this.completedInputTiming = undefined;
     // An answer typed for this command but never sent must not become the next shell command.
     const draft = this.runningDraft;
@@ -13083,15 +13087,11 @@ export class TerminalApp {
     if (this.stopAhead && this.running?.startId === this.stopAhead.startId && !this.editor.text) {
       return {text: `${this.stopAhead.done ? 'Runs when the prompt is back' : `Runs at the prompt once ${this.stopAhead.program} stops`} · Esc takes it back`, waiting: false};
     }
-    // Queue Mode is a standing choice for this window: the empty composer says so at the prompt too.
-    if (!this.running && !this.passthrough && !this.queueEdit && !this.startupPending && this.queueModeOn()) {
-      const waiting = this.queueState.entries.length;
-      if (waiting && this.queueState.paused) return {text: `Queue Mode · queue paused, ${waiting} waiting · Enter runs it now · Ctrl+Q queues it after them`, waiting: false};
-      if (waiting) return {text: `Queue Mode · Enter adds it after ${waiting} waiting · Ctrl+Q on an empty line turns Queue Mode off`, waiting: false};
-      return {text: 'Queue Mode · while a command runs, Enter queues · Ctrl+Q on an empty line turns it off', waiting: false};
-    }
     if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
+    if (this.queueCompose && this.queueComposeFor === this.running.startId) {
+      return {text: `Queueing · each Enter adds a command to run after ${runningProgramName(this.running.command)} · Esc stops`, waiting: false};
+    }
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : runningProgramName(this.running.command);
@@ -13101,9 +13101,8 @@ export class TerminalApp {
     // as a line.
     if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
     if (!this.queueAvailable()) return undefined;
-    if (this.queueModeOn()) return {text: `Queue Mode · Enter queues it to run next · Ctrl+S sends to ${program}`, waiting: false};
     const enter = this.session.lookInput && this.session.features.has('input-look') ? 'Enter checks who reads it' : 'Enter holds it for approval';
-    return {text: `${enter} · Ctrl+Q runs it after · Ctrl+S sends to ${program} · Ctrl+Q on an empty line: Queue Mode`, waiting: false};
+    return {text: `${enter} · Ctrl+Q runs it after · Ctrl+S sends to ${program} · Ctrl+Q alone queues several`, waiting: false};
   }
 
   /**
@@ -13193,27 +13192,22 @@ export class TerminalApp {
   }
 
   /**
-   * Queue Mode, for this window: while a command runs, Enter queues the line as an ordinary command, as Ctrl+Q does,
-   * instead of holding it for approval. Input ownership still comes first: a program NMSh sees waiting for input gets
-   * Enter, and typing NMSh has not placed yet is looked at before it is drawn. Starts from Settings (off by default);
-   * Ctrl+Q on an empty line and /queue mode change it for this window only, so a stray key never persists.
+   * The queue composer, opened with Ctrl+Q on an empty line while a command runs (#473): every line entered in it is
+   * queued to run after that command, as Ctrl+Q on a line does, with no approval step and without pressing Ctrl+Q for
+   * each line. It is the person's explicit choice for this one command: it never outlives it, Esc closes it, and plain
+   * Enter elsewhere keeps the input-ownership rules (#426, #514). A program seen asking for input closes it while it is
+   * empty, so the next keys (a password included) go where input ownership sends them, never into a visible queue line.
+   * Ctrl+Q on the empty composer again closes it. What NMSh cannot see (a reader with no prompt on macOS) is not made
+   * safe by this: the composer says, every time it is open, that what is typed in it runs as a command.
    */
-  private queueModeOn(): boolean {
-    return this.queueAvailable() && (this.queueModeChoice ?? this.promptConfiguration.queue.queueMode === true);
-  }
-
-  private setQueueMode(source: string, value?: boolean): void {
-    if (!this.queueAvailable()) {
-      this.output.addFrontendInteraction(source, this.session.features.has('queue')
-        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
-      this.render();
-      return;
+  private openQueueComposer(): void {
+    if (this.queueCompose && this.queueComposeFor === this.running?.startId) {
+      this.queueCompose = false;
+      this.queueComposeFor = undefined;
+    } else {
+      this.queueCompose = true;
+      this.queueComposeFor = this.running!.startId;
     }
-    const on = value ?? !this.queueModeOn();
-    this.queueModeChoice = on;
-    this.output.addFrontendInteraction(source, on
-      ? 'Queue Mode on: while a command runs, Enter queues the line to run after it. A program waiting for input still gets Enter. Ctrl+Q on an empty line turns it off.'
-      : 'Queue Mode off: while a command runs, Enter holds a line for your approval; Ctrl+Q queues it.', INFO);
     this.render();
   }
 
@@ -13372,12 +13366,14 @@ export class TerminalApp {
       this.session.queue({op: 'add', text, ...(conditions ? {condition: 'approve' as const, typedWhile} : {})});
       if (conditions) this.ownHeldAdds += 1;
       // The note never repeats the text: it may be a password.
-      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after; Queue Mode (Ctrl+Q on an empty line) makes Enter queue.`, INFO);
+      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after; Ctrl+Q on an empty line queues several.`, INFO);
     }
     this.editor.clear();
     this.composerHistory.reset();
     this.runningDraft = undefined;
-    this.queueCompose = false;
+    // The queue composer the person opened for this command stays open for the next line; a one-off one closes.
+    this.queueCompose = this.queueComposeFor !== undefined && this.queueComposeFor === this.running?.startId;
+    if (!this.queueCompose) this.queueComposeFor = undefined;
     this.render();
   }
 
@@ -13436,7 +13432,7 @@ export class TerminalApp {
       if (intent === 'enter' && text.trim() && (this.justStopped() || afterDone) && !this.answersByDefault() && !this.passthrough) { this.holdForStop(text, afterDone && !this.justStopped()); return; }
       // A first-key hold can contain edits and Enter together. Parse NMSh actions above first; a replayed
       // program submission still needs reliable ownership, even when a later look only inferred a line reader.
-      if (intent === 'enter' && this.replayingHeld && text.trim() && !this.justStopped() && !this.running.done && !this.queueModeOn()
+      if (intent === 'enter' && this.replayingHeld && text.trim() && !this.justStopped() && !this.running.done
         && this.inputState?.request?.confidence !== 'confirmed' && this.session.lookInput && this.session.features.has('input-look')) {
         this.holdForOwnershipLook({kind: 'enter'}, true);
         return;
@@ -13451,14 +13447,12 @@ export class TerminalApp {
       }
       if (!text.trim()) return;
       if (this.reviewMixedBlock(text)) return;
-      // Queue Mode: the person said Enter queues. Nothing waits for input that NMSh can see (that took Enter above),
-      // so the line is a command for after this one, shown as typed and run without an approval step.
-      this.enqueue(text, intent === 'enter' && !this.queueModeOn() ? runningProgramName(this.running.command) : undefined);
+      this.enqueue(text, intent === 'enter' ? runningProgramName(this.running.command) : undefined);
       return;
     }
     if (intent === 'send') return;
     // Held keys replayed after their command ended: this Enter was pressed while it ran, so it is no command (#426).
-    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.queueModeOn() ? undefined : this.replayTypedWhile); return; }
+    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.replayTypedWhile); return; }
     if (this.reviewMixedBlock(text)) return;
     if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
@@ -13469,11 +13463,10 @@ export class TerminalApp {
       return;
     }
     // A held line waiting for approval at the head runs nothing by itself, so it never holds the prompt: a command you
-    // submit there runs now (#426). Anything behind the held line waits for it either way. In Queue Mode Enter queues,
-    // so a line never runs ahead of entries already waiting; only a paused queue gives the prompt back.
+    // submit there runs now (#426). Anything behind the held line waits for it either way.
     const head = this.queueState.entries[0];
     const held = Boolean(head && head.condition === 'approve' && !head.approved);
-    const behind = this.queueState.entries.length > 0 && !this.queueState.paused && (!held || this.queueModeOn());
+    const behind = this.queueState.entries.length > 0 && !this.queueState.paused && !held;
     if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || behind)) {
       this.enqueue(text);
       return;
@@ -13680,6 +13673,13 @@ export class TerminalApp {
     }
     this.inputState = state;
     if (this.arcade) this.arcadeInputState(state);
+    // A program asks for input while the queue composer is open and empty: it closes, so the next keys (a password
+    // included) go where input ownership sends them, never into a visible queue line. A line already begun in it was
+    // begun as a queued command; it stays one, and the composer closes once it is added (or Esc).
+    if (state.request && this.queueComposeFor !== undefined) {
+      if (!this.editor.text) { this.queueCompose = false; this.queueComposeFor = undefined; }
+      else this.queueComposeFor = undefined;
+    }
     // The shell said the command is done: typing begun from now on is for the prompt, never a reply (#426, #436).
     if (state.done) {
       this.running.done = true;
@@ -13804,9 +13804,13 @@ export class TerminalApp {
    */
   private needsOwnershipLook(key: Key): boolean {
     // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt the stop brings back.
-    if (this.replayingHeld || !this.running || this.passthrough || this.startupPending || this.queueCompose || this.queueEdit || this.justStopped()) return false;
+    if (this.replayingHeld || !this.running || this.passthrough || this.startupPending || this.queueEdit || this.justStopped()) return false;
+    // A one-off queue entry (Ctrl+Q during direct input) is composed for the queue. The queue composer is looked at
+    // before its first key is drawn, like the composer: hidden input closes it and the typing stays held, unseen.
+    if (this.queueCompose && this.queueComposeFor === undefined) return false;
     if (this.inputState?.request || this.inputState?.terminalOwner || !this.session.lookInput || !this.session.features.has('input-look')) return false;
     if ((key.kind === 'text' || key.kind === 'paste') && !this.editor.text) return true;
+    if (this.queueCompose) return false;
     const text = this.editor.text;
     return key.kind === 'enter' && Boolean(text.trim()) && !isSlashInput(text) && this.queueAvailable() && !this.answersByDefault();
   }
@@ -13952,6 +13956,8 @@ export class TerminalApp {
       // its read returns, and the typing type-ahead; but it can be a second question with no prompt. Either way the
       // typing is not a known reply (not discarded) and not known type-ahead (never run by itself if the command ends).
       if (result === 'hidden') { if (afterHiddenAnswer()) hold.sawAnsweredHidden = true; else hold.sawHidden = true; }
+      // Hidden input: the queue composer closes, so nothing typed now is drawn as a queue line.
+      if (result === 'hidden' && this.queueComposeFor !== undefined) { this.queueCompose = false; this.queueComposeFor = undefined; }
       // Nothing runs: the command ended (its done marker can come well before its prompt), so the rules for typing
       // held by a command that ended apply now, not those for one still running. Typing is type-ahead for the prompt
       // only when the shell's done marker reached this window before it began (InputState.done): a look's idle says
@@ -13961,9 +13967,7 @@ export class TerminalApp {
       const blind = result === 'unknown' || (result === 'hidden' && !this.inputState?.request) || result === undefined;
       // Echo permits presentation, not submission to a reader. Combined first-key holds are checked
       // by routeComposer after their editor keys and NMSh actions have been parsed.
-      // In Queue Mode Enter is the person's queue key, as Ctrl+Q is: the line is queued, and the owner holds it for
-      // approval if the command is later seen asking for input (QueueDispatcher.onInputRequest).
-      if (result === 'visible' && !this.inputState?.request && key.kind === 'enter' && !this.queueModeOn()
+      if (result === 'visible' && !this.inputState?.request && key.kind === 'enter'
         && this.running?.startId === running.startId && !this.running.done) { confirm(); return; }
       if (!blind) settle('route');
       else if (!relooked && this.running?.startId === running.startId) { relooked = true; look(); }

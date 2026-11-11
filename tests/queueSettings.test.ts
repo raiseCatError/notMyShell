@@ -30,7 +30,7 @@ test('queue presentation defaults match the approved spec: timeline on, two resu
   assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.queue, {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
     outputDisplay: 'inline',
     autoSaveSummary: true, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
-    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false, queueMode: false});
+    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false});
   assert.deepEqual(normalizePromptConfiguration({}).queue, {...DEFAULT_PROMPT_CONFIGURATION.queue, autoSaveSummary: false}, 'an existing configuration keeps the defaults');
 });
 

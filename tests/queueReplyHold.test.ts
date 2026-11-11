@@ -5,7 +5,7 @@ import {QueueDispatcher} from '../src/session/QueueDispatcher.js';
 
 /**
  * #514 race, owner side: an Enter pressed before NMSh could see that the command reads (an echoing terminal is no
- * evidence) can reach the queue as a command, with no approval in Queue Mode. Once the command is reported asking for
+ * evidence) can reach the queue as a command: Ctrl+Q and the queue composer add lines without approval. Once the command is reported asking for
  * input, everything queued while it ran waits for approval. The owner decides it beside the prompt, so a reader that
  * ends right after it was seen can never let the next dispatch run its reply.
  */

@@ -161,8 +161,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
 
   /**
    * The running command asked for input (InputWatch reported a request; `program` names it). A line queued while it
-   * ran, before this was known, may be its reply: in Queue Mode Enter queues without approval, and an Enter pressed
-   * before the reader could be seen (an echoing terminal is no evidence, #514) queues it as a command. Those entries now
+   * ran, before this was known, may be its reply: Ctrl+Q and the queue composer add lines without approval, and NMSh
+   * may not have been able to see the reader when they were typed (an echoing terminal is no evidence, #514). Those entries now
    * wait for approval, decided here beside the prompt so the next dispatch can never overtake a frontend's request;
    * hidden input also hides their text. Each request is checked once, when first reported: what the person queues
    * while it is shown stays as queued.

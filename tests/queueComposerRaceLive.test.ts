@@ -6,19 +6,19 @@ import {fileURLToPath} from 'node:url';
 import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
 
 /**
- * Queue Mode under #514's ownership race, on a real PTY: a prompt-less `read` that NMSh cannot recognize yet (the
- * fixture holds back only the evidence, never the shell) gets an immediate reply and Enter. An echoing terminal is no
- * evidence of a reader, and Queue Mode queues lines without approval, so the reply reaches the queue as a command.
- * Once the read is seen, that entry waits for approval: when the read gives up and its command succeeds, the reply has
- * not run, and never runs by itself.
+ * The queue composer under #514's ownership race, on a real PTY: a prompt-less `read` that NMSh cannot recognize yet
+ * (the fixture holds back only the evidence, never the shell). The person opens the queue composer and types a reply
+ * into it anyway: the composer queues what is typed in it without approval, so the reply reaches the queue. Once the
+ * read is seen, the owner holds that entry for approval: when the read gives up and its command succeeds, the reply
+ * has not run, and never runs by itself. (A reader NMSh never sees before it ends is the documented limit.)
  */
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 const entry = fileURLToPath(new URL('./fixtures/ownershipRaceEntry.mjs', import.meta.url));
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
 
 for (const reactionMs of [0, 300]) {
-  test(`live zsh, Queue Mode: a reply entered ${reactionMs}ms into a read NMSh could not see yet never runs as a command`, {skip: !supported, timeout: 90_000}, async t => {
-    const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh', queue: {queueMode: true}});
+  test(`live zsh, queue composer: a reply entered ${reactionMs}ms into a read NMSh could not see yet never runs as a command`, {skip: !supported, timeout: 90_000}, async t => {
+    const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh'});
     const gate = join(sandbox.home, 'ownership-gate');
     const frontend = sandbox.launch([], {cols: 120, rows: 36}, {NMSH_TEST_OWNERSHIP_GATE: gate}, entry);
     const trace = () => existsSync(gate + '.jsonl') ? readFileSync(gate + '.jsonl', 'utf8').trim().split('\n').filter(Boolean) : [];
@@ -30,8 +30,10 @@ for (const reactionMs of [0, 300]) {
       const mark = frontend.mark;
       frontend.pty.write(command + '\r');
       await pause(reactionMs);
+      frontend.pty.write('\u0011');
+      await frontend.waitFor(/Queueing · each Enter adds/u, mark, 5000);
       frontend.pty.write('hello\r');
-      await until(async () => (await sandbox.sessions())[0]?.queued === 1, 5000, 'Queue Mode queued the unrecognized reply');
+      await until(async () => (await sandbox.sessions())[0]?.queued === 1, 5000, 'the composer queued the unrecognized reply');
       assert.ok(trace().some(line => line.includes('"sample"')), 'the control exercised real probe observations');
       writeFileSync(gate + '.release', '');
       await until(async () => (await sandbox.sessions())[0]?.inputMode === 'line', 10_000, 'the read is seen once the evidence is released');
@@ -44,12 +46,11 @@ for (const reactionMs of [0, 300]) {
       assert.equal(records.some(r => r.command.trim() === 'hello'), false, 'the reply never ran as a command');
       assert.equal((await sandbox.sessions())[0]?.queued, 1, 'it waits in the queue');
       assert.match(strip(frontend.output.slice(mark)), /waits? for your approval/u, 'and says why');
-      // In Queue Mode the next line goes behind it; nothing releases the held reply but the person.
-      frontend.pty.write('echo AFTER\r');
-      await until(async () => (await sandbox.sessions())[0]?.queued === 2, 5000, 'the next line queued behind the held reply');
-      await pause(1500);
+      // The composer closed with its command; a command at the prompt runs now, and the held reply still waits.
+      await frontend.run('echo AFTER', /AFTER/u);
       const after = (await sandbox.transcripts().list()).flatMap(s => s.transcript.records).map(r => r.command.trim());
-      assert.equal(after.includes('hello') || after.includes('echo AFTER'), false, 'neither ran by itself');
+      assert.equal(after.includes('hello'), false, 'the reply never ran by itself');
+      assert.equal((await sandbox.sessions())[0]?.queued, 1, 'it still waits for approval');
     } finally { t.diagnostic(JSON.stringify({reactionMs, trace: trace().length})); await sandbox.dispose(); }
   });
 }

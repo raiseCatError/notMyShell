@@ -137,7 +137,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/qr', insertion: '/qr', alias: '/queue', description: 'Review before resuming the queue'},
   {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
   {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
-  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings; /queue mode [on|off] switches Queue Mode, where Enter queues while a command runs'},
+  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume|refresh)'},
   {name: '/track', insertion: '/track ', description: 'Keep one live result of a finite command in the transcript, refreshed in place (/track df -h · /track --every 5s -- docker system df · pause|resume|refresh|stop|copy)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
@@ -251,8 +251,6 @@ export type ParsedSlashCommand =
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start' | 'copy'; arguments: string; /** Typed as /track: keep one live result in the transcript. */ track?: boolean}
   | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'}
-  /** `/queue mode [on|off]`: this window's Queue Mode; no argument toggles it. */
-  | {kind: 'queueMode'; value?: boolean}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -414,8 +412,6 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
   const shortcut = ({'/qp': 'pause', '/pause': 'pause', '/qr': 'resume', '/qc': 'clear'} as const)[input.trim() as '/qp'];
   if (shortcut) return {kind: 'queue', op: shortcut};
-  const queueMode = /^\/(?:queue|q)\s+mode(?:\s+(on|off))?\s*$/u.exec(input);
-  if (queueMode) return queueMode[1] ? {kind: 'queueMode', value: queueMode[1] === 'on'} : {kind: 'queueMode'};
   const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings|history|save-summary))?\s*$/u.exec(input);
   if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
     : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'};

@@ -171,18 +171,23 @@ typed is drawn, not even as dots.
 - **There are no answer buttons.** NMSh never submits an answer on your behalf.
 - **No question in sight** (nothing waits that NMSh can see): Enter holds a line for approval and shows it by where it
   came from, because a prompt-less read is indistinguishable from a command NMSh cannot see (#426). Ctrl+Q queues it
-  as typed. **Queue Mode** (per window: Ctrl+Q on an empty line or `/queue mode`; Settings chooses how windows start)
-  makes Enter do what Ctrl+Q does. It changes only this case: the look before typing is drawn, Enter to a program that
-  waits, hidden input and the held state when a look cannot tell are all as above. Its accepted cost is the prompt-less
-  read NMSh cannot see (an external program reading with no prompt): in Queue Mode the line is queued, visibly, instead.
-  A reader seen late (#514: an echoing terminal is no evidence, and a loaded machine can delay the follow-up sample) is
-  caught by the owner: when the running command is first reported asking for input, every entry queued since it was
-  submitted waits for approval (hidden input also hides their text). The session service decides this beside the
-  prompt, so the next dispatch cannot overtake it. What remains is a reader NMSh never sees before it ends (on macOS
-  there is no kernel read report: a prompt-less external reader, or a timed read that gives up within a second): its
-  queued line runs after it, as a Ctrl+Q line always has.
-  At the prompt, Queue Mode keeps order: a line never runs ahead of entries already waiting (a held head included);
-  only a paused queue gives the prompt back.
+  as typed. **The queue composer** (#473): Ctrl+Q on an empty line while a command runs opens it for that command
+  only; each line entered in it is queued as typed, without approval, until Esc, a second Ctrl+Q on the empty line,
+  or the end of that command. It is the person's explicit choice, made after seeing what runs, and it never carries
+  over to the next command, so a reflexive Enter there gets the rules above. Plain Enter is never made to queue by a
+  standing mode: on macOS nothing proves that a program does not read, so no setting can make Enter safe for every
+  command (#514's boundary stays).
+  - Hidden input closes it before anything is drawn: its first key is looked at like the composer's, and a hidden
+    look closes it and holds the typing unseen; a request reported while it is open and empty closes it, so the
+    keys go where ownership sends them. A line already begun in it stays a queued command, then it closes.
+  - A reader seen late (an echoing terminal is no evidence, and a loaded machine delays the follow-up sample) is
+    caught by the owner: when the running command is first reported asking for input, every entry queued since it
+    was submitted waits for approval (hidden input also hides their text), decided by the session service beside the
+    prompt, so the next dispatch cannot overtake it.
+  - Unavoidable limit: a reader NMSh never sees before it ends (a prompt-less external reader on macOS, or a timed
+    read that gives up within about a second) — a line typed for it into the queue composer runs after it as a
+    command, exactly as a Ctrl+Q line always has. A secret typed with echo on into the composer is shown and queued
+    like any queued text. Tests: `queueComposer.test.ts`, `queueComposerRaceLive.test.ts`, `queueReplyHold.test.ts`.
 - **Unfinished command lines.** NMSh draws no continuation prompt, so zsh and Bash print PS2 as an invisible marker.
   The session counts the continuation prompts a submission's own line breaks explain; one more, before the command
   starts, means the shell is waiting for the rest of a line NMSh sent whole (an unclosed quote, bracket or heredoc;
