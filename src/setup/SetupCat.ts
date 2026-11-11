@@ -397,7 +397,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Session notices are short events about another session (a finished command, a failure, a request for attention); /sessions keeps the state.'], rows: [
     {row: configRow('liveSessionStartup')},
     {row: configRow('liveSessionMultiple')},
-    {row: configRow('commandQueue'), note: draft => draft.commandQueue ? 'On: while a command runs, Enter queues the next one; a program waiting for input still gets your answer' : 'Off: Enter while a command runs goes to the program, as in a plain terminal'},
+    {row: configRow('commandQueue'), note: draft => draft.commandQueue ? 'On: while a command runs, Ctrl+Q queues the next command; Enter holds a line for your approval unless Queue Mode is on' : 'Off: Enter while a command runs goes to the program, as in a plain terminal'},
+    {row: configRow('queueMode'), note: draft => draft.queue.queueMode ? 'On: new windows start in Queue Mode; while a command runs, Enter queues the line, and a program waiting for input still gets your answer' : 'Off: Enter holds a line typed while a command runs for your approval; Ctrl+Q on an empty line switches one window to Queue Mode'},
     {row: configRow('queueFailurePolicy'), note: () => 'Applies to new execution chains; existing reviewed work keeps its policy. Ctrl+C always pauses.'},
     {row: configRow('queueTimeline'), note: draft => draft.queue.liveTimeline ? 'On: queued work shows as a chronological timeline — recent results, the running command and what runs next' : 'Off: the one-line queue row and pending list, as before'},
     {row: configRow('queueRecentResults')},

@@ -988,6 +988,8 @@ export class TerminalApp {
   private staleStopReport?: () => void;
   /** Set while held keys are replayed after their command ended: an Enter among them was pressed while it ran. */
   private replayTypedWhile?: string;
+  /** This window's Queue Mode choice (Ctrl+Q on an empty line, /queue mode); undefined follows Settings. */
+  private queueModeChoice?: boolean;
   /** Held lines (typedWhile) the person chose to see, by queue entry id; everything else shows where it came from. */
   private readonly revealedQueue = new Set<number>();
   /** Held lines this window added and has not yet seen in the owner's state (so others are the owner's, #426). */
@@ -1120,7 +1122,9 @@ export class TerminalApp {
         // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
         this.hostSemantics.prompt(marker.cwd, marker.exitCode);
         this.completedInputTiming = marker.inputWaits ? {waitedMs: marker.inputWaitMs ?? 0, waits: marker.inputWaits} : undefined;
+        const unfinished = marker.incomplete ? this.running?.command : undefined;
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
+        if (unfinished !== undefined) this.explainIncomplete(unfinished);
       }
     });
     this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed, stamp.queued); } });
@@ -2866,6 +2870,7 @@ export class TerminalApp {
     else if (key.kind === 'deleteLineAfter') this.editor.deleteLineAfter();
     else if (key.kind === 'delete') this.editor.delete();
     else if (key.kind === 'newline') this.editor.insert('\n');
+    else if (key.kind === 'queueCommand' && !this.editor.text.trim() && !this.queueCompose && !this.queueEdit && this.queueAvailable()) this.setQueueMode('Ctrl+Q');
     else if (key.kind === 'queueCommand') this.routeComposer('queue');
     else if (key.kind === 'sendToProgram') this.routeComposer('send');
     else if (key.kind === 'enter') this.routeComposer('enter');
@@ -3305,6 +3310,7 @@ export class TerminalApp {
     else if (slash.kind === 'doctor') void this.openDoctor();
     else if (slash.kind === 'watch') this.handleWatch(command.trim(), slash.op, slash.arguments, slash.track === true);
     else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
+    else if (slash.kind === 'queueMode') this.setQueueMode(command.trim(), slash.value);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
       else {
@@ -13025,7 +13031,7 @@ export class TerminalApp {
     const request = this.inputState?.request;
     // Typing held without evidence of who reads it: say so, and how to choose, in the rows a wait would use. Typing held
     // at the prompt for a command that ended is not this command's: the composer says it.
-    if (this.ownershipLook?.uncertain && !this.ownershipLook.atPrompt) return heldInputRows(this.running.command.trim().split(/\s+/u)[0] || 'the command', columns);
+    if (this.ownershipLook?.uncertain && !this.ownershipLook.atPrompt) return heldInputRows(runningProgramName(this.running.command), columns);
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
       const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
@@ -13071,18 +13077,26 @@ export class TerminalApp {
     if (this.stopAhead && this.running?.startId === this.stopAhead.startId && !this.editor.text) {
       return {text: `${this.stopAhead.done ? 'Runs when the prompt is back' : `Runs at the prompt once ${this.stopAhead.program} stops`} · Esc takes it back`, waiting: false};
     }
+    // Queue Mode is a standing choice for this window: the empty composer says so at the prompt too.
+    if (!this.running && !this.passthrough && !this.queueEdit && !this.startupPending && this.queueModeOn()) {
+      const waiting = this.queueState.entries.length;
+      if (waiting && this.queueState.paused) return {text: `Queue Mode · queue paused, ${waiting} waiting · Enter runs it now · Ctrl+Q queues it after them`, waiting: false};
+      if (waiting) return {text: `Queue Mode · Enter adds it after ${waiting} waiting · Ctrl+Q on an empty line turns Queue Mode off`, waiting: false};
+      return {text: 'Queue Mode · while a command runs, Enter queues · Ctrl+Q on an empty line turns it off', waiting: false};
+    }
     if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
     if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
-    const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
-    if (this.ownershipLook?.uncertain) return {text: heldInputActions(this.running.command.trim().split(/\s+/u)[0] || 'the command'), waiting: true};
+    const program = request ? inputProgram(request, this.running.command) : runningProgramName(this.running.command);
+    if (this.ownershipLook?.uncertain) return {text: heldInputActions(runningProgramName(this.running.command)), waiting: true};
     if (this.ownershipLook?.slow) return {text: `Checking whether ${program} is waiting for input · your typing is kept`, waiting: false};
     // A waiting program gets the one instruction, with or without a queue; a question NMSh has not yet probed reads
     // as a line.
     if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
     if (!this.queueAvailable()) return undefined;
-    return {text: `Enter holds it for approval · Ctrl+Q runs it after · Ctrl+S sends to ${program}`, waiting: false};
+    if (this.queueModeOn()) return {text: `Queue Mode · Enter queues it to run next · Ctrl+S sends to ${program}`, waiting: false};
+    return {text: `Enter holds it for approval · Ctrl+Q runs it after · Ctrl+S sends to ${program} · Ctrl+Q on an empty line: Queue Mode`, waiting: false};
   }
 
   /**
@@ -13169,6 +13183,31 @@ export class TerminalApp {
 
   private queueAvailable(): boolean {
     return this.promptConfiguration.commandQueue !== false && this.session.features.has('queue');
+  }
+
+  /**
+   * Queue Mode, for this window: while a command runs, Enter queues the line as an ordinary command, as Ctrl+Q does,
+   * instead of holding it for approval. Input ownership still comes first: a program NMSh sees waiting for input gets
+   * Enter, and typing NMSh has not placed yet is looked at before it is drawn. Starts from Settings (off by default);
+   * Ctrl+Q on an empty line and /queue mode change it for this window only, so a stray key never persists.
+   */
+  private queueModeOn(): boolean {
+    return this.queueAvailable() && (this.queueModeChoice ?? this.promptConfiguration.queue.queueMode === true);
+  }
+
+  private setQueueMode(source: string, value?: boolean): void {
+    if (!this.queueAvailable()) {
+      this.output.addFrontendInteraction(source, this.session.features.has('queue')
+        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
+      this.render();
+      return;
+    }
+    const on = value ?? !this.queueModeOn();
+    this.queueModeChoice = on;
+    this.output.addFrontendInteraction(source, on
+      ? 'Queue Mode on: while a command runs, Enter queues the line to run after it. A program waiting for input still gets Enter. Ctrl+Q on an empty line turns it off.'
+      : 'Queue Mode off: while a command runs, Enter holds a line for your approval; Ctrl+Q queues it.', INFO);
+    this.render();
   }
 
   /** The queue's line: what is queued and what runs next, or why it waits; an edit in progress says how to finish. */
@@ -13326,7 +13365,7 @@ export class TerminalApp {
       this.session.queue({op: 'add', text, ...(conditions ? {condition: 'approve' as const, typedWhile} : {})});
       if (conditions) this.ownHeldAdds += 1;
       // The note never repeats the text: it may be a password.
-      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after.`, INFO);
+      this.output.addFrontendInteraction(typedWhile, `The line entered while ${typedWhile} runs may be its reply, so it never runs by itself: it ${conditions ? 'waits for your approval' : 'pauses the queue'} (/queue). Ctrl+Q queues a command to run after; Queue Mode (Ctrl+Q on an empty line) makes Enter queue.`, INFO);
     }
     this.editor.clear();
     this.composerHistory.reset();
@@ -13398,12 +13437,14 @@ export class TerminalApp {
       }
       if (!text.trim()) return;
       if (this.reviewMixedBlock(text)) return;
-      this.enqueue(text, intent === 'enter' ? commandWords(this.running.command)[0] ?? 'the command' : undefined);
+      // Queue Mode: the person said Enter queues. Nothing waits for input that NMSh can see (that took Enter above),
+      // so the line is a command for after this one, shown as typed and run without an approval step.
+      this.enqueue(text, intent === 'enter' && !this.queueModeOn() ? runningProgramName(this.running.command) : undefined);
       return;
     }
     if (intent === 'send') return;
     // Held keys replayed after their command ended: this Enter was pressed while it ran, so it is no command (#426).
-    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.replayTypedWhile); return; }
+    if (this.replayTypedWhile !== undefined && intent === 'enter' && text.trim() && !slash) { this.enqueue(text, this.queueModeOn() ? undefined : this.replayTypedWhile); return; }
     if (this.reviewMixedBlock(text)) return;
     if (this.pendingQueuePause) { this.render(); return; }
     // An empty Enter where the queue offers something arms its review; nothing runs yet.
@@ -13414,10 +13455,12 @@ export class TerminalApp {
       return;
     }
     // A held line waiting for approval at the head runs nothing by itself, so it never holds the prompt: a command you
-    // submit there runs now (#426). Anything behind the held line waits for it either way.
+    // submit there runs now (#426). Anything behind the held line waits for it either way. In Queue Mode Enter queues,
+    // so a line never runs ahead of entries already waiting; only a paused queue gives the prompt back.
     const head = this.queueState.entries[0];
     const held = Boolean(head && head.condition === 'approve' && !head.approved);
-    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused && !held))) {
+    const behind = this.queueState.entries.length > 0 && !this.queueState.paused && (!held || this.queueModeOn());
+    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || behind)) {
       this.enqueue(text);
       return;
     }
@@ -13763,7 +13806,7 @@ export class TerminalApp {
     const running = this.running!;
     const keys = [key];
     // The command line's own first word (sudo, not the command sudo runs): what the person sees running.
-    const program = running.command.trim().split(/\s+/u)[0] || 'the command';
+    const program = runningProgramName(running.command);
     const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter' || item.kind === 'newline';
     const discarded = (message: string) => { if (keys.some(typing)) this.output.addFrontendInteraction(program, message, INFO); };
     let settled = false;
@@ -13911,6 +13954,20 @@ export class TerminalApp {
     if (request && this.running && !stopped) this.answeredQuestion = {startId: this.running.startId, since: request.since};
     if (request) this.inputState = {timing: this.inputState!.timing};
     this.commandLine.reset();
+  }
+
+  /**
+   * The shell asked for more input to finish a command line NMSh submitted whole, so the session cancelled it before
+   * anything ran (the session owns the shell). Say why in plain words and give the line back to fix, unless something else is
+   * already being typed.
+   */
+  private explainIncomplete(command: string): void {
+    const shell = this.shellId === 'bash' ? 'Bash' : this.shellId === 'fish' ? 'Fish' : 'zsh';
+    const bang = this.shellId === 'zsh' && /"[^"]*![^"]*"?/u.test(command)
+      ? ' In zsh, ! inside double quotes starts history expansion and !" removes the closing quote: use single quotes or \\!.' : '';
+    this.output.addFrontendInteraction('Unfinished command line', `${shell} was still waiting for the end of this command line (an unclosed quote or bracket), so NMSh cancelled it: nothing ran.${bang}`, ERROR);
+    if (!this.editor.text && !this.queueEdit && !this.queueCompose && !this.passthrough) this.editor.replaceText(command);
+    this.render();
   }
 
   /** This command's phrase pair under Expressive wording: chosen once from the command and its start, so it never changes while it runs. */
@@ -14253,4 +14310,30 @@ export class TerminalApp {
 /** Commands newest first, read lazily so navigation stops at its bound. */
 function* historyCommands(entries: readonly {command: string}[]): Iterable<string> {
   for (const entry of entries) yield entry.command;
+}
+
+/**
+ * The running program as NMSh names it in a hold or a queued line's origin: the command line's first word (sudo, not
+ * what sudo runs). A line of several commands (`a; b`, `a && b`, a pipeline or a multi-line block) has no single
+ * program NMSh can name from its text, and its first word may long have finished, so it is "the command".
+ */
+function runningProgramName(command: string): string {
+  const line = command.trim();
+  if (!line || severalCommands(line)) return 'the command';
+  return commandWords(line)[0] ?? 'the command';
+}
+
+/** Whether a command line runs more than one command: an unquoted `;`, `|`, `&` (not a `>&`/`&>` redirect) or newline. */
+function severalCommands(line: string): boolean {
+  let quote: '\'' | '"' | undefined;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    if (quote === '\'') { if (char === '\'') quote = undefined; continue; }
+    if (char === '\\') { index += 1; continue; }
+    if (quote === '"') { if (char === '"') quote = undefined; continue; }
+    if (char === '\'' || char === '"') { quote = char; continue; }
+    if (char === '\n' || char === ';' || char === '|') return true;
+    if (char === '&' && line[index - 1] !== '>' && line[index - 1] !== '<' && line[index + 1] !== '>') return true;
+  }
+  return false;
 }

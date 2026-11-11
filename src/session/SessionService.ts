@@ -100,7 +100,8 @@ function toMessage(event: BacklogEvent): ServerMessage {
       ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed}), ...(event.queued === undefined ? {} : {queued: event.queued})};
     case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at,
       ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge}),
-      ...(event.inputWaits ? {inputWaitMs: event.inputWaitMs ?? 0, inputWaits: event.inputWaits} : {})};
+      ...(event.inputWaits ? {inputWaitMs: event.inputWaitMs ?? 0, inputWaits: event.inputWaits} : {}),
+      ...(event.incomplete ? {incomplete: 1} : {})};
   }
 }
 
@@ -542,7 +543,8 @@ export class SessionService {
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
         ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge}),
-        ...(marker.inputWaits ? {inputWaitMs: marker.inputWaitMs ?? 0, inputWaits: marker.inputWaits} : {})});
+        ...(marker.inputWaits ? {inputWaitMs: marker.inputWaitMs ?? 0, inputWaits: marker.inputWaits} : {}),
+        ...(marker.incomplete ? {incomplete: true} : {})});
       // After the prompt is on its way: the next queued command, if any, starts from this evidence only.
       session.queue.onPrompt(marker.exitCode, session.idleSince, marker);
     });

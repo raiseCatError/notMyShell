@@ -867,6 +867,11 @@ export interface QueuePresentationSettings {
   summaryExitCodes: boolean;
   /** Show observed input waits when one was recorded; nothing is ever guessed. */
   summaryInputWaits: boolean;
+  /**
+   * New windows start in Queue Mode: while a command runs, Enter queues the line as an ordinary command (as Ctrl+Q
+   * does) instead of holding it for approval. A program NMSh sees waiting for input still gets Enter. Off by default.
+   */
+  queueMode: boolean;
 }
 
 function boundedCount(value: unknown, min: number, max: number, fallback: number): number {
@@ -887,7 +892,8 @@ export function normalizeQueuePresentation(value: unknown): QueuePresentationSet
     summaryDetail: pickValue(QUEUE_SUMMARY_DETAILS, raw.summaryDetail, 'detailed'),
     summaryPlacement: pickValue(QUEUE_SUMMARY_PLACEMENTS, raw.summaryPlacement, 'center'),
     summaryAlign: pickValue(QUEUE_SUMMARY_ALIGNS, raw.summaryAlign, 'left'),
-    summaryDurations: raw.summaryDurations !== false, summaryExitCodes: raw.summaryExitCodes !== false, summaryInputWaits: raw.summaryInputWaits === true};
+    summaryDurations: raw.summaryDurations !== false, summaryExitCodes: raw.summaryExitCodes !== false, summaryInputWaits: raw.summaryInputWaits === true,
+    queueMode: raw.queueMode === true};
 }
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
@@ -940,7 +946,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
     outputDisplay: 'inline',
     autoSaveSummary: true, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
-    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false},
+    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false, queueMode: false},
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',

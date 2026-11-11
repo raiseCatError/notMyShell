@@ -26,6 +26,7 @@ export const zshAdapter: ShellAdapter = {
   capabilities: {completion: 'rich', completionDescriptions: true, liveNames: true, historyImport: true,
     privateHistory: 'a leading space, or a match of HISTORY_IGNORE, keeps a command out of history', jobCount: true},
   editorChrome: 'none',
+  cancelContinuation: '\u0003\r',
   builtins: ZSH_BUILTINS,
   resolveExecutable(env) {
     try { return resolveZsh(env); } catch { return undefined; }
@@ -106,7 +107,8 @@ function nmsh_precmd {
   # owns prompt rendering, so it always has the last word here.
   PROMPT=''
   RPROMPT=''
-  PS2=''
+  # The continuation prompt draws nothing; its marker tells NMSh the shell is waiting for the rest of a line.
+  PS2=$'\\e]777;nmsh;${token};continue\\a'
   # Themes such as Powerlevel10k move their own hook to the end of
   # precmd_functions every cycle; move ours back after it so the next cycle
   # still blanks last. Their prompt-spacing options must not return either.

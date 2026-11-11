@@ -171,6 +171,20 @@ typed is drawn, not even as dots.
   - NMSh gestures and pointer events are never sent.
   - Nothing typed is shown, journaled, put in history or written to the key-debug log.
 - **There are no answer buttons.** NMSh never submits an answer on your behalf.
+- **No question in sight** (nothing waits that NMSh can see): Enter holds a line for approval and shows it by where it
+  came from, because a prompt-less read is indistinguishable from a command NMSh cannot see (#426). Ctrl+Q queues it
+  as typed. **Queue Mode** (per window: Ctrl+Q on an empty line or `/queue mode`; Settings chooses how windows start)
+  makes Enter do what Ctrl+Q does. It changes only this case: the look before typing is drawn, Enter to a program that
+  waits, hidden input and the held state when a look cannot tell are all as above. Its accepted cost is the prompt-less
+  read NMSh cannot see (an external program reading with no prompt): in Queue Mode the line is queued, visibly, instead.
+  At the prompt, Queue Mode keeps order: a line never runs ahead of entries already waiting (a held head included);
+  only a paused queue gives the prompt back.
+- **Unfinished command lines.** NMSh draws no continuation prompt, so zsh and Bash print PS2 as an invisible marker.
+  The session counts the continuation prompts a submission's own line breaks explain; one more, before the command
+  starts, means the shell is waiting for the rest of a line NMSh sent whole (an unclosed quote, bracket or heredoc;
+  zsh's `!"` history expansion). The session cancels it there (zsh needs Ctrl+C then Enter: it acts on the interrupt
+  only when its read returns; Bash needs Ctrl+C), nothing of it has run, and the next prompt carries `incomplete` so
+  every window explains it and the queue pauses before what follows. Fish keeps unfinished lines in its own reader.
 
 ## Other sessions
 

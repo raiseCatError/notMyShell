@@ -68,7 +68,7 @@ for (const reply of REPLIES) {
       await f.typeLine(reply);
       const held = f.entry(reply);
       assert.equal(held?.condition, 'approve', 'it waits for approval, whatever it looks like');
-      assert.equal(held?.typedWhile, 'sleep', 'the owner knows it was typed while sleep ran');
+      assert.equal(held?.typedWhile, 'the command', 'the owner knows it was typed while that command line ran (several commands: no single program to name)');
       assert.equal(f.written.some(data => data.includes(reply)), false, 'not written to the terminal');
       assert.equal(f.recalled().includes(reply), false, 'not offered by Up as a command typed this session');
       assert.match(f.transcript(), /never runs by itself/u, 'a note says why');
@@ -91,7 +91,7 @@ test('quarantine: the held line is shown by where it came from, never by its tex
     assert.equal(f.transcript().includes(SECRET), false, 'the note never repeats the text');
     f.complete(0); await settled();
     assert.equal(f.screen().includes(SECRET), false, 'at the prompt');
-    assert.match(f.screen(), /typed while sleep ran/u, 'it says where it came from');
+    assert.match(f.screen(), /typed while the command ran/u, 'it says where it came from');
   } finally { f.dispose(); }
 });
 

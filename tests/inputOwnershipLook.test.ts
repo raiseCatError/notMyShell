@@ -74,8 +74,9 @@ function fixture() {
 }
 
 const settled = () => new Promise(done => setImmediate(done));
-const KEPT = /Checking whether \S+ is waiting for input · your typing is kept/u;
-const HELD = /Can't tell whether \S+ is reading your typing/u;
+// A line of several commands (READ) is named "the command": its first word may have finished long ago.
+const KEPT = /Checking whether (?:the command|\S+) is waiting for input · your typing is kept/u;
+const HELD = /Can't tell whether (?:the command|\S+) is reading your typing/u;
 
 test('#426: a reply to a prompt-less read is not queued when the look outlasts 800 ms', async t => {
   const f = fixture();

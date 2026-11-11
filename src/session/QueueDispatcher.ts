@@ -152,7 +152,10 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     if (!this.atPrompt) this.interrupted = true;
   }
 
-  onPrompt(exitCode: number, at = this.clock.now(), waits?: {inputWaitMs?: number}): void {
+  onPrompt(exitCode: number, at = this.clock.now(), waits?: {inputWaitMs?: number; incomplete?: boolean}): void {
+    // The entry it submitted was a line the shell could not finish; the session cancelled it before anything ran. It is
+    // a mistake in the queued text, not a result: what follows waits for the person, whatever the failure policy.
+    const unfinished = !this.ran && waits?.incomplete === true ? this.sent : undefined;
     if (!this.ran && (this.sent || (this.manualStarting && this.startingChain !== undefined && this.startingChain === this.timeline.state?.id))) this.timeline.unobserved();
     this.manualStarting = false; this.startingChain = undefined;
     const belongs = this.timeline.running;
@@ -168,6 +171,7 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
       // An entry that is to run regardless of the result before it is not held back by a plain failure.
       else if (belongs && exitCode !== 0 && this.queue.next?.condition !== 'always' && this.timeline.policy !== 'continue') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
     }
+    if (unfinished && this.queue.size && !this.queue.state.paused) this.queue.hold({reason: 'failed', at, command: unfinished.text, exitCode});
     this.interrupted = false;
     this.settleTimeline();
     this.emit('state', this.state, {});
