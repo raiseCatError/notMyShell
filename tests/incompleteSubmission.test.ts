@@ -81,6 +81,47 @@ test('live zsh and bash: a multi-line submission\'s own continuation prompts nev
   }
 });
 
+/** Complete constructs whose own line breaks ask for continuation lines: each must run, never be cancelled. */
+const COMPLETE: Array<{text: string; expect: RegExp}> = [
+  {text: "cat <<'EOF'\nit's \"half-quoted\nEOF", expect: /it's "half-quoted/u},
+  {text: 'cat <<EOF\n$(echo NESTED-SUB)\nEOF', expect: /NESTED-SUB/u},
+  {text: 'echo "LINE-ONE\nLINE-TWO"', expect: /LINE-ONE\r?\nLINE-TWO/u},
+  {text: 'echo ESC \\\nAPED', expect: /ESC APED/u},
+  {text: 'nmsh_f() {\n  echo FUNC-BODY\n}\nnmsh_f', expect: /FUNC-BODY/u},
+  {text: 'echo $(\n  echo MULTI-SUB\n)', expect: /MULTI-SUB/u},
+  {text: "echo 'Single Done!'", expect: /Single Done!/u},
+  {text: 'if true; then\n\n  echo BLANK-LINE-IF\nfi', expect: /BLANK-LINE-IF/u},
+];
+/** Lines the shell can never finish: cancelled, and nothing of them runs. */
+const UNFINISHED = ['echo $(echo NEVER-SUB', 'cat <<EOF\nNEVER-HEREDOC', 'nmsh_g() {\n  echo NEVER-FUNC', 'echo "NEVER-QUOTE\nstill open', 'echo NEVER-ESCAPED \\'];
+
+test('live zsh and bash: heredocs, nested quotes, escaped newlines, functions and substitutions run; only unfinished lines are cancelled', {skip: supported ? false : 'unsupported platform', timeout: 180_000}, async () => {
+  for (const shell of ['zsh', ...(bash ? ['bash' as const] : [])] as const) {
+    await withShell(shell, async (session, next, outputs) => {
+      for (const {text, expect} of COMPLETE) {
+        const from = outputs.length;
+        session.submit(shellSubmission(text, shell));
+        const marker = await next();
+        assert.equal(marker.incomplete, undefined, `${shell}: ${JSON.stringify(text)} is complete and is not cancelled`);
+        assert.equal(marker.exitCode, 0, `${shell}: ${JSON.stringify(text)} succeeds`);
+        assert.match(outputs.slice(from).join(''), expect, `${shell}: ${JSON.stringify(text)} ran`);
+      }
+      for (const text of UNFINISHED) {
+        const from = outputs.length;
+        session.submit(shellSubmission(text, shell));
+        const marker = await next();
+        assert.equal(marker.incomplete, true, `${shell}: ${JSON.stringify(text)} is reported unfinished`);
+        assert.doesNotMatch(outputs.slice(from).join(''), /NEVER-/u, `${shell}: nothing of ${JSON.stringify(text)} ran`);
+        // The very next command is an ordinary one: no leftover continuation state swallows or cancels it.
+        session.submit(shellSubmission('echo AFTER-UNFINISHED', shell));
+        const after = await next();
+        assert.equal(after.incomplete, undefined, `${shell}: the command after ${JSON.stringify(text)} is not cancelled`);
+        assert.match(outputs.slice(from).join(''), /AFTER-UNFINISHED/u);
+      }
+    });
+  }
+});
+
 test('queue: an entry the shell could not finish pauses what follows, whatever the failure policy; nothing else is sent', async () => {
   const {CommandQueue} = await import('../src/session/CommandQueue.js');
   const {QueueDispatcher} = await import('../src/session/QueueDispatcher.js');
