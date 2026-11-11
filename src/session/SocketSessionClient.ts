@@ -265,7 +265,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
-      ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
+      ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {}),
+      ...(message.incomplete ? {incomplete: true} : {})}, {seq: message.seq, at: message.at});
     else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
     else if (message.type === 'input-looked') { this.looks.get(message.id)?.(lookResultFrom(message.result)); this.looks.delete(message.id); }
     else if (message.type === 'queue-state') {

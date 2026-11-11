@@ -29,7 +29,8 @@ async function showAndRunHeld(frontend: Frontend, mode: string, run: number, nex
     frontend.pty.write('\r');
     return;
   }
-  assert.ok(mode === 'ahead' && run % 2 === 1, `only typing ahead during a hidden read is held (${mode}${run})`);
+  assert.ok(mode === 'ahead' && (run % 2 === 1 || /Typed while \S+ ran[^\n]*held, not run/u.test(strip(frontend.output.slice(mark)))),
+    `only hidden or explicitly quarantined type-ahead is held (${mode}${run})`);
   assert.equal(new RegExp(`(?<!echo )${next.slice('echo '.length)}`, 'u').test(strip(frontend.output.slice(mark))), false, 'held, it has not run');
   const shown = frontend.mark;
   frontend.pty.write('\t');

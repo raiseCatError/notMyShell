@@ -194,6 +194,25 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
     return undefined;
   }
 
+  /**
+   * Entries added at or after `since` stop running by themselves (#426): the command that ran then asked for input,
+   * so each may be its reply, typed before anything showed that it reads. They wait for approval; `typedWhile` (hidden
+   * input) also keeps their text out of view. Entries the person already approved are left. Returns how many changed.
+   */
+  holdAddedSince(since: number, typedWhile?: string): number {
+    let held = 0;
+    for (const entry of this.entries) {
+      if (entry.addedAt < since || (entry.condition === 'approve' && entry.approved)) continue;
+      const hide = typedWhile !== undefined && entry.typedWhile === undefined;
+      if (entry.condition === 'approve' && !hide) continue;
+      entry.condition = 'approve';
+      if (hide) entry.typedWhile = typedWhile;
+      held += 1;
+    }
+    if (held) this.changed();
+    return held;
+  }
+
   /** Stops automatic running; entries stay. */
   hold(pause: QueuePause): void {
     if (!this.entries.length) return;
