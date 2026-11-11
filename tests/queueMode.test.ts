@@ -53,16 +53,17 @@ test('/queue mode parses on, off and toggle; other /queue words are unchanged', 
   assert.equal(parseSlashCommand('/queue mode maybe')?.kind, 'unknown');
 });
 
-test('off (the default): a line entered while sleep runs is still held for approval, by where it came from', async () => {
+test('off (the default): a line entered while sleep runs is never queued by Enter; it waits for an explicit choice (#514)', async () => {
   const f = fixture();
   try {
     f.begin('sleep 30');
+    assert.match(f.screen(), /Enter checks who reads it · Ctrl\+Q runs it after/u);
     f.type('echo one');
     await settled();
     f.enter();
     await settled();
-    assert.deepEqual(f.adds().map(op => [op.text, op.condition, op.typedWhile]), [['echo one', 'approve', 'sleep']]);
-    assert.match(f.screen(), /Enter holds it for approval · Ctrl\+Q runs it after/u);
+    assert.deepEqual(f.adds(), [], 'an echoing terminal is no evidence: nothing is queued or sent');
+    assert.match(f.screen(), /Can.t tell whether sleep is reading your typing/u);
   } finally { f.dispose(); }
 });
 
@@ -199,8 +200,9 @@ test('a line of several commands is named "the command", never its first word, w
       await settled();
       f.enter();
       await settled();
-      assert.equal(f.adds()[0]?.typedWhile, 'the command', command);
-      assert.doesNotMatch(f.transcript(), /entered while (echo|printf|make) runs/u, command);
+      assert.deepEqual(f.adds(), [], command);
+      assert.match(f.screen(), /Can.t tell whether the command is reading your typing/u, command);
+      assert.doesNotMatch(f.screen(), /whether (echo|printf|make) is reading/u, command);
     } finally { f.dispose(); }
   }
 });

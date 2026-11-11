@@ -73,7 +73,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       // (A redraw writes only the rows that changed, so the header and the list rows are checked apart.)
       await frontend.waitFor(/› cd sub +Next/u, mark);
       await frontend.waitFor(/Queue · 6 commands/u, mark);
-      assert.match(drawn(frontend, mark), /Enter holds it for approval · Ctrl\+Q runs it after · Ctrl\+S sends to sh/u, 'the empty composer says what Enter and Ctrl+Q do');
+      assert.match(drawn(frontend, mark), /Enter checks who reads it · Ctrl\+Q runs it after · Ctrl\+S sends to sh/u, 'the empty composer says what Enter and Ctrl+Q do');
       writeFileSync(release, '');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
       const commands = [holding, ...SET_STATE[shell], CHECK_STATE[shell]];
@@ -309,7 +309,7 @@ test('live: after Ctrl+Z or Ctrl+C, what you type next is for the shell prompt, 
   } finally { await sandbox.dispose(); }
 });
 
-test('live: a program that survives Ctrl+C gets ordinary routing again: a later line is held for approval, never sent into the program or run', {skip: supported && bash ? false : 'Bash 4.4+ not installed', timeout: 120_000}, async () => {
+test('live: a program that survives Ctrl+C gets ordinary routing again: a later line stays in ownership quarantine, never sent into the program or run', {skip: supported && bash ? false : 'Bash 4.4+ not installed', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     const mark = frontend.mark;
@@ -322,7 +322,7 @@ test('live: a program that survives Ctrl+C gets ordinary routing again: a later 
     frontend.pty.write('\u0003');
     await pause(4200);
     frontend.pty.write('echo LATER\r');
-    await frontend.waitFor(/typed while \S+ ran/u, mark);
+    await frontend.waitFor(/Can.t tell whether \S+ is reading your typing/u, mark);
     writeFileSync(release, '');
     await frontend.waitFor(/SURVIVED/u, mark, 20_000);
     await pause(1500);

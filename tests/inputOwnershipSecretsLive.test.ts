@@ -39,17 +39,21 @@ for (const shell of ['zsh', 'bash'] as const) {
       const command = 'read -rs a; sleep 3; read -rs b; echo "LENGTHS=${#a}/${#b}"';
       frontend.pty.write(`${command}\r`);
       await frontend.waitFor(/[Ww]aiting for input/u, mark, 20_000);
+      const firstQuestion = (await sandbox.sessions())[0]?.inputSince;
       frontend.pty.write('first\r');
       // The first read returned; `sleep` runs with the terminal echoing again and nothing asks.
       await pause(400);
       const typed = frontend.mark;
       for (const char of SECRET) { frontend.pty.write(char); await pause(15); }
       frontend.pty.write('\r');
-      await frontend.waitFor(/1 queued/u, typed, 10_000);
+      await frontend.waitFor(/Can.t tell whether read is reading your typing/u, typed, 10_000);
+      assert.equal((await sandbox.sessions())[0]?.queued ?? 0, 0, 'an early password is not an approval entry');
+      const held = frontend.mark;
       // The second read, with no prompt: NMSh reports it, and the entry may be its reply.
-      await frontend.waitFor(/asked for hidden input/u, typed, 20_000);
-      frontend.pty.write('second\r');
-      await frontend.waitFor(/LENGTHS=5\/6/u, mark, 20_000);
+      await until(async () => { const current = (await sandbox.sessions())[0]; return current?.inputMode === 'hidden' && current.inputSince !== firstQuestion; }, 20_000, 'the second hidden reader');
+      assert.equal(strip(frontend.output.slice(held)).includes(SECRET), false, 'late hidden input never reveals the capture');
+      frontend.pty.write('\u0013');
+      await frontend.waitFor(/LENGTHS=5\/10/u, mark, 20_000);
       const records = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records);
       await until(async () => (await records()).some(record => record.command === command), 15_000, 'the command to complete');
       // Anything that would run after it has had time to start.
@@ -60,7 +64,7 @@ for (const shell of ['zsh', 'bash'] as const) {
       const history = readFileSync(join(sandbox.home, histfile), 'utf8');
       assert.match(history, /echo READY/u, 'the shell records history here');
       assert.equal(history.includes(SECRET), false, 'not in the shell\'s history');
-      assert.match(strip(frontend.output.slice(typed)), /waits for your approval/u);
+      assert.equal((await sandbox.sessions())[0]?.queued ?? 0, 0);
     } finally { await sandbox.dispose(); }
   });
 
@@ -141,7 +145,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         await pause(500);
         for (const char of typed) { frontend.pty.write(char); await pause(15); }
         frontend.pty.write(runs ? '\u0011' : '\r');
-        await frontend.waitFor(new RegExp(`${runs ? 1 : index} (?:queued|waiting)`, 'u'), mark, 10_000);
+        await frontend.waitFor(runs ? /1 (?:queued|waiting)/u : /Can.t tell whether sleep is reading your typing|Typed while sleep ran[^\n]*held, not run/u, mark, 10_000);
         await until(async () => await ran() === before + 1, 20_000, 'the command to complete');
         if (runs) {
           await until(async () => (await records()).some(record => record.command === typed), 15_000, 'the real command to run after it');
@@ -150,9 +154,11 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         // Anything that would run after it has had time to start.
         await pause(2500);
         assert.equal((await records()).some(record => record.command === typed), false, `${typed}: never run, not in NMSh's journal`);
-        assert.match(strip(frontend.output.slice(mark)), /never runs by itself/u);
+        assert.match(strip(frontend.output.slice(mark)), /held, not run/u);
+        assert.equal((await sandbox.sessions())[0]?.queued ?? 0, 0);
         assert.doesNotMatch(strip(frontend.output.slice(mark)), new RegExp(`${SECRET}[^\\n]*(?:not found|No such|Unknown command)|(?:not found|No such|Unknown command)[^\\n]*${SECRET}`, 'u'),
           'the shell never saw it as a command');
+        frontend.pty.write('\u001b[27u'); // Explicitly discard this capture before the next independent case.
         if (shell !== 'fish') {
           const history = readFileSync(join(sandbox.home, HISTORY[shell][1]), 'utf8').split('\n');
           assert.equal(history.some(line => line.replace(/^: \d+:\d+;/u, '') === typed), false, `${typed}: not in the shell's history`);
