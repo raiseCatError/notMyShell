@@ -135,11 +135,11 @@ Live sessions are owned by the per-user session service (`nmshd`), which listens
 - **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. That window's shell ends when the window closes; it cannot be detached or reattached. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
 - **Startup restore:** two settings in Config → Sessions.
   - **Startup restore:** Ask (default), Always or Never.
-    - Ask: with one detached session, the launch shows its directory, what it is running and its age, then offers Resume (R/Enter), Not now (N/Esc), Always resume (A) or Don't resume at startup (D). A and D also save the setting.
+    - Ask: with one detached session, the launch shows its name, directory and shell, and the same evidence-based status as `/resume` (idle or what it runs, for how long, whether it waits for input), then offers Resume (R/Enter), Not now (N/Esc), Always resume (A) or Don't resume at startup (D). A and D also save the setting.
     - Never only skips restoring at launch. It never ends a session, and `/resume`, detach and reattach are unaffected.
   - **Multiple detached sessions:** Ask which (default) or Open all.
-    - The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions. Esc, or Enter with nothing selected, starts fresh.
-  - Both screens have one destructive key, `X`, which only opens a confirmation (Enter/Y kills, Esc/N/Ctrl+C cancels). The kill is the same confirmed termination `/resume` uses; the transcript is archived and stays in `/resume`. Sessions attached elsewhere are never touched, and killing the last one starts a fresh session. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
+    - Each row shows the session's name, directory, shell and status. The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions, or the highlighted one when none is selected; the footer says which ("Enter resume this", "Enter resume 2 selected"). N or Esc starts a new session and leaves every listed one running. The screen redraws when the terminal is resized.
+  - Both screens have one destructive key, `X`, which only opens a confirmation (Enter/Y kills, Esc/N/Ctrl+C cancels). In the picker it targets the selected sessions, or the highlighted one when none is selected; the confirmation names how many and lists them, so A then X is Kill all. Every target is listed by name and nothing else is ended. Each kill is the same confirmed termination `/resume` uses, performed one at a time and addressed by the service's session id (never a PID): the service's list is read again first, and the service itself refuses the kill if a window holds the session at that moment. The transcript is archived and stays in `/resume`; if archiving fails after the shell ended, the line says so and the spool is kept for the next launch. Once a kill is sent the service refuses to attach that session until its shell exits. An unreachable service is reported as a failure, never as "already ended". Sessions attached elsewhere are never touched (a line says how many were left), and killing the last one starts a fresh session. Launching or quitting NMSh never ends a session by itself. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
   - When several sessions are restored, this window attaches the first. Each other one opens in a new window of the host terminal, running `nmsh --attach <id>`:
     - Ghostty on macOS: Ghostty's AppleScript API (`new surface configuration`, then `new window with configuration`). It opens a normal window in the running Ghostty app. The command words are passed as `osascript` arguments and shell-quoted with `quoted form of`, never written into the script. macOS asks once for Automation permission. If AppleScript is disabled or permission is denied, NMSh names the session's `nmsh --attach` command instead.
     - Ghostty on Linux: `ghostty -e`.
@@ -159,6 +159,49 @@ Known limitations:
 - Nothing running in a shell survives the service being killed or the machine restarting. Only the transcript and the output captured so far are kept.
 - Sessions owned by an older service version can't be attached from a newer frontend. They stay listed as unverified until they end.
 - Recovery runs at launch and when `/resume` opens. A session that ends while another window is open is archived the next time either of those happens.
+
+## Session lifecycle and cleanup
+
+The service (`nmshd`) owns every live session; a window only controls one. Rex, Ghostty or any other host keeps its own panes and sessions, and NMSh never infers intent from them: a host pane that goes away is a lost connection, never a request to end anything. One pure function, `eligibility()` in `src/session/lifecycle.ts`, decides from facts the service observed, and both the service and every surface read the same answer.
+
+States, from observed facts only:
+
+| State | Facts |
+|---|---|
+| attached | a window controls it |
+| executing (detached) | a command runs, a fullscreen program holds the screen, the shell is still in its startup (an rc file waiting on a question), or there are queued commands, background tasks or shell jobs |
+| waiting (detached) | the running command credibly waits for input |
+| idle (detached) | at its prompt, has run at least one command |
+| unused (detached) | at its prompt and never ran a command, queued one or started a task |
+| protected | marked with P in the picker; an overlay on any state |
+| ending | a confirmed end was sent; the shell has not exited yet (nothing may attach) |
+| ended / stale | the service no longer lists it; its spool and journal are archived at the next launch or `/resume` (by service listing, never by PID) |
+| unknown | the service cannot be reached, or another protocol version owns it: nothing is touched |
+
+Idle output never makes a session disposable. Child processes are read with one bounded `pgrep -P <shell pid>` only when cleanup is about to act; the shell is the service's own PTY child, and a shell switch during the read is detected. If the read fails, the session is kept.
+
+Policy:
+
+| Event | What happens | Automatic? |
+|---|---|---|
+| Window or Rex pane closes, host quits, frontend crashes or is SIGKILLed | Detach. The session keeps running. | Yes (never ends it) |
+| `/exit`, `/zsh`, `/fish`, `/bash` | Detach and hand off; `nmsh` from that shell returns to it. | Yes (never ends it) |
+| Picker N or Esc (Start New / Leave Running) | Every listed session keeps running. | Yes |
+| Unused, detached for the grace period (Config → Sessions → Clean up unused sessions: Off, 10 min default, 30 min, 1 h) | Ended after re-verifying, right before, that it is still detached, unused, unprotected, holds no work and has no child processes. Its transcript is archived with the reason. | Yes, only for sessions created after a policy reached the service |
+| Used, idle, detached for a day | Suggested: the picker tags it and offers I (Review Idle Sessions) and E; a launch without the picker shows one line. | No: needs confirmation |
+| Idle expiry (Config → Sessions → End idle sessions: Off by default, 1, 3 or 7 days) | Ended after the same re-verification. | Only if the person turned it on |
+| Attached, executing, waiting, queued, tasks, jobs, child processes | Never ended by a timer. | Protected by the rules |
+| Protected (P) | Never ended by cleanup or End All Eligible; X still ends it after its confirmation. | Protected |
+| X (End Selected) | The confirmation lists every target by name; each is re-read from the service and ended by id; attached ones are never touched. | Needs confirmation |
+| E (End All Eligible) | Lists exactly the eligible sessions with their reasons; the service re-verifies each (work, protection, children) and keeps any that changed. | Needs confirmation |
+| A shell ignores SIGHUP on an explicit end | After 3 s the service sends SIGKILL to that shell, only after confirming its pid is still the service's own child (a reaped or reused pid is left alone). | Part of the confirmed end |
+| Shell exits on its own | The session ends; detached, the next launch archives it. | Yes |
+| Service crash or SIGKILL | Shells lose their PTY and end; the next launch archives each with a "service stopped" note. No automatic restart. | Yes |
+| Service SIGTERM/SIGHUP | Ends every shell and task, archives on next launch. | Yes |
+
+Upgrades: the policy reaches the service in each frontend's hello (`unused=<s>;idle=<s>`, bounded). A session created before any frontend stated a policy is never ended by a timer, and an older frontend that states none changes nothing. Each protocol version has its own service, so sessions owned by an older service keep that service's behaviour until they end. A configuration without these settings gets unused cleanup at 10 minutes and idle expiry off.
+
+Timers are event driven: one timer per detached session, armed on detach, prompt, policy or protection change, at the moment it could become eligible, cleared on attach, exit and end. A detached session holding work is looked at again at most hourly.
 
 ## Current scope and planned follow-up
 

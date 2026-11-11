@@ -11,6 +11,12 @@ export const LIVE_SESSION_STARTUP = ['ask', 'always', 'never'] as const;
 export type LiveSessionStartup = typeof LIVE_SESSION_STARTUP[number];
 export const LIVE_SESSION_MULTIPLE = ['ask', 'open-all'] as const;
 export type LiveSessionMultiple = typeof LIVE_SESSION_MULTIPLE[number];
+/** End a detached session that never ran a command after this long (Session Lifecycle; see session/lifecycle.ts). */
+export const SESSION_CLEANUP = ['off', '10m', '30m', '1h'] as const;
+export type SessionCleanup = typeof SESSION_CLEANUP[number];
+/** End a used, idle detached session after this long without activity; off by default. */
+export const SESSION_IDLE_EXPIRY = ['off', '1d', '3d', '7d'] as const;
+export type SessionIdleExpiry = typeof SESSION_IDLE_EXPIRY[number];
 import type {OutputFoldingMode} from '../output/FoldPolicy.js';
 import type {NavigationProviderId} from '../shell/DirectoryService.js';
 import type {PickerProviderId} from '../pickers/Picker.js';
@@ -641,6 +647,10 @@ export interface PromptConfiguration {
   liveSessionStartup: LiveSessionStartup;
   /** With several detached live sessions at launch: ask which, or open them all. */
   liveSessionMultiple: LiveSessionMultiple;
+  /** Session Lifecycle: end never-used detached sessions after this grace; only sessions created after the policy reached the service. */
+  sessionCleanup: SessionCleanup;
+  /** Session Lifecycle: end used idle detached sessions after this long; off by default. */
+  sessionIdleExpiry: SessionIdleExpiry;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
   /** Semantic Output: a test or build summary drawn in recognized blocks (#386). Presentation only; Off draws raw only. */
@@ -906,6 +916,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   updateFrequency: 'daily',
   liveSessionStartup: 'ask',
   liveSessionMultiple: 'ask',
+  sessionCleanup: '10m',
+  sessionIdleExpiry: 'off',
   notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
   outputFolding: 'smart',
   semanticOutput: true,
@@ -1034,6 +1046,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? value.liveSessionStartup as LiveSessionStartup : 'ask';
   const liveSessionMultiple: LiveSessionMultiple = LIVE_SESSION_MULTIPLE.includes(value.liveSessionMultiple as LiveSessionMultiple)
     ? value.liveSessionMultiple as LiveSessionMultiple : 'ask';
+  const sessionCleanup: SessionCleanup = SESSION_CLEANUP.includes(value.sessionCleanup as SessionCleanup) ? value.sessionCleanup as SessionCleanup : '10m';
+  const sessionIdleExpiry: SessionIdleExpiry = SESSION_IDLE_EXPIRY.includes(value.sessionIdleExpiry as SessionIdleExpiry) ? value.sessionIdleExpiry as SessionIdleExpiry : 'off';
   // Off persists as `never`, so v0.4 configs load unchanged.
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
   const semanticOutput = value.semanticOutput !== false;
@@ -1121,7 +1135,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, sessionCleanup, sessionIdleExpiry, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
@@ -1181,7 +1195,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
+    glyphStyle, glyphChoiceComplete, onboardingBackdrop, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, sessionCleanup, sessionIdleExpiry, outputFolding, semanticOutput, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

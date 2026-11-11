@@ -138,13 +138,21 @@ if (args[0] === 'packs') {
   let target: string | undefined = attachIndex === -1 ? undefined : args[attachIndex + 1];
   let explicit = target !== undefined;
   let notice: string | undefined;
+  let endedWhileAway = 0;
   if (process.env[SESSION_SERVICE_ENV] !== '0') {
+    // Every request this launch makes states the person's session cleanup policy; an unreadable configuration states none.
+    try {
+      const [{setHelloLifecycle}, {encodePolicy, policyFromSettings}, {loadPromptConfiguration}] = await Promise.all([
+        import('./session/SocketSessionClient.js'), import('./session/lifecycle.js'), import('./prompt/configuration.js')]);
+      setHelloLifecycle(encodePolicy(policyFromSettings(loadPromptConfiguration())));
+    } catch { /* the service then keeps whatever policy it already has, or none */ }
     // Sessions that ended with no window attached become ordinary archives.
     const {recoverEndedSessions} = await import('./session/recovery.js');
     const {defaultRuntimeDir} = await import('./session/runtimeDir.js');
     const {TranscriptStore} = await import('./sessions/TranscriptStore.js');
     try {
       const recovered = await recoverEndedSessions(defaultRuntimeDir(), new TranscriptStore());
+      endedWhileAway = recovered.archived.length;
       if (recovered.archived.length > 0) {
         notice = `${recovered.archived.length} live session${recovered.archived.length === 1 ? '' : 's'} ended while no NMSh window was attached; see /resume.`;
       } else if (recovered.skipped === 'another NMSh session service version is running') {
@@ -174,16 +182,14 @@ if (args[0] === 'packs') {
     const config = loadPromptConfiguration();
     // Same confirmed termination as /resume. Service truth is re-read first: a session that ended
     // meanwhile is simply gone, and one attached elsewhere is never touched.
-    const killDetached = async (session: (typeof live)[number]): Promise<'killed' | 'gone' | 'attached'> => {
-      const [{killAndArchive}, {TranscriptStore}] = await Promise.all([import('./session/liveSessions.js'), import('./sessions/TranscriptStore.js')]);
-      const current = (await listLiveSessions().catch(() => [])).find(item => item.id === session.id);
-      if (!current) return 'gone';
-      if (current.state !== 'detached') return 'attached';
-      try { await killAndArchive(current, {store: new TranscriptStore(), origin: 'the startup picker'}); return 'killed'; }
-      catch (error) {
-        if (!(await listLiveSessions().catch(() => [current])).some(item => item.id === session.id)) return 'gone';
-        throw error;
-      }
+    // An unreachable service is a failure, never "already ended"; only a shell this call ended counts as killed.
+    const killDetached = async (session: (typeof live)[number], mode?: 'eligible') => {
+      const [{endDetachedSession, archiveKilled}, {killSession}, {defaultRuntimeDir, socketPathFor}, {TranscriptStore}] = await Promise.all([
+        import('./session/liveSessions.js'), import('./session/SocketSessionClient.js'), import('./session/runtimeDir.js'), import('./sessions/TranscriptStore.js')]);
+      const store = new TranscriptStore();
+      return endDetachedSession(session, {list: () => listLiveSessions(),
+        kill: current => killSession(socketPathFor(defaultRuntimeDir()), current.id, 5000, mode),
+        archive: current => archiveKilled(current, {store, origin: 'the startup picker'})});
     };
     const restored = await restoreAtStartup(live, {
       // After a failed return, never silently attach a different session: ask instead of Always.
@@ -192,12 +198,34 @@ if (args[0] === 'packs') {
         try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
       askOne: session => picker.askWithKill(session, {run: picker.runStartupScreen, kill: killDetached}),
-      pick: sessions => picker.pickWithKill(sessions, {run: picker.runStartupScreen, kill: killDetached}),
+      pick: sessions => picker.pickWithKill(sessions, {run: picker.runStartupScreen, kill: killDetached,
+        context: {attachedElsewhere: live.filter(session => session.state === 'attached').length, endedWhileAway},
+        protect: async (session, on) => {
+          const [{protectSession}, {defaultRuntimeDir, socketPathFor}] = await Promise.all([import('./session/SocketSessionClient.js'), import('./session/runtimeDir.js')]);
+          return protectSession(socketPathFor(defaultRuntimeDir()), session.id, on);
+        },
+        configure: async () => {
+          const base = loadPromptConfiguration();
+          const state = {draft: {sessionCleanup: base.sessionCleanup, sessionIdleExpiry: base.sessionIdleExpiry}, cursor: 0 as 0 | 1};
+          const chosen = await picker.runStartupScreen(columns => picker.renderCleanupSettings(state, columns), key => picker.cleanupSettingsKey(state, key));
+          if (!chosen) return undefined;
+          savePromptConfiguration({...base, ...chosen}, undefined, base);
+          const [{setHelloLifecycle}, {encodePolicy, policyFromSettings}] = await Promise.all([import('./session/SocketSessionClient.js'), import('./session/lifecycle.js')]);
+          setHelloLifecycle(encodePolicy(policyFromSettings(chosen)));
+          return 'Cleanup settings saved; the session service applies them now.';
+        },
+        refresh: () => listLiveSessions()}),
       host: detectTerminalHost(),
       selfCommand: [process.execPath, ...process.execArgv.filter(arg => !arg.startsWith('--inspect')), process.argv[1]!],
     });
     target = restored.target;
     notice = [notice, restored.notice].filter(Boolean).join(' ') || undefined;
+    // Long-idle detached sessions are only ever suggested; the picker shows them itself, so this is for launches without it.
+    const {planLaunch} = await import('./session/liveSessions.js');
+    const longIdle = live.filter(session => session.state === 'detached' && session.lifecycle === 'idle' && session.eligibility === 'review' && session.id !== target);
+    if (longIdle.length && planLaunch(live, {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple}).kind !== 'pick') {
+      notice = [notice, `${longIdle.length} detached session${longIdle.length === 1 ? ' has' : 's have'} been idle for over a day; /sessions to review (nothing is ended unless you choose).`].join(' ').trim();
+    }
   }
 
   // The loop lets /resume switch this window to another live session.

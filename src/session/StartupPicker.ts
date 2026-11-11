@@ -1,6 +1,9 @@
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import {formatAge, sessionText, tildePath} from './sessionList.js';
+import {liveStatusParts} from './liveStatus.js';
+import type {EndOutcome} from './liveSessions.js';
+import {SESSION_CLEANUP, SESSION_IDLE_EXPIRY, type SessionCleanup, type SessionIdleExpiry} from '../prompt/configuration.js';
 import {GLYPHS, checkMark} from '../ui/glyphs.js';
 
 // Launch-time restore screens, shown before any session is attached. Each has
@@ -9,24 +12,38 @@ import {GLYPHS, checkMark} from '../ui/glyphs.js';
 // transcript is archived, never discarded.
 
 const clipTo = (columns: number) => (raw: string) => { const text = sessionText(raw); return text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text; };
-const activity = (session: SessionInfo) => (session.running === undefined ? undefined : sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 60)) ?? 'zsh';
-const age = (session: SessionInfo, now: number) => formatAge(now - (session.runningSince ?? session.idleSince ?? session.createdAt));
+const shellName = (session: SessionInfo) => session.shell ?? 'zsh';
+/** What the session is doing, from the service's evidence only: the first one or two facts /sessions shows. */
+const activity = (session: SessionInfo, now: number) => sessionText(liveStatusParts(session, now).slice(0, session.running ? 2 : 1).join(' · '));
+/** The one-session screens have room to say it in words: idle at the prompt (for how long), or what runs. */
+const spelledActivity = (session: SessionInfo, now: number) => session.running ? activity(session, now)
+  : `idle at the prompt${session.idleSince ? ` · ${formatAge(now - session.idleSince)}` : ''}`;
+/** Its own name, when the person gave one or the service assigned a signature. */
+const identity = (session: SessionInfo) => sessionText(session.name ?? session.signature ?? '');
+/** The service reports lifecycle facts (it advertised 'lifecycle'); older services say nothing and none of this shows. */
+const hasLifecycle = (sessions: readonly SessionInfo[]) => sessions.some(session => session.eligibility !== undefined);
+const eligible = (session: SessionInfo) => session.eligibility === 'automatic' || session.eligibility === 'review';
+/** Cleanup status worth a row: protected, eligible, or counting down. Work is already in the activity column. */
+const cleanupTag = (session: SessionInfo) => session.protected ? 'protected'
+  // The activity column already says how long it has been idle.
+  : eligible(session) || session.cleanupAt !== undefined ? sessionText((session.cleanup ?? '').replace(/^idle [^;]+; /u, '')) : '';
 
 // ── One detached session ─────────────────────────────────────────────────────
 
 /** resume: attach · not-now: fresh session, this launch only · always/never: also persist the startup setting. */
 export type SinglePromptChoice = 'resume' | 'not-now' | 'always' | 'never' | 'kill';
 
-export function renderSinglePrompt(session: SessionInfo, columns: number, now: number): string[] {
+export function renderSinglePrompt(session: SessionInfo, columns: number, now: number, message?: string): string[] {
   const clip = clipTo(columns);
+  const name = identity(session);
   return ['NMSh · 1 detached live session', '',
-    clip(`  ${tildePath(session.cwd)}`),
-    clip(`  ${session.running ? `running ${activity(session)}` : 'idle at the prompt'} · ${age(session, now)}`),
-    clip(`  started ${formatAge(now - session.createdAt)} ago`), '',
+    clip(`  ${name ? `${name} · ` : ''}${tildePath(session.cwd)} · ${shellName(session)}`),
+    clip(`  ${spelledActivity(session, now)}`),
+    clip(`  started ${formatAge(now - session.createdAt)} ago`), ...(cleanupTag(session) ? [clip(`  ${cleanupTag(session)}`)] : []), '',
     '  R  Resume', '  N  Not now (start a new session; it keeps running)',
     '  X  Kill session (ends the shell; transcript stays in /resume)',
     '  A  Always resume', '  D  Don\'t resume at startup (it keeps running)', '',
-    clip('Enter resume · Esc not now · sessions stay in /resume')];
+    clip('Enter resume · Esc not now · sessions stay in /resume'), ...(message ? ['', clip(message)] : [])];
 }
 
 export function singlePromptKey(key: Key): SinglePromptChoice | undefined {
@@ -38,13 +55,29 @@ export function singlePromptKey(key: Key): SinglePromptChoice | undefined {
 
 // ── Kill confirmation (shared by both screens) ──────────────────────────────
 
-export function renderKillConfirm(session: SessionInfo, columns: number, now: number): string[] {
+export function renderKillConfirm(target: SessionInfo | readonly SessionInfo[], columns: number, now: number, mode: 'selected' | 'eligible' = 'selected'): string[] {
   const clip = clipTo(columns);
-  return ['Kill detached session?', '',
-    clip(`  ${tildePath(session.cwd)}`),
-    clip(`  ${session.running ? `running ${activity(session)}` : 'idle at the prompt'} · ${age(session, now)}`), '',
-    '  This ends the live shell.', '  Its transcript will remain available in /resume.', '',
-    clip('Enter/Y kill · Esc/N cancel')];
+  const sessions = Array.isArray(target) ? target as readonly SessionInfo[] : [target as SessionInfo];
+  const many = sessions.length > 1;
+  if (mode === 'eligible') {
+    const plural = sessions.length === 1 ? '' : 's';
+    return [`End ${sessions.length} eligible session${plural}?`, '',
+      ...sessions.map(session => clip(`  ${identity(session) ? `${identity(session)} · ` : ''}${tildePath(session.cwd)} · ${shellName(session)} · ${sessionText(session.cleanup ?? '')}`)), '',
+      `  Exactly ${sessions.length === 1 ? 'this session' : `these ${sessions.length}`}. Each is checked again just before it ends;`,
+      '  one that has started work, is protected or is attached elsewhere is kept.',
+      `  ${sessions.length === 1 ? 'Its transcript remains' : 'Their transcripts remain'} available in /resume.`, '',
+      clip(`Enter/Y end ${sessions.length === 1 ? 'it' : `all ${sessions.length}`} · Esc/N cancel`)];
+  }
+  // Every target is named on its own line (the service caps live sessions, so the list is bounded): the confirmation
+  // is the exact set that will be ended, never "and N more", and two sessions in one directory stay distinguishable.
+  const named = (session: SessionInfo) => { const name = identity(session); return name ? `${name} · ` : ''; };
+  return [many ? `Kill ${sessions.length} detached sessions?` : 'Kill detached session?', '',
+    ...sessions.flatMap(session => many
+      ? [clip(`  ${named(session)}${tildePath(session.cwd)} · ${shellName(session)} · ${activity(session, now)}`)]
+      : [clip(`  ${named(session)}${tildePath(session.cwd)} · ${shellName(session)}`), clip(`  ${spelledActivity(session, now)}`)]), '',
+    many ? `  This ends ${sessions.length} live shells and whatever runs in them.` : '  This ends the live shell and whatever runs in it.',
+    `  ${many ? 'Their transcripts remain' : 'Its transcript will remain'} available in /resume. Sessions open in another window are not touched.`, '',
+    clip(`Enter/Y kill${many ? ` all ${sessions.length}` : ''} · Esc/N cancel`)];
 }
 
 /** Enter/Y confirm, Esc/N/Ctrl+C cancel; anything else is ignored. */
@@ -62,51 +95,100 @@ export interface MultiPickerState {
   sessions: SessionInfo[];
   cursor: number;
   selected: Set<string>;
-  /** The session a kill confirmation is open for. */
-  confirming?: string;
+  /** The sessions a kill confirmation is open for: the selected ones, or the highlighted one. */
+  confirming?: string[];
+  /** What the open confirmation is: End Selected (default) or End All Eligible. */
+  confirmMode?: 'selected' | 'eligible';
+  /** Sessions selected by Review Idle Sessions: ending them goes through the service's eligibility re-check. */
+  reviewed?: Set<string>;
+  /** Other live sessions worth counting in the header: attached in another window, and archived at this launch. */
+  context?: PickerContext;
   /** One factual line about the last kill, shown under the list. */
   message?: string;
 }
 
 /** Returned by multiPickerKey once a kill is confirmed; the caller performs it and re-enters the picker. */
-export interface KillRequest {kill: string}
+/** mode 'eligible' re-checks every target; `recheck` names the ones (from Review Idle Sessions) that are re-checked in an End Selected. */
+export interface KillRequest {kill: string[]; mode?: 'eligible'; recheck?: string[]}
+/** P: protect or unprotect the highlighted session (the service records it). */
+export interface ProtectRequest {protect: string; on: boolean}
+/** C: open the cleanup settings. */
+export interface ConfigureRequest {configure: true}
+export type PickerRequest = KillRequest | ProtectRequest | ConfigureRequest;
 
-export function createMultiPicker(sessions: SessionInfo[]): MultiPickerState {
-  return {sessions, cursor: 0, selected: new Set()};
+export interface PickerContext {attachedElsewhere?: number; endedWhileAway?: number}
+
+export function createMultiPicker(sessions: SessionInfo[], context?: PickerContext): MultiPickerState {
+  return {sessions, cursor: 0, selected: new Set(), ...(context ? {context} : {})};
+}
+
+/** The header's counts, from the service's own lifecycle reading: working, waiting, idle; plus what is not listed. */
+function pickerHeader(state: MultiPickerState): string {
+  const count = state.sessions.length;
+  const parts = [`NMSh · ${count} detached live session${count === 1 ? '' : 's'}`];
+  if (hasLifecycle(state.sessions)) {
+    const of = (...states: string[]) => state.sessions.filter(session => states.includes(session.lifecycle ?? '')).length;
+    const working = of('executing');
+    const waiting = of('waiting');
+    const idle = of('idle', 'unused');
+    if (working) parts.push(`${working} working`);
+    if (waiting) parts.push(`${waiting} waiting`);
+    if (idle) parts.push(`${idle} idle`);
+  }
+  if (state.context?.attachedElsewhere) parts.push(`${state.context.attachedElsewhere} attached elsewhere`);
+  if (state.context?.endedWhileAway) parts.push(`${state.context.endedWhileAway} ended while away (in /resume)`);
+  return parts.join(' · ');
 }
 
 export function renderMultiPicker(state: MultiPickerState, columns: number, now: number): string[] {
   const clip = clipTo(columns);
   const width = Math.min(32, Math.max(...state.sessions.map(session => tildePath(session.cwd).length), 4));
-  const commandWidth = Math.min(20, Math.max(...state.sessions.map(session => activity(session).length), 3));
-  const confirming = state.sessions.find(session => session.id === state.confirming);
-  if (confirming) return renderKillConfirm(confirming, columns, now);
-  const rows = [`NMSh · ${state.sessions.length} detached live session${state.sessions.length === 1 ? '' : 's'}`, ''];
+  const named = Math.min(16, Math.max(0, ...state.sessions.map(session => identity(session).length)));
+  const confirming = state.confirming ? state.sessions.filter(session => state.confirming!.includes(session.id)) : [];
+  if (confirming.length) return renderKillConfirm(confirming, columns, now, state.confirmMode);
+  const rows = [clip(pickerHeader(state)), ''];
   state.sessions.forEach((session, index) => {
     const mark = checkMark(state.selected.has(session.id));
-    rows.push(clip(`${index === state.cursor ? GLYPHS.selection : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
+    const name = named ? `${identity(session).slice(0, named).padEnd(named)}  ` : '';
+    const tag = cleanupTag(session);
+    rows.push(clip(`${index === state.cursor ? GLYPHS.selection : ' '} ${mark} ${name}${tildePath(session.cwd).padEnd(width)}  ${shellName(session).padEnd(4)}  ${activity(session, now)}${tag ? ` · ${tag}` : ''}`));
   });
   const count = state.selected.size;
-  rows.push('', clip(`↑↓ move · Space select · A all · X kill · Enter resume ${count === 0 ? 'none' : count} · Esc none`),
-    clip('Unselected sessions keep running and stay in /resume.'), ...(state.message ? [clip(state.message)] : []));
+  // What Enter does is spelled out, and so is what X would end: the action under the cursor is never a guess.
+  const enter = count === 0 ? 'Enter resume this' : `Enter resume ${count} selected`;
+  const kill = count === 0 ? 'X kill this' : `X kill ${count} selected`;
+  const lifecycle = hasLifecycle(state.sessions)
+    ? [clip(`E end eligible (${state.sessions.filter(eligible).length}) · I review idle · P protect · C cleanup settings`)] : [];
+  rows.push('', clip(`${enter} · N new session · ↑↓ move · Space select · A all`),
+    clip(`${kill} · Esc new session · sessions you leave keep running (/resume)`), ...lifecycle, ...(state.message ? ['', clip(state.message)] : []));
   return rows;
 }
 
-/** Apply one key; returns the ids to resume (in list order) once the user is done, [] for none. */
-export function multiPickerKey(state: MultiPickerState, key: Key): string[] | KillRequest | undefined {
+/**
+ * Apply one key; returns the ids to resume (in list order) once the user is done, [] for a new session. Enter resumes
+ * the selected sessions, or the highlighted one when none is selected; N and Esc start a new session and leave every
+ * listed one running. X asks to kill the selected sessions, or the highlighted one.
+ */
+export function multiPickerKey(state: MultiPickerState, key: Key): string[] | PickerRequest | undefined {
   const count = state.sessions.length;
   if (state.confirming) {
     const decision = killConfirmKey(key);
-    const id = state.confirming;
-    if (decision) state.confirming = undefined;
-    return decision === 'confirm' ? {kill: id} : undefined;
+    const ids = state.confirming;
+    const mode = state.confirmMode;
+    if (decision) { state.confirming = undefined; state.confirmMode = undefined; }
+    const recheck = mode === 'eligible' ? [] : ids.filter(id => state.reviewed?.has(id));
+    return decision === 'confirm' ? {kill: [...ids], ...(mode === 'eligible' ? {mode} : {}), ...(recheck.length ? {recheck} : {})} : undefined;
   }
   state.message = undefined;
-  if (key.kind === 'text' && key.value.toLowerCase() === 'x') state.confirming = state.sessions[state.cursor]?.id;
+  const highlighted = state.sessions[state.cursor];
+  const letter = key.kind === 'text' ? key.value.toLowerCase() : '';
+  if (hasLifecycle(state.sessions) && ['e', 'i', 'p', 'c'].includes(letter)) return lifecycleKey(state, letter);
+  const chosen = () => state.selected.size ? state.sessions.filter(session => state.selected.has(session.id)).map(session => session.id) : highlighted ? [highlighted.id] : [];
+  if (key.kind === 'text' && key.value.toLowerCase() === 'x') { const ids = chosen(); if (ids.length) state.confirming = ids; }
   else if (key.kind === 'up') state.cursor = (state.cursor - 1 + count) % count;
   else if (key.kind === 'down') state.cursor = (state.cursor + 1) % count;
-  else if (key.kind === 'escape' || key.kind === 'interrupt') return [];
-  else if (key.kind === 'enter') return state.sessions.filter(session => state.selected.has(session.id)).map(session => session.id);
+  else if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) return [];
+  else if (key.kind === 'enter') return chosen();
   else if (key.kind === 'text' && key.value === ' ') {
     const id = state.sessions[state.cursor]!.id;
     if (!state.selected.delete(id)) state.selected.add(id);
@@ -118,15 +200,40 @@ export function multiPickerKey(state: MultiPickerState, key: Key): string[] | Ki
   return undefined;
 }
 
+/** E end eligible, I review idle, P protect, C cleanup settings: only when the service reports lifecycle facts. */
+function lifecycleKey(state: MultiPickerState, letter: string): PickerRequest | undefined {
+  const highlighted = state.sessions[state.cursor];
+  if (letter === 'e') {
+    // Exactly the sessions the service called eligible, listed in the confirmation; the service checks each again.
+    const ids = state.sessions.filter(eligible).map(session => session.id);
+    if (ids.length) { state.confirming = ids; state.confirmMode = 'eligible'; }
+    else state.message = 'No session is eligible for cleanup: each is attached, protected, working or recently used.';
+    return undefined;
+  }
+  if (letter === 'i') {
+    // Review: select the long-idle ones (Space keeps one); X then asks before ending exactly those.
+    const idle = state.sessions.filter(session => session.lifecycle === 'idle' && eligible(session));
+    if (!idle.length) { state.message = 'No session has been idle for over a day.'; return undefined; }
+    state.selected = new Set(idle.map(session => session.id));
+    // Suggested from the listing, which cannot see child processes: the service checks each again before ending it.
+    state.reviewed = new Set(state.selected);
+    state.cursor = state.sessions.indexOf(idle[0]!);
+    state.message = `Selected ${idle.length} session${idle.length === 1 ? '' : 's'} idle for over a day: Space keeps one, X ends the selected after a confirmation.`;
+    return undefined;
+  }
+  if (letter === 'p') return highlighted ? {protect: highlighted.id, on: !highlighted.protected} : undefined;
+  return {configure: true};
+}
+
 /** Drop a session (killed or already gone): selection and cursor stay consistent and in bounds. */
 export function removeFromMultiPicker(state: MultiPickerState, id: string): void {
   state.sessions = state.sessions.filter(session => session.id !== id);
   state.selected.delete(id);
-  if (state.confirming === id) state.confirming = undefined;
+  if (state.confirming) { state.confirming = state.confirming.filter(item => item !== id); if (!state.confirming.length) state.confirming = undefined; }
   state.cursor = Math.max(0, Math.min(state.cursor, state.sessions.length - 1));
 }
 
-export type KillResult = 'killed' | 'gone' | 'attached';
+export type KillResult = EndOutcome;
 
 /**
  * The multi-session screen with in-place kill. `run` shows one screen until
@@ -136,24 +243,89 @@ export type KillResult = 'killed' | 'gone' | 'attached';
  */
 export async function pickWithKill(sessions: SessionInfo[], io: {
   run: <T>(render: (columns: number) => string[], onKey: (key: Key) => T | undefined) => Promise<T>;
-  kill: (session: SessionInfo) => Promise<KillResult>;
+  kill: (session: SessionInfo, mode?: 'eligible') => Promise<KillResult>;
+  /** Record protection with the service; resolves with the session's updated record. */
+  protect?: (session: SessionInfo, on: boolean) => Promise<SessionInfo | undefined>;
+  /** The cleanup settings screen; resolves with a line to show, after the service has the new policy. */
+  configure?: () => Promise<string | undefined>;
+  /** The service's current list, to redraw from after a settings change. */
+  refresh?: () => Promise<SessionInfo[]>;
+  context?: PickerContext;
   now?: () => number;
 }): Promise<string[]> {
-  const state = createMultiPicker(sessions);
+  const state = createMultiPicker(sessions, io.context);
   const now = io.now ?? Date.now;
   for (;;) {
-    const result = await io.run<string[] | KillRequest>(columns => renderMultiPicker(state, columns, now()), key => multiPickerKey(state, key));
+    const result = await io.run<string[] | PickerRequest>(columns => renderMultiPicker(state, columns, now()), key => multiPickerKey(state, key));
     if (Array.isArray(result)) return result;
-    const target = state.sessions.find(session => session.id === result.kill);
-    if (!target) continue;
-    let outcome: KillResult;
-    try { outcome = await io.kill(target); }
-    catch (error) { state.message = `Could not end that session: ${error instanceof Error ? error.message : String(error)}`; continue; }
-    removeFromMultiPicker(state, target.id);
-    state.message = outcome === 'killed' ? 'Session ended; its transcript is in /resume.'
-      : outcome === 'gone' ? 'That session had already ended; it is in /resume.' : 'That session is attached in another window and was not touched.';
+    if ('protect' in result) {
+      const target = state.sessions.find(session => session.id === result.protect);
+      if (!target || !io.protect) continue;
+      try {
+        const updated = await io.protect(target, result.on);
+        if (!updated) { state.message = 'That session has ended.'; removeFromMultiPicker(state, target.id); }
+        else {
+          state.sessions = state.sessions.map(session => session.id === updated.id ? updated : session);
+          state.message = updated.protected ? 'Protected: cleanup and End All Eligible never end it.' : 'No longer protected: cleanup applies to it again.';
+        }
+      } catch (error) { state.message = `Could not change protection: ${error instanceof Error ? error.message : String(error)}`; }
+      if (state.sessions.length === 0) return [];
+      continue;
+    }
+    if ('configure' in result) {
+      if (!io.configure) continue;
+      try { state.message = await io.configure(); } catch (error) { state.message = `Could not save cleanup settings: ${error instanceof Error ? error.message : String(error)}`; }
+      if (io.refresh) {
+        try {
+          const fresh = new Map((await io.refresh()).map(session => [session.id, session]));
+          // Same rows, newest facts; a session that ended or was attached elsewhere meanwhile drops out.
+          for (const session of state.sessions) if (fresh.get(session.id)?.state !== 'detached') removeFromMultiPicker(state, session.id);
+          state.sessions = state.sessions.map(session => fresh.get(session.id) ?? session);
+        } catch { /* keep the rows as they were */ }
+      }
+      if (state.sessions.length === 0) return [];
+      continue;
+    }
+    const targets = state.sessions.filter(session => result.kill.includes(session.id));
+    if (!targets.length) continue;
+    // One at a time, each re-checked by the service: a session attached elsewhere meanwhile is left alone.
+    const tally: KillTally = {killed: 0, 'killed-unarchived': 0, gone: 0, attached: 0, kept: 0, failed: []};
+    for (const target of targets) {
+      let outcome: KillResult;
+      try { outcome = await io.kill(target, result.mode ?? (result.recheck?.includes(target.id) ? 'eligible' : undefined)); }
+      catch (error) { tally.failed.push(error instanceof Error ? error.message : String(error)); continue; }
+      tally[outcome] += 1;
+      if (outcome !== 'attached' && outcome !== 'kept') removeFromMultiPicker(state, target.id);
+      else state.selected.delete(target.id);
+    }
+    state.message = killSummary(tally);
     if (state.sessions.length === 0) return [];
   }
+}
+
+type KillTally = Record<EndOutcome, number> & {failed: string[]};
+
+/** One factual line about what a kill did, session by session; what failed comes first, so a narrow screen never clips it. */
+function killSummary(tally: KillTally): string {
+  const sessions = (count: number) => `${count} session${count === 1 ? '' : 's'}`;
+  const unarchived = tally['killed-unarchived'];
+  const kinds = [tally.failed.length, tally.attached, tally.kept, tally.killed, unarchived, tally.gone].filter(Boolean).length;
+  if (kinds === 1) {
+    const one = (count: number) => count === 1;
+    if (one(tally.failed.length)) return `Could not end that session: ${tally.failed[0]}`;
+    if (one(tally.attached)) return 'That session is attached in another window and was not touched.';
+    if (one(tally.kept)) return 'That session was checked again and kept: it has work, is protected, or is not eligible yet.';
+    if (one(tally.killed)) return 'Session ended; its transcript is in /resume.';
+    if (one(tally.gone)) return 'That session had already ended; it is in /resume.';
+  }
+  const parts: string[] = [];
+  if (tally.failed.length) parts.push(`${sessions(tally.failed.length)} could not be ended (${tally.failed[0]})`);
+  if (tally.attached) parts.push(`${sessions(tally.attached)} attached in another window ${tally.attached === 1 ? 'was' : 'were'} not touched`);
+  if (tally.kept) parts.push(`${sessions(tally.kept)} checked again and kept (work, protection or not eligible yet)`);
+  if (tally.killed) parts.push(`${sessions(tally.killed)} ended`);
+  if (unarchived) parts.push(`${sessions(unarchived)} ended but ${unarchived === 1 ? 'its transcript was' : 'their transcripts were'} not archived yet (kept; the next launch archives ${unarchived === 1 ? 'it' : 'them'})`);
+  if (tally.gone) parts.push(`${sessions(tally.gone)} had already ended`);
+  return `${parts.join('; ')}${tally.killed || tally.gone ? '; transcripts stay in /resume.' : '.'}`;
 }
 
 /** The one-session prompt with in-place kill; confirmation cancels back to the prompt. */
@@ -163,14 +335,57 @@ export async function askWithKill(session: SessionInfo, io: {
   now?: () => number;
 }): Promise<SinglePromptChoice> {
   const now = io.now ?? Date.now;
+  let message: string | undefined;
   for (;;) {
-    const choice = await io.run<SinglePromptChoice>(columns => renderSinglePrompt(session, columns, now()), singlePromptKey);
+    const choice = await io.run<SinglePromptChoice>(columns => renderSinglePrompt(session, columns, now(), message), singlePromptKey);
+    message = undefined;
     if (choice !== 'kill') return choice;
     const decision = await io.run<'confirm' | 'cancel'>(columns => renderKillConfirm(session, columns, now()), killConfirmKey);
     if (decision === 'cancel') continue;
-    try { await io.kill(session); } catch { continue; }
+    // Only an ended session lets startup go on fresh; anything else is said on the prompt, never treated as killed.
+    let outcome: KillResult;
+    try { outcome = await io.kill(session); }
+    catch (error) { message = `Could not end that session: ${error instanceof Error ? error.message : String(error)}`; continue; }
+    if (outcome === 'attached') { message = 'That session is attached in another window and was not touched.'; continue; }
+    if (outcome === 'kept') { message = 'That session was checked again and kept.'; continue; }
     return 'kill';
   }
+}
+
+// ── Cleanup settings (C in the picker) ─────────────────────────────────────
+
+export interface CleanupSettings {sessionCleanup: SessionCleanup; sessionIdleExpiry: SessionIdleExpiry}
+const CLEANUP_LABELS: Record<SessionCleanup, string> = {off: 'Off', '10m': '10 minutes', '30m': '30 minutes', '1h': '1 hour'};
+const EXPIRY_LABELS: Record<SessionIdleExpiry, string> = {off: 'Off', '1d': 'After 1 day', '3d': 'After 3 days', '7d': 'After 7 days'};
+
+export interface CleanupSettingsState {draft: CleanupSettings; cursor: 0 | 1}
+
+export function renderCleanupSettings(state: CleanupSettingsState, columns: number): string[] {
+  const clip = clipTo(columns);
+  const row = (index: 0 | 1, label: string, value: string) => clip(`${state.cursor === index ? GLYPHS.selection : ' '} ${label.padEnd(26)} ‹ ${value} ›`);
+  return ['Session cleanup', '',
+    row(0, 'Clean up unused sessions', CLEANUP_LABELS[state.draft.sessionCleanup]),
+    row(1, 'End idle sessions', EXPIRY_LABELS[state.draft.sessionIdleExpiry]), '',
+    clip('  Unused: a detached session that never ran a command ends after this long detached.'),
+    clip('  Idle: a used detached session ends after this long with no activity (off by default).'),
+    clip('  Never ended: attached, protected, running, waiting for input, queued, background tasks,'),
+    clip('  shell jobs or child processes. Each is checked again just before; transcripts are kept.'), '',
+    clip('↑↓ select · ←→ change · Enter save · Esc back')];
+}
+
+/** ↑↓ select, ←→ change, Enter save (returns the draft), Esc back (returns null). */
+export function cleanupSettingsKey(state: CleanupSettingsState, key: Key): CleanupSettings | null | undefined {
+  if (key.kind === 'up' || key.kind === 'down') { state.cursor = state.cursor === 0 ? 1 : 0; return undefined; }
+  if (key.kind === 'left' || key.kind === 'right') {
+    const step = key.kind === 'right' ? 1 : -1;
+    const cycle = <T,>(values: readonly T[], value: T) => values[(values.indexOf(value) + step + values.length) % values.length]!;
+    if (state.cursor === 0) state.draft = {...state.draft, sessionCleanup: cycle(SESSION_CLEANUP, state.draft.sessionCleanup)};
+    else state.draft = {...state.draft, sessionIdleExpiry: cycle(SESSION_IDLE_EXPIRY, state.draft.sessionIdleExpiry)};
+    return undefined;
+  }
+  if (key.kind === 'enter') return state.draft;
+  if (key.kind === 'escape' || key.kind === 'interrupt') return null;
+  return undefined;
 }
 
 // ── Terminal runner ─────────────────────────────────────────────────────────
@@ -194,6 +409,7 @@ export function runStartupScreen<T>(render: (columns: number) => string[], onKey
         const result = onKey(key);
         if (result !== undefined) {
           process.stdin.off('data', onData);
+          process.stdout.off('resize', onResize);
           process.stdin.setRawMode(wasRaw);
           process.stdin.pause();
           process.stdout.write('\u001b[?25h\u001b[?1049l');
@@ -203,6 +419,9 @@ export function runStartupScreen<T>(render: (columns: number) => string[], onKey
       }
       draw();
     };
+    // A resize redraws at the new width (narrow terminals keep every line clipped, never wrapped).
+    const onResize = () => draw();
+    process.stdout.on('resize', onResize);
     process.stdin.on('data', onData);
     process.stdin.resume();
     draw();
