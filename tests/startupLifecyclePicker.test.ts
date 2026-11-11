@@ -17,7 +17,7 @@ const key = (kind: string): Key => ({kind} as Key);
 const fleet = () => [
   info('work', {lifecycle: 'executing', running: 'npm run build', runningSince: 0, cleanup: 'a command is running'}),
   info('wait', {lifecycle: 'waiting', running: 'read -r x', runningSince: 0, inputSince: 0, inputConfidence: 'likely', cleanup: 'waiting for input'}),
-  info('old', {lifecycle: 'idle', idleSince: 0, eligibility: 'review', cleanup: 'idle 2d; cleanup suggested'}),
+  info('old', {lifecycle: 'idle', idleSince: 1, eligibility: 'review', cleanup: 'idle 2d; cleanup suggested'}),
   info('new', {lifecycle: 'unused', used: undefined, eligibility: 'kept', cleanup: 'never used; cleanup in 4m', cleanupAt: 5 * 60_000}),
 ];
 
@@ -25,7 +25,7 @@ test('the header counts working, waiting and idle sessions, plus what is not lis
   const state = createMultiPicker(fleet(), {attachedElsewhere: 1, endedWhileAway: 2});
   const screen = renderMultiPicker(state, 200, 2 * DAY).join('\n');
   assert.match(screen, /4 detached live sessions · 1 working · 1 waiting · 2 idle · 1 attached elsewhere · 2 ended while away/);
-  assert.match(screen, /\/w\/old .*idle 2d; cleanup suggested/);
+  assert.match(screen, /\/w\/old\s+zsh\s+idle [^·;]+ · cleanup suggested$/m, 'the idle age is said once, by the activity column');
   assert.match(screen, /\/w\/new .*never used; cleanup in 4m/);
   assert.doesNotMatch(screen.split('\n').find(line => line.includes('/w/work'))!, /cleanup/, 'work speaks for itself; no cleanup tag');
   assert.match(screen, /E end eligible \(1\) · I review idle · P protect · C cleanup settings/);

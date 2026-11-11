@@ -397,6 +397,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Session notices are short events about another session (a finished command, a failure, a request for attention); /sessions keeps the state.'], rows: [
     {row: configRow('liveSessionStartup')},
     {row: configRow('liveSessionMultiple')},
+    {row: configRow('sessionCleanup'), note: draft => draft.sessionCleanup === 'off' ? 'Off: detached sessions are never ended by a timer; long-idle ones are still suggested for review'
+      : 'A detached session that never ran a command ends after this long. Attached, protected or busy sessions never do; the transcript is kept'},
+    {row: configRow('sessionIdleExpiry')},
     {row: configRow('commandQueue'), note: draft => draft.commandQueue ? 'On: while a command runs, Enter queues the next one; a program waiting for input still gets your answer' : 'Off: Enter while a command runs goes to the program, as in a plain terminal'},
     {row: configRow('queueFailurePolicy'), note: () => 'Applies to new execution chains; existing reviewed work keeps its policy. Ctrl+C always pauses.'},
     {row: configRow('queueTimeline'), note: draft => draft.queue.liveTimeline ? 'On: queued work shows as a chronological timeline — recent results, the running command and what runs next' : 'Off: the one-line queue row and pending list, as before'},

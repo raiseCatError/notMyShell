@@ -25,7 +25,8 @@ const hasLifecycle = (sessions: readonly SessionInfo[]) => sessions.some(session
 const eligible = (session: SessionInfo) => session.eligibility === 'automatic' || session.eligibility === 'review';
 /** Cleanup status worth a row: protected, eligible, or counting down. Work is already in the activity column. */
 const cleanupTag = (session: SessionInfo) => session.protected ? 'protected'
-  : eligible(session) || session.cleanupAt !== undefined ? sessionText(session.cleanup ?? '') : '';
+  // The activity column already says how long it has been idle.
+  : eligible(session) || session.cleanupAt !== undefined ? sessionText((session.cleanup ?? '').replace(/^idle [^;]+; /u, '')) : '';
 
 // ── One detached session ─────────────────────────────────────────────────────
 
