@@ -20,6 +20,7 @@ test('support: Rex only, never inside tmux or screen; NMSH_PROGRAM_STATUS overri
   assert.equal(programStatusSupported({TERM_PROGRAM: 'rex', TERM: 'xterm-256color'}), true);
   assert.equal(programStatusSupported({TERM_PROGRAM: 'rex', TMUX: '/tmp/tmux,1,0'}), false);
   assert.equal(programStatusSupported({TERM_PROGRAM: 'rex', STY: '1.pts'}), false);
+  assert.equal(programStatusSupported({TERM_PROGRAM: 'rex', ZELLIJ: '0'}), false, 'Zellij owns the real terminal');
   assert.equal(programStatusSupported({TERM_PROGRAM: 'ghostty'}), false);
   assert.equal(programStatusSupported({}), false);
   assert.equal(programStatusSupported({TERM_PROGRAM: 'ghostty', NMSH_PROGRAM_STATUS: '1'}), true);
@@ -29,6 +30,7 @@ test('support: Rex only, never inside tmux or screen; NMSH_PROGRAM_STATUS overri
 test('Rex gets OSC 133 and OSC 7 and is named; nothing else about other hosts changes', () => {
   assert.deepEqual(semanticSupport({TERM_PROGRAM: 'rex', TERM: 'xterm-256color'}), {marks: true, cwd: true});
   assert.deepEqual(semanticSupport({TERM_PROGRAM: 'rex', NMSH_SEMANTIC: '0'}), {marks: false, cwd: false});
+  assert.deepEqual(semanticSupport({TERM_PROGRAM: 'rex', ZELLIJ: '0'}), {marks: false, cwd: false}, 'not through Zellij');
   assert.deepEqual(semanticSupport({TERM_PROGRAM: 'SomethingElse'}), {marks: false, cwd: false});
   const host = detectTerminalHost({TERM_PROGRAM: 'rex', TERM: 'xterm-256color'}, 'darwin');
   assert.equal(host.name, 'Rex');
@@ -113,5 +115,12 @@ test('TerminalApp: each state comes from NMSh evidence; the command line and typ
     frame.capture();
     frame.app['stop'](0);
     assert.deepEqual(states().slice(7), ['blocked:permission', 'clear'], 'NMSh stopping removes its record');
+    // An uncaught error ends the process without stop(): the record is removed there too, once.
+    frame.session.emit('queueState', {entries: [{id: 4, text: 'echo held', addedAt: 6, condition: 'approve', typedWhile: 'sleep'}]}, {});
+    frame.app['stopped'] = false;
+    frame.app['hostProgramStatus'].set({state: 'working'}, true);
+    frame.app['onProcessExit']();
+    frame.app['stopped'] = true;
+    assert.deepEqual(states().slice(9), ['working', 'clear'], 'an abnormal exit clears the record');
   } finally { frame.dispose(); }
 });

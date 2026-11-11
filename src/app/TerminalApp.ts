@@ -1649,6 +1649,8 @@ export class TerminalApp {
 
   private readonly onProcessExit = (): void => {
     if (!this.stopped) {
+      // The frontend ends without stop() (an uncaught error): NMSh's host status record must not stay behind.
+      this.hostProgramStatus.end();
       if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
       this.terminalFocus = 'unknown';
       this.renderer.leave();

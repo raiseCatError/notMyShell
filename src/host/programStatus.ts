@@ -26,12 +26,12 @@ export type ProgramStatus =
 
 /**
  * Hosts that document OSC 7501. Unknown hosts get nothing, and nothing inside tmux or screen (they own the real
- * terminal and drop or reroute unknown OSCs). NMSH_PROGRAM_STATUS=0 turns it off; NMSH_PROGRAM_STATUS=1 turns it on.
+ * terminal and drop or reroute unknown OSCs; Zellij too). NMSH_PROGRAM_STATUS=0 turns it off; NMSH_PROGRAM_STATUS=1 turns it on.
  */
 export function programStatusSupported(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.NMSH_PROGRAM_STATUS === '0' || env.TERM === 'dumb') return false;
   if (env.NMSH_PROGRAM_STATUS === '1') return true;
-  if (env.TMUX || env.STY || /^(tmux|screen)/u.test(env.TERM ?? '')) return false;
+  if (env.TMUX || env.STY || env.ZELLIJ !== undefined || /^(tmux|screen)/u.test(env.TERM ?? '')) return false;
   return env.TERM_PROGRAM === 'rex';
 }
 
